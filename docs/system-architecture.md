@@ -6,7 +6,7 @@
 - [GUI UI Architecture](ui-architecture.md) — L2a Tauri GUI の screen / phase state machine (Phase 2 基盤、Phase 3/4 で拡張)
 - [Tauri Commands リファレンス](tauri-commands.md) — `gui/src-tauri/src/lib.rs` 内の全 `#[tauri::command]` 一覧 (signature + 想定エラー + AppError code 推奨)
 - [metadata.json 仕様](metadata-spec.md) — CLI ↔ GUI の唯一の契約
-- [リリース戦略](release-strategy.md) — develop-x.x.x / main のブランチ運用
+- [リリース戦略](release-process.md) — develop-x.x.x / main のブランチ運用
 
 本 doc は上記を横断する「全体像」と「起動経路 (CUI/GUI dispatch)」を扱う。
 
@@ -25,7 +25,9 @@
 │  L1: CLI (`allaganeye`, Python)                                  │
 │  ├── detect  ── metadata.json 生成 (ffmpeg / OpenCV)             │
 │  ├── split   ── metadata.json 生成 + MP4 分割                   │
-│  └── split --from-metadata ── metadata.json 読み込み + 分割     │
+│  ├── split --from-metadata ── metadata.json 読み込み + 分割     │
+│  ├── export  ── metadata.json から並列 H.264/copy 書き出し (#761) │
+│  └── minimap ── エリアマップ切抜き (--region crop / 提案)       │
 │                                                                   │
 │  L2a: GUI (`Allagan Eye`, Tauri 2 + React 19)                    │
 │  ├── Zustand store ── metadata.json の in-memory 編集            │
@@ -35,7 +37,7 @@
 ```
 
 - **CLI (L1)** は standalone 動作し、GUI に依存しない
-- **GUI (L2a)** は CLI を subprocess として呼び出して detect / split を実行する
+- **GUI (L2a)** は CLI を subprocess として呼び出す (呼び出し口の一覧は [§2.3](#23-gui--cli-subprocess-経路) が正。本節では列挙しない)
 - **Installer (L2b)** は両者を同梱する配布形態を提供する
 - **metadata.json** が CLI ↔ GUI の唯一の契約 ([metadata-spec.md](metadata-spec.md) #463)
 
@@ -48,27 +50,36 @@ Allagan Eye は **別 exe 方式**を採用する (2026-04-23 確定、#527)。�
 | 起動ターゲット | 起動方法 | 実体 | 状態 |
 | --- | --- | --- | --- |
 | `allaganeye.bat` 引数なし (Portable ZIP) | ダブルクリック | `start "" allaganeye-gui.exe` で GUI 起動 (CLI-only ZIP 時はヘルプ表示にフォールバック) | v0.2.0 で対応 (#617) |
-| `allaganeye.bat` 引数付き (Portable ZIP) | Cmd / PowerShell で `allaganeye.bat <subcommand>` または動画ドラッグ | 同梱 Python + `python -m allaganeye` | リリース済み (v0.1.1) |
+| `allaganeye.bat` 引数付き (Portable ZIP) | Cmd / PowerShell で `allaganeye.bat <subcommand>` または動画ドラッグ | PyInstaller frozen CLI `allaganeye\allaganeye.exe` (v0.3.0+ #752。v0.2.x までは同梱 Python + `python -m allaganeye`) | リリース済み (v0.1.1) |
 | `allaganeye` (Python venv 内) | `python -m allaganeye <cmd>` | pyproject.toml の console_scripts | 開発時 |
 | `allaganeye-gui.exe` (Tauri bundle) | ダブルクリック / start menu | Tauri 2 ランタイム | v0.2.0 で対応 (#570)。Portable ZIP に同梱、`tauri.conf.json` の `bundle.active = false` のまま `.exe` 単体を生成し `scripts/build-portable-zip.ps1` で `allaganeye-gui.exe` をそのまま payload にコピー (リネームなし、Cargo binary 名を直接使用)。productName "Allagan Eye" は Tauri のウィンドウタイトルにのみ使われる。NSIS / MSI installer は現バージョンでは生成しない |
 
 ### 2.2 判断根拠
 
 - **ユーザー体験**: ダブルクリックで GUI が立ち上がるのは一般的な Windows アプリの感覚。CLI が混ざると「シェル出力を期待した」「GUI が出てほしい」の混乱が起きる
-- **Portable ZIP との整合**: `allaganeye.bat` は引数なし (ダブルクリック) で `allaganeye-gui.exe` を `start` 起動する GUI launcher、引数付きで Python ランタイムを呼ぶ CLI ラッパとして dual 役割 (v0.2.0+ #617)。Windows Defender / SmartScreen で弾かれる運用課題が `.bat` 経由で抽象化済み (#507)
+- **Portable ZIP との整合**: `allaganeye.bat` は引数なし (ダブルクリック) で `allaganeye-gui.exe` を `start` 起動する GUI launcher、引数付きで CLI を呼ぶラッパとして dual 役割 (v0.2.0+ #617)。v0.2.x までは `python -m allaganeye` 経由で Python ランタイムを呼んでいたが、v0.3.0 (#752) 以降は PyInstaller frozen CLI (`allaganeye\allaganeye.exe`) を直接呼ぶ形に変わった (bat 内部実装の変更は Rust 側から不可視、§2.6 参照)。Windows Defender / SmartScreen で弾かれる運用課題が `.bat` 経由で抽象化済み (#507)
 - **bundle の独立性**: Tauri bundle は別 `.exe` なので、CLI の `.bat` と衝突しない。将来 MSIX 等のパッケージ化でも両者を並列同梱可能
 - **開発工数**: 単一バイナリ化するには Rust 側に Python interpreter embedding が必要。実質的に別実装と同等のコストで benefit が薄い
 
 ### 2.3 GUI → CLI subprocess 経路
 
-GUI は以下のタイミングで CLI を subprocess として呼び出す (本仕様は Phase 3/4 の本物化で `tokio::process::Command` で実装される):
+GUI は以下のタイミングで CLI を subprocess として呼び出す (`tokio::process::Command` で実装済み)。
+
+**本表が GUI → CLI 呼び出し口の正 (SSoT) であり、網羅である。**他節・他 doc は呼び出し口の一覧と argv を再掲せず本表を参照すること (#818 の doc SSoT 規約を doc 内の列挙にも適用。同じ列挙が複数箇所にあると、そのたびに片方だけ古くなる余地が生まれるため)。個別の呼び出しに言及すること自体は妨げないが、その場合も argv 全体は書かず本表に委ねる。
+
+argv 列の各行には末尾に `gui/src-tauri/src/lib.rs` 側の argv 構築関数名を括弧書きで添える。argv を変更したときにどの行を直すべきかが一意に決まり、突合先が行ごとに固定されるため。`[...]` は条件付きで付く引数を表す。
+
+網羅性の根拠は `gui/src-tauri/src/lib.rs` で CLI (`cmd_spec.program`) を spawn する箇所が以下 5 つに限られること: `start_detect` / `enumerate_h264_encoders` / `start_export` / `start_minimap` / `detect_minimap_regions`。ffprobe / ffmpeg / explorer.exe を Rust から直接 spawn する経路 (サムネイル生成・フォルダを開く等) は CLI 呼び出しではないため本表の対象外 (プロセス木と孤児対策の観点での spawn 一覧は [process-tree-orphan-audit.md](process-tree-orphan-audit.md) が別途持つ)。
 
 | GUI 画面 | subprocess 引数 | 生成物 | 実装 PR |
 | --- | --- | --- | --- |
-| DetectingScreen (本物化予定) | `allaganeye detect <video> -o <output>` | metadata.json | [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) Phase 3 |
-| ExportScreen (本物化予定) | `allaganeye split --from-metadata <meta>` | metadata.json + MP4 | [#466](https://github.com/Idios/kobutachan-allaganeye/issues/466) Phase 4 |
+| DetectingScreen | `allaganeye detect <video> -o <output> --progress-format json [--blackout-threshold V] [--min-blackout-duration V] [--min-match-duration V] [--workers N] [--no-audio] [--no-cache] [--gpu` or `--no-gpu] [--gpu-vendor V]` (`detect_command_args`) | metadata.json | [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) Phase 3 / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) |
+| ExportScreen | `allaganeye export --stdin --json --output-dir <dir> --codec <codec> --name-pattern <pat> [--exclude i,j]` (`start_export`。metadata は positional ではなく stdin で渡す) | MP4 (per match) | [#466](https://github.com/Idios/kobutachan-allaganeye/issues/466) Phase 4 / [#761](https://github.com/Idios/kobutachan-allaganeye/issues/761) |
+| ExportScreen (マウント時) | `allaganeye encoder-slots --vendors <a,b> --preference <a,b> --gpu-models <a,b>` (`enumerate_h264_encoders`) | EncoderSlot 一覧 (JSON) | [#761](https://github.com/Idios/kobutachan-allaganeye/issues/761) |
+| MinimapScreen (自動検出 = 提案モード) | `allaganeye minimap <meta> --json [--exclude i,j]` (`detect_minimap_regions`) | 領域候補一覧 (JSON、stdout)。exit 0 / 4 の双方を成功扱い | [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) |
+| MinimapScreen (切抜き実行 = crop モード) | `allaganeye minimap <meta> --json --region X,Y,W,H --output-dir <dir> --name-pattern <pat> [--expected-mtime <ms>] [--exclude i,j]` (`build_minimap_argv`) | minimap MP4 per match + metadata.json write-back | [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) |
 
-ExportScreen の H.264 再エンコード時のエンコーダ選択 (#591) は subprocess 経路を使わない。 detect/split が metadata.json `system_info.gpu_vendors_available` に probe 結果を保存しているので、GUI 起動時はその値を `select_h264_encoder_for_export` Tauri command (Rust 内純関数) に渡して NVENC / QSV / AMF / libx264 を解決する。GPU 初期化失敗時のみ `export_match` 内で libx264 fallback retry が走る (CLI 呼び出しなし)。
+ExportScreen の H.264 再エンコード時のエンコーダ選択 (#591, #761) は `enumerate_h264_encoders` Tauri command (`allaganeye encoder-slots` サブコマンドを subprocess 呼び出し) で行う。detect/split が metadata.json `system_info` に保存した `gpu_vendors_available` / `vendor_preference` / `gpu` (GPU モデル名、#761) を渡して NVENC / QSV / AMF / libx264 のスロット一覧を取得し、並列エクスポートは `start_export` command が担う。
 
 spawn された CLI プロセスは `ProcessMap` (Rust side、#523) に登録される。ユーザーがウィンドウを閉じる (`×`) 前にプロセスが走っていれば、GUI 側が `kill_tracked_processes` で中断する ([ui-architecture.md §ffmpeg 実行中の中断フロー](ui-architecture.md))。
 
@@ -116,6 +127,21 @@ Portable ZIP 内の `integrity-manifest.json` を起動時に読み、同梱物
   を copy → 1 file 削除 → `allaganeye.bat --version` → exit code 7 を
   assert する E2E step。
 
+### 2.6 Portable ZIP 内構造 (#752 で簡素化)
+
+- `<install>/allaganeye/`: PyInstaller frozen CLI application (#752、v0.3.0+)
+  - `allaganeye.exe`: entry point
+  - `_internal/`: Python interpreter + library.zip + numpy/scipy/cv2 native DLLs + `allaganeye/audio/refs/fanfare.npz` 等の data
+- `<install>/ffmpeg/`: FFmpeg LGPLv3 shared build (LICENSE.txt 同梱、#508)
+- `<install>/allaganeye.bat`: launcher (#617、内部実装は `allaganeye\allaganeye.exe` を呼ぶ)
+- `<install>/allaganeye-gui.exe`: Tauri GUI (#527、frozen CLI を allaganeye.bat 経由で起動 (#646))
+- `<install>/README.txt`: 日本語 (#749)
+- `<install>/integrity-manifest.json`: 同梱物整合性検査 manifest (#668)
+
+旧来の `python/` (embeddable interpreter) および `lib/` (`pip install --target`) ディレクトリは **v0.3.0 の #752 で廃止**。PyInstaller `--onedir` が Python interpreter + 全依存を `allaganeye/_internal/` に統合する。
+
+GUI Tauri Rust 側 (`gui/src-tauri/src/lib.rs::resolve_allaganeye_command`) は `<resource_dir>/allaganeye.bat` を `Command::new(...)` の program として渡すだけで、bat 内部実装の変更 (`python.exe -m allaganeye` → `allaganeye\allaganeye.exe`) は Rust から不可視 (`allaganeye.bat` 抽象化レイヤー、#646)。
+
 ## 3. データフロー
 
 ### 3.1 detect → preview → export の典型フロー
@@ -124,18 +150,19 @@ Portable ZIP 内の `integrity-manifest.json` を起動時に読み、同梱物
 sequenceDiagram
     participant User
     participant GUI as allaganeye-gui.exe
-    participant CLI as allaganeye detect/split
+    participant CLI as allaganeye CLI
     participant Disk as metadata.json + MP4
 
     User ->> GUI: 動画ファイルをドラッグ
-    GUI ->> CLI: spawn: allaganeye detect <video>
+    GUI ->> CLI: spawn: detect (argv は §2.3)
     CLI ->> Disk: metadata.json 書き込み
     CLI -->> GUI: exit 0
     GUI ->> Disk: metadata.json 読み込み (load_metadata)
     User ->> GUI: 試合境界を調整 → [適用]
     GUI ->> Disk: metadata.json 上書き + metadata.original.json 退避
     User ->> GUI: [書き出し]
-    GUI ->> CLI: spawn: allaganeye split --from-metadata <meta>
+    GUI ->> CLI: spawn: export (metadata を stdin 渡し、argv は §2.3)
+    CLI -->> GUI: JSON Lines 進捗 (export-progress イベント)
     CLI ->> Disk: match_NNN.mp4 生成
     CLI -->> GUI: exit 0
 ```
@@ -152,7 +179,7 @@ sequenceDiagram
 └── .detection_cache.json             # CLI の内部キャッシュ (再実行高速化)
 ```
 
-`~/.allaganeye/cache/<video_hash>/thumbs/*.webp` は GUI のサムネイルキャッシュ (#465)。出力ディレクトリとは別。
+`<install dir>/cache/<video_hash>/thumbs/*.webp` は GUI のサムネイルキャッシュ (#465)。出力ディレクトリとは別。PR #655 Round 2 で Portable ZIP 哲学 (削除 = アンインストール、ユーザープロファイルに残留物を残さない) に合わせ `~/.allaganeye/cache/` から exe ディレクトリ配下へ移設済み (`recent.json` #571 と同じ方針)。dev ビルドでは `target/debug/cache/...` (gitignored)。正の実装は `gui/src-tauri/src/lib.rs` の `thumb_cache_dir`。
 
 ## 4. 責務分離の原則
 
@@ -172,7 +199,7 @@ sequenceDiagram
 - **CLI の新サブコマンド** → [cli-spec.md](cli-spec.md) 更新 / GUI が spawn するなら本 doc §2.3 にも行追加
 - **GUI の新画面** → [ui-architecture.md §screen 遷移図](ui-architecture.md) の Mermaid 図更新
 - **起動経路の変更** (例: `allaganeye-gui.exe` を別アーキでビルド) → 本 doc §2 の表を更新
-- **bundle 形態の変更** (例: MSIX 採用) → リリース戦略 ([release-strategy.md](release-strategy.md)) と本 doc §2.1 を同時更新
+- **bundle 形態の変更** (例: MSIX 採用) → リリース戦略 ([release-process.md](release-process.md)) と本 doc §2.1 を同時更新
 
 ## 6. 関連 issue / doc
 
@@ -184,4 +211,4 @@ sequenceDiagram
 - [#451](https://github.com/Idios/kobutachan-allaganeye/issues/451) / [#452](https://github.com/Idios/kobutachan-allaganeye/issues/452) L2b installer (bundle 形態 / 配布)
 - [#619](https://github.com/Idios/kobutachan-allaganeye/issues/619) Tauri Commands リファレンス新設 ([tauri-commands.md](tauri-commands.md))
 - [#668](https://github.com/Idios/kobutachan-allaganeye/issues/668) Portable ZIP integrity check (manifest + exit code 7)
-- [cli-spec.md](cli-spec.md) / [ui-architecture.md](ui-architecture.md) / [tauri-commands.md](tauri-commands.md) / [metadata-spec.md](metadata-spec.md) / [release-strategy.md](release-strategy.md)
+- [cli-spec.md](cli-spec.md) / [ui-architecture.md](ui-architecture.md) / [tauri-commands.md](tauri-commands.md) / [metadata-spec.md](metadata-spec.md) / [release-process.md](release-process.md)

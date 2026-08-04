@@ -5,9 +5,13 @@ Design notes:
 - No heavy runtime dependencies (no ``psutil``).  Uses stdlib + platform
   subprocess tools (``wmic``, ``nvidia-smi``, ``lspci``,
   ``system_profiler``) opportunistically.
-- Every public helper returns ``"(unavailable)"`` on any failure rather
-  than raising.  The verbose header is informational; a failed probe
-  must never abort ``allaganeye split``.
+- No public helper raises on probe failure.  The verbose header is
+  informational; a failed probe must never abort ``allaganeye split``.
+  The failure value depends on the return type: scalar ``str`` helpers
+  (:func:`get_cpu_info`, :func:`get_gpu_info`, :func:`get_memory_info`,
+  :func:`get_disk_info`) return ``"(unavailable)"``; list helpers
+  (:func:`probe_gpu_vendors`, :func:`get_gpu_info_lines`) return an empty
+  list; :func:`gpu_vendor_probe_warning` returns ``None``.
 - Linux / macOS are best-effort (Windows is the primary platform).
 """
 
@@ -25,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 _UNAVAILABLE = "(unavailable)"
 _SUBPROCESS_TIMEOUT_S = 5.0
+_PS_TIMEOUT_S = 10.0  # PowerShell cold start は wmic より遅い (#860)
 
 
 def _run_text(cmd: list[str], *, timeout: float = _SUBPROCESS_TIMEOUT_S) -> str | None:
@@ -102,6 +107,9 @@ def _detect_cpu_models() -> list[str] | None:
             # First line is the "Name" header; subsequent lines are per-CPU.
             if len(lines) >= 2:
                 return lines[1:]
+        ps = _windows_ps_values("Win32_Processor", "Name")  # #860
+        if ps:
+            return ps
         # Fall back to platform.processor() which on Windows returns
         # the CPU brand via registry lookup.
         proc = platform.processor().strip()
@@ -188,8 +196,16 @@ def _detect_physical_cores() -> int | None:
                 if line.isdigit():
                     total += int(line)
                     found = True
-            return total if found else None
-        return None
+            if found:
+                return total
+        ps = _windows_ps_values("Win32_Processor", "NumberOfCores")  # #860
+        total = 0
+        found = False
+        for value in ps:
+            if value.isdigit():
+                total += int(value)
+                found = True
+        return total if found else None
     if system == "Linux":
         try:
             cores: set[tuple[str, str]] = set()
@@ -334,6 +350,11 @@ def _detect_total_memory_bytes() -> int | None:
                 line = line.strip()
                 if line.isdigit():
                     return int(line)
+        for value in _windows_ps_values(
+            "Win32_ComputerSystem", "TotalPhysicalMemory"
+        ):  # #860
+            if value.isdigit():
+                return int(value)
         return None
     if system == "Linux":
         try:
@@ -431,6 +452,50 @@ def probe_gpu_vendors() -> list[str]:
     return vendors
 
 
+def gpu_vendor_probe_warning() -> str | None:
+    """Return a warning when Windows GPU vendor detection found nothing (#860).
+
+    wmic/PowerShell 両方の probe 失敗 (または真に GPU 無し) を verbose header
+    で可視化し、GUI export が GPU エンコーダを提示できず libx264 へ silent
+    degrade する事態にユーザーが気づけるようにする。Windows 以外、または
+    vendor を 1 件以上検出できた場合は ``None``。
+    """
+    if platform.system() != "Windows":
+        return None
+    if probe_gpu_vendors():
+        return None
+    return (
+        "GPU vendor を検出できませんでした (wmic 非搭載環境では PowerShell "
+        "fallback も失敗した可能性)。GPU エンコーダ (NVENC/QSV/AMF) は提示されず "
+        "export は libx264 になります。"
+    )
+
+
+def _windows_ps_values(cim_class: str, prop: str) -> list[str]:
+    """Return ``prop`` values from ``Get-CimInstance <cim_class>`` via PowerShell.
+
+    wmic-less (Win11 24H2+) fallback for Windows hw probes (#860).
+    ``powershell.exe`` (Windows PowerShell 5.1) is in-box on Win10/11
+    incl. 24H2/25H2 (only wmic etc. moved to Features on Demand).
+    ``-ExpandProperty`` yields header-less output, one value per line.
+    Returns ``[]`` on any failure (never raises).
+    """
+    stdout = _run_text(
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            f"Get-CimInstance -ClassName {cim_class} "
+            f"| Select-Object -ExpandProperty {prop}",
+        ],
+        timeout=_PS_TIMEOUT_S,
+    )
+    if not stdout:
+        return []
+    return [line.strip() for line in stdout.splitlines() if line.strip()]
+
+
 def _probe_gpu_names_platform() -> list[str]:
     """Return GPU name strings from platform-specific probes.
 
@@ -444,7 +509,10 @@ def _probe_gpu_names_platform() -> list[str]:
     if system == "Windows":
         stdout = _run_text(["wmic", "path", "win32_VideoController", "get", "Name"])
         if stdout:
-            return [line.strip() for line in stdout.splitlines()[1:] if line.strip()]
+            names = [line.strip() for line in stdout.splitlines()[1:] if line.strip()]
+            if names:
+                return names
+        return _windows_ps_values("Win32_VideoController", "Name")  # #860
     elif system == "Linux":
         stdout = _run_text(["lspci"])
         if stdout:

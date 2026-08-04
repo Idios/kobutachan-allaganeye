@@ -1,6 +1,6 @@
 [package]
 name = "allaganeye-gui"
-version = "0.2.1"
+version = "0.3.0"
 description = "Allagan Eye GUI shell (Tauri 2 + React)"
 edition = "2021"
 
@@ -25,16 +25,11 @@ serde_json = "=1.0.149"
 #   - time: tokio::time::{sleep, timeout}
 # bytes / fs / io-std / mio / parking_lot / signal / socket2 / tracing は未使用。
 tokio = { version = "=1.52.1", features = ["rt-multi-thread", "macros", "process", "sync", "io-util", "net", "time"] }
-tokio-util = { version = "=0.7.18", features = ["io"] }
 axum = { version = "=0.8.9", features = ["macros"] }
 tower-http = { version = "=0.6.8", features = ["fs"] }
-hyper = "=1.9.0"
 futures = "=0.3.32"
-urlencoding = "=2.1.3"
-percent-encoding = "=2.3.2"
 uuid = { version = "=1.23.1", features = ["v4"] }
 sha2 = "=0.10.9"
-dirs = "=6.0.0"
 # #669 -- ErrorModal `[Issue 本文をコピー]` button が clipboard に書き込む Markdown
 # 本文の `## 環境情報` section を組み立てるために OS / CPU / Memory / Disk 情報を
 # probe する。Tauri command `probe_environment_info` から使用。`metadata.system_info`

@@ -1,13 +1,19 @@
 """Tests for video probe module."""
 
 import json
+import logging
 import subprocess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+import allaganeye.video.probe as probe_mod
 from allaganeye.exceptions import InputFileError, VideoProcessingError
-from allaganeye.video.probe import _parse_frame_rate, probe_video
+from allaganeye.video.probe import (
+    _parse_frame_rate,
+    _parse_frame_rate_rational,
+    probe_video,
+)
 
 
 # --- Existing test ---
@@ -392,4 +398,247 @@ def test_timeout_raises_video_processing_error(_mock_ffprobe, mock_run, tmp_path
     video = tmp_path / "test.mp4"
     video.write_bytes(b"")
     with pytest.raises(VideoProcessingError, match="timed out"):
+        probe_video(video)
+
+
+# --- _parse_frame_rate_rational tests (#576) ---
+
+
+class TestParseFrameRateRational:
+    """Tests for _parse_frame_rate_rational (新規, #576)."""
+
+    def test_integer_rate(self):
+        assert _parse_frame_rate_rational("60/1") == (60, 1)
+
+    def test_ntsc_rate(self):
+        assert _parse_frame_rate_rational("60000/1001") == (60000, 1001)
+
+    def test_invalid_returns_zero_zero(self):
+        assert _parse_frame_rate_rational("") == (0, 0)
+        assert _parse_frame_rate_rational("0/1") == (0, 0)
+        assert _parse_frame_rate_rational("1/0") == (0, 0)
+        assert _parse_frame_rate_rational("abc") == (0, 0)
+
+
+# --- ProbeResult rational fps fields (#576) ---
+
+
+class TestProbeRationalFps:
+    """ProbeResult exposes fps_num / fps_den (#576)."""
+
+    def test_probe_result_has_rational_fields(self, tmp_path, monkeypatch):
+        # NOTE: this calls probe_video with a fake ffprobe output via
+        # monkeypatching subprocess.run.
+        fake_streams = {
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "codec_name": "av1",
+                    "width": 1920,
+                    "height": 1080,
+                    "r_frame_rate": "60000/1001",
+                    "avg_frame_rate": "60000/1001",
+                },
+            ],
+            "format": {"duration": "3600.0"},
+        }
+        mock_result = MagicMock()
+        mock_result.stdout = json.dumps(fake_streams)
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+        monkeypatch.setattr(
+            probe_mod.subprocess,
+            "run",
+            lambda *a, **kw: mock_result,
+        )
+        monkeypatch.setattr(
+            probe_mod,
+            "find_ffprobe",
+            lambda: "ffprobe",
+        )
+
+        result = probe_mod.probe_video(tmp_path / "fake.mkv")
+        assert result["fps_num"] == 60000
+        assert result["fps_den"] == 1001
+        assert abs(result["fps"] - 60000 / 1001) < 1e-9
+
+    def test_probe_falls_back_to_avg_frame_rate_for_rational(
+        self, tmp_path, monkeypatch
+    ):
+        """fps_num/fps_den fall back to avg_frame_rate when r_frame_rate is invalid."""
+        fake_streams = {
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "codec_name": "h264",
+                    "width": 1920,
+                    "height": 1080,
+                    "r_frame_rate": "0/0",  # invalid -> _parse_frame_rate_rational returns (0,0)
+                    "avg_frame_rate": "30/1",
+                },
+            ],
+            "format": {"duration": "3600.0"},
+        }
+        mock_result = MagicMock()
+        mock_result.stdout = json.dumps(fake_streams)
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+        monkeypatch.setattr(
+            probe_mod.subprocess,
+            "run",
+            lambda *a, **kw: mock_result,
+        )
+        monkeypatch.setattr(
+            probe_mod,
+            "find_ffprobe",
+            lambda: "ffprobe",
+        )
+
+        result = probe_mod.probe_video(tmp_path / "fake.mkv")
+        assert result["fps_num"] == 30
+        assert result["fps_den"] == 1
+        assert result["fps"] == pytest.approx(30.0)
+
+
+# --- 静的 VFR WARN tests (#576) ---
+
+
+class TestProbeStaticVfrWarn:
+    """probe_video logs WARNING when r_frame_rate vs avg_frame_rate differ > 1% (#576)."""
+
+    def test_aggregate_disagree_logs_warn(self, tmp_path, monkeypatch, caplog):
+        fake_streams = {
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "codec_name": "av1",
+                    "width": 1920,
+                    "height": 1080,
+                    "r_frame_rate": "60/1",
+                    "avg_frame_rate": "59/1",  # 1.67% diff -> WARN
+                },
+            ],
+            "format": {"duration": "3600.0"},
+        }
+        mock_result = MagicMock()
+        mock_result.stdout = json.dumps(fake_streams)
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+        monkeypatch.setattr(probe_mod.subprocess, "run", lambda *a, **kw: mock_result)
+        monkeypatch.setattr(probe_mod, "find_ffprobe", lambda: "ffprobe")
+
+        with caplog.at_level(logging.WARNING, logger="allaganeye.video.probe"):
+            probe_mod.probe_video(tmp_path / "fake.mkv")
+
+        warns = [r for r in caplog.records if "VFR" in r.getMessage()]
+        assert len(warns) == 1, (
+            f"expected one VFR WARN, got {[r.getMessage() for r in caplog.records]}"
+        )
+
+    def test_aggregate_match_does_not_warn(self, tmp_path, monkeypatch, caplog):
+        fake_streams = {
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "codec_name": "av1",
+                    "width": 1920,
+                    "height": 1080,
+                    "r_frame_rate": "60/1",
+                    "avg_frame_rate": "60/1",  # exact match -> no WARN
+                },
+            ],
+            "format": {"duration": "3600.0"},
+        }
+        mock_result = MagicMock()
+        mock_result.stdout = json.dumps(fake_streams)
+        mock_result.stderr = ""
+        mock_result.returncode = 0
+        monkeypatch.setattr(probe_mod.subprocess, "run", lambda *a, **kw: mock_result)
+        monkeypatch.setattr(probe_mod, "find_ffprobe", lambda: "ffprobe")
+
+        with caplog.at_level(logging.WARNING, logger="allaganeye.video.probe"):
+            probe_mod.probe_video(tmp_path / "fake.mkv")
+
+        warns = [r for r in caplog.records if "VFR" in r.getMessage()]
+        assert warns == []
+
+
+# --- P3 pin tests: non-numeric duration / resolution ---
+
+
+@patch("allaganeye.video.probe.subprocess.run")
+@patch("allaganeye.video.probe.find_ffprobe", return_value="ffprobe")
+def test_probe_nonnumeric_duration_raises_video_processing_error(
+    _mock_ffprobe, mock_run, tmp_path
+):
+    """ffprobe duration='N/A' must raise VideoProcessingError, not bare ValueError."""
+    video = tmp_path / "test.mkv"
+    video.touch()
+    data = {
+        "streams": [
+            {
+                "codec_type": "video",
+                "codec_name": "h264",
+                "width": 1920,
+                "height": 1080,
+                "r_frame_rate": "60/1",
+                "avg_frame_rate": "60/1",
+            }
+        ],
+        "format": {"duration": "N/A"},
+    }
+    mock_run.return_value = _mock_result(stdout=json.dumps(data))
+    with pytest.raises(VideoProcessingError):
+        probe_video(video)
+
+
+@patch("allaganeye.video.probe.subprocess.run")
+@patch("allaganeye.video.probe.find_ffprobe", return_value="ffprobe")
+def test_probe_nonnumeric_width_raises_video_processing_error(
+    _mock_ffprobe, mock_run, tmp_path
+):
+    """ffprobe width='N/A' must raise VideoProcessingError, not bare ValueError."""
+    video = tmp_path / "test.mkv"
+    video.touch()
+    data = {
+        "streams": [
+            {
+                "codec_type": "video",
+                "codec_name": "h264",
+                "width": "N/A",
+                "height": 1080,
+                "r_frame_rate": "60/1",
+                "avg_frame_rate": "60/1",
+            }
+        ],
+        "format": {"duration": "600.0"},
+    }
+    mock_run.return_value = _mock_result(stdout=json.dumps(data))
+    with pytest.raises(VideoProcessingError):
+        probe_video(video)
+
+
+@patch("allaganeye.video.probe.subprocess.run")
+@patch("allaganeye.video.probe.find_ffprobe", return_value="ffprobe")
+def test_probe_nonnumeric_height_raises_video_processing_error(
+    _mock_ffprobe, mock_run, tmp_path
+):
+    """ffprobe height='N/A' must raise VideoProcessingError, not bare ValueError."""
+    video = tmp_path / "test.mkv"
+    video.touch()
+    data = {
+        "streams": [
+            {
+                "codec_type": "video",
+                "codec_name": "h264",
+                "width": 1920,
+                "height": "N/A",
+                "r_frame_rate": "60/1",
+                "avg_frame_rate": "60/1",
+            }
+        ],
+        "format": {"duration": "600.0"},
+    }
+    mock_run.return_value = _mock_result(stdout=json.dumps(data))
+    with pytest.raises(VideoProcessingError):
         probe_video(video)

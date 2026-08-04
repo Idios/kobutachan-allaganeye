@@ -8,6 +8,15 @@ export const DetectionParamsSchema = z.object({
   no_audio: z.boolean(),
   use_gpu: z.union([z.number(), z.boolean(), z.null()]),
   workers: z.number().nullable(),
+  /**
+   * #821 -- detection-path provenance. Optional because pre-#821
+   * metadata.json doesn't include them; absent means false. `masked` is
+   * the request flag; `masked_fallback_used` is the resolved path (the
+   * fallback also auto-triggers on zero-blackout recordings).
+   */
+  vtuber: z.boolean().optional(),
+  masked: z.boolean().optional(),
+  masked_fallback_used: z.boolean().optional(),
 });
 
 export const MatchSchema = z
@@ -20,7 +29,8 @@ export const MatchSchema = z
     duration: z.number().min(0),
     duration_display: z.string(),
     type: z.enum(['fl_match', 'unknown']),
-    output_file: z.string(),
+    output_file: z.string().optional(),
+    post_match: z.boolean().optional(),
   })
   // #517: passthrough match-level edit fields (`name` / `type_override` /
   // `edited`) so metadata.draft.json round-trips them when reloaded.
@@ -68,12 +78,16 @@ export const WarningSchema = z.object({
  * #591 -- GPU vendor probe snapshot. Optional field on metadata.json
  * (pre-#591 files don't carry it). Frontend uses
  * `gpu_vendors_available` + `vendor_preference` to pick the H.264
- * encoder via `select_h264_encoder_for_export`.
+ * encoder via `enumerate_h264_encoders`.
  */
 export const SystemInfoSchema = z.object({
   gpu_vendors_available: z.array(z.string()),
   gpu_vendor_used: z.string().nullable(),
   vendor_preference: z.array(z.string()),
+  /** #761 -- GPU model name strings from get_gpu_info_lines(). Optional for
+   * backward compat with pre-#761 metadata.json files that don't carry this
+   * field. Empty array on CPU-only hosts or when probing fails. */
+  gpu: z.array(z.string()).optional(),
 });
 
 /**
@@ -90,6 +104,46 @@ export const SystemInfoSchema = z.object({
 export const BrightnessSamplesSchema = z.object({
   interval_s: z.number().positive(),
   values: z.array(z.number().min(0).max(255)),
+});
+
+/**
+ * #810 — capture-region timeline resolved by detection. `coarse` is the
+ * region Pass 1 actually measured brightness on (FULL_FRAME on standard
+ * OBS runs; the scorebar band ROI on --vtuber runs; the mask-free game
+ * rectangle when the masked fallback produced the result). `source` and
+ * `fallback_reason` are free strings — readers must accept unknown
+ * values (forward compat, same philosophy as warning codes).
+ */
+export const CaptureRegionSchema = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  w: z.number().min(0).max(1),
+  h: z.number().min(0).max(1),
+  confidence: z.number().min(0).max(1),
+  source: z.string().min(1),
+});
+
+export const RegionSegmentSchema = z.object({
+  time_range: z.tuple([z.number().min(0), z.number().min(0)]),
+  region: CaptureRegionSchema,
+});
+
+export const CaptureRegionsSchema = z.object({
+  coarse: CaptureRegionSchema,
+  segments: z.array(RegionSegmentSchema),
+  fallback_reason: z.string().nullable(),
+});
+
+/**
+ * #481 -- per-match minimap crop region entry. `match_index` references
+ * Match.index (1-based). `region` is the normalized crop rectangle recorded
+ * when the user ran `allaganeye minimap --region`. Absent in pre-#481
+ * metadata.json (field was never written); present only after `minimap
+ * --region` write-back.
+ */
+export const MinimapRegionEntrySchema = z.object({
+  match_index: z.number().int().min(1),
+  region: CaptureRegionSchema,
 });
 
 /**
@@ -141,5 +195,19 @@ export const MetadataSchema = z
      * complete screen falls back to a sample curve when missing.
      */
     brightness_samples: BrightnessSamplesSchema.optional(),
+    /**
+     * #810 -- capture-region timeline. Optional because pre-#810
+     * metadata.json (and cache hits from pre-#810 vtuber/masked caches)
+     * don't carry it. GUI has no consumer yet; the field round-trips
+     * through load -> apply unchanged.
+     */
+    capture_regions: CaptureRegionsSchema.optional(),
+    /**
+     * #481 -- per-match minimap crop region array. Optional because
+     * pre-#481 metadata.json (and any run without `minimap --region`)
+     * won't carry it. Field absent = minimap crop never ran. GUI has no
+     * consumer yet; the field round-trips through load -> apply unchanged.
+     */
+    minimap_regions: z.array(MinimapRegionEntrySchema).optional(),
   })
   .passthrough();

@@ -1,23 +1,30 @@
 """Tests for the ``allaganeye detect`` command (#463)."""
 
 import json
+import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 from allaganeye.commands.detect import run_detect
-from allaganeye.commands.split_matches import build_brightness_samples
+from allaganeye.commands.split_matches import CacheHit, build_brightness_samples
 from allaganeye.config import SplitConfig
 from allaganeye.exceptions import DetectionError
 from allaganeye.video.detector import MatchBoundary
 from allaganeye.video.probe import ProbeResult
+
+if TYPE_CHECKING:
+    from allaganeye.metadata_types import CaptureRegions
 
 PROBE_RESULT: ProbeResult = {
     "duration": 1800.0,
     "width": 1920,
     "height": 1080,
     "fps": 30.0,
+    "fps_num": 30,
+    "fps_den": 1,
     "codec": "h264",
     "audio_codec": "aac",
 }
@@ -57,11 +64,35 @@ def test_detect_writes_metadata_without_note(tmp_path):
     payload = json.loads(meta_path.read_text(encoding="utf-8"))
     # `note` was retired in #463
     assert "note" not in payload
-    assert payload["source"] == str(Path("input.mp4"))
+    # #930 B2: `source` follows the schema contract (absolute path), so a
+    # cwd-relative argv is absolutised before it is persisted.
+    assert payload["source"] == os.path.abspath("input.mp4")
     assert payload["source_duration"] == PROBE_RESULT["duration"]
     assert len(payload["matches"]) == len(BOUNDARIES)
     assert payload["matches"][0]["output_file"] == "match_001.mp4"
     assert payload["matches"][1]["output_file"] == "match_002.mp4"
+
+
+def test_detect_writes_absolute_source_for_relative_argv(tmp_path, monkeypatch):
+    """detect も相対 argv を絶対 source として永続化する (#930 B2).
+
+    `detect <video> -o out` -> `split --from-metadata out/metadata.json` は
+    公式フローなので、metadata dir 起点で解決される読み手と argv 生値
+    (cwd 起点) を書く書き手が食い違うと round-trip が壊れる。
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (tmp_path / "input.mp4").write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+    probe, detect = _mock_detect_only(out_dir)
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    written = Path(payload["source"])
+    assert written.is_absolute()
+    assert written.resolve() == (tmp_path / "input.mp4").resolve()
 
 
 def test_detect_writes_detection_started_and_completed_at(tmp_path):
@@ -127,13 +158,166 @@ def test_detect_uses_cache_when_present(tmp_path):
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
     with (
         patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
-        patch(f"{MODULE_DETECT}._load_cache", return_value=BOUNDARIES),
+        patch(
+            f"{MODULE_DETECT}._load_cache_hit",
+            return_value=CacheHit(
+                boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None
+            ),
+        ),
         patch(f"{MODULE_DETECT}._run_detection") as mock_detect,
     ):
         run_detect(Path("input.mp4"), config, quiet=True)
 
     mock_detect.assert_not_called()
     assert (tmp_path / "metadata.json").exists()
+
+
+def test_detect_verbose_cache_miss_summary_includes_vtuber_token(tmp_path, capsys):
+    """detect の cache-miss verbose summary に vtuber token が出る (PR #823 R2).
+
+    run_split 側の Detecting summary (R1 fix) と同形。初回 (cache-miss) 実行でも
+    検出 mode の provenance が stdout に残ることを pin する。
+    """
+    config = SplitConfig(
+        output_dir=tmp_path, min_match_duration=60.0, no_cache=True, vtuber=True
+    )
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
+    ):
+        run_detect(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "Detecting match boundaries" in out
+    assert "vtuber=on" in out
+
+    config_off = SplitConfig(
+        output_dir=tmp_path, min_match_duration=60.0, no_cache=True
+    )
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
+    ):
+        run_detect(Path("input.mp4"), config_off, verbose=True)
+    out = capsys.readouterr().out
+    assert "vtuber=off" in out
+
+
+def test_detect_verbose_cache_miss_prints_region_line(tmp_path, capsys):
+    """detect fresh 経路の verbose に Region: 行が出る (#810 round-2 #3 wiring pin).
+
+    run_split 側 (`test_verbose_cache_miss_prints_region_line`) と対の detect 版。
+    """
+    from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("region_callback")
+        assert cb is not None, (
+            "run_detect must pass region_callback to _run_detection (#810)"
+        )
+        cb(RegionTimeline(coarse=FULL_FRAME))
+        return BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, no_cache=True)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", side_effect=fake_run_detection),
+    ):
+        run_detect(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "Region: full_frame" in out
+
+
+def test_detect_verbose_cache_hit_omits_region_line(tmp_path, capsys):
+    """detect cache-hit の verbose には Region: 行が出ない (#908 doc 記述の pin)。
+
+    run_split 側 (`test_verbose_cache_hit_omits_region_line`) と対の detect 版。
+    `captured_region` は cache 記録値から復元される (`detect.py` cache-hit 分岐)
+    が、`Region:` 行は `if boundaries is None:` の内側にあるため到達しない。
+    `docs/output-spec.md` 行 12a の「cache miss 時のみ」を実装側で pin する。
+    """
+    band_regions: CaptureRegions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE_DETECT}._load_cache_hit",
+            return_value=CacheHit(
+                boundaries=BOUNDARIES,
+                masked_fallback_used=False,
+                capture_regions=band_regions,
+            ),
+        ),
+        patch(f"{MODULE_DETECT}._run_detection") as mock_detect,
+    ):
+        run_detect(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    mock_detect.assert_not_called()
+    # positive anchor: verbose 出力経路自体は生きている (vacuous pass 防止)
+    assert "Cache hit: detection params from" in out
+    assert "Region:" not in out
+    # 値は cache から復元され metadata まで届いている
+    payload = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["capture_regions"] == band_regions
+
+
+def test_detect_verbose_cache_miss_summary_includes_masked_token(tmp_path, capsys):
+    """detect の cache-miss verbose summary に masked token が出る (vtuber と同型)."""
+    config = SplitConfig(
+        output_dir=tmp_path, min_match_duration=60.0, no_cache=True, masked=True
+    )
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
+    ):
+        run_detect(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+    assert "masked=on" in out
+
+    config_off = SplitConfig(
+        output_dir=tmp_path, min_match_duration=60.0, no_cache=True
+    )
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
+    ):
+        run_detect(Path("input.mp4"), config_off, verbose=True)
+    out = capsys.readouterr().out
+    assert "masked=off" in out
+
+
+def test_detect_records_masked_fallback_used(tmp_path):
+    """detect 経路でも resolved path が metadata に記録される (run_split と同型)."""
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("masked_fallback_callback")
+        assert cb is not None, (
+            "run_detect must pass masked_fallback_callback to _run_detection"
+        )
+        cb()
+        return BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, no_cache=True)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", side_effect=fake_run_detection),
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    assert payload["detection_params"]["masked"] is False
+    assert payload["detection_params"]["masked_fallback_used"] is True
 
 
 def test_detect_writes_system_info_to_metadata(tmp_path, monkeypatch):
@@ -182,7 +366,12 @@ def test_detect_cache_hit_records_vendor_used_null(tmp_path, monkeypatch):
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
     with (
         patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
-        patch(f"{MODULE_DETECT}._load_cache", return_value=BOUNDARIES),
+        patch(
+            f"{MODULE_DETECT}._load_cache_hit",
+            return_value=CacheHit(
+                boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None
+            ),
+        ),
     ):
         run_detect(Path("input.mp4"), config, quiet=True)
 
@@ -291,6 +480,95 @@ def test_detect_text_mode_still_writes_human_status(tmp_path, capsys):
     assert "Metadata:" in captured
 
 
+# --- 完了行の出力パス報告 (PR #930 の export / minimap と同じ方針) ---
+
+
+def _metadata_line_value(stdout: str) -> str:
+    """Extract the path shown on the ``Metadata: ...`` completion line."""
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if line.startswith("Metadata:"):
+            return line.split("Metadata:", 1)[1].strip()
+    raise AssertionError(f"no 'Metadata:' line in stdout: {stdout!r}")
+
+
+def test_detect_metadata_line_is_absolute_for_relative_output_dir(
+    tmp_path, monkeypatch, capsys
+):
+    """相対 ``-o`` でも完了行は絶対パスを出す。
+
+    ``tmp_path`` をそのまま渡すテストは元から絶対なので、生値表示のままでも
+    通ってしまう。cwd を移して**相対**の output_dir を渡すことで、生値表示
+    (``Metadata: out/metadata.json``) を赤にする。
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=Path("out"), min_match_duration=60.0)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=False, progress_format="text")
+
+    shown = Path(_metadata_line_value(capsys.readouterr().out))
+    assert shown.is_absolute(), (
+        f"completion line must report an absolute path, got {str(shown)!r}"
+    )
+    # ...and it must be the file we actually wrote, not just any absolute path.
+    assert shown.resolve() == (out_dir / "metadata.json").resolve()
+
+
+def test_detect_metadata_line_uses_native_separators(tmp_path, monkeypatch, capsys):
+    """完了行はそのまま shell / explorer に貼れる OS ネイティブ区切りで出す。
+
+    Windows で ``-o E:/foo`` のように POSIX 区切りを渡されても、表示は
+    ``E:\\foo`` に正規化される (PR #930 の export / minimap と同じ文言方針)。
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=Path("./out"), min_match_duration=60.0)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=False, progress_format="text")
+
+    shown = _metadata_line_value(capsys.readouterr().out)
+    foreign_sep = "/" if os.sep == "\\" else "\\"
+    assert foreign_sep not in shown, (
+        f"completion line must use {os.sep!r} separators, got {shown!r}"
+    )
+    assert "./" not in shown and ".\\" not in shown
+
+
+def test_detect_json_done_metadata_path_is_absolute(tmp_path, monkeypatch, capsys):
+    """``--progress-format json`` の done イベントも絶対パスで報告する。
+
+    GUI は常に絶対 ``-o`` を渡すので実挙動は不変 (abspath は no-op) だが、
+    CLI と同じ「実際に書いた場所」を wire でも保証する。
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=Path("out"), min_match_duration=60.0)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=False, progress_format="json")
+
+    lines = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip()
+    ]
+    done = next(e for e in lines if e["phase"] == "done")
+    shown = Path(done["metadata_path"])
+    assert shown.is_absolute(), (
+        f"done event must report an absolute metadata_path, got {done['metadata_path']!r}"
+    )
+    assert shown.resolve() == (out_dir / "metadata.json").resolve()
+
+
 def test_detect_writes_brightness_samples_when_callback_fires(tmp_path):
     """When detection emits brightness, metadata.json carries the timeline."""
 
@@ -327,3 +605,151 @@ def test_detect_omits_brightness_samples_when_callback_silent(tmp_path):
 
     payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
     assert "brightness_samples" not in payload
+
+
+# #805 段階2 -- post_match_trailing_dropped warning emission stopped (W1)
+
+
+def test_detect_does_not_pass_trailing_drop_callback(tmp_path):
+    """detect 経路は trailing_drop_callback を `_run_detection` に渡さず、
+    warnings は emit されない (#805 段階2 W1)。
+
+    post_match flag が warning を代替したため callback チェーンは除去された。
+    callback kwarg が渡らないこと + payload の warnings が [] であることを assert。
+    """
+
+    def _detect_no_callback(*args, **kwargs):
+        assert "trailing_drop_callback" not in kwargs, (
+            "run_detect must NOT pass trailing_drop_callback to _run_detection "
+            "(#805 段階2: callback removed, post_match flag replaces it)"
+        )
+        return BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE_DETECT}._run_detection",
+            side_effect=_detect_no_callback,
+        ),
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    assert payload["warnings"] == []
+
+
+def test_detect_no_trailing_drop_writes_empty_warnings(tmp_path):
+    """callback 不発 (drop なし) なら detect の warnings は [] (#805 段階1)。"""
+    probe, detect = _mock_detect_only(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with probe, detect:
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    assert payload["warnings"] == []
+
+
+def test_detect_carries_post_match_flag_to_metadata(tmp_path):
+    """detect 経路が post_match-flagged boundary を非破壊で metadata に搬送する (#805 段階2).
+
+    detector の `_flag_post_match_trailing` が最終 segment に post_match=True を
+    立てて返すと、run_detect はそれを active から分離し、output_file 無しの
+    post_match Match として metadata に書く。active match は従来どおり
+    placeholder output_file を持つ。
+    """
+    boundaries_with_post: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "fl_match"},
+        {"start": 600.0, "end": 700.0, "type": "unknown", "post_match": True},
+    ]
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=boundaries_with_post),
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text("utf-8"))
+    matches = payload["matches"]
+    assert len(matches) == 2
+
+    # active match: placeholder output_file 有り、post_match flag 無し。
+    active = matches[0]
+    assert active["index"] == 1
+    assert active["output_file"] == "match_001.mp4"
+    assert "post_match" not in active
+
+    # post_match match: flag True、output_file 無し、index は active の後 (2)。
+    trailing = matches[1]
+    assert trailing["post_match"] is True
+    assert "output_file" not in trailing
+    assert trailing["index"] == 2
+
+
+# ---------------------------------------------------------------------------
+# #810 -- capture_regions wiring through run_detect
+# ---------------------------------------------------------------------------
+
+
+def test_detect_writes_capture_regions_fresh(tmp_path):
+    """#810 -- fresh detection: region_callback 経由で capture_regions を書く。"""
+    from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("region_callback")
+        assert cb is not None, (
+            "run_detect must pass region_callback to _run_detection (#810)"
+        )
+        cb(RegionTimeline(coarse=FULL_FRAME))
+        return BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", side_effect=fake_run_detection),
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    payload = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    regions = payload["capture_regions"]
+    assert regions["coarse"]["source"] == "fallback"
+    assert regions["coarse"]["x"] == 0.0 and regions["coarse"]["w"] == 1.0
+    assert regions["segments"] == []
+    assert regions["fallback_reason"] is None
+
+
+def test_detect_cache_hit_carries_capture_regions(tmp_path):
+    """#810 -- cache-hit: cache 記録値が metadata.json へ引き継がれる。
+
+    `_load_cache_hit` を patch して CacheHit (with capture_regions) を返す (#879)。
+    """
+    band_regions: CaptureRegions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE_DETECT}._load_cache_hit",
+            return_value=CacheHit(
+                boundaries=BOUNDARIES,
+                masked_fallback_used=False,
+                capture_regions=band_regions,
+            ),
+        ),
+        patch(f"{MODULE_DETECT}._run_detection") as mock_detect,
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True)
+
+    mock_detect.assert_not_called()
+    payload = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["capture_regions"] == band_regions

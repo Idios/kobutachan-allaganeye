@@ -372,7 +372,9 @@ def test_resolve_install_dir_from_package_init(tmp_path: Path) -> None:
     assert _resolve_install_dir(init_path) == tmp_path
 
 
-def test_default_manifest_path_under_install_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_manifest_path_under_install_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """_default_manifest_path returns <install dir>/integrity-manifest.json.
 
     Patches the module-level Path-from-__file__ resolution so the test is
@@ -506,7 +508,9 @@ Expected: ImportError (`check` not defined yet).
 [allaganeye/integrity.py](../../../allaganeye/integrity.py) に追加:
 
 ```python
-def check(manifest_path: Path | None = None, *, install_dir: Path | None = None) -> None:
+def check(
+    manifest_path: Path | None = None, *, install_dir: Path | None = None
+) -> None:
     """Verify all bundled files match the manifest.
 
     Default arguments (production): manifest at ``<install dir>/integrity-manifest.json``,
@@ -532,11 +536,13 @@ def check(manifest_path: Path | None = None, *, install_dir: Path | None = None)
                 "integrity check failed (size_mismatch placeholder)",
                 context={
                     "missing": [],
-                    "size_mismatch": [{
-                        "path": rel_path,
-                        "expected": int(entry["size"]),
-                        "actual": actual,
-                    }],
+                    "size_mismatch": [
+                        {
+                            "path": rel_path,
+                            "expected": int(entry["size"]),
+                            "actual": actual,
+                        }
+                    ],
                 },
             )
     return None
@@ -593,9 +599,7 @@ def test_check_detects_missing_file(tmp_path: Path) -> None:
             {
                 "version": 1,
                 "generated_at": "2026-05-08T00:00:00Z",
-                "files": [
-                    {"path": "absent.bin", "size": 100, "tolerance_bytes": 0}
-                ],
+                "files": [{"path": "absent.bin", "size": 100, "tolerance_bytes": 0}],
             }
         ),
         encoding="utf-8",
@@ -649,7 +653,9 @@ Expected: FAIL (現状 check は missing で `FileNotFoundError` を漏らす)�
 [allaganeye/integrity.py](../../../allaganeye/integrity.py) の `check` 関数を以下に置き換え:
 
 ```python
-def check(manifest_path: Path | None = None, *, install_dir: Path | None = None) -> None:
+def check(
+    manifest_path: Path | None = None, *, install_dir: Path | None = None
+) -> None:
     """Verify all bundled files match the manifest.
 
     Aggregates ``missing`` paths into the IntegrityError context so the
@@ -873,7 +879,9 @@ EOF
 [tests/test_integrity.py](../../../tests/test_integrity.py) に追加:
 
 ```python
-def test_check_skips_when_env_set(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_check_skips_when_env_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """ALLAGANEYE_INTEGRITY_SKIP=1 makes check() a no-op even with missing manifest."""
     from allaganeye.integrity import check
 
@@ -921,7 +929,9 @@ _SKIP_ENV = "ALLAGANEYE_INTEGRITY_SKIP"
 `check` 関数の冒頭 (manifest_path 解決の前) に追加:
 
 ```python
-def check(manifest_path: Path | None = None, *, install_dir: Path | None = None) -> None:
+def check(
+    manifest_path: Path | None = None, *, install_dir: Path | None = None
+) -> None:
     """..."""
     if os.environ.get(_SKIP_ENV) == "1":
         return None

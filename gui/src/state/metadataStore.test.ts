@@ -179,6 +179,26 @@ describe('useMetadataStore.load', () => {
     expect(useMetadataStore.getState().metadata).toBeNull();
     expect(useMetadataStore.getState().loadErrorState).toBeTruthy();
   });
+
+  // #834 -- mtime は内容 read より前に取得する (TOCTOU を silent overwrite では
+  // なく conflict 検出側に倒す)。
+  it('captures mtime before reading metadata content (#834)', async () => {
+    const order: string[] = [];
+    invokeMock.mockImplementation((cmd: string) => {
+      order.push(cmd);
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(1700);
+      if (cmd === 'load_metadata') return Promise.resolve(validMetadata());
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      if (cmd === 'load_draft') return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+    await useMetadataStore.getState().load('p');
+    const mIdx = order.indexOf('get_metadata_mtime');
+    const lIdx = order.indexOf('load_metadata');
+    expect(mIdx).toBeGreaterThanOrEqual(0);
+    expect(lIdx).toBeGreaterThanOrEqual(0);
+    expect(mIdx).toBeLessThan(lIdx);
+  });
 });
 
 describe('useMetadataStore.updateMatch', () => {
@@ -237,6 +257,56 @@ describe('useMetadataStore.apply', () => {
     expect(persistedMatches[0]).not.toHaveProperty('type_override');
   });
 
+  // #805 Phase 1 (Codex HIGH 1) -- normalizeForPersistence must passthrough the
+  // post_match non-destructive flag. Without it, ANY [適用] strips post_match
+  // from the written metadata.json -> on the next split/export the trailing
+  // segment is treated as a normal match and gets an MP4, reversing the
+  // exclusion invariant. The flag is truthy-only (normal matches stay
+  // flag-free), and a post_match match never carries output_file.
+  it('preserves post_match (truthy-only) and omits output_file for post_match matches on apply (#805)', async () => {
+    const meta = validMetadata();
+    // matches[1] becomes a post_match trailing segment: flag set, no output_file.
+    meta.matches[1] = {
+      index: 2,
+      start_time: 1000,
+      end_time: 1800,
+      start_display: '16:40',
+      end_display: '30:00',
+      duration: 800,
+      duration_display: '13m20s',
+      type: 'unknown',
+      post_match: true,
+    };
+    configureInvoke({
+      load_metadata: meta,
+      apply_changes: undefined,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    // Apply an unrelated edit to the normal match so this exercises the full
+    // normalize/apply path (not a no-op apply).
+    useMetadataStore.getState().updateMatch(1, { name: 'Round 1' });
+    await useMetadataStore.getState().apply();
+
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    expect(applyCall).toBeDefined();
+    const persisted = (applyCall![1] as { metadata: Metadata }).metadata.matches;
+
+    // Normal match: GUI-only fields stripped on persist (name was set above via
+    // updateMatch; normalizeForPersistence must remove it before apply_changes).
+    expect(persisted[0].index).toBe(1);
+    expect(persisted[0].output_file).toBe('match_001.mp4');
+    expect(persisted[0]).not.toHaveProperty('post_match');
+    expect(persisted[0]).not.toHaveProperty('name');
+    expect(persisted[0]).not.toHaveProperty('edited');
+    expect(persisted[0]).not.toHaveProperty('type_override');
+
+    // post_match match: flag preserved as true, output_file omitted.
+    expect(persisted[1].index).toBe(2);
+    expect(persisted[1].post_match).toBe(true);
+    expect(persisted[1]).not.toHaveProperty('output_file');
+  });
+
   it('does not change canonical type when type_override is skip', async () => {
     configureInvoke({
       load_metadata: validMetadata(),
@@ -270,6 +340,101 @@ describe('useMetadataStore.apply', () => {
     configureInvoke({});
     await useMetadataStore.getState().apply();
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  // #814 (AC1) -- end <= start must be blocked before apply_changes is invoked.
+  it('blocks apply when a match has end_time < start_time (#814)', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      get_metadata_mtime: 1700,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, {
+      edited: { start_time: 900, end_time: 100 },
+    });
+    await useMetadataStore.getState().apply();
+    const state = useMetadataStore.getState();
+    expect(
+      invokeMock.mock.calls.find((c) => c[0] === 'apply_changes'),
+    ).toBeUndefined();
+    expect(state.applyErrorState?.code).toBe('validation.boundary_invalid');
+    expect(state.applying).toBe(false);
+    // edits retained so the user can fix them
+    expect(state.dirty).toBe(true);
+  });
+
+  it('blocks apply when a match has end_time === start_time (zero duration, #814)', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, {
+      edited: { start_time: 500, end_time: 500 },
+    });
+    await useMetadataStore.getState().apply();
+    expect(
+      invokeMock.mock.calls.find((c) => c[0] === 'apply_changes'),
+    ).toBeUndefined();
+    expect(useMetadataStore.getState().applyErrorState?.code).toBe(
+      'validation.boundary_invalid',
+    );
+  });
+
+  // #814 (AC4) -- *_display strings are regenerated from the edited numbers so
+  // the persisted file never shows a timestamp that disagrees with the value.
+  it('regenerates *_display from edited numeric boundaries on apply (#814)', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      apply_changes: 2000,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, {
+      edited: { start_time: 65, end_time: 3725 },
+    });
+    await useMetadataStore.getState().apply();
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    const m = (applyCall![1] as { metadata: Metadata }).metadata.matches[0];
+    expect(m.start_time).toBe(65);
+    expect(m.end_time).toBe(3725);
+    expect(m.start_display).toBe('01:05'); // fmtTime(65)
+    expect(m.end_display).toBe('1:02:05'); // fmtTime(3725)
+    expect(m.duration).toBe(3660);
+    expect(m.duration_display).toBe('1h01m'); // fmtMatchDuration(3660)
+    // in-memory store metadata also reflects the regenerated strings
+    expect(useMetadataStore.getState().metadata?.matches[0].start_display).toBe(
+      '01:05',
+    );
+  });
+
+  // #834 (P2-18) -- name/type_override は apply 後も in-memory に残る (UI 表示維持)。
+  // 一方 metadata.json (apply_changes payload) には書き戻さない (契約維持)。
+  it('retains name and type_override in-memory after apply but strips them from disk (#834)', async () => {
+    configureInvoke({
+      load_metadata: validMetadata(),
+      apply_changes: 2000,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, {
+      name: 'highlight reel',
+      type_override: 'skip',
+    });
+    await useMetadataStore.getState().apply();
+
+    const m = useMetadataStore
+      .getState()
+      .metadata!.matches.find((x) => x.index === 1)!;
+    expect(m.name).toBe('highlight reel');
+    expect(m.type_override).toBe('skip');
+
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    const persisted = (applyCall![1] as { metadata: Metadata }).metadata
+      .matches[0];
+    expect(persisted.name).toBeUndefined();
+    expect(persisted.type_override).toBeUndefined();
   });
 });
 
@@ -369,6 +534,30 @@ describe('useMetadataStore.restore (#516)', () => {
     await useMetadataStore.getState().restore();
     // only loadSample should have run — no invoke calls at all
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  // #814 (AC3) -- a restore whose reload fails must not report success.
+  it('surfaces a reload failure as restoreErrorState (#814)', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'restore_from_original') return Promise.resolve(undefined);
+      if (cmd === 'load_metadata') {
+        return Promise.reject({
+          code: 'parse.json_invalid',
+          message: 'restored metadata is corrupt',
+          hint: 'restore from a different backup',
+        });
+      }
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(null);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      return Promise.resolve(null);
+    });
+    useMetadataStore.setState({ filePath: 'p' });
+    await useMetadataStore.getState().restore();
+    const state = useMetadataStore.getState();
+    expect(state.restoring).toBe(false);
+    expect(state.restoreErrorState?.message).toContain('corrupt');
+    expect(state.restoreErrorState?.code).toBe('parse.json_invalid');
+    expect(state.metadata).toBeNull();
   });
 });
 
@@ -1493,6 +1682,164 @@ describe('#691: catch path lifecycle pinning', () => {
     expect(state.restoreErrorState).toBeNull();
     expect(state.draftLoadErrorState).toBeNull();
     expect(state.draftSaveErrorState).toBeNull();
+  });
+});
+
+describe('normalizeForPersistence capture_regions round-trip (#810)', () => {
+  it('normalizeForPersistence preserves capture_regions (#810)', async () => {
+    // top-level spread で保持される契約を pin する (欠落で GUI 適用時に領域が消えると
+    // #481 minimap 等の consumer が cached 情報を失う)
+    const meta = validMetadata();
+    const captureRegions = {
+      coarse: { x: 0, y: 0, w: 1, h: 1, confidence: 1, source: 'fallback' },
+      segments: [],
+      fallback_reason: null,
+    };
+    // Metadata now has capture_regions?: CaptureRegions (from generated types)
+    const metaWithRegions = { ...meta, capture_regions: captureRegions };
+    configureInvoke({
+      load_metadata: metaWithRegions,
+      apply_changes: 2000,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    // Need a dirty edit to trigger apply
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().apply();
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    expect(applyCall).toBeDefined();
+    const persisted = (applyCall![1] as { metadata: Metadata }).metadata;
+    expect(persisted.capture_regions).toEqual(captureRegions);
+  });
+});
+
+describe('useMetadataStore.reloadFromDisk (#893)', () => {
+  it('reloadFromDisk refreshes metadata + mtime and clears conflict', async () => {
+    const fresh = { ...validMetadata(), minimap_regions: [{ match_index: 1, region: { x: 0.01, y: 0.02, w: 0.15, h: 0.2, confidence: 1, source: 'manual' } }] };
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(999);
+      if (cmd === 'load_metadata') return Promise.resolve(fresh);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      return Promise.resolve(null);
+    });
+    useMetadataStore.setState({ filePath: 'C:/x/metadata.json', loadedMtimeMs: 1, conflictErrorState: { code: 'x', message: 'y', hint: null } });
+
+    await useMetadataStore.getState().reloadFromDisk();
+
+    const s = useMetadataStore.getState();
+    expect(s.metadata?.minimap_regions?.[0].match_index).toBe(1);
+    expect(s.loadedMtimeMs).toBe(999);
+    expect(s.conflictErrorState).toBeNull();
+    expect(s.dirty).toBe(false);
+  });
+
+  // F2 fix (Round 1 #894): reloadFromDisk must also clear applyErrorState and
+  // restoreErrorState (symmetric with load()), so lingering error banners are
+  // dismissed after a successful post-crop reload.
+  it('reloadFromDisk clears applyErrorState and restoreErrorState on success', async () => {
+    const fresh = validMetadata();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(1000);
+      if (cmd === 'load_metadata') return Promise.resolve(fresh);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      return Promise.resolve(null);
+    });
+    // Pre-seed non-null error states that should be wiped by a successful reload.
+    useMetadataStore.setState({
+      filePath: 'C:/x/metadata.json',
+      applyErrorState: mkErrorState('apply failed'),
+      restoreErrorState: mkErrorState('restore failed'),
+      conflictErrorState: mkErrorState('conflict'),
+    });
+
+    await useMetadataStore.getState().reloadFromDisk();
+
+    const s = useMetadataStore.getState();
+    expect(s.applyErrorState).toBeNull();
+    expect(s.restoreErrorState).toBeNull();
+    expect(s.conflictErrorState).toBeNull();
+    expect(s.loadErrorState).toBeNull();
+  });
+
+  // F2 fix (Round 1 #894): reloadFromDisk must not throw on schema-invalid data
+  // or invoke failure; instead it must set loadErrorState and keep existing
+  // in-memory metadata intact.
+  it('reloadFromDisk sets loadErrorState and preserves metadata on invoke failure', async () => {
+    // load_metadata rejects (e.g. file vanished after crop)
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(null);
+      if (cmd === 'load_metadata') return Promise.reject(new Error('file gone'));
+      return Promise.resolve(null);
+    });
+    const existing = validMetadata();
+    useMetadataStore.setState({
+      filePath: 'C:/x/metadata.json',
+      metadata: existing as unknown as import('../types/metadata').Metadata,
+    });
+
+    // Must resolve (not throw) even though invoke rejects.
+    await expect(useMetadataStore.getState().reloadFromDisk()).resolves.toBeUndefined();
+
+    const s = useMetadataStore.getState();
+    expect(s.loadErrorState).not.toBeNull();
+    expect(s.loadErrorState?.message).toContain('file gone');
+    // Existing in-memory metadata is preserved (crop already wrote to disk).
+    expect(s.metadata).not.toBeNull();
+  });
+
+  it('reloadFromDisk sets loadErrorState on schema-invalid response', async () => {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(500);
+      if (cmd === 'load_metadata') return Promise.resolve({ bogus: true }); // invalid schema
+      return Promise.resolve(null);
+    });
+    const existing = validMetadata();
+    useMetadataStore.setState({
+      filePath: 'C:/x/metadata.json',
+      metadata: existing as unknown as import('../types/metadata').Metadata,
+    });
+
+    await expect(useMetadataStore.getState().reloadFromDisk()).resolves.toBeUndefined();
+
+    const s = useMetadataStore.getState();
+    expect(s.loadErrorState).not.toBeNull();
+    // Existing in-memory metadata is not wiped.
+    expect(s.metadata).not.toBeNull();
+  });
+
+  it('reloadFromDisk is a no-op without filePath (sample mode)', async () => {
+    invokeMock.mockReset();
+    useMetadataStore.setState({ filePath: null });
+    await expect(useMetadataStore.getState().reloadFromDisk()).resolves.toBeUndefined();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('normalizeForPersistence minimap_regions round-trip (#481)', () => {
+  it('normalizeForPersistence preserves minimap_regions (#481)', async () => {
+    // minimap_regions must survive load -> edit -> apply intact so the
+    // minimap consumer can read the cached crop region after a GUI round-trip.
+    const meta = validMetadata();
+    const minimapRegions = [
+      {
+        match_index: 1,
+        region: { x: 0.01, y: 0.02, w: 0.28, h: 0.35, confidence: 1.0, source: 'manual' },
+      },
+    ];
+    const metaWithMinimap = { ...meta, minimap_regions: minimapRegions };
+    configureInvoke({
+      load_metadata: metaWithMinimap,
+      apply_changes: 2000,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    // Need a dirty edit to trigger apply
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().apply();
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    expect(applyCall).toBeDefined();
+    const persisted = (applyCall![1] as { metadata: Metadata }).metadata;
+    expect(persisted.minimap_regions).toEqual(minimapRegions);
   });
 });
 

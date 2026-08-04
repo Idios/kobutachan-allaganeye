@@ -140,6 +140,10 @@ allaganeye split your_recording.mkv --min-match-duration 60 --dry-run
 
 4. **録画ソフトの設定**: OBS 等でシーン切替時にフェードを入れている場合、暗転が短くなることがあります。`--min-blackout-duration` を下げてみてください。
 
+5. **チャット欄マスクを合成した録画**: 配信のチャット欄を隠すマスク画像を全画面に合成している録画では、暗転部分もマスクに覆われて検知できないことがあります。暗転が 1 件も検出できなかった録画では、mask のない領域を自動検出して再検知する fallback が `--masked` 未指定でも自動で発動します。暗転が一部だけ見つかって結果が合わない場合は、`--masked` を指定してこの経路を強制してください（#821 / #822）。発動したかどうかは `metadata.json` の `detection_params.masked_fallback_used` で確認できます。
+
+6. **VTuber 配信の録画（ゲーム画面が inset）**: ゲーム画面が画面の一部に縮小配置され、装飾オーバーレイが重なる録画では、試合間の暗転が画面全体の暗転として現れません。`--vtuber` を指定すると、暗転ではなく「試合中である」証拠（スコアバーの有無 × 画面の動き）の timeline から試合区間を抽出します（#895）。`--masked` との同時指定は排他エラー（exit 5）になります。
+
 ---
 
 ### 処理が遅い
@@ -170,7 +174,7 @@ allaganeye split your_recording.mkv --sample-interval 2.0
 allaganeye split your_recording.mkv --workers 16
 ```
 
-デフォルトでは CPU コア数（最大 24）が自動設定されます。通常は変更不要ですが、他のプロセスとリソースを共有する場合は下げることも検討してください。
+デフォルトでは CPU コア数に応じたワーカー数が自動設定されます（上限は実装側の cap に従います。正は `allaganeye/video/detector.py` の `_resolve_workers` docstring）。通常は変更不要ですが、他のプロセスとリソースを共有する場合は下げることも検討してください。
 
 **対処 3: `--gpu` で GPU アクセラレーションを使う**
 
@@ -246,8 +250,11 @@ allaganeye split your_recording.mkv --dry-run --gpu
 | `--min-match-duration` | 300.0 | 0 以上 | この秒数未満のセグメントを除外する |
 | `--min-blackout-duration` | 3.0 | 0 以上 | この秒数未満の暗転を無視する（リスポーン暗転の除外用） |
 | `--sample-interval` | 1.0 | 0 より大きい値 | フレームチェックの間隔（秒）。大きくすると高速だが精度が下がる |
-| `--workers` | auto | 1 以上 | 並列ワーカー数。デフォルトは CPU コア数（最大 24） |
-| `--gpu` / `--no-gpu` | `--no-gpu` | - | GPU アクセラレーション検知。利用不可時は CPU フォールバック |
+| `--workers` | auto | 1 以上 | 並列ワーカー数。auto は CPU コア数から実装の cap で解決される (正: `_resolve_workers` docstring) |
+| `--gpu` / `--no-gpu` | auto | - | GPU アクセラレーション検知。**どちらも指定しない場合はコーデックから自動選択** (H.264/HEVC/AV1/VP9 → GPU、それ以外 → CPU、#414)。利用不可時は CPU フォールバック |
+| `--masked` | false | - | チャット欄マスク画像が全画面に合成された録画向け。mask のない領域を自動検出して再検知する。暗転が 1 件も検出できなかった場合は未指定でも自動発動し、本フラグは暗転が一部見つかる場合でもこの経路を強制する (#821 / #822) |
+| `--vtuber` | false | - | VTuber 配信録画（ゲーム画面が inset）向けの timeline 検出。暗転ではなくスコアバーの有無 × 画面の動きから試合区間を抽出する。`--masked` との同時指定は排他エラー (exit 5) (#895) |
+| `--keep-trailing` | false | - | 試合終了後の trailing 区間を通常の試合として分割出力する。デフォルトは metadata に `post_match: true` で保持しつつ分割 MP4 からは除外する (#805) |
 
 ## よくある質問
 

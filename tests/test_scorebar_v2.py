@@ -21,6 +21,7 @@ from allaganeye.video.detector import (
     _EMBLEM_POSITIONS,
     _EMBLEM_SAT_THRESHOLD,
     _SCOREBAR_SCAN_MAX_GAP_PX,
+    _SCOREBAR_SCAN_MAX_WIDTH_PX,
     _SCOREBAR_SCAN_MIN_WIDTH_PX,
     _SCOREBAR_V2_PROBE_HEIGHT,
     _SCOREBAR_V2_PROBE_WIDTH,
@@ -219,19 +220,45 @@ class TestFindScorebarHorizontalRange:
         assert _find_scorebar_horizontal_range(_empty_hires_frame()) is None
 
     def test_too_narrow_region_returns_none(self):
-        """Saturated band narrower than MIN_WIDTH_PX -> None."""
-        # Width 301 < 400 (_SCOREBAR_SCAN_MIN_WIDTH_PX)
-        frame = _make_hires_frame_with_strip(500, 800)
-        assert _SCOREBAR_SCAN_MIN_WIDTH_PX > 301
+        """Centered band narrower than MIN_WIDTH_PX -> None (width gate)."""
+        # (860, 1060) width 201 < 400 (_SCOREBAR_SCAN_MIN_WIDTH_PX) and it
+        # straddles center 960, so it reaches the width gate (not the center
+        # gate) -- exercising the min-width rejection specifically.
+        frame = _make_hires_frame_with_strip(860, 1060)
+        assert _SCOREBAR_SCAN_MIN_WIDTH_PX > 201
         assert _find_scorebar_horizontal_range(frame) is None
 
-    def test_two_disjoint_regions_returns_longest(self):
-        """Two far-apart regions -> only the larger one returned."""
-        # (100, 700) width 601 + (1200, 1400) width 201
-        # gap = 1200 - 700 - 1 = 499 > MAX_GAP_PX (80) -> not bridged.
-        frame = _make_hires_frame_with_strips([(100, 700), (1200, 1400)])
+    def test_two_disjoint_regions_centered_wins(self):
+        """Two far-apart regions -> the center-straddling one is returned.
+
+        Here the centered region (700, 1300) is also the larger one; the
+        off-center region (1500, 1700) is ignored.  See
+        ``test_longer_offcenter_run_does_not_mask_centered_scorebar`` for the
+        case where the off-center run is the *longer* one.
+        """
+        # (700, 1300) width 601 straddles center 960; (1500, 1700) does not.
+        # gap = 1500 - 1300 - 1 = 199 > MAX_GAP_PX (80) -> not bridged.
+        frame = _make_hires_frame_with_strips([(700, 1300), (1500, 1700)])
         result = _find_scorebar_horizontal_range(frame)
-        assert result == (100, 700)
+        assert result == (700, 1300)
+
+    def test_longer_offcenter_run_does_not_mask_centered_scorebar(self):
+        """A longer off-center run must not mask a valid centered scorebar.
+
+        Selecting only the longest run lets a longer off-center / over-wide
+        band (UI / colorful background) reject the whole frame, false-
+        negativing a real centered HUD-scaled scorebar -- the 4K / Game DVR
+        layouts the rescue path exists to support.  The run straddling screen
+        center must win (Codex PR pre-flight Step 5 adversarial-review,
+        2026-05-24).
+        """
+        # A = (10, 700) width 691: off-center (does not contain center 960)
+        #     and the LONGEST run.
+        # B = (900, 1400) width 501: centered (contains 960), within width.
+        # gap = 900 - 700 - 1 = 199 > MAX_GAP_PX -> not bridged.
+        assert _SCOREBAR_SCAN_MAX_GAP_PX < 199
+        frame = _make_hires_frame_with_strips([(10, 700), (900, 1400)])
+        assert _find_scorebar_horizontal_range(frame) == (900, 1400)
 
     def test_small_gap_is_bridged(self):
         """Gap within MAX_GAP_PX -> runs merged into one span."""
@@ -250,6 +277,45 @@ class TestFindScorebarHorizontalRange:
         assert _SCOREBAR_SCAN_MAX_GAP_PX < 199
         result = _find_scorebar_horizontal_range(frame)
         assert result == (500, 1000)
+
+    def test_overwide_band_returns_none(self):
+        """Near-full-width band (post-match interior) -> None (#803).
+
+        obs-20260116 t=6800/6850: a colorful interior produces a ~1912px
+        saturated band at screen top. A real FL scorebar tops out at
+        ~1090px (1080p OBS), so this is gated out by width.
+        """
+        # 8..1919 -> width 1912 >> _SCOREBAR_SCAN_MAX_WIDTH_PX (1440)
+        frame = _make_hires_frame_with_strip(8, 1919)
+        assert _find_scorebar_horizontal_range(frame) is None
+
+    def test_right_edge_band_returns_none(self):
+        """Right-side band not straddling center (chat panel) -> None (#803).
+
+        obs-20260116 t=6544-6555 (Limsa): a chat panel at 1410..1919.
+        Width 510 passes the min-width floor but the band does not contain
+        screen center x=960, so it is gated out by position.
+        """
+        frame = _make_hires_frame_with_strip(1410, 1919)
+        assert _find_scorebar_horizontal_range(frame) is None
+
+    def test_left_edge_band_returns_none(self):
+        """Left-side band not straddling center (minimap) -> None (#803).
+
+        obs-20260116 t=6895: a left-side widget at 8..544. Width 537
+        passes the min-width floor but does not contain center x=960.
+        """
+        frame = _make_hires_frame_with_strip(8, 544)
+        assert _find_scorebar_horizontal_range(frame) is None
+
+    def test_centered_band_within_max_width_returns_range(self):
+        """Centered in-match-like band within bounds -> range returned (#803 guard).
+
+        Regression guard: a normal in-match span (600..1320, width 721,
+        straddles center 960, < max) must still be accepted.
+        """
+        frame = _make_hires_frame_with_strip(600, 1320)
+        assert _find_scorebar_horizontal_range(frame) == (600, 1320)
 
     def test_opencv_unavailable_returns_none(self):
         """ImportError on cv2 -> None (lets caller fall back to V1)."""
@@ -369,12 +435,37 @@ class TestHasScorebarV2:
             if saved is not None:
                 sys.modules["cv2"] = saved
 
+    def test_offcenter_layout_returns_false_after_gating(self):
+        """Emblem-like features at a right-edge layout -> span gated -> False (#803).
+
+        Simulates post-match content (obs-20260116 t=6555 Limsa chat panel):
+        a saturated band with emblem-like features at the screen edge.
+        Primary absolute path finds no emblems at 600/828/1263; the Rescue
+        path's span (1410..1919) is rejected by the center gate, so V2
+        returns False instead of a false positive.
+        """
+        frame = _make_hires_frame_with_emblems_at_layout(1410, 1919)
+        assert _has_scorebar_v2(frame) is False
+
+    def test_overwide_layout_returns_false_after_gating(self):
+        """Emblem-like features spread across near-full width -> False (#803).
+
+        Simulates obs-20260116 t=6800/6850 (colorful interior). Rescue
+        span (~8..1919) is rejected by the width gate; Primary finds no
+        emblems at the absolute positions -> False.
+        """
+        frame = _make_hires_frame_with_emblems_at_layout(8, 1919)
+        assert _has_scorebar_v2(frame) is False
+
     def test_thresholds_are_documented_constants(self):
         """Sanity: thresholds exist and match documented validation."""
         # Saturation threshold derived from validation against lobby
         # backgrounds (median 66-79) -- should sit at 70.
         assert _EMBLEM_SAT_THRESHOLD == 70.0
         assert _EMBLEM_EDGE_THRESHOLD == 40.0
+        # Width upper bound (#803): 75% of the 1920px probe width, clears the
+        # ~1090px real scorebar max and rejects the ~1912px post-match FP.
+        assert _SCOREBAR_SCAN_MAX_WIDTH_PX == 1440
 
 
 # ---------------------------------------------------------------------------
@@ -452,7 +543,9 @@ class TestProbeScorebarContextV2:
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=b"lo")
     def test_v2_true_returns_true(self, _lo, _hi, mock_v1, _mock_v2):
         """V2 True -> True; V1 not consulted."""
-        results, frames = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
+        results, frames, _ = _probe_scorebar_context(
+            Path("v.mp4"), [1.0], 180, workers=1
+        )
         assert results == [True]
         # frames returned are LOW-RES (used for static-screen detection)
         assert frames == [b"lo"]
@@ -470,7 +563,7 @@ class TestProbeScorebarContextV2:
         frame, V2 False wins, because V1 has known FP on lobby backgrounds
         that block correct merging of match_boundary pairs (PR #313 rationale).
         """
-        results, _ = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
+        results, _, _ = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
         assert results == [False]
         mock_v1.assert_not_called()
 
@@ -481,7 +574,7 @@ class TestProbeScorebarContextV2:
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=b"lo")
     def test_v2_none_falls_back_to_v1(self, _lo, _hi, mock_v1, _mock_v2):
         """V2 None (e.g. opencv missing or hi-res probe failed) -> V1 result."""
-        results, _ = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
+        results, _, _ = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
         assert results == [True]
         mock_v1.assert_called_once()
 
@@ -492,7 +585,7 @@ class TestProbeScorebarContextV2:
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=b"lo")
     def test_v1_method_skips_hires_probe(self, _lo, mock_hi, _mock_v1_fn, mock_v2):
         """When METHOD=v1, no high-res probe and no V2 call."""
-        results, _ = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
+        results, _, _ = _probe_scorebar_context(Path("v.mp4"), [1.0], 180, workers=1)
         assert results == [True]
         mock_hi.assert_not_called()
         mock_v2.assert_not_called()

@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +22,49 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = PROJECT_ROOT / "schemas" / "cleanup-output.schema.json"
+
+
+def _resolve_bash() -> str | None:
+    """Return a bash executable that can run the project's shell scripts.
+
+    On Windows a bare ``bash`` on PATH usually resolves to a WSL launcher
+    (``...\\WindowsApps\\bash.exe``, legacy ``System32\\bash.exe``), which
+    strips backslashes from Windows paths and fails with exit 127 (#875).
+    Production hooks run under Git Bash on Windows, so only positively
+    identified Git Bash / MSYS installs are accepted: derived from git.exe's
+    install root, or the stock Git for Windows locations. PATH ``bash`` is
+    deliberately NOT used as a fallback -- there is no reliable way to tell
+    a usable bash from another WSL shim by its path alone. Returns None when
+    no usable bash exists; callers skip with a reason instead of failing.
+    """
+    if sys.platform != "win32":
+        return shutil.which("bash")
+    candidates: list[Path] = []
+    git = shutil.which("git")
+    if git is not None:
+        # <root>/cmd/git.exe or <root>/bin/git.exe -> <root>/bin/bash.exe
+        # (also covers MSYS2: <root>/usr/bin/git.exe -> <root>/usr/bin/bash.exe)
+        root = Path(git).resolve().parent.parent
+        candidates += [root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"]
+    candidates += [
+        Path(r"C:\Program Files\Git\bin\bash.exe"),
+        Path(r"C:\Program Files (x86)\Git\bin\bash.exe"),
+    ]
+    for cand in candidates:
+        if cand.is_file():
+            return str(cand)
+    return None
+
+
+BASH = _resolve_bash()
+
+
+@pytest.fixture
+def bash_exe() -> str:
+    """Usable bash path; skips the test when none is available (#875)."""
+    if BASH is None:
+        pytest.skip("no usable bash found (Git Bash required on Windows, #875)")
+    return BASH
 
 
 @dataclass
@@ -48,9 +92,10 @@ def _symlink_or_copy(src: Path, dst: Path) -> None:
 def tmp_repo(tmp_path: Path) -> Path:
     """Isolated git repo with .claude/ and scripts/ wired from project root.
 
-    The repo has an initial commit on `develop-0.2.0` (the project's default
-    base branch). cleanup-claude-branches.sh's merge-base logic resolves
-    correctly against this branch.
+    The repo has an initial commit on `develop-0.2.0` (a fixture-internal
+    branch name kept for historical continuity; it matches the develop-*
+    glob, so cleanup-claude-branches.sh's merge-base logic resolves
+    correctly against it regardless of the project's current base branch).
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -190,7 +235,7 @@ def make_worktree_dir(tmp_repo: Path) -> Callable[..., Path]:
 
 
 @pytest.fixture
-def run_hook(tmp_repo: Path) -> Callable[..., HookResult]:
+def run_hook(tmp_repo: Path, bash_exe: str) -> Callable[..., HookResult]:
     """Invoke a hook bash script under tmp_repo with CLAUDE_PROJECT_DIR set.
 
     Args:
@@ -199,12 +244,15 @@ def run_hook(tmp_repo: Path) -> Callable[..., HookResult]:
 
     Returns: HookResult with stdout/stderr/exit_code and parsed NDJSON lines
     (any stdout line that successfully parses as a JSON object).
+
+    Paths are passed in forward-slash form (as_posix): identical to str() on
+    POSIX, and the form Git Bash accepts unambiguously on Windows (#875).
     """
 
     def _run(script: str, *args: str) -> HookResult:
-        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_repo)}
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": tmp_repo.as_posix()}
         proc = subprocess.run(
-            ["bash", str(tmp_repo / script), *args],
+            [bash_exe, (tmp_repo / script).as_posix(), *args],
             cwd=tmp_repo,
             env=env,
             capture_output=True,
@@ -261,18 +309,21 @@ def with_gh_stub(tmp_repo: Path, monkeypatch):
 
     Args of the returned callable:
       response: literal string the stub will print on stdout.
+      exit_code: exit status the stub returns (default 0). Non-zero simulates a
+        gh failure / network error (cleanup-claude-branches.sh #827 fallback).
 
     Returns: None (callable side-effect).
     """
     stub_src = PROJECT_ROOT / "tests" / "hooks" / "_gh_stub.sh"
 
-    def _install(response: str) -> None:
+    def _install(response: str, exit_code: int = 0) -> None:
         bin_dir = tmp_repo / "bin"
         bin_dir.mkdir(exist_ok=True)
         gh_target = bin_dir / "gh"
         shutil.copy2(stub_src, gh_target)
         gh_target.chmod(0o755)
         monkeypatch.setenv("GH_STUB_RESPONSE", response)
+        monkeypatch.setenv("GH_STUB_EXIT", str(exit_code))
         monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
 
     return _install

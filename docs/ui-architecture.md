@@ -9,7 +9,7 @@
 Phase 2 で整備した責務:
 
 - React 19 + Zustand による 2 層 state machine (screen + phase)
-- 5 画面 (drop / detecting / complete / preview / export) の UI 骨格
+- 5 画面 (drop / detecting / complete / preview / export) の UI 骨格 (minimap は #893 で追加され、現在は 6 画面)
 - `aetherTheme` デザイントークンの CSS 変数化 (`gui/src/styles/tokens.css`)
 - CSS Modules による component-scoped スタイル
 - `#516` `[元に戻す]` 機能 (Rust `restore_from_original` + TS `metadataStore.restore`)
@@ -20,12 +20,13 @@ Phase 3/4 (#465, #466) は本 doc の phase 遷移を維持したまま reducer 
 ## 2. 2 層構造の state machine
 
 ```text
-(a) screen   = drop | detecting | complete | preview | export   (useAppStateStore.screen)
-(b) phase    = 各 screen の内部 state enum                        (screens/types.ts + local useState)
+(a) screen   = drop | detecting | complete | preview | export | minimap   (useAppStateStore.screen)
+(b) phase    = 各 screen の内部 state enum                                  (screens/types.ts + local useState)
 ```
 
 - **screen** は URL の代替。`useAppStateStore.navigate()` で切り替える。react-router-dom は採用しない (desktop-only)
 - **phase** は画面内の状態を表現。純粋関数 `reducers/*.ts` で遷移を記述
+- screen enum の正は [`appStateStore.ts`](../gui/src/state/appStateStore.ts) の `AppScreen` 型 (`minimap` は #893 で追加)
 
 ## 3. screen 遷移図 + アプリ終了経路
 
@@ -39,14 +40,21 @@ stateDiagram-v2
 
     complete --> preview: 試合行 double-click
     complete --> export: [全試合書き出し]
+    complete --> minimap: [⬦ ミニマップ切抜き] (matches 0 件なら disabled、#893)
     complete --> drop: [x 閉じる] (store.clear でリセット)
 
     preview --> complete: [◀ 一覧へ] or [元に戻す] 完了
     preview --> export: [書き出し]
 
     export --> preview: [◀ プレビュー] (idle/error 時のみ)
-    export --> complete: [✓ フォルダを開く] 押下後
+    export --> minimap: [⬦ ミニマップ切抜きへ] (completed phase のみ描画、#893)
+
+    minimap --> complete: [◀ 一覧へ] (#893)
 ```
+
+> **[✓ 完了 — フォルダを開く] は画面遷移しない**: ExportScreen の `handleOpenFolder` は `open_folder_in_explorer` を invoke するだけで `navigate` を呼ばない (旧実装の `navigate('complete')` は Explorer が開く前に遷移する不具合として #466 review #5 で撤去済)。したがって `export --> complete` のエッジは存在しない。
+>
+> **minimap 画面内の phase 遷移** (`idle / running / cancelling / completed / error`) は §5 の minimap 節および [ui-interaction-spec.md §2.6](ui-interaction-spec.md) を参照 (#893)。
 
 **アプリ終了**: ウィンドウ右上 `×` (Tauri chrome) = 即時 app exit。任意の screen / phase から `[*]` への遷移は暗黙。Phase 2 では警告なし (dummy のため)。Phase 3/4 で running 中の confirm + process kill を追加予定 (**#523** で追跡)。
 
@@ -318,23 +326,50 @@ Phase 3 で差し替え:
 - 2 つの `<video>` placeholder を実 `<video>` + axum HTTP ストリーミングに
 - `FrameStrip` を実デコードサムネイルに
 
-### export (Phase 2 は dummy)
+### export
 
 ```mermaid
 stateDiagram-v2
     [*] --> export_idle
     export_idle --> export_running: [書き出し開始]
     export_running --> export_cancelling: [中断]
-    export_cancelling --> export_idle: ffmpeg 停止 (Phase 2 即時、progress reset)
+    export_cancelling --> export_idle: ffmpeg 停止 (progress reset)
+    export_cancelling --> export_completed: PROGRESS_COMPLETE (中断前に export 完了した race、#837)
     export_running --> export_completed: progress 100%
     export_running --> export_error: ffmpeg エラー
-    export_completed --> export_idle: [もう一度書き出す]
-    export_completed --> [*]: [✓ フォルダを開く] → shell.open + navigate('complete')
-    export_error --> export_idle: [閉じる]
+    export_completed --> export_completed: [✓ 完了 — フォルダを開く] → open_folder_in_explorer (画面遷移なし、#466 review #5)
+    export_completed --> export_idle: [設定変更して再書き出し] (RESTART)
+    export_completed --> [*]: [⬦ ミニマップ切抜きへ] → navigate('minimap') (#893)
+    export_error --> export_idle: [設定変更して再試行] (DISMISS_ERROR)
     export_idle --> [*]: [◀ プレビュー] → preview
 ```
 
-Phase 2 実装: 80ms interval のダミー progress。Phase 4 で実 ffmpeg 呼び出し + stderr パースに差し替え。
+実装: Rust `start_export` への単発 invoke で Python 側 pool が N 並列 ffmpeg を起動し、per-match 進捗は `export-progress` Tauri event で届く (#466 / #761)。ボタン文言の正は [ExportScreen.tsx](../gui/src/screens/ExportScreen.tsx) の JSX で、`[もう一度書き出す]` / `[閉じる]` は旧文言 (#545 review #4 で廃止、`ExportScreen.test.tsx` が pin 済)。
+
+### minimap (#893)
+
+```mermaid
+stateDiagram-v2
+    [*] --> minimap_idle
+    minimap_idle --> minimap_running: [⬦ 切抜き開始] (START_CLICKED)
+    minimap_running --> minimap_cancelling: [中断] (CANCEL_CLICKED)
+    minimap_running --> minimap_completed: PROGRESS_COMPLETE
+    minimap_running --> minimap_error: EXPORT_ERROR
+    minimap_running --> minimap_idle: CONFLICT_RESOLVED (mtime 衝突を modal で解消し再試行可能に戻す)
+    minimap_running --> minimap_idle: CANCEL_CONFIRMED (CANCEL_CLICKED を経ない中断の belt-and-suspenders)
+    minimap_cancelling --> minimap_idle: CANCEL_CONFIRMED or EXPORT_ERROR
+    minimap_cancelling --> minimap_completed: PROGRESS_COMPLETE (中断前に完了した race)
+    minimap_completed --> minimap_completed: [✓ 完了 — フォルダを開く] → open_folder_in_explorer (画面遷移なし)
+    minimap_completed --> minimap_idle: [再切り抜き] (RESTART)
+    minimap_error --> minimap_idle: [再試行] (RESTART)
+    minimap_idle --> [*]: [◀ 一覧へ] → complete
+```
+
+- 遷移の正は [reducers/minimap.ts](../gui/src/screens/reducers/minimap.ts) の `minimapReducer` (`MinimapPhase` / `MinimapAction`)。topology は export reducer のミラー
+- `running --> idle: CONFLICT_RESOLVED` は crop 実行中に metadata.json の mtime 衝突を検知したときの特殊経路
+- `running --> idle: CANCEL_CONFIRMED` も belt-and-suspenders で許容 (`kill_tracked_processes` が CANCEL_CLICKED を経由せず呼ばれた場合に running で stuck しないため)
+- `[◀ 一覧へ]` は phase に関わらず常時描画される (図では代表として `minimap_idle` から出している)
+- 画面内の UI 部品ごとの操作 → store mutation は [ui-interaction-spec.md §2.6](ui-interaction-spec.md) が正
 
 ## 6. ffmpeg 実行中の中断フロー (Phase 3/4、#523 で実装)
 
@@ -368,15 +403,24 @@ Phase 2 は dummy なので `×` 即時 exit。Phase 3/4 では以下を実装 (
 ## 9. コンポーネント階層
 
 ```text
+main.tsx (React root)
+├── ErrorBoundary               (#614、React 内部例外を捕捉して子 sub-tree を blank)
+│   └── App (App.tsx)
+└── ErrorModal                  (#614、Boundary の外側なので blank 後も visible)
+
 App (App.tsx)
-├── StateSwitcher           (dev 用 5 タブ、absolute 配置で右上に float)
-└── body
-    └── main
-        └── (screen === 'drop') DropScreen
-        └── (screen === 'detecting') DetectingScreen
-        └── (screen === 'complete') CompleteScreen
-        └── (screen === 'preview') PreviewScreen (key=selectedMatchIndex で reset)
-        └── (screen === 'export') ExportScreen
+├── StateSwitcher           (dev 用 6 タブ、absolute 配置で右上に float。#653 で production build では非描画)
+├── body
+│   └── main
+│       └── (screen === 'drop') DropScreen
+│       └── (screen === 'detecting') DetectingScreen
+│       └── (screen === 'complete') CompleteScreen
+│       └── (screen === 'preview') PreviewScreen (key=selectedMatchIndex で reset)
+│       └── (screen === 'export') ExportScreen
+│       └── (screen === 'minimap') MinimapScreen (#893)
+├── ConflictModal           (#514、body の外に常時 render される global modal)
+├── DraftRestoreModal       (#517、同上)
+└── ConfirmExitModal        (#523、同上)
 
 components/
 ├── AllaganCorner / AllaganFrame / AllaganSigil   (装飾)
@@ -385,7 +429,14 @@ components/
 ├── BrightnessTimeline                            (complete 用 SVG)
 ├── FrameStrip                                    (preview 用候補フレーム)
 ├── RestoreButton                                 (#516)
-└── SampleModeBanner                              (sample mode 起動時の上部 inline banner (#633))
+├── SampleModeBanner                              (sample mode 起動時の上部 inline banner (#633))
+├── ConflictModal                                 (#514、metadata.json の外部変更衝突。§4 参照)
+├── DraftRestoreModal                             (#517、draft 復元提案)
+├── ConfirmExitModal                              (#523、ffmpeg 実行中の終了確認。§6 参照)
+├── ErrorBoundary / ErrorModal                    (#614、§4 参照。main.tsx で render)
+├── InlineErrorHint                               (#693 / #694、§4.7 参照)
+├── DisabledTooltip                               (#587、disabled 理由の提示)
+└── LoadingSpinner                                (#587、待機表示)
 
 注: **カスタム title bar は無し** (prototype の WindowChrome は handoff 時点の
 MacOS 風デザインだったが、L2 は Windows-only (#451) のため Tauri のネイティブ
@@ -398,20 +449,35 @@ Windows title bar に一本化。`tauri.conf.json` の `title: "Allagan Eye"` �
 snapshot として保持しており、production 実装からは削除されている。
 
 state/
-├── appStateStore.ts  — screen + selectedMatchIndex + selectedVideoPath + detectionParams (#613)
-└── metadataStore.ts  — metadata + dirty + apply / restore / loadSample
+├── appStateStore.ts  — screen + selectedMatchIndex + selectedVideoPath + detectionParams (#613) + lastExportOutputDir (#893)
+├── metadataStore.ts  — metadata + dirty + apply / restore / loadSample
+├── errorStore.ts     — ErrorModal 表示状態 + ErrorCategory (#614、first-write-wins)
+└── recentStore.ts    — 直近録画の履歴 (#571)
 
 screens/reducers/
 ├── drop.ts       — DropEvent → DropPhase
 ├── detecting.ts  — DetectingEvent → DetectingPhase
-└── export.ts     — ExportEvent → ExportPhase
+├── export.ts     — ExportEvent → ExportPhase
+└── minimap.ts    — MinimapAction → MinimapPhase (#893、export.ts と同 topology)
 
 data/
 └── sampleMetadata.ts  — Phase 2 専用 sample (9 matches、AE_META 相当)
 
 utils/
-├── time.ts        — fmtTime / fmtPreciseTime
-└── brightness.ts  — buildBrightnessPath / findBlackoutRegions / buildLocalBrightness
+├── time.ts             — fmtTime / fmtPreciseTime / fmtMatchDuration
+├── brightness.ts       — buildBrightnessPath / findBlackoutRegions / buildLocalBrightness
+├── detection.ts        — toStartDetectParams / isDetectionParamsModified (#613)
+├── detectOutputDir.ts  — deriveDetectOutputDir / metadataPathFor (#569)
+├── path.ts             — stripExtendedPathPrefix / joinPath / splitPath (#676)
+├── boundary.ts         — isBoundaryValid (match 境界の write invariant、#814)
+└── region.ts           — elementRectToSourcePx / validateRegionPx (minimap crop の letterbox 補正、#893)
+
+lib/
+├── appError.ts                — AppError code 体系 / toErrorState (#663、§4 参照)
+├── globalErrorListener.ts     — JS error / unhandledrejection / Tauri panic listen (#614、§4.9 参照)
+├── issueReportBody.ts         — bug report 用 Markdown 生成 (#669、§4 参照)
+├── preventBrowserShortcuts.ts — production build で browser shortcut を抑止
+└── systemInfo.ts              — ErrorModal / issue 本文の環境情報欄
 ```
 
 ## 10. CSS Modules 慣例
@@ -465,8 +531,8 @@ sequenceDiagram
 
 ### 構成要素
 
-- **Rust**: `restore_from_original(path) -> Result<(), String>`, `check_backup_exists(path) -> bool`
-- **TS store**: `restore()`, `refreshBackupStatus()`, fields `hasBackup` / `restoring` / `restoreError`
+- **Rust**: `restore_from_original(path: String) -> Result<(), AppError>`, `check_backup_exists(path: String) -> Result<bool, AppError>` (#665 で legacy `Result<T, String>` / bare `bool` から migration 済。code 体系の master 一覧は [`docs/tauri-commands.md`](tauri-commands.md))
+- **TS store**: `restore()`, `refreshBackupStatus()`, fields `hasBackup` / `restoring` / `restoreErrorState` (#694 で `restoreError` + `restoreErrorHint` を `ErrorState | null` 単一 field に集約。§4.8 参照)
 - **UI**: `<RestoreButton>` — hasBackup=false で disabled、confirm 経由で restore 実行、`onRestored` で任意の後続処理
 
 ## 12. 性能目標

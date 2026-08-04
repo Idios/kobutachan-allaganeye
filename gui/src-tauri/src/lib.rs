@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
     extract::{Path as AxumPath, State},
@@ -61,6 +61,14 @@ fn video_server() -> &'static Mutex<VideoServer> {
     VIDEO_SERVER.get_or_init(|| Mutex::new(VideoServer::new()))
 }
 
+/// Strip a leading UTF-8 BOM (U+FEFF / bytes EF BB BF) so serde_json::from_str
+/// accepts files an editor saved with one. serde_json rejects a BOM with
+/// "expected value" (audit P2-19); metadata.json hand-edited on Windows
+/// commonly carries one. Returns the input unchanged when no BOM is present.
+fn strip_bom(s: &str) -> &str {
+    s.strip_prefix('\u{FEFF}').unwrap_or(s)
+}
+
 /// #465 -- payload returned to the GUI from `register_video`.
 ///
 /// The frontend sets `url` as the `<video>` element's `src` and keeps `token`
@@ -91,7 +99,7 @@ fn load_metadata_sync(meta_path: &Path) -> Result<Value, AppError> {
         )
         .with_default_hint()
     })?;
-    let value: Value = serde_json::from_str(&content).map_err(|e| {
+    let value: Value = serde_json::from_str(strip_bom(&content)).map_err(|e| {
         AppError::new(
             "parse.json_invalid",
             format!("invalid JSON in {}: {}", meta_path.display(), e),
@@ -196,7 +204,7 @@ fn load_draft_sync(meta_path: &Path) -> Result<Option<Value>, AppError> {
         )
         .with_default_hint()
     })?;
-    let value: Value = serde_json::from_str(&content).map_err(|e| {
+    let value: Value = serde_json::from_str(strip_bom(&content)).map_err(|e| {
         AppError::new(
             "parse.json_invalid",
             format!("invalid JSON in draft {}: {}", draft_path.display(), e),
@@ -251,7 +259,7 @@ fn restore_from_original_sync(meta_path: &Path) -> Result<(), AppError> {
         )
         .with_default_hint()
     })?;
-    let value: Value = serde_json::from_str(&content).map_err(|e| {
+    let value: Value = serde_json::from_str(strip_bom(&content)).map_err(|e| {
         AppError::new(
             "parse.json_invalid",
             format!("parse backup failed ({}): {}", original_path.display(), e),
@@ -277,7 +285,8 @@ async fn check_backup_exists(path: String) -> Result<bool, AppError> {
 }
 
 /// #571 — single entry of the recent-videos history persisted at
-/// `<home>/.allaganeye/recent.json`.
+/// `<install dir>/recent.json` (relocated from `<home>/.allaganeye/` in
+/// PR #655 Round 2; resolution logic lives in `recent_path()`).
 ///
 /// `path` is the absolute file path with the Windows extended-length `\\?\`
 /// prefix already stripped (see `setSelectedVideoPath` on the TS side).
@@ -364,7 +373,7 @@ fn read_recent_sync(path: &Path) -> Vec<RecentEntry> {
     let Ok(content) = fs::read_to_string(path) else {
         return Vec::new();
     };
-    serde_json::from_str::<Vec<RecentEntry>>(&content).unwrap_or_default()
+    serde_json::from_str::<Vec<RecentEntry>>(strip_bom(&content)).unwrap_or_default()
 }
 
 /// #571 — normalize a path string for the recent-list dedup key.
@@ -920,11 +929,271 @@ async fn serve_video(
     }
 }
 
+/// #814 -- validate a metadata payload before it is persisted by
+/// `apply_changes`. `apply_changes` accepts arbitrary `serde_json::Value`, so
+/// this is the write-side guard that prevents persisting a `metadata.json` the
+/// GUI's zod schema cannot reload (audit P1-2; codex adversarial-review rounds
+/// 1-2). It mirrors the REQUIRED parts of `gui/src/types/metadata.schema.ts`
+/// (`MetadataSchema` / `MatchSchema` / `GapSchema`) -- keep the two in sync.
+///
+/// Deliberate read/write asymmetry on matches: the GUI edits match boundaries,
+/// so we enforce strict `end > start` on write (zero-length clips are invalid,
+/// AC1) even though the read schema is lenient (`>=`). Gaps are not editable,
+/// so we mirror the read schema's `end >= start`.
+///
+/// Codes: `parse.schema_invalid` for missing / wrong-type required fields,
+/// `validation.boundary_invalid` for malformed match / gap boundaries.
+
+/// #879 -- shared AppError constructor for optional-field shape violations.
+fn schema_invalid(msg: String) -> AppError {
+    AppError::new("parse.schema_invalid", msg).with_default_hint()
+}
+
+/// #879 -- CaptureRegion shape (mirror zod CaptureRegionSchema): x/y/w/h/
+/// confidence are numbers in [0,1]; source is a non-empty string. Shared by
+/// capture_regions.coarse, capture_regions.segments[].region, and
+/// minimap_regions[].region. Extra keys are allowed (zod strips them; the doc
+/// stays readable).
+fn validate_capture_region(v: &Value, ctx: &str) -> Result<(), AppError> {
+    let obj = v
+        .as_object()
+        .ok_or_else(|| schema_invalid(format!("{ctx} must be an object")))?;
+    for key in ["x", "y", "w", "h", "confidence"] {
+        match obj.get(key).and_then(Value::as_f64) {
+            Some(n) if (0.0..=1.0).contains(&n) => {}
+            _ => return Err(schema_invalid(format!("{ctx}.{key} must be a number in [0,1]"))),
+        }
+    }
+    match obj.get("source").and_then(Value::as_str) {
+        Some(s) if !s.is_empty() => {}
+        _ => return Err(schema_invalid(format!("{ctx}.source must be a non-empty string"))),
+    }
+    Ok(())
+}
+
+/// #879 -- capture_regions shape (mirror zod CaptureRegionsSchema).
+fn validate_capture_regions(v: &Value) -> Result<(), AppError> {
+    let obj = v
+        .as_object()
+        .ok_or_else(|| schema_invalid("metadata.capture_regions must be an object".into()))?;
+    let coarse = obj
+        .get("coarse")
+        .ok_or_else(|| schema_invalid("metadata.capture_regions.coarse is required".into()))?;
+    validate_capture_region(coarse, "metadata.capture_regions.coarse")?;
+    let segments = obj
+        .get("segments")
+        .and_then(Value::as_array)
+        .ok_or_else(|| schema_invalid("metadata.capture_regions.segments must be an array".into()))?;
+    for (i, seg) in segments.iter().enumerate() {
+        let so = seg.as_object().ok_or_else(|| {
+            schema_invalid(format!("metadata.capture_regions.segments[{i}] must be an object"))
+        })?;
+        let tr = so.get("time_range").and_then(Value::as_array).ok_or_else(|| {
+            schema_invalid(format!(
+                "metadata.capture_regions.segments[{i}].time_range must be an array"
+            ))
+        })?;
+        if tr.len() != 2 || !tr.iter().all(|t| matches!(t.as_f64(), Some(n) if n >= 0.0)) {
+            return Err(schema_invalid(format!(
+                "metadata.capture_regions.segments[{i}].time_range must be [n>=0, n>=0]"
+            )));
+        }
+        let region = so.get("region").ok_or_else(|| {
+            schema_invalid(format!(
+                "metadata.capture_regions.segments[{i}].region is required"
+            ))
+        })?;
+        validate_capture_region(
+            region,
+            &format!("metadata.capture_regions.segments[{i}].region"),
+        )?;
+    }
+    match obj.get("fallback_reason") {
+        Some(Value::String(_)) | Some(Value::Null) => {}
+        _ => {
+            return Err(schema_invalid(
+                "metadata.capture_regions.fallback_reason must be a string or null".into(),
+            ))
+        }
+    }
+    Ok(())
+}
+
+/// #879 -- minimap_regions shape (mirror zod array of MinimapRegionEntrySchema).
+/// match_index mirrors z.number().int().min(1): accept int-valued floats (2.0)
+/// as zod does, reject non-integers and < 1.
+fn validate_minimap_regions(v: &Value) -> Result<(), AppError> {
+    let arr = v
+        .as_array()
+        .ok_or_else(|| schema_invalid("metadata.minimap_regions must be an array".into()))?;
+    for (i, entry) in arr.iter().enumerate() {
+        let eo = entry.as_object().ok_or_else(|| {
+            schema_invalid(format!("metadata.minimap_regions[{i}] must be an object"))
+        })?;
+        match eo.get("match_index").and_then(Value::as_f64) {
+            Some(n) if n >= 1.0 && n.fract() == 0.0 => {}
+            _ => {
+                return Err(schema_invalid(format!(
+                    "metadata.minimap_regions[{i}].match_index must be an integer >= 1"
+                )))
+            }
+        }
+        let region = eo.get("region").ok_or_else(|| {
+            schema_invalid(format!("metadata.minimap_regions[{i}].region is required"))
+        })?;
+        validate_capture_region(region, &format!("metadata.minimap_regions[{i}].region"))?;
+    }
+    Ok(())
+}
+
+/// #879 -- system_info shape (mirror zod SystemInfoSchema). gpu_vendors_available
+/// / vendor_preference are required string arrays; gpu_vendor_used is a required
+/// string-or-null; gpu is an optional string array.
+fn validate_system_info(v: &Value) -> Result<(), AppError> {
+    let obj = v
+        .as_object()
+        .ok_or_else(|| schema_invalid("metadata.system_info must be an object".into()))?;
+    let is_string_array = |val: Option<&Value>| {
+        matches!(val, Some(Value::Array(a)) if a.iter().all(Value::is_string))
+    };
+    for key in ["gpu_vendors_available", "vendor_preference"] {
+        if !is_string_array(obj.get(key)) {
+            return Err(schema_invalid(format!(
+                "metadata.system_info.{key} must be an array of strings"
+            )));
+        }
+    }
+    match obj.get("gpu_vendor_used") {
+        Some(Value::String(_)) | Some(Value::Null) => {}
+        _ => {
+            return Err(schema_invalid(
+                "metadata.system_info.gpu_vendor_used must be a string or null".into(),
+            ))
+        }
+    }
+    if obj.contains_key("gpu") && !is_string_array(obj.get("gpu")) {
+        return Err(schema_invalid(
+            "metadata.system_info.gpu must be an array of strings".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// #879 -- brightness_samples shape (mirror zod BrightnessSamplesSchema):
+/// interval_s is a positive number; values is an array of numbers in [0,255].
+fn validate_brightness_samples(v: &Value) -> Result<(), AppError> {
+    let obj = v
+        .as_object()
+        .ok_or_else(|| schema_invalid("metadata.brightness_samples must be an object".into()))?;
+    match obj.get("interval_s").and_then(Value::as_f64) {
+        Some(n) if n > 0.0 => {}
+        _ => {
+            return Err(schema_invalid(
+                "metadata.brightness_samples.interval_s must be a positive number".into(),
+            ))
+        }
+    }
+    match obj.get("values") {
+        Some(Value::Array(a))
+            if a.iter().all(|x| matches!(x.as_f64(), Some(n) if (0.0..=255.0).contains(&n))) => {}
+        _ => {
+            return Err(schema_invalid(
+                "metadata.brightness_samples.values must be an array of numbers in [0,255]".into(),
+            ))
+        }
+    }
+    Ok(())
+}
+
+fn validate_metadata_for_write(payload: &Value) -> Result<(), AppError> {
+    fn schema_err(msg: impl Into<String>) -> AppError {
+        AppError::new("parse.schema_invalid", msg).with_default_hint()
+    }
+    fn boundary_err(msg: impl Into<String>) -> AppError {
+        AppError::new("validation.boundary_invalid", msg).with_default_hint()
+    }
+
+    let obj = payload
+        .as_object()
+        .ok_or_else(|| schema_err("metadata must be a JSON object"))?;
+
+    // Required non-empty string fields (mirror MetadataSchema).
+    for key in ["source", "source_duration_display", "detected_at"] {
+        match obj.get(key).and_then(Value::as_str) {
+            Some(s) if !s.is_empty() => {}
+            _ => return Err(schema_err(format!("metadata.{key} must be a non-empty string"))),
+        }
+    }
+    match obj.get("source_duration").and_then(Value::as_f64) {
+        Some(d) if d > 0.0 => {}
+        _ => return Err(schema_err("metadata.source_duration must be a positive number")),
+    }
+    if !obj.get("detection_params").map(Value::is_object).unwrap_or(false) {
+        return Err(schema_err("metadata.detection_params must be an object"));
+    }
+
+    let matches = obj
+        .get("matches")
+        .and_then(Value::as_array)
+        .ok_or_else(|| schema_err("metadata.matches must be an array"))?;
+    let gaps = obj
+        .get("gaps")
+        .and_then(Value::as_array)
+        .ok_or_else(|| schema_err("metadata.gaps must be an array"))?;
+
+    // Match boundaries: finite numeric start/end with strict end > start.
+    for (i, m) in matches.iter().enumerate() {
+        let start = m.get("start_time").and_then(Value::as_f64);
+        let end = m.get("end_time").and_then(Value::as_f64);
+        if !matches!((start, end), (Some(s), Some(e)) if e > s) {
+            return Err(boundary_err(format!(
+                "match at index {i} has invalid boundaries (start_time/end_time must be finite numbers with end_time > start_time); got start_time={:?}, end_time={:?}",
+                m.get("start_time"),
+                m.get("end_time")
+            )));
+        }
+    }
+
+    // Gap boundaries: finite numeric start/end with end >= start (mirror GapSchema).
+    for (i, g) in gaps.iter().enumerate() {
+        let start = g.get("start_time").and_then(Value::as_f64);
+        let end = g.get("end_time").and_then(Value::as_f64);
+        if !matches!((start, end), (Some(s), Some(e)) if e >= s) {
+            return Err(boundary_err(format!(
+                "gap at index {i} has invalid boundaries (start_time/end_time must be finite numbers with end_time >= start_time); got start_time={:?}, end_time={:?}",
+                g.get("start_time"),
+                g.get("end_time")
+            )));
+        }
+    }
+
+    // #879 -- optional field shape validation (present only, mirror zod).
+    if let Some(si) = obj.get("system_info") {
+        validate_system_info(si)?;
+    }
+    if let Some(bs) = obj.get("brightness_samples") {
+        validate_brightness_samples(bs)?;
+    }
+    if let Some(cr) = obj.get("capture_regions") {
+        validate_capture_regions(cr)?;
+    }
+    if let Some(mr) = obj.get("minimap_regions") {
+        validate_minimap_regions(mr)?;
+    }
+
+    Ok(())
+}
+
 fn apply_changes_sync(
     meta_path: &Path,
     payload: &Value,
     expected_mtime_ms: Option<u64>,
 ) -> Result<(), AppError> {
+    // #814 -- validate the payload against the GUI reload contract before any
+    // backup/write so apply_changes can never persist an unreadable
+    // metadata.json (audit P1-2; codex adversarial-review rounds 1-2).
+    validate_metadata_for_write(payload)?;
+
     // #514 — refuse to overwrite a file that has been modified externally
     // since the caller last loaded it. Target not existing is not a conflict
     // (treat as a fresh write).
@@ -1198,16 +1467,16 @@ async fn generate_match_thumbnails(
     })?;
 
     let timestamps = compute_candidate_timestamps(boundary_t_seconds, window_seconds, count);
-    let semaphore = Arc::new(Semaphore::new(4));
 
     let mut tasks = Vec::with_capacity(timestamps.len());
     for t in timestamps.iter().copied() {
         let token = thumb_token(match_index, t);
         let out_path = cache_dir.join(format!("{}.webp", token));
         let video_for_task = canonical.clone();
-        let sem = Arc::clone(&semaphore);
         tasks.push(async move {
-            let _permit = sem.acquire_owned().await.map_err(|e| {
+            // #834 -- acquire from the process-global semaphore so concurrency is
+            // bounded across the whole screen, not per-invoke.
+            let _permit = thumbnail_semaphore().acquire().await.map_err(|e| {
                 AppError::new(
                     "internal.error",
                     format!("semaphore closed: {}", e),
@@ -1473,6 +1742,16 @@ fn process_tracker() -> &'static ProcessMap {
     PROCESS_TRACKER.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
 }
 
+/// Process-global cap on concurrent thumbnail ffmpeg jobs. Previously a fresh
+/// Semaphore::new(4) was created inside generate_match_thumbnails on each invoke,
+/// so N matches each spawned up to 4 ffmpeg => up to 4N concurrent (audit P2-21).
+/// A single static semaphore bounds the whole screen to 4 at a time.
+static THUMBNAIL_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+
+fn thumbnail_semaphore() -> &'static Semaphore {
+    THUMBNAIL_SEMAPHORE.get_or_init(|| Semaphore::new(4))
+}
+
 /// #523 -- report whether any child process is currently being tracked.
 /// Called by the frontend when it receives a `close-requested` event so it
 /// can decide whether to show the confirm modal or let the window close.
@@ -1573,120 +1852,6 @@ async fn force_exit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
-/// #466 -- codec selection for a single-match export. `Copy` is fast and
-/// keyframe-aligned (no re-encode); `H264` re-encodes for accurate seek
-/// boundaries. The actual H.264 encoder (libx264 / NVENC / QSV / AMF)
-/// is chosen separately via [`H264Encoder`] (#591).
-#[derive(Debug, serde::Deserialize)]
-pub enum ExportCodec {
-    #[serde(rename = "copy")]
-    Copy,
-    #[serde(rename = "h264")]
-    H264,
-}
-
-/// #591 -- which H.264 encoder ffmpeg should use when [`ExportCodec::H264`]
-/// is requested. Auto-selected from the metadata.json `system_info`
-/// (probe results from the detect/split run) by [`select_h264_encoder`].
-///
-/// `Libx264` is the CPU fallback; `Nvenc` / `Qsv` / `Amf` are the GPU
-/// hardware encoders for NVIDIA / Intel / AMD respectively. The frontend
-/// displays the chosen encoder in the export panel sub label and passes
-/// the value back to `export_match` so the runtime fallback retry (#591
-/// Phase 3) knows which GPU encoder failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum H264Encoder {
-    Libx264,
-    Nvenc,
-    Qsv,
-    Amf,
-}
-
-impl H264Encoder {
-    /// Return the ffmpeg `-c:v` value for this encoder.
-    fn ffmpeg_codec_name(&self) -> &'static str {
-        match self {
-            H264Encoder::Libx264 => "libx264",
-            H264Encoder::Nvenc => "h264_nvenc",
-            H264Encoder::Qsv => "h264_qsv",
-            H264Encoder::Amf => "h264_amf",
-        }
-    }
-
-    /// Return the vendor-specific quality / preset args. Targets visual
-    /// parity with libx264 CRF 18 (1080p ≈ 4-8 Mbps band), but the RD
-    /// curves differ between encoders so the mapping is approximate.
-    /// Tuned values may be revisited per-vendor based on PR #591 real
-    /// hardware verification.
-    fn quality_args(&self) -> &'static [&'static str] {
-        match self {
-            // Existing libx264 settings (unchanged from #466 baseline).
-            H264Encoder::Libx264 => &["-crf", "18", "-preset", "medium"],
-            // NVENC has no CRF; -cq is constant-quality with -rc vbr.
-            // -preset p5 ≈ libx264 medium on NVIDIA SDK 12+ (p1=fastest,
-            // p7=slowest).
-            H264Encoder::Nvenc => &[
-                "-rc", "vbr", "-cq", "19", "-preset", "p5",
-            ],
-            // QSV ICQ (Intelligent Constant Quality). -look_ahead 1
-            // enables 1-frame look-ahead for better RD decisions.
-            H264Encoder::Qsv => &[
-                "-global_quality", "20", "-look_ahead", "1", "-preset", "medium",
-            ],
-            // AMF Constant QP. Windows-only encoder; matches CLAUDE.md
-            // "対応プラットフォーム: Windows のみ".
-            H264Encoder::Amf => &[
-                "-quality", "quality", "-rc", "cqp", "-qp_i", "19", "-qp_p", "21",
-            ],
-        }
-    }
-
-    /// Short human label shown in the GUI export panel sub line.
-    fn display_label(&self) -> &'static str {
-        match self {
-            H264Encoder::Libx264 => "libx264 (CPU)",
-            H264Encoder::Nvenc => "NVENC",
-            H264Encoder::Qsv => "QSV",
-            H264Encoder::Amf => "AMF",
-        }
-    }
-}
-
-/// #591 -- choose an H.264 encoder from the GPU vendor probe results.
-///
-/// `vendors` is the `gpu_vendors_available` slice from the metadata.json
-/// `system_info` field (Phase 1). `preference` is `vendor_preference`
-/// from the same payload (a snapshot of `gpu_detector._VENDOR_PREFERENCE`,
-/// currently `["nvidia", "amd", "intel"]`).
-///
-/// Returns the first preference entry that is also present in `vendors`,
-/// mapped to the vendor's H.264 encoder. Falls back to `Libx264` when no
-/// vendor matches (CPU-only environment, empty system_info, or unknown
-/// vendor names).
-fn select_h264_encoder(vendors: &[String], preference: &[String]) -> H264Encoder {
-    for pref in preference {
-        if vendors.iter().any(|v| v == pref) {
-            match pref.as_str() {
-                "nvidia" => return H264Encoder::Nvenc,
-                "intel" => return H264Encoder::Qsv,
-                "amd" => return H264Encoder::Amf,
-                _ => continue,
-            }
-        }
-    }
-    H264Encoder::Libx264
-}
-
-/// #466 -- terminal payload returned to the frontend when a single match
-/// finishes exporting. `duration_ms` is wall time; the frontend uses it to
-/// show "exported in Ns" per match.
-#[derive(Debug, serde::Serialize)]
-pub struct ExportResult {
-    pub match_index: u32,
-    pub output_path: String,
-    pub duration_ms: u64,
-}
-
 /// #466 -- progress event emitted on channel `export-progress`. One event
 /// per ffmpeg `out_time_ms` line during encoding, plus a terminal
 /// `stage="done"` on success or `stage="error"` on failure.
@@ -1706,126 +1871,18 @@ pub struct ExportProgress {
     pub fallback_from: Option<String>,
 }
 
-/// #591 -- detect "this looks like a GPU encoder initialisation failure"
-/// from ffmpeg stderr text. Used by `export_match` to decide whether a
-/// non-zero exit warrants a libx264 retry.
-///
-/// Returns `false` for [`H264Encoder::Libx264`] (libx264 errors are not
-/// recoverable by switching encoders) and for unrelated errors (e.g.
-/// `"No such file or directory"`).
-///
-/// The substring patterns are pinned to ffmpeg 8.x BtbN LGPL builds
-/// (CLAUDE.md recommended). Future ffmpeg releases may change the
-/// wording -- when that happens, extend this match arm rather than
-/// loosening the matcher (loose matching would silently retry on
-/// unrelated failures).
-///
-/// QSV patterns include the post-PR-#596 verified ffmpeg 8.1 strings
-/// (`Error creating a MFX session` / `current mfx implementation is not
-/// supported` -- observed when QSV is forced on a non-Intel host) plus
-/// the older `Error initializing an internal MFX session` for older
-/// ffmpeg builds. The `Could not open encoder` line is generic but
-/// always preceded by `[h264_qsv @ ...]` in QSV failures, so we accept
-/// it inside the Qsv arm only.
-///
-/// NVENC and AMF were validated against ffmpeg 8.1 BtbN LGPL on an
-/// Intel-iGPU-only host (#604): `Cannot load nvcuda.dll` (NVENC) and
-/// `DLL amfrt64.dll failed to open` (AMF) are the strings ffmpeg 8.1
-/// emits when the respective vendor driver DLL is missing. Pre-#604
-/// the patterns targeted ffmpeg 7.x only and missed every line of the
-/// 8.1 stderr, so the libx264 fallback retry never fired -- the same
-/// version-drift class of bug PR #596 fixed for QSV.
-fn is_gpu_encoder_failure(stderr: &str, encoder: H264Encoder) -> bool {
-    match encoder {
-        H264Encoder::Libx264 => false,
-        H264Encoder::Nvenc => {
-            stderr.contains("No NVENC capable devices found")
-                || stderr.contains("Cannot load nvEncodeAPI")
-                || stderr.contains("OpenEncodeSessionEx failed")
-                || stderr.contains("Cannot load nvcuda.dll")
-        }
-        H264Encoder::Qsv => {
-            stderr.contains("Error creating a MFX session")
-                || stderr.contains("Error initializing an internal MFX session")
-                || stderr.contains("current mfx implementation is not supported")
-                || stderr.contains("Cannot load libmfx")
-                || stderr.contains("MFXVideoENCODE_Init")
-                || (stderr.contains("h264_qsv") && stderr.contains("Could not open encoder"))
-        }
-        H264Encoder::Amf => {
-            stderr.contains("AMF runtime not initialized")
-                || stderr.contains("DLL load failed")
-                || stderr.contains("Could not initialize AMFContext")
-                || stderr.contains("DLL amfrt64.dll failed to open")
-        }
-    }
-}
-
-/// #466 -- pure validator for export arguments. Split out so unit tests can
-/// exercise the error paths without spawning ffmpeg. The caller is expected
-/// to pass the resolved `video_path` (no path-resolution done here).
-fn validate_export_request(
-    video_path: &Path,
-    start_seconds: f64,
-    end_seconds: f64,
-) -> Result<(), AppError> {
-    if !video_path.exists() {
-        return Err(AppError::new(
-            "io.file_not_found",
-            format!("video file not found: {}", video_path.display()),
-        )
-        .with_default_hint());
-    }
-    let meta = fs::metadata(video_path).map_err(|e| {
-        AppError::new(
-            "io.read_failed",
-            format!("stat failed ({}): {}", video_path.display(), e),
-        )
-        .with_default_hint()
-    })?;
-    if !meta.is_file() {
-        return Err(AppError::new(
-            "validation.not_a_file",
-            format!("video path is not a regular file: {}", video_path.display()),
-        )
-        .with_default_hint());
-    }
-    if !start_seconds.is_finite() || start_seconds < 0.0 {
-        return Err(AppError::new(
-            "validation.range_invalid",
-            format!("start_seconds must be >= 0 (got {})", start_seconds),
-        )
-        .with_default_hint());
-    }
-    if !end_seconds.is_finite() || end_seconds <= start_seconds {
-        return Err(AppError::new(
-            "validation.range_invalid",
-            format!(
-                "end_seconds must be > start_seconds (got start={}, end={})",
-                start_seconds, end_seconds
-            ),
-        )
-        .with_default_hint());
-    }
-    Ok(())
-}
-
-/// #466 -- assemble the ffmpeg argv for a single export. Pulled out of
-/// `export_match` so unit tests can verify flag ordering and codec choices
-/// without spawning a process.
-///
-/// Note: `-ss` is placed BEFORE `-i` so ffmpeg does a fast keyframe-based
-/// seek rather than decoding from t=0. `-to` / `-t` interpretation after
-/// `-ss -i` is "duration from the seek point", so we pass
-/// `end_seconds - start_seconds` as a duration via `-t`.
 /// #466 review #4: 出力先の親ディレクトリが存在することを検証する。
 ///
-/// 以前は `export_match` 内で `create_dir_all` を呼んでいたが、ユーザーが
+/// 以前は `start_export` 内で `create_dir_all` を呼んでいたが、ユーザーが
 /// タイポしたパスに静かにディレクトリツリーが作られて混乱を招くため、
 /// 明示拒否に変更した。ディレクトリ作成はユーザーが事前に行う前提。
 ///
 /// `output_path` がルート / 親なし (file_name only など) の場合は no-op で
 /// Ok を返す (現在のディレクトリを意味すると解釈)。
+///
+/// `start_export` subprocess 経路に移行後、本関数の呼び出し元は tests のみ。
+/// #[cfg(test)] で test ビルドのみに限定し dead_code 警告を抑止。
+#[cfg(test)]
 fn validate_output_parent_exists(output_path: &Path) -> Result<(), AppError> {
     if let Some(parent) = output_path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -1878,9 +1935,10 @@ fn validate_open_folder_request(path: &str) -> Result<(), AppError> {
 /// 確実に動かす (#545 review、2026-04-25)。
 ///
 /// **#727 (2026-05-13)**: 元 `std::process::Command` から `tokio::process::Command`
-/// に切り替え、lib.rs 内 6 spawn site (probe_video_with / ensure_thumbnail_exists
-/// / run_ffmpeg_export_attempt / start_detect / extract_brightness_window_impl
-/// / 本関数) を `tokio::process::Command` 系で統一する refactor (gui spawn 統一)。
+/// に切り替え、lib.rs 内 spawn site (probe_video_with / ensure_thumbnail_exists
+/// / start_detect / start_export / enumerate_h264_encoders /
+/// extract_brightness_window_impl / 本関数) を `tokio::process::Command` 系で
+/// 統一する refactor (gui spawn 統一)。
 ///
 /// **apply_no_window 非適用**: explorer.exe は Win32 GUI subsystem アプリで
 /// そもそも console window を生成しないため、`process_util::apply_no_window`
@@ -1902,9 +1960,10 @@ async fn open_folder_in_explorer(path: String) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
     {
         // #727 -- spawn explorer.exe via tokio::process::Command for parity
-        // with the other 5 spawn sites (probe_video_with /
-        // ensure_thumbnail_exists / run_ffmpeg_export_attempt / start_detect
-        // / extract_brightness_window_impl). The returned Child is dropped
+        // with the other spawn sites (probe_video_with /
+        // ensure_thumbnail_exists / start_detect / start_export /
+        // enumerate_h264_encoders / extract_brightness_window_impl). The
+        // returned Child is dropped
         // immediately: explorer.exe is the user's file manager UI and should
         // outlive this Tauri app; Windows has no zombie process model so
         // the drop is safe.
@@ -1921,58 +1980,6 @@ async fn open_folder_in_explorer(path: String) -> Result<(), AppError> {
     }
 
     Ok(())
-}
-
-fn ffmpeg_args_for_export(
-    video_path: &Path,
-    start_seconds: f64,
-    end_seconds: f64,
-    output_path: &Path,
-    codec: &ExportCodec,
-    h264_encoder: H264Encoder,
-) -> Vec<String> {
-    let duration = (end_seconds - start_seconds).max(0.0);
-    let start_str = format!("{:.3}", start_seconds.max(0.0));
-    let duration_str = format!("{:.3}", duration);
-
-    let mut args: Vec<String> = Vec::new();
-    args.push("-y".to_string());
-    args.push("-hide_banner".to_string());
-    args.push("-loglevel".to_string());
-    args.push("error".to_string());
-    args.push("-progress".to_string());
-    args.push("pipe:2".to_string());
-    args.push("-ss".to_string());
-    args.push(start_str);
-    args.push("-i".to_string());
-    args.push(video_path.to_string_lossy().to_string());
-    args.push("-t".to_string());
-    args.push(duration_str);
-
-    match codec {
-        ExportCodec::Copy => {
-            args.push("-c".to_string());
-            args.push("copy".to_string());
-            args.push("-avoid_negative_ts".to_string());
-            args.push("make_zero".to_string());
-        }
-        ExportCodec::H264 => {
-            // #591 -- vendor-aware encoder selection. h264_encoder is
-            // resolved by select_h264_encoder() from metadata.json
-            // system_info.gpu_vendors_available; falls back to libx264
-            // when the system_info is missing or empty.
-            args.push("-c:v".to_string());
-            args.push(h264_encoder.ffmpeg_codec_name().to_string());
-            for q in h264_encoder.quality_args() {
-                args.push((*q).to_string());
-            }
-            args.push("-c:a".to_string());
-            args.push("copy".to_string());
-        }
-    }
-
-    args.push(output_path.to_string_lossy().to_string());
-    args
 }
 
 /// #466 -- insert a spawned ffmpeg child into the global PROCESS_TRACKER so
@@ -2015,6 +2022,10 @@ async fn untrack_child(id: Uuid) -> Option<tokio::process::Child> {
 /// a terminal `progress=end` or `progress=continue`. We only care about
 /// `out_time_ms` (for the percent bar) and `progress=end` (for the terminal
 /// event). Returns None for every other key.
+///
+/// Task 12 で `run_ffmpeg_export_attempt` を削除後、呼び出し元は tests のみ。
+/// #[cfg(test)] で test ビルドのみに限定し dead_code 警告を抑止。
+#[cfg(test)]
 fn parse_progress_line(line: &str) -> Option<ProgressSignal> {
     let line = line.trim();
     if let Some(rest) = line.strip_prefix("out_time_ms=") {
@@ -2032,6 +2043,10 @@ fn parse_progress_line(line: &str) -> Option<ProgressSignal> {
 }
 
 /// #466 -- internal enum for parsed progress lines.
+///
+/// Task 12 で `run_ffmpeg_export_attempt` を削除後、参照元は tests のみ。
+/// #[cfg(test)] で test ビルドのみに限定し dead_code 警告を抑止。
+#[cfg(test)]
 #[derive(Debug, PartialEq)]
 enum ProgressSignal {
     /// ffmpeg's `out_time_ms` is actually in microseconds (the name is a
@@ -2043,368 +2058,51 @@ enum ProgressSignal {
 /// #466 -- keep the last `max_bytes` bytes of `buf` as a UTF-8 lossy
 /// string. Used so the error message returned to the frontend stays
 /// bounded even if ffmpeg dumps pages of diagnostics.
+///
+/// Task 12 で `run_ffmpeg_export_attempt` を削除後、呼び出し元は tests のみ。
+/// #[cfg(test)] で test ビルドのみに限定し dead_code 警告を抑止。
+#[cfg(test)]
 fn tail_string(buf: &[u8], max_bytes: usize) -> String {
     let start = buf.len().saturating_sub(max_bytes);
     String::from_utf8_lossy(&buf[start..]).trim().to_string()
 }
 
-/// #466 -- export a single match to `output_path` by invoking ffmpeg.
-///
-/// Spawns with stderr piped, reads `-progress pipe:2` lines, and emits one
-/// `export-progress` event per `out_time_ms=` or terminal `progress=end`
-/// line. Non-progress stderr lines (e.g. real ffmpeg errors under
-/// `-loglevel error`) are accumulated into a ring buffer and folded into
-/// the Err message on non-zero exit.
-///
-/// The spawned child is registered in PROCESS_TRACKER for the duration of
-/// the call so the CloseRequested flow can kill it before app exit.
-/// #591 -- one ffmpeg invocation: spawn, stream stderr (progress events
-/// + tail buffer), wait for exit. Returns the captured stderr tail and
-/// final status so the caller can decide whether to retry with a
-/// different encoder.
-///
-/// `attempt_emits_done`: when `true` (single-attempt path or final
-/// retry), the function emits `stage="done"` on success. When `false`
-/// (first attempt of a retry sequence), the caller suppresses the done
-/// event for the failing attempt so the frontend doesn't see "done"
-/// followed by "fallback". The done event for a successful retry is
-/// emitted by the next call with `attempt_emits_done = true`.
-async fn run_ffmpeg_export_attempt(
-    app: &tauri::AppHandle,
-    args: &[String],
-    duration_seconds: f64,
-    match_index: u32,
-    attempt_emits_done: bool,
-) -> Result<(std::process::ExitStatus, Vec<u8>, bool), String> {
-    let mut cmd = tokio::process::Command::new("ffmpeg");
-    for a in args {
-        cmd.arg(a);
+/// Append `chunk` to a rolling `tail` buffer, keeping at most ~`max_tail`
+/// trailing bytes. Used by `drain_to_bounded_tail` (the start_detect /
+/// start_export stderr drains) so a chatty child can't grow the buffer without
+/// bound while still preserving the most recent output for the error message
+/// (audit P2-15). Drains only when the buffer exceeds `max_tail * 2`, amortising
+/// the shift cost.
+fn append_bounded_tail(tail: &mut Vec<u8>, chunk: &[u8], max_tail: usize) {
+    tail.extend_from_slice(chunk);
+    if tail.len() > max_tail * 2 {
+        let drop = tail.len() - max_tail;
+        tail.drain(0..drop);
     }
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    process_util::apply_no_window(&mut cmd);
+}
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("spawn ffmpeg failed: {}", e))?;
-
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "failed to capture ffmpeg stderr".to_string())?;
-
-    // #756 -- export ffmpeg has no descendants to reap, so wrap with
-    // `TrackedChild::no_job`. The Job Object path is reserved for
-    // `start_detect` (Python CLI with N ffmpeg children); see
-    // `docs/process-tree-orphan-audit.md`.
-    let tracked_id = track_child(TrackedChild::no_job(child)).await;
-
-    let mut reader = BufReader::new(stderr).lines();
-    let mut stderr_tail: Vec<u8> = Vec::with_capacity(4096);
-    let max_tail = 2048;
-    let mut saw_end = false;
-
+/// Drain an async reader (a child's stderr) into a bounded tail, reading in
+/// fixed-size chunks so the buffer stays bounded even when the child emits a
+/// huge newline-free run or carriage-return-only progress (e.g. ffmpeg `\r`).
+/// The earlier newline-delimited read accumulated a whole "line" before
+/// bounding, so a newline-free stream could grow unbounded before EOF
+/// (audit #837 codex review). Returns at most ~`max_tail` trailing bytes.
+async fn drain_to_bounded_tail<R>(reader: R, max_tail: usize) -> Vec<u8>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let mut reader = reader;
+    let mut tail: Vec<u8> = Vec::with_capacity(max_tail.saturating_mul(2).max(1));
+    let mut chunk = [0u8; 1024];
     loop {
-        match reader.next_line().await {
-            Ok(Some(line)) => match parse_progress_line(&line) {
-                Some(ProgressSignal::OutTimeMs(us)) => {
-                    let seconds = (us as f64) / 1_000_000.0;
-                    let mut percent = if duration_seconds > 0.0 {
-                        seconds / duration_seconds * 100.0
-                    } else {
-                        0.0
-                    };
-                    if !percent.is_finite() {
-                        percent = 0.0;
-                    }
-                    if percent < 0.0 {
-                        percent = 0.0;
-                    }
-                    if percent > 100.0 {
-                        percent = 100.0;
-                    }
-                    let _ = app.emit(
-                        "export-progress",
-                        ExportProgress {
-                            match_index,
-                            percent,
-                            stage: "encoding".to_string(),
-                            message: None,
-                            fallback_from: None,
-                        },
-                    );
-                }
-                Some(ProgressSignal::End) => {
-                    saw_end = true;
-                    if attempt_emits_done {
-                        let _ = app.emit(
-                            "export-progress",
-                            ExportProgress {
-                                match_index,
-                                percent: 100.0,
-                                stage: "done".to_string(),
-                                message: None,
-                                fallback_from: None,
-                            },
-                        );
-                    }
-                }
-                None => {
-                    stderr_tail.extend_from_slice(line.as_bytes());
-                    stderr_tail.push(b'\n');
-                    if stderr_tail.len() > max_tail * 2 {
-                        let keep_from = stderr_tail.len() - max_tail;
-                        stderr_tail.drain(0..keep_from);
-                    }
-                }
-            },
-            Ok(None) => break,
-            Err(e) => {
-                stderr_tail
-                    .extend_from_slice(format!("stderr read error: {}\n", e).as_bytes());
-                break;
-            }
+        match reader.read(&mut chunk).await {
+            Ok(0) => break,
+            Ok(n) => append_bounded_tail(&mut tail, &chunk[..n], max_tail),
+            Err(_) => break,
         }
     }
-
-    let mut child = match untrack_child(tracked_id).await {
-        Some(c) => c,
-        None => {
-            return Err("export cancelled (process tracker drained)".to_string());
-        }
-    };
-
-    let status = child
-        .wait()
-        .await
-        .map_err(|e| format!("wait ffmpeg failed: {}", e))?;
-
-    Ok((status, stderr_tail, saw_end))
-}
-
-#[tauri::command]
-async fn export_match(
-    app: tauri::AppHandle,
-    video_path: String,
-    start_seconds: f64,
-    end_seconds: f64,
-    output_path: String,
-    codec: ExportCodec,
-    h264_encoder: Option<H264Encoder>,
-    match_index: u32,
-) -> Result<ExportResult, AppError> {
-    let video = PathBuf::from(&video_path);
-    validate_export_request(&video, start_seconds, end_seconds)?;
-
-    let output = PathBuf::from(&output_path);
-    validate_output_parent_exists(&output)?;
-
-    // #591 -- frontend が metadata.json system_info から resolve した
-    // encoder を渡す。None (legacy / 古い metadata) は libx264 fallback。
-    let encoder = h264_encoder.unwrap_or(H264Encoder::Libx264);
-
-    let duration_seconds = end_seconds - start_seconds;
-    let started = Instant::now();
-    let max_tail = 2048;
-
-    // Attempt 1: vendor-resolved encoder.
-    let primary_args =
-        ffmpeg_args_for_export(&video, start_seconds, end_seconds, &output, &codec, encoder);
-    let (status, stderr_tail, saw_end) = run_ffmpeg_export_attempt(
-        &app,
-        &primary_args,
-        duration_seconds,
-        match_index,
-        true, // emits "done" on success
-    )
-    .await
-    .map_err(|e| {
-        let _ = app.emit(
-            "export-progress",
-            ExportProgress {
-                match_index,
-                percent: 0.0,
-                stage: "error".to_string(),
-                message: Some(e.clone()),
-                fallback_from: None,
-            },
-        );
-        e
-    })?;
-
-    if status.success() {
-        // Some ffmpeg builds close stderr without flushing the final
-        // `progress=end` line -- synthesize a terminal "done" so the
-        // frontend always sees one.
-        if !saw_end {
-            let _ = app.emit(
-                "export-progress",
-                ExportProgress {
-                    match_index,
-                    percent: 100.0,
-                    stage: "done".to_string(),
-                    message: None,
-                    fallback_from: None,
-                },
-            );
-        }
-        return Ok(build_export_result(&output, match_index, started));
-    }
-
-    // Failed. Decide whether to retry with libx264 (#591).
-    let stderr_text = String::from_utf8_lossy(&stderr_tail).into_owned();
-    if encoder != H264Encoder::Libx264
-        && matches!(codec, ExportCodec::H264)
-        && is_gpu_encoder_failure(&stderr_text, encoder)
-    {
-        let from_to = format!("{} -> libx264", encoder.ffmpeg_codec_name());
-        let _ = app.emit(
-            "export-progress",
-            ExportProgress {
-                match_index,
-                percent: 0.0,
-                stage: "fallback".to_string(),
-                message: Some(format!(
-                    "{} の初期化に失敗したため libx264 で再試行します",
-                    encoder.display_label()
-                )),
-                fallback_from: Some(from_to),
-            },
-        );
-
-        let retry_args = ffmpeg_args_for_export(
-            &video,
-            start_seconds,
-            end_seconds,
-            &output,
-            &codec,
-            H264Encoder::Libx264,
-        );
-        let (retry_status, retry_tail, retry_saw_end) = run_ffmpeg_export_attempt(
-            &app,
-            &retry_args,
-            duration_seconds,
-            match_index,
-            true,
-        )
-        .await
-        .map_err(|e| {
-            let _ = app.emit(
-                "export-progress",
-                ExportProgress {
-                    match_index,
-                    percent: 0.0,
-                    stage: "error".to_string(),
-                    message: Some(e.clone()),
-                    fallback_from: None,
-                },
-            );
-            e
-        })?;
-
-        if retry_status.success() {
-            if !retry_saw_end {
-                let _ = app.emit(
-                    "export-progress",
-                    ExportProgress {
-                        match_index,
-                        percent: 100.0,
-                        stage: "done".to_string(),
-                        message: None,
-                        fallback_from: None,
-                    },
-                );
-            }
-            return Ok(build_export_result(&output, match_index, started));
-        }
-
-        // Retry also failed -- surface the libx264 stderr (more useful
-        // than the original GPU failure).
-        let tail = tail_string(&retry_tail, max_tail);
-        let msg = if tail.is_empty() {
-            format!(
-                "ffmpeg (libx264 retry) exited with status {:?}",
-                retry_status.code()
-            )
-        } else {
-            format!(
-                "ffmpeg (libx264 retry) exited with status {:?}: {}",
-                retry_status.code(),
-                tail
-            )
-        };
-        let _ = app.emit(
-            "export-progress",
-            ExportProgress {
-                match_index,
-                percent: 0.0,
-                stage: "error".to_string(),
-                message: Some(msg.clone()),
-                fallback_from: None,
-            },
-        );
-        return Err(AppError::new("subprocess.exit_failed", msg).with_default_hint());
-    }
-
-    // No retry -- surface the primary failure.
-    let tail = tail_string(&stderr_tail, max_tail);
-    let msg = if tail.is_empty() {
-        format!("ffmpeg exited with status {:?}", status.code())
-    } else {
-        format!("ffmpeg exited with status {:?}: {}", status.code(), tail)
-    };
-    let _ = app.emit(
-        "export-progress",
-        ExportProgress {
-            match_index,
-            percent: 0.0,
-            stage: "error".to_string(),
-            message: Some(msg.clone()),
-            fallback_from: None,
-        },
-    );
-    Err(AppError::new("subprocess.exit_failed", msg).with_default_hint())
-}
-
-fn build_export_result(output: &Path, match_index: u32, started: Instant) -> ExportResult {
-    let output_str = fs::canonicalize(output)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| output.to_string_lossy().to_string());
-    ExportResult {
-        match_index,
-        output_path: output_str,
-        duration_ms: started.elapsed().as_millis() as u64,
-    }
-}
-
-/// #591 -- payload returned from `select_h264_encoder_for_export` to the
-/// frontend. `encoder_kind` is the wire form (`"Nvenc"` / `"Qsv"` /
-/// `"Amf"` / `"Libx264"`) which the frontend passes back unchanged in
-/// the `h264_encoder` field of `export_match`.
-#[derive(Debug, serde::Serialize)]
-pub struct EncoderInfo {
-    pub encoder: String,
-    pub display_label: String,
-    pub encoder_kind: H264Encoder,
-}
-
-/// #591 -- pure-function Tauri command that maps a metadata.json
-/// `system_info.gpu_vendors_available` + `vendor_preference` pair to the
-/// concrete H.264 encoder the frontend should use. No subprocess work
-/// (the probe already happened during detect/split), so this is cheap to
-/// call on every ExportScreen mount.
-#[tauri::command]
-fn select_h264_encoder_for_export(
-    vendors: Vec<String>,
-    preference: Vec<String>,
-) -> EncoderInfo {
-    let encoder = select_h264_encoder(&vendors, &preference);
-    EncoderInfo {
-        encoder: encoder.ffmpeg_codec_name().to_string(),
-        display_label: encoder.display_label().to_string(),
-        encoder_kind: encoder,
-    }
+    tail
 }
 
 /// #569 -- detect command parameters surfaced from the GUI's drop screen.
@@ -2480,6 +2178,12 @@ pub struct DetectProgress {
     /// `start` phase: source video path (echoes the request).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// #813 -- detect run identifier echoed back to the frontend on every
+    /// event so the listener can fence out stragglers from a previous
+    /// (cancelled) run. The CLI never emits this; `start_detect` injects it
+    /// via `stamp_run_id` on every `detect-progress` emit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
 }
 
 /// #569 -- terminal payload returned to the frontend when detect finishes.
@@ -2642,6 +2346,25 @@ fn find_worktree_root(start: Option<PathBuf>) -> Option<PathBuf> {
     None
 }
 
+/// #813 -- stamp the active detect run's id onto a progress event before
+/// emitting it. Centralises the injection so every `detect-progress` emit
+/// in `start_detect` carries the run id and the frontend can drop
+/// stragglers from a previous run (audit P1-1).
+fn stamp_run_id(mut progress: DetectProgress, run_id: &str) -> DetectProgress {
+    progress.run_id = Some(run_id.to_string());
+    progress
+}
+
+/// #813 (iterate-review #4) -- the single sink for `detect-progress` events
+/// out of `start_detect`. Routing every emit through here guarantees the run
+/// id is stamped exactly once, so a future emit path can't silently bypass
+/// the frontend's run-id fence (the same "new code path forgets a required
+/// wiring step" failure class that bit detection cache keys). Do NOT call
+/// `app.emit("detect-progress", ...)` directly -- always use this.
+fn emit_detect_progress(app: &tauri::AppHandle, run_id: &str, progress: DetectProgress) {
+    let _ = app.emit("detect-progress", stamp_run_id(progress, run_id));
+}
+
 /// #569 -- assemble argv for `allaganeye detect --progress-format json`.
 /// Pulled out of `start_detect` so unit tests can pin flag ordering and
 /// the plumbing of optional `DetectParams` -> CLI flags without spawning
@@ -2699,17 +2422,19 @@ fn detect_command_args(
 /// progress events to the frontend.
 ///
 /// The child is registered with [`process_tracker`] so the
-/// `CloseRequested` flow (#523) and the user-pressed cancel button (next
-/// PR, also #523) can kill it.  Cancellation by the user from the
-/// detecting screen is handled by the frontend dispatching a phase
-/// transition only -- the actual `kill_tracked_processes` invocation is
-/// deferred to #523's PR.
+/// `CloseRequested` window-close flow (#523) and the user-pressed cancel
+/// button on the detecting screen (#813) can kill it.  On cancel the
+/// frontend invokes `kill_tracked_processes`, which drains the tracker and
+/// drops this child's Job handle (tree-killing the Python CLI + ffmpeg
+/// descendants, #756); the `untrack_child` below then returns `None`, so we
+/// emit a `cancelled` event and return `subprocess.cancelled`.
 #[tauri::command]
 async fn start_detect(
     app: tauri::AppHandle,
     video_path: String,
     output_dir: String,
     params: DetectParams,
+    run_id: String,
 ) -> Result<DetectResult, AppError> {
     let video = PathBuf::from(&video_path);
     if !video.exists() {
@@ -2837,27 +2562,13 @@ async fn start_detect(
     // above. The tail is exposed only when the child exits non-zero, so
     // line semantics are not load-bearing -- we just need the trailing
     // bytes intact for the GUI error display.
-    let stderr_handle = tokio::spawn(async move {
-        let max_tail = 2048usize;
-        let mut tail: Vec<u8> = Vec::with_capacity(4096);
-        let mut reader = BufReader::new(stderr);
-        let mut buf: Vec<u8> = Vec::with_capacity(1024);
-        loop {
-            buf.clear();
-            match reader.read_until(b'\n', &mut buf).await {
-                Ok(0) => break,
-                Ok(_) => {
-                    tail.extend_from_slice(&buf);
-                    if tail.len() > max_tail * 2 {
-                        let drop = tail.len() - max_tail;
-                        tail.drain(0..drop);
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-        tail
-    });
+    // #838 -- drain in fixed-size chunks via the shared bounded helper
+    // (not a newline-delimited accumulator) so the tail stays bounded even
+    // for newline-free / CR-only child output (e.g. ffmpeg progress). The
+    // earlier inline read_until loop only bounded after a whole line, so a
+    // newline-free run could grow without limit before EOF. This converges
+    // start_detect with start_export (#837) on drain_to_bounded_tail.
+    let stderr_handle = tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await });
 
     let mut metadata_path: Option<String> = None;
     let mut total_matches: u64 = 0;
@@ -2890,7 +2601,7 @@ async fn start_detect(
                             total_matches = m;
                         }
                     }
-                    let _ = app.emit("detect-progress", progress);
+                    emit_detect_progress(&app, &run_id, progress);
                 }
             }
             Err(e) => {
@@ -2898,8 +2609,9 @@ async fn start_detect(
                 // we don't leak a zombie.  The error path below sets the
                 // error event.
                 let msg = format!("stdout read error: {e}");
-                let _ = app.emit(
-                    "detect-progress",
+                emit_detect_progress(
+                    &app,
+                    &run_id,
                     DetectProgress {
                         phase: "error".to_string(),
                         message: Some(msg.clone()),
@@ -2915,8 +2627,9 @@ async fn start_detect(
         Some(c) => c,
         None => {
             // Drained by `kill_tracked_processes` -- treat as user cancel.
-            let _ = app.emit(
-                "detect-progress",
+            emit_detect_progress(
+                &app,
+                &run_id,
                 DetectProgress {
                     phase: "cancelled".to_string(),
                     ..Default::default()
@@ -2943,8 +2656,9 @@ async fn start_detect(
                 tail
             )
         };
-        let _ = app.emit(
-            "detect-progress",
+        emit_detect_progress(
+            &app,
+            &run_id,
             DetectProgress {
                 phase: "error".to_string(),
                 message: Some(msg.clone()),
@@ -3220,6 +2934,977 @@ fn read_error_log_tail_inner(
     Ok(String::new())
 }
 
+/// #761 -- Encoder slot returned from Python `allaganeye encoder-slots`.
+///
+/// `encoder_kind` is the title-cased enum variant name (`"Nvenc"`,
+/// `"Libx264"`, `"Qsv"`, `"Amf"`) that the frontend renders as the
+/// encoder badge ("NVENC x3" etc.).
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct EncoderSlotJson {
+    pub slot_index: u32,
+    pub encoder_kind: String,
+    pub display_label: String,
+}
+
+/// #761 -- Request shape for `enumerate_h264_encoders`. Frontend supplies
+/// the metadata.json `system_info` slice.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnumerateEncodersRequest {
+    pub vendors: Vec<String>,
+    pub preference: Vec<String>,
+    pub gpu_models: Vec<String>,
+}
+
+/// #761 -- Spawn `python -m allaganeye encoder-slots --vendors=... \
+/// --preference=... --gpu-models=...` and parse the JSON array on stdout.
+///
+/// Codex review #2: enforce `PYTHONIOENCODING=utf-8:replace` to match
+/// `start_detect` cp932 mitigation pattern.
+#[tauri::command]
+async fn enumerate_h264_encoders(
+    app: tauri::AppHandle,
+    req: EnumerateEncodersRequest,
+) -> Result<Vec<EncoderSlotJson>, AppError> {
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+    for a in &cmd_spec.prefix_args {
+        cmd.arg(a);
+    }
+    cmd.arg("encoder-slots")
+        .arg("--vendors").arg(req.vendors.join(","))
+        .arg("--preference").arg(req.preference.join(","))
+        .arg("--gpu-models").arg(req.gpu_models.join(","))
+        .env("PYTHONIOENCODING", "utf-8:replace")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = &cmd_spec.cwd {
+        cmd.current_dir(cwd);
+    }
+    process_util::apply_no_window(&mut cmd);
+
+    let output = cmd.output().await.map_err(|e| {
+        AppError::new("subprocess.spawn_failed", format!("encoder-slots spawn: {}", e))
+            .with_default_hint()
+    })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(AppError::new(
+            "subprocess.exit_failed",
+            format!("encoder-slots exit {}: {}", output.status, stderr),
+        )
+        .with_default_hint());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    serde_json::from_str::<Vec<EncoderSlotJson>>(&stdout).map_err(|e| {
+        AppError::new(
+            "subprocess.parse_failed",
+            format!("encoder-slots stdout parse: {} (raw={})", e, stdout),
+        )
+        .with_default_hint()
+    })
+}
+
+/// #761 -- Discriminated union of JSON-line events emitted by
+/// `python -m allaganeye export --json`. See spec section 5.
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "type")]
+pub enum WireEvent {
+    #[serde(rename = "progress")]
+    Progress { match_index: u32, percent: f64, stage: String },
+    #[serde(rename = "fallback")]
+    Fallback {
+        match_index: u32,
+        fallback_from: String,
+        fallback_to: String,
+        message: String,
+    },
+    #[serde(rename = "result")]
+    Result {
+        match_index: u32,
+        output_path: String,
+        duration_ms: u64,
+        encoder_used: String,
+    },
+    #[serde(rename = "error")]
+    Error {
+        match_index: u32,
+        error_kind: String,
+        error_message: String,
+        error_hint: Option<String>,
+    },
+    #[serde(rename = "summary")]
+    Summary {
+        success: u32,
+        failure: u32,
+        skipped: u32,
+        cancelled: bool,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+/// #761 -- Parse one ndjson line into `WireEvent`. `None` for empty / malformed.
+fn parse_wire_event(line: &str) -> Option<WireEvent> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    serde_json::from_str(trimmed).ok()
+}
+
+/// #761 -- Request shape for `start_export` Tauri command.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartExportRequest {
+    /// Full metadata JSON content (in-memory edited state). Passed via
+    /// stdin to Python so sample mode (filePath=null) + unsaved edits
+    /// are supported.
+    pub metadata_json: serde_json::Value,
+    pub output_dir: String,
+    pub codec: String, // "copy" | "h264"
+    pub name_pattern: String,
+    pub excluded_indexes: Vec<u32>,
+}
+
+/// #893 -- Request payload for the `start_minimap` Tauri command.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartMinimapRequest {
+    pub metadata_path: String,
+    pub region: String,
+    pub output_dir: String,
+    pub name_pattern: String,
+    #[serde(default)]
+    pub excluded_indexes: Vec<u32>,
+    #[serde(default)]
+    pub expected_mtime_ms: Option<u64>,
+    /// #893 R2 (Codex HIGH): explicit overwrite intent flag.
+    /// When `true` (post-ConflictModal path), the CAS guard is bypassed
+    /// deliberately. When `false` (default), an absent `expected_mtime_ms`
+    /// is a caller bug / version skew and the guard rejects it fail-closed.
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+/// #893 -- Pixel region for a minimap crop proposal.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RegionPx {
+    pub x: i64,
+    pub y: i64,
+    pub w: i64,
+    pub h: i64,
+}
+
+/// #893 -- Single proposal returned by `detect_minimap_regions`.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MinimapProposal {
+    pub match_index: u32,
+    pub region: Option<RegionPx>,
+    pub confidence: f64,
+    pub scattered: bool,
+}
+
+/// #893 -- Request payload for `detect_minimap_regions`.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectMinimapRequest {
+    pub metadata_path: String,
+    #[serde(default)]
+    pub excluded_indexes: Vec<u32>,
+}
+
+/// #893 -- Parse a single stdout line from the CLI proposal mode.
+/// Returns `Some(MinimapProposal)` only when `type == "proposal"`.
+fn parse_proposal_line(line: &str) -> Option<MinimapProposal> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("type")?.as_str()? != "proposal" {
+        return None;
+    }
+    let region = match v.get("region") {
+        Some(r) if r.is_object() => Some(RegionPx {
+            x: r.get("x")?.as_i64()?,
+            y: r.get("y")?.as_i64()?,
+            w: r.get("w")?.as_i64()?,
+            h: r.get("h")?.as_i64()?,
+        }),
+        _ => None,
+    };
+    Some(MinimapProposal {
+        match_index: v.get("match_index")?.as_u64()? as u32,
+        region,
+        confidence: v.get("confidence").and_then(|c| c.as_f64()).unwrap_or(0.0),
+        scattered: v.get("scattered").and_then(|s| s.as_bool()).unwrap_or(false),
+    })
+}
+
+/// #893 R2 (Codex HIGH): the minimap CROP write-back must never run unguarded
+/// by accident. Require an expected mtime UNLESS the caller explicitly opted
+/// into overwrite (the post-ConflictModal path). A None mtime without overwrite
+/// is a caller bug / version skew, not a deliberate overwrite -> fail closed.
+fn minimap_write_guard(req: &StartMinimapRequest) -> Result<(), AppError> {
+    if !req.overwrite && req.expected_mtime_ms.is_none() {
+        return Err(AppError::new(
+            "state.mtime_required",
+            "minimap crop requires an expected mtime unless overwrite is set (refusing an unguarded write-back)",
+        )
+        .with_default_hint());
+    }
+    Ok(())
+}
+
+/// #893 -- Build the positional + option argv for `allaganeye minimap`.
+/// Factored out for unit-testability (mirrors the export argv-builder pattern).
+fn build_minimap_argv(req: &StartMinimapRequest) -> Vec<String> {
+    let mut argv = vec![
+        "minimap".to_string(),
+        req.metadata_path.clone(),
+        "--json".to_string(),
+        "--region".to_string(),
+        req.region.clone(),
+        "--output-dir".to_string(),
+        req.output_dir.clone(),
+        "--name-pattern".to_string(),
+        req.name_pattern.clone(),
+    ];
+    // #893 R2: only pass --expected-mtime when NOT overwriting. When overwrite=true,
+    // omitting the flag tells the Python CLI to skip its CAS check (deliberate
+    // overwrite). Combined with minimap_write_guard, when !overwrite the mtime is
+    // always Some (guard rejected None), so --expected-mtime is always emitted.
+    if !req.overwrite {
+        if let Some(m) = req.expected_mtime_ms {
+            argv.push("--expected-mtime".to_string());
+            argv.push(m.to_string());
+        }
+    }
+    if !req.excluded_indexes.is_empty() {
+        let joined = req
+            .excluded_indexes
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        argv.push("--exclude".to_string());
+        argv.push(joined);
+    }
+    argv
+}
+
+/// #761 -- Aggregate returned to frontend after Python exits.
+#[derive(Debug, serde::Serialize)]
+pub struct ExportSummary {
+    pub success: u32,
+    pub failure: u32,
+    pub skipped: u32,
+    pub cancelled: bool,
+}
+
+#[tauri::command]
+async fn start_export(
+    app: tauri::AppHandle,
+    req: StartExportRequest,
+) -> Result<ExportSummary, AppError> {
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+    for arg in &cmd_spec.prefix_args {
+        cmd.arg(arg);
+    }
+    let exclude_arg = req
+        .excluded_indexes
+        .iter()
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    cmd.arg("export")
+        .arg("--stdin").arg("--json")
+        .arg("--output-dir").arg(&req.output_dir)
+        .arg("--codec").arg(&req.codec)
+        .arg("--name-pattern").arg(&req.name_pattern);
+    if !exclude_arg.is_empty() {
+        cmd.arg("--exclude").arg(&exclude_arg);
+    }
+    if let Some(cwd) = &cmd_spec.cwd {
+        cmd.current_dir(cwd);
+    }
+    cmd.env("PYTHONIOENCODING", "utf-8:replace")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    process_util::apply_no_window(&mut cmd);
+
+    let mut child = cmd.spawn().map_err(|e| {
+        AppError::new("subprocess.spawn_failed", format!("start_export spawn: {}", e))
+            .with_default_hint()
+    })?;
+
+    // Write metadata JSON to stdin, then close
+    {
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            AppError::new("subprocess.stdin_unavailable", "stdin missing on spawn")
+                .with_default_hint()
+        })?;
+        use tokio::io::AsyncWriteExt;
+        let serialized = serde_json::to_vec(&req.metadata_json).map_err(|e| {
+            AppError::new("subprocess.serialize_failed", format!("metadata serialize: {}", e))
+                .with_default_hint()
+        })?;
+        stdin.write_all(&serialized).await.map_err(|e| {
+            AppError::new(
+                "subprocess.stdin_write_failed",
+                format!("metadata stdin write: {}", e),
+            )
+            .with_default_hint()
+        })?;
+        // stdin dropped here -> EOF to Python
+    }
+
+    // #837 (P2-16) -- take stdout/stderr from the child BEFORE tracking. The old
+    // code took stdout *after* track_child by locking the tracker map and
+    // unwrapping `get_mut(&tracked_id)`, which panicked if a concurrent
+    // kill_tracked_processes drained the entry between track and the lock (a
+    // normal cancel surfaced as an "internal error"). Taking the pipes up front
+    // removes the post-track lookup entirely (mirrors start_detect).
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // #837 (P2-15) -- drain stderr into a bounded tail in parallel so a chatty
+    // child can't fill the OS pipe and block (export hang), and a crash's
+    // traceback survives for the error message. start_export previously piped
+    // stderr but never read it (asymmetric with start_detect).
+    let stderr_handle = stderr.map(|stderr| {
+        // #837 -- drain in fixed-size chunks (not newline-delimited) so the tail
+        // stays bounded even for newline-free / CR-only child output (codex review).
+        tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await })
+    });
+
+    // Track via PROCESS_TRACKER. Export spawns a single Python process
+    // (which itself spawns N ffmpeg children). Use Job Object on Windows
+    // (same as start_detect) so cancelling export reliably reaps all
+    // ffmpeg descendants. Failure to create/assign the Job is downgraded
+    // to a warning (export proceeds without tree-kill protection).
+    #[cfg(windows)]
+    let job: Option<process_util::job_object::ProcessJob> = {
+        match process_util::job_object::ProcessJob::new() {
+            Ok(j) => {
+                if let Some(raw) = child.raw_handle() {
+                    if let Err(e) = j.assign(raw) {
+                        eprintln!(
+                            "warning: AssignProcessToJobObject failed: {} \
+                             (export descendants may be orphaned on cancel)",
+                            e
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "warning: child.raw_handle() returned None for export \
+                         spawn (export descendants may be orphaned on cancel)"
+                    );
+                }
+                Some(j)
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: CreateJobObject failed: {} \
+                     (export descendants may be orphaned on cancel)",
+                    e
+                );
+                None
+            }
+        }
+    };
+    let tracked = TrackedChild {
+        child,
+        #[cfg(windows)]
+        job,
+    };
+    let tracked_id = track_child(tracked).await;
+
+    let mut summary_capture: Option<ExportSummary> = None;
+    if let Some(stdout) = stdout {
+        // #761 / #656 -- defensive byte-level read with lossy UTF-8 decode
+        // to mirror start_detect's pattern. PYTHONIOENCODING=utf-8:replace
+        // (above) is the primary guarantee; this defensive layer catches the
+        // case where the env var fails to apply (e.g. exotic Python launcher).
+        let mut reader = BufReader::new(stdout);
+        let mut line_buf: Vec<u8> = Vec::with_capacity(1024);
+
+        loop {
+            line_buf.clear();
+            match reader.read_until(b'\n', &mut line_buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    while matches!(line_buf.last(), Some(b'\n') | Some(b'\r')) {
+                        line_buf.pop();
+                    }
+                    let line = String::from_utf8_lossy(&line_buf);
+                    match parse_wire_event(&line) {
+                        Some(WireEvent::Progress { match_index, percent, stage }) => {
+                            let _ = app.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent,
+                                    stage,
+                                    message: None,
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Fallback { match_index, fallback_from, fallback_to, message }) => {
+                            let _ = app.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 0.0,
+                                    stage: "fallback".to_string(),
+                                    message: Some(message),
+                                    fallback_from: Some(format!("{} -> {}", fallback_from, fallback_to)),
+                                },
+                            );
+                        }
+                        Some(WireEvent::Result { match_index, .. }) => {
+                            let _ = app.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 100.0,
+                                    stage: "done".to_string(),
+                                    message: None,
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Error { match_index, error_kind: _, error_message, error_hint }) => {
+                            let _ = app.emit(
+                                "export-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 0.0,
+                                    stage: "error".to_string(),
+                                    message: Some(if let Some(hint) = error_hint {
+                                        format!("{} ({})", error_message, hint)
+                                    } else {
+                                        error_message
+                                    }),
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Summary { success, failure, skipped, cancelled }) => {
+                            summary_capture = Some(ExportSummary { success, failure, skipped, cancelled });
+                        }
+                        Some(WireEvent::Unknown) | None => {
+                            // forward-compat: ignore unknown / non-JSON lines
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
+    let mut child = match untrack_child(tracked_id).await {
+        Some(c) => c,
+        None => {
+            return Ok(ExportSummary {
+                success: 0,
+                failure: 0,
+                skipped: 0,
+                cancelled: true,
+            });
+        }
+    };
+    let status = child.wait().await.map_err(|e| {
+        AppError::new("subprocess.wait_failed", format!("python subprocess wait: {}", e))
+            .with_default_hint()
+    })?;
+
+    // #837 (P2-15) -- join the stderr drain and keep the bounded tail for the
+    // error path below. On the normal-exit and error paths this reaps the task.
+    // On the cancel path (untrack_child returned None, early return above) the
+    // JoinHandle was dropped; the task then terminates on its own when the
+    // killed child closes its stderr pipe (detached, not awaited -- same as
+    // start_detect's cancel early-return).
+    let stderr_tail = match stderr_handle {
+        Some(h) => h.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+
+    if let Some(summary) = summary_capture {
+        return Ok(summary);
+    }
+
+    // summary_capture is None — Python exited without emitting a summary line.
+    // In practice, Python's export_matches always emits a summary line via
+    // WireWriter even for empty queues (see allaganeye/commands/export.py
+    // where summary is emitted in --json mode regardless of filtered list size).
+    // This fallback path is defensive against:
+    // - Python crash before reaching the summary emit
+    // - stdout pipe broken / buffer not flushed (uncommon)
+    // - extreme races (cancellation between last result and summary emit)
+    if status.success() {
+        // Exit 0 + no summary = Python normal exit with no output (unlikely but defensive).
+        // Treat as zero-work success, NOT cancelled (avoids false CANCEL_CONFIRMED on
+        // empty-include / all-excluded scenarios).
+        eprintln!(
+            "[start_export] WARNING: Python subprocess exited cleanly without summary line; \
+             returning zero-work success. Inspect Python stdout flushing if this recurs."
+        );
+        return Ok(ExportSummary {
+            success: 0,
+            failure: 0,
+            skipped: 0,
+            cancelled: false,
+        });
+    }
+
+    // Non-zero exit + no summary = Python crashed. Surface the stderr tail
+    // (#837 / P2-15) so the GUI shows the traceback instead of just a status code.
+    let tail = String::from_utf8_lossy(&stderr_tail).trim().to_string();
+    let detail = if tail.is_empty() {
+        format!(
+            "python export subprocess exited unexpectedly (status: {:?}) without emitting summary",
+            status.code()
+        )
+    } else {
+        format!(
+            "python export subprocess exited unexpectedly (status: {:?}) without emitting summary: {}",
+            status.code(),
+            tail
+        )
+    };
+    Err(AppError::new("subprocess.exit_failed", detail).with_default_hint())
+}
+
+/// #893 -- Launch `allaganeye minimap <path> --json …` as a child process and
+/// stream `minimap-progress` events to the frontend until the process exits.
+/// Metadata is passed by path (not stdin), so the command works with on-disk
+/// metadata.json without loading the full JSON into Rust memory.
+/// CLI exit 6 (CAS mtime conflict) is mapped to `AppError("state.mtime_conflict")`
+/// so the frontend can reuse `ConflictModal` (#514 pattern).
+#[tauri::command]
+async fn start_minimap(
+    app: tauri::AppHandle,
+    req: StartMinimapRequest,
+) -> Result<ExportSummary, AppError> {
+    // #893 R2 (Codex HIGH): guard FIRST — no subprocess is ever spawned for an
+    // unguarded write-back. Must be before resolve_allaganeye_command / any spawn.
+    minimap_write_guard(&req)?;
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+    for arg in &cmd_spec.prefix_args {
+        cmd.arg(arg);
+    }
+    for a in build_minimap_argv(&req) {
+        cmd.arg(a);
+    }
+    if let Some(cwd) = &cmd_spec.cwd {
+        cmd.current_dir(cwd);
+    }
+    cmd.env("PYTHONIOENCODING", "utf-8:replace")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    process_util::apply_no_window(&mut cmd);
+
+    let mut child = cmd.spawn().map_err(|e| {
+        AppError::new("subprocess.spawn_failed", format!("start_minimap spawn: {}", e))
+            .with_default_hint()
+    })?;
+
+    // #837 (P2-16) -- take stdout/stderr from the child BEFORE tracking. The old
+    // code took stdout *after* track_child by locking the tracker map and
+    // unwrapping `get_mut(&tracked_id)`, which panicked if a concurrent
+    // kill_tracked_processes drained the entry between track and the lock (a
+    // normal cancel surfaced as an "internal error"). Taking the pipes up front
+    // removes the post-track lookup entirely (mirrors start_detect / start_export).
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // #837 (P2-15) -- drain stderr into a bounded tail in parallel so a chatty
+    // child can't fill the OS pipe and block (minimap hang), and a crash's
+    // traceback survives for the error message.
+    let stderr_handle = stderr.map(|stderr| {
+        // drain in fixed-size chunks (not newline-delimited) so the tail
+        // stays bounded even for newline-free / CR-only child output.
+        tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await })
+    });
+
+    // Track via PROCESS_TRACKER. Minimap spawns a single Python process
+    // (which itself spawns N ffmpeg children). Use Job Object on Windows
+    // so cancelling minimap reliably reaps all ffmpeg descendants.
+    // Failure to create/assign the Job is downgraded to a warning
+    // (minimap proceeds without tree-kill protection).
+    #[cfg(windows)]
+    let job: Option<process_util::job_object::ProcessJob> = {
+        match process_util::job_object::ProcessJob::new() {
+            Ok(j) => {
+                if let Some(raw) = child.raw_handle() {
+                    if let Err(e) = j.assign(raw) {
+                        eprintln!(
+                            "warning: AssignProcessToJobObject failed: {} \
+                             (minimap descendants may be orphaned on cancel)",
+                            e
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "warning: child.raw_handle() returned None for minimap \
+                         spawn (minimap descendants may be orphaned on cancel)"
+                    );
+                }
+                Some(j)
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: CreateJobObject failed: {} \
+                     (minimap descendants may be orphaned on cancel)",
+                    e
+                );
+                None
+            }
+        }
+    };
+    let tracked = TrackedChild {
+        child,
+        #[cfg(windows)]
+        job,
+    };
+    let tracked_id = track_child(tracked).await;
+
+    let mut summary_capture: Option<ExportSummary> = None;
+    if let Some(stdout) = stdout {
+        // #761 / #656 -- defensive byte-level read with lossy UTF-8 decode
+        // to mirror start_detect / start_export pattern. PYTHONIOENCODING=utf-8:replace
+        // (above) is the primary guarantee; this defensive layer catches the
+        // case where the env var fails to apply (e.g. exotic Python launcher).
+        let mut reader = BufReader::new(stdout);
+        let mut line_buf: Vec<u8> = Vec::with_capacity(1024);
+
+        loop {
+            line_buf.clear();
+            match reader.read_until(b'\n', &mut line_buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    while matches!(line_buf.last(), Some(b'\n') | Some(b'\r')) {
+                        line_buf.pop();
+                    }
+                    let line = String::from_utf8_lossy(&line_buf);
+                    match parse_wire_event(&line) {
+                        Some(WireEvent::Progress { match_index, percent, stage }) => {
+                            let _ = app.emit(
+                                "minimap-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent,
+                                    stage,
+                                    message: None,
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Fallback { match_index, fallback_from, fallback_to, message }) => {
+                            let _ = app.emit(
+                                "minimap-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 0.0,
+                                    stage: "fallback".to_string(),
+                                    message: Some(message),
+                                    fallback_from: Some(format!("{} -> {}", fallback_from, fallback_to)),
+                                },
+                            );
+                        }
+                        Some(WireEvent::Result { match_index, .. }) => {
+                            let _ = app.emit(
+                                "minimap-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 100.0,
+                                    stage: "done".to_string(),
+                                    message: None,
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Error { match_index, error_kind: _, error_message, error_hint }) => {
+                            let _ = app.emit(
+                                "minimap-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 0.0,
+                                    stage: "error".to_string(),
+                                    message: Some(if let Some(hint) = error_hint {
+                                        format!("{} ({})", error_message, hint)
+                                    } else {
+                                        error_message
+                                    }),
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        Some(WireEvent::Summary { success, failure, skipped, cancelled }) => {
+                            summary_capture = Some(ExportSummary { success, failure, skipped, cancelled });
+                        }
+                        Some(WireEvent::Unknown) | None => {
+                            // forward-compat: ignore unknown / non-JSON lines
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
+    let mut child = match untrack_child(tracked_id).await {
+        Some(c) => c,
+        None => {
+            return Ok(ExportSummary {
+                success: 0,
+                failure: 0,
+                skipped: 0,
+                cancelled: true,
+            });
+        }
+    };
+    let status = child.wait().await.map_err(|e| {
+        AppError::new("subprocess.wait_failed", format!("python subprocess wait: {}", e))
+            .with_default_hint()
+    })?;
+
+    // #837 (P2-15) -- join the stderr drain and keep the bounded tail for the
+    // error path below. On the normal-exit and error paths this reaps the task.
+    // On the cancel path (untrack_child returned None, early return above) the
+    // JoinHandle was dropped; the task then terminates on its own when the
+    // killed child closes its stderr pipe (detached, not awaited).
+    let stderr_tail = match stderr_handle {
+        Some(h) => h.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+
+    // #893 -- CAS conflict from the CLI (exit 6) maps to the #514 conflict
+    // AppError the apply() path uses, so the GUI reuses ConflictModal. A
+    // conflict emits no summary line; do NOT treat any summary as success.
+    if status.code() == Some(6) {
+        return Err(AppError::new(
+            "state.mtime_conflict",
+            "conflict: metadata.json was modified externally during minimap write",
+        )
+        .with_default_hint());
+    }
+
+    if let Some(summary) = summary_capture {
+        return Ok(summary);
+    }
+
+    // summary_capture is None — Python exited without emitting a summary line.
+    // This fallback path is defensive against:
+    // - Python crash before reaching the summary emit
+    // - stdout pipe broken / buffer not flushed (uncommon)
+    // - extreme races (cancellation between last result and summary emit)
+    if status.success() {
+        // Exit 0 + no summary = Python normal exit with no output (unlikely but defensive).
+        // Treat as zero-work success, NOT cancelled.
+        eprintln!(
+            "[start_minimap] WARNING: Python subprocess exited cleanly without summary line; \
+             returning zero-work success. Inspect Python stdout flushing if this recurs."
+        );
+        return Ok(ExportSummary {
+            success: 0,
+            failure: 0,
+            skipped: 0,
+            cancelled: false,
+        });
+    }
+
+    // Non-zero exit + no summary = Python crashed. Surface the stderr tail
+    // so the GUI shows the traceback instead of just a status code.
+    let tail = String::from_utf8_lossy(&stderr_tail).trim().to_string();
+    let detail = if tail.is_empty() {
+        format!(
+            "python minimap subprocess exited unexpectedly (status: {:?}) without emitting summary",
+            status.code()
+        )
+    } else {
+        format!(
+            "python minimap subprocess exited unexpectedly (status: {:?}) without emitting summary: {}",
+            status.code(),
+            tail
+        )
+    };
+    Err(AppError::new("subprocess.exit_failed", detail).with_default_hint())
+}
+
+/// #893 -- Launch `allaganeye minimap <path> --json` in proposal mode (no
+/// `--region`) and aggregate the `{"type":"proposal",…}` stdout lines into a
+/// `Vec<MinimapProposal>`.  Read-only; does NOT emit progress events.
+/// Exit codes 0 and 4 are both treated as success (CLI exits 4 in proposal
+/// mode because it cannot auto-confirm without a region).
+#[tauri::command]
+async fn detect_minimap_regions(
+    app: tauri::AppHandle,
+    req: DetectMinimapRequest,
+) -> Result<Vec<MinimapProposal>, AppError> {
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+    for arg in &cmd_spec.prefix_args {
+        cmd.arg(arg);
+    }
+    cmd.arg("minimap").arg(&req.metadata_path).arg("--json");
+    if !req.excluded_indexes.is_empty() {
+        let joined = req
+            .excluded_indexes
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        cmd.arg("--exclude").arg(joined);
+    }
+    if let Some(cwd) = &cmd_spec.cwd {
+        cmd.current_dir(cwd);
+    }
+    cmd.env("PYTHONIOENCODING", "utf-8:replace")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    process_util::apply_no_window(&mut cmd);
+
+    let mut child = cmd.spawn().map_err(|e| {
+        AppError::new(
+            "subprocess.spawn_failed",
+            format!("detect_minimap_regions spawn: {}", e),
+        )
+        .with_default_hint()
+    })?;
+
+    // Take pipes before tracking (mirrors start_detect / start_minimap).
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // Drain stderr to a bounded tail so a chatty child can't stall the pipe.
+    let stderr_handle = stderr.map(|stderr| {
+        tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await })
+    });
+
+    // Proposal mode spawns ffmpeg `-ss` decode children per match → tree-kill.
+    #[cfg(windows)]
+    let job: Option<process_util::job_object::ProcessJob> = {
+        match process_util::job_object::ProcessJob::new() {
+            Ok(j) => {
+                if let Some(raw) = child.raw_handle() {
+                    if let Err(e) = j.assign(raw) {
+                        eprintln!(
+                            "warning: AssignProcessToJobObject failed: {} \
+                             (detect_minimap_regions descendants may be orphaned on cancel)",
+                            e
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "warning: child.raw_handle() returned None for detect_minimap_regions \
+                         (descendants may be orphaned on cancel)"
+                    );
+                }
+                Some(j)
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: CreateJobObject failed: {} \
+                     (detect_minimap_regions descendants may be orphaned on cancel)",
+                    e
+                );
+                None
+            }
+        }
+    };
+    let tracked = TrackedChild {
+        child,
+        #[cfg(windows)]
+        job,
+    };
+    let tracked_id = track_child(tracked).await;
+
+    let mut proposals: Vec<MinimapProposal> = Vec::new();
+    if let Some(stdout) = stdout {
+        let mut reader = BufReader::new(stdout);
+        let mut line_buf: Vec<u8> = Vec::with_capacity(1024);
+        loop {
+            line_buf.clear();
+            match reader.read_until(b'\n', &mut line_buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    while matches!(line_buf.last(), Some(b'\n') | Some(b'\r')) {
+                        line_buf.pop();
+                    }
+                    let line = String::from_utf8_lossy(&line_buf);
+                    if let Some(p) = parse_proposal_line(&line) {
+                        proposals.push(p);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
+    let mut child = match untrack_child(tracked_id).await {
+        Some(c) => c,
+        None => {
+            return Err(
+                AppError::new("subprocess.cancelled", "minimap detect cancelled")
+                    .with_default_hint(),
+            );
+        }
+    };
+    let status = child.wait().await.map_err(|e| {
+        AppError::new(
+            "subprocess.wait_failed",
+            format!("detect_minimap_regions wait: {}", e),
+        )
+        .with_default_hint()
+    })?;
+
+    let stderr_tail = match stderr_handle {
+        Some(h) => h.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+
+    // Exit 4 = CLI proposal-mode normal exit (cannot auto-confirm without --region).
+    // Exit 0 = also success (crop mode). Anything else is an error.
+    //
+    // Why exit 4 is unambiguously safe to treat as success (#893 Round 1 F4):
+    // resolve_match_regions (Python areamap.py) can raise a bare ImportError
+    // (opencv missing -> propagates uncaught through the proposal-mode block,
+    // which catches only AllaganEyeError -> CLI exit 1) or VideoProcessingError
+    // (an AllaganEyeError -> exit 3). Neither is exit 4. Exit 4 is emitted solely
+    // by the proposal-mode control flow in minimap.py AFTER resolve_match_regions
+    // returns, so a proposal-mode exit 4 means proposals produced (possibly zero),
+    // no crash. Any non-{0,4} exit is treated as an error below.
+    let code = status.code();
+    if code == Some(0) || code == Some(4) {
+        return Ok(proposals);
+    }
+
+    let tail = String::from_utf8_lossy(&stderr_tail).trim().to_string();
+    let detail = if tail.is_empty() {
+        format!(
+            "python minimap subprocess exited unexpectedly (status: {:?})",
+            code
+        )
+    } else {
+        format!(
+            "python minimap subprocess exited unexpectedly (status: {:?}): {}",
+            code, tail
+        )
+    };
+    Err(AppError::new("subprocess.exit_failed", detail).with_default_hint())
+}
+
 pub fn run() {
     // #614 -- Rotate stale panic logs (>7 days) and detect unclean shutdown
     // from the previous session, BEFORE the Tauri builder runs so the
@@ -3301,6 +3986,10 @@ pub fn run() {
     // arguments, so we build the handler list twice and pick at compile time.
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        enumerate_h264_encoders,
+        start_export,
+        start_minimap,
+        detect_minimap_regions,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -3316,8 +4005,6 @@ pub fn run() {
         is_process_running,
         kill_tracked_processes,
         force_exit_app,
-        export_match,
-        select_h264_encoder_for_export,
         open_folder_in_explorer,
         start_detect,
         read_recent,
@@ -3330,6 +4017,10 @@ pub fn run() {
     ]);
     #[cfg(not(debug_assertions))]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        enumerate_h264_encoders,
+        start_export,
+        start_minimap,
+        detect_minimap_regions,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -3345,8 +4036,6 @@ pub fn run() {
         is_process_running,
         kill_tracked_processes,
         force_exit_app,
-        export_match,
-        select_h264_encoder_for_export,
         open_folder_in_explorer,
         start_detect,
         read_recent,
@@ -3368,6 +4057,196 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use tempfile::TempDir;
+
+    /// #814 -- a fully valid metadata payload satisfying
+    /// `validate_metadata_for_write`. Tests start from this and tweak one field
+    /// to exercise a specific concern (boundary / mtime / backup).
+    fn valid_metadata_payload() -> Value {
+        json!({
+            "source": "C:/videos/test.mkv",
+            "source_duration": 600.0,
+            "source_duration_display": "10:00",
+            "detected_at": "2026-04-27T00:00:00Z",
+            "detection_params": {
+                "sample_interval": 2.0,
+                "blackout_threshold": 15.0,
+                "min_match_duration": 300.0,
+                "min_blackout_duration": 3.0,
+                "no_audio": false,
+                "use_gpu": null,
+                "workers": null
+            },
+            "matches": [{
+                "index": 1,
+                "start_time": 0.0,
+                "end_time": 100.0,
+                "start_display": "00:00",
+                "end_display": "01:40",
+                "duration": 100.0,
+                "duration_display": "1m40s",
+                "type": "fl_match",
+                "output_file": "match_001.mp4"
+            }],
+            "gaps": []
+        })
+    }
+
+    #[test]
+    fn write_validation_accepts_valid_capture_regions() {
+        let mut p = valid_metadata_payload();
+        p["capture_regions"] = json!({
+            "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": "full_frame"},
+            "segments": [{"time_range": [0.0, 100.0], "region": {"x": 0.1, "y": 0.1, "w": 0.5, "h": 0.5, "confidence": 0.9, "source": "scorebar"}}],
+            "fallback_reason": null
+        });
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_rejects_capture_region_coord_out_of_range() {
+        let mut p = valid_metadata_payload();
+        p["capture_regions"] = json!({
+            "coarse": {"x": 1.5, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": "full_frame"},
+            "segments": [],
+            "fallback_reason": null
+        });
+        let err = validate_metadata_for_write(&p).unwrap_err();
+        assert_eq!(err.code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_rejects_capture_region_empty_source() {
+        let mut p = valid_metadata_payload();
+        p["capture_regions"] = json!({
+            "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": ""},
+            "segments": [],
+            "fallback_reason": null
+        });
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_rejects_segment_time_range_wrong_len() {
+        let mut p = valid_metadata_payload();
+        p["capture_regions"] = json!({
+            "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": "full_frame"},
+            "segments": [{"time_range": [0.0], "region": {"x": 0.1, "y": 0.1, "w": 0.5, "h": 0.5, "confidence": 0.9, "source": "scorebar"}}],
+            "fallback_reason": null
+        });
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_accepts_valid_minimap_regions() {
+        let mut p = valid_metadata_payload();
+        p["minimap_regions"] = json!([
+            {"match_index": 1, "region": {"x": 0.8, "y": 0.8, "w": 0.15, "h": 0.15, "confidence": 1.0, "source": "user"}},
+            {"match_index": 2.0, "region": {"x": 0.8, "y": 0.8, "w": 0.15, "h": 0.15, "confidence": 1.0, "source": "user"}}
+        ]);
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_rejects_minimap_match_index_below_one() {
+        let mut p = valid_metadata_payload();
+        p["minimap_regions"] = json!([
+            {"match_index": 0, "region": {"x": 0.8, "y": 0.8, "w": 0.15, "h": 0.15, "confidence": 1.0, "source": "user"}}
+        ]);
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_capture_regions_absent_is_ok() {
+        let p = valid_metadata_payload();
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_rejects_capture_regions_missing_fallback_reason() {
+        // Mirrors zod: fallback_reason is a REQUIRED (nullable) key; absent must
+        // reject so we never persist a blob GUI zod would refuse to reload (#879).
+        let mut p = valid_metadata_payload();
+        p["capture_regions"] = json!({
+            "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": "full_frame"},
+            "segments": []
+        });
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_rejects_minimap_match_index_non_integer() {
+        // match_index mirrors z.number().int(): 1.5 must reject (fract != 0), #879.
+        let mut p = valid_metadata_payload();
+        p["minimap_regions"] = json!([
+            {"match_index": 1.5, "region": {"x": 0.8, "y": 0.8, "w": 0.15, "h": 0.15, "confidence": 1.0, "source": "user"}}
+        ]);
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_accepts_valid_system_info() {
+        let mut p = valid_metadata_payload();
+        p["system_info"] = json!({
+            "gpu_vendors_available": ["nvidia"],
+            "gpu_vendor_used": "nvidia",
+            "vendor_preference": ["nvidia", "amd", "intel"],
+            "gpu": ["NVIDIA RTX 5090 (32GB VRAM)"]
+        });
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_accepts_system_info_null_vendor_used_no_gpu() {
+        let mut p = valid_metadata_payload();
+        p["system_info"] = json!({
+            "gpu_vendors_available": [],
+            "gpu_vendor_used": null,
+            "vendor_preference": ["nvidia"]
+        });
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_rejects_system_info_nonstring_vendor() {
+        let mut p = valid_metadata_payload();
+        p["system_info"] = json!({
+            "gpu_vendors_available": [1],
+            "gpu_vendor_used": null,
+            "vendor_preference": []
+        });
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_rejects_system_info_missing_vendor_used_key() {
+        let mut p = valid_metadata_payload();
+        p["system_info"] = json!({
+            "gpu_vendors_available": [],
+            "vendor_preference": []
+        });
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_accepts_valid_brightness_samples() {
+        let mut p = valid_metadata_payload();
+        p["brightness_samples"] = json!({"interval_s": 2.0, "values": [0.0, 128.0, 255.0]});
+        assert!(validate_metadata_for_write(&p).is_ok());
+    }
+
+    #[test]
+    fn write_validation_rejects_brightness_samples_nonpositive_interval() {
+        let mut p = valid_metadata_payload();
+        p["brightness_samples"] = json!({"interval_s": 0.0, "values": [1.0]});
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
+
+    #[test]
+    fn write_validation_rejects_brightness_samples_value_out_of_range() {
+        let mut p = valid_metadata_payload();
+        p["brightness_samples"] = json!({"interval_s": 2.0, "values": [300.0]});
+        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+    }
 
     #[test]
     fn atomic_write_creates_target() {
@@ -3393,15 +4272,150 @@ mod tests {
         assert_eq!(roundtrip, payload);
     }
 
+    // #814 -- write-boundary guard: end_time must be strictly > start_time so
+    // a boundary the zod schema would reject on reload never reaches disk.
+    #[test]
+    fn apply_changes_rejects_end_before_start() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["matches"][0]["start_time"] = json!(900.0);
+        p["matches"][0]["end_time"] = json!(100.0);
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        // nothing is written when the guard rejects
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_zero_duration_boundary() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["matches"][0]["start_time"] = json!(500.0);
+        p["matches"][0]["end_time"] = json!(500.0);
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_accepts_valid_boundaries() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let p = valid_metadata_payload();
+        apply_changes_sync(&meta, &p, None).expect("valid boundaries accepted");
+        assert!(meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_match_missing_start_time() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["matches"][0].as_object_mut().unwrap().remove("start_time");
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_match_missing_end_time() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["matches"][0].as_object_mut().unwrap().remove("end_time");
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_match_non_numeric_boundary() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["matches"][0]["start_time"] = json!("0");
+        p["matches"][0]["end_time"] = json!("100");
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_inverted_gap() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["gaps"] = json!([{ "start_time": 200.0, "end_time": 100.0 }]);
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "validation.boundary_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_accepts_zero_duration_gap() {
+        // GapSchema is lenient (end >= start); a zero-length gap is valid.
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p["gaps"] = json!([{ "start_time": 100.0, "end_time": 100.0 }]);
+        apply_changes_sync(&meta, &p, None).expect("zero-duration gap accepted");
+        assert!(meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_missing_matches_array() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p.as_object_mut().unwrap().remove("matches");
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "parse.schema_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_missing_gaps_array() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p.as_object_mut().unwrap().remove("gaps");
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "parse.schema_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_missing_required_top_level_field() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let mut p = valid_metadata_payload();
+        p.as_object_mut().unwrap().remove("source");
+        let err = apply_changes_sync(&meta, &p, None).unwrap_err();
+        assert_eq!(err.code, "parse.schema_invalid");
+        assert!(!meta.exists());
+    }
+
+    #[test]
+    fn apply_changes_rejects_non_object_payload() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let err = apply_changes_sync(&meta, &json!([1, 2, 3]), None).unwrap_err();
+        assert_eq!(err.code, "parse.schema_invalid");
+        assert!(!meta.exists());
+    }
+
     #[test]
     fn apply_changes_creates_backup_on_first_call() {
         let tmp = TempDir::new().unwrap();
         let meta = tmp.path().join("metadata.json");
         let backup = tmp.path().join("metadata.original.json");
-        let original = json!({"source": "a.mkv", "matches": [{"m": 1}]});
+        let original = valid_metadata_payload();
         fs::write(&meta, serde_json::to_string_pretty(&original).unwrap()).unwrap();
 
-        let edited = json!({"source": "a.mkv", "matches": [{"m": 1, "edited": true}]});
+        let mut edited = valid_metadata_payload();
+        edited["matches"][0]["end_time"] = json!(200.0);
         apply_changes_sync(&meta, &edited, None).unwrap();
 
         assert!(backup.exists());
@@ -3417,19 +4431,25 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let meta = tmp.path().join("metadata.json");
         let backup = tmp.path().join("metadata.original.json");
-        let original = json!({"version": "v1"});
+        let original = valid_metadata_payload();
         fs::write(&meta, serde_json::to_string_pretty(&original).unwrap()).unwrap();
 
-        apply_changes_sync(&meta, &json!({"version": "v2"}), None).unwrap();
-        apply_changes_sync(&meta, &json!({"version": "v3"}), None).unwrap();
-        apply_changes_sync(&meta, &json!({"version": "v4"}), None).unwrap();
+        let mut p2 = valid_metadata_payload();
+        p2["source_duration_display"] = json!("10:02");
+        let mut p3 = valid_metadata_payload();
+        p3["source_duration_display"] = json!("10:03");
+        let mut p4 = valid_metadata_payload();
+        p4["source_duration_display"] = json!("10:04");
+        apply_changes_sync(&meta, &p2, None).unwrap();
+        apply_changes_sync(&meta, &p3, None).unwrap();
+        apply_changes_sync(&meta, &p4, None).unwrap();
 
         // backup stays the very first snapshot
         let backup_value: Value =
             serde_json::from_str(&fs::read_to_string(&backup).unwrap()).unwrap();
         assert_eq!(backup_value, original);
         let current: Value = serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
-        assert_eq!(current, json!({"version": "v4"}));
+        assert_eq!(current, p4);
     }
 
     #[test]
@@ -3438,7 +4458,7 @@ mod tests {
         let meta = tmp.path().join("metadata.json");
         let backup = tmp.path().join("metadata.original.json");
         // No pre-existing metadata.json
-        apply_changes_sync(&meta, &json!({"first": true}), None).unwrap();
+        apply_changes_sync(&meta, &valid_metadata_payload(), None).unwrap();
         assert!(meta.exists());
         // No backup created because there was nothing to back up
         assert!(!backup.exists());
@@ -3869,6 +4889,42 @@ mod tests {
         assert!(err.message.contains("must be a JSON object"));
     }
 
+    // #834 (P2-19) -- strip_bom 純関数の単体。先頭 BOM のみ除去、それ以外は素通し。
+    #[test]
+    fn strip_bom_removes_leading_bom_only() {
+        assert_eq!(strip_bom("\u{FEFF}{}"), "{}");
+        assert_eq!(strip_bom("{}"), "{}");
+        assert_eq!(strip_bom("a\u{FEFF}b"), "a\u{FEFF}b");
+    }
+
+    // #834 (P2-19) -- UTF-8 BOM 付き metadata.json が load できる (audit P2-19)。
+    #[test]
+    fn load_metadata_accepts_utf8_bom() {
+        let tmp = TempDir::new().unwrap();
+        let meta = tmp.path().join("metadata.json");
+        let body = "\u{FEFF}{\"source\":\"a.mkv\",\"matches\":[]}";
+        std::fs::write(&meta, body.as_bytes()).unwrap();
+        let value = load_metadata_sync(&meta)
+            .expect("BOM-prefixed metadata.json should load");
+        assert_eq!(value.get("source").and_then(|v| v.as_str()), Some("a.mkv"));
+    }
+
+    // #834 (P2-21) -- thumbnail semaphore は process-global な 1 インスタンスで、
+    // 並列上限 4 が画面全体に効く (修正前は invoke ごとに別 Semaphore::new(4) で
+    // 4N 並列。audit P2-21)。本 test が suite 内で唯一 permit を取得する。
+    #[tokio::test]
+    async fn thumbnail_semaphore_caps_concurrency_at_4_globally() {
+        let a = thumbnail_semaphore() as *const Semaphore;
+        let b = thumbnail_semaphore() as *const Semaphore;
+        assert_eq!(a, b, "one process-global semaphore, not per-invoke");
+        let s = thumbnail_semaphore();
+        assert_eq!(s.available_permits(), 4);
+        let permits: Vec<_> = (0..4).map(|_| s.try_acquire().unwrap()).collect();
+        assert!(s.try_acquire().is_err(), "5th concurrent thumbnail must be capped");
+        drop(permits);
+        assert_eq!(s.available_permits(), 4);
+    }
+
     // #514 — mtime-based exclusive control for apply_changes.
 
     #[test]
@@ -3878,11 +4934,12 @@ mod tests {
         fs::write(&meta, r#"{"v":1}"#).unwrap();
         let current = file_mtime_ms(&meta).expect("mtime exists for newly written file");
 
-        apply_changes_sync(&meta, &json!({"v": 2}), Some(current)).unwrap();
+        let p = valid_metadata_payload();
+        apply_changes_sync(&meta, &p, Some(current)).unwrap();
 
         let after: Value =
             serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
-        assert_eq!(after, json!({"v": 2}));
+        assert_eq!(after, p);
     }
 
     #[test]
@@ -3894,7 +4951,7 @@ mod tests {
         // real-world file write, so the comparison is deterministic.
         let stale: u64 = 1;
 
-        let err = apply_changes_sync(&meta, &json!({"v": 2}), Some(stale)).unwrap_err();
+        let err = apply_changes_sync(&meta, &valid_metadata_payload(), Some(stale)).unwrap_err();
         assert!(err.message.starts_with("conflict:"), "unexpected error: {err}");
 
         // Conflict must not overwrite the file.
@@ -3910,10 +4967,11 @@ mod tests {
         fs::write(&meta, r#"{"v":1}"#).unwrap();
 
         // None → check is bypassed even though the file already exists.
-        apply_changes_sync(&meta, &json!({"v": 2}), None).unwrap();
+        let p = valid_metadata_payload();
+        apply_changes_sync(&meta, &p, None).unwrap();
         let after: Value =
             serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
-        assert_eq!(after, json!({"v": 2}));
+        assert_eq!(after, p);
     }
 
     #[test]
@@ -3922,7 +4980,7 @@ mod tests {
         let meta = tmp.path().join("metadata.json");
         // First write: no existing file to conflict against, so expected_mtime
         // must not block the write.
-        apply_changes_sync(&meta, &json!({"first": true}), Some(12345)).unwrap();
+        apply_changes_sync(&meta, &valid_metadata_payload(), Some(12345)).unwrap();
         assert!(meta.exists());
     }
 
@@ -3968,7 +5026,7 @@ mod tests {
         );
 
         // apply_changes_sync with the stale initial mtime must refuse the write.
-        let err = apply_changes_sync(&meta, &json!({"v": 2}), Some(initial_mtime))
+        let err = apply_changes_sync(&meta, &valid_metadata_payload(), Some(initial_mtime))
             .unwrap_err();
         assert!(err.message.starts_with("conflict:"), "unexpected error: {err}");
 
@@ -3993,19 +5051,26 @@ mod tests {
         fs::write(&meta, r#"{"v":1}"#).unwrap();
         let m1 = file_mtime_ms(&meta).unwrap();
 
+        let mut p2 = valid_metadata_payload();
+        p2["source_duration_display"] = json!("10:02");
+        let mut p3 = valid_metadata_payload();
+        p3["source_duration_display"] = json!("10:03");
+        let mut p4 = valid_metadata_payload();
+        p4["source_duration_display"] = json!("10:04");
+
         sleep(Duration::from_millis(20));
-        apply_changes_sync(&meta, &json!({"v": 2}), Some(m1)).unwrap();
+        apply_changes_sync(&meta, &p2, Some(m1)).unwrap();
         let m2 = file_mtime_ms(&meta).unwrap();
         assert!(m2 > m1, "mtime must advance after apply ({m2} > {m1})");
 
         sleep(Duration::from_millis(20));
-        apply_changes_sync(&meta, &json!({"v": 3}), Some(m2)).unwrap();
+        apply_changes_sync(&meta, &p3, Some(m2)).unwrap();
         let m3 = file_mtime_ms(&meta).unwrap();
         assert!(m3 > m2, "mtime must advance again ({m3} > {m2})");
 
         // The original m1 is now stale — attempting to apply with it must fail
         // (regression guard: prevents accepting pre-first-apply handles).
-        let err = apply_changes_sync(&meta, &json!({"v": 4}), Some(m1)).unwrap_err();
+        let err = apply_changes_sync(&meta, &p4, Some(m1)).unwrap_err();
         assert!(err.message.starts_with("conflict:"), "unexpected error: {err}");
     }
 
@@ -4375,395 +5440,6 @@ mod tests {
         );
     }
 
-    /// #466 -- `copy` codec must emit `-c copy`, not `libx264`. The
-    /// `-avoid_negative_ts make_zero` flag prevents negative timestamp
-    /// errors common when seeking into a stream whose first packet after
-    /// the seek point has a non-zero PTS.
-    #[test]
-    fn ffmpeg_args_for_export_copy_uses_c_copy() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            10.0,
-            40.0,
-            Path::new("C:/out/match1.mp4"),
-            &ExportCodec::Copy,
-            H264Encoder::Libx264,
-        );
-        let joined = args.join(" ");
-        assert!(joined.contains("-c copy"), "args: {}", joined);
-        assert!(
-            joined.contains("-avoid_negative_ts make_zero"),
-            "args: {}",
-            joined
-        );
-        assert!(!joined.contains("libx264"), "args: {}", joined);
-    }
-
-    /// #466 -- `h264` codec must use libx264 with the documented crf/preset
-    /// tuning so the frontend's "high quality" toggle lands a consistent
-    /// encode. Audio must be copied (not re-encoded) to avoid silent loss
-    /// of quality.
-    #[test]
-    fn ffmpeg_args_for_export_h264_uses_libx264() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            0.0,
-            30.0,
-            Path::new("C:/out/match1.mp4"),
-            &ExportCodec::H264,
-            H264Encoder::Libx264,
-        );
-        let joined = args.join(" ");
-        assert!(joined.contains("-c:v libx264"), "args: {}", joined);
-        assert!(joined.contains("-crf 18"), "args: {}", joined);
-        assert!(joined.contains("-preset medium"), "args: {}", joined);
-        assert!(joined.contains("-c:a copy"), "args: {}", joined);
-    }
-
-    /// #466 -- ffmpeg's seek semantics differ dramatically depending on
-    /// whether `-ss` appears before or after `-i`. Before `-i`: fast
-    /// keyframe-based seek. After `-i`: slow decode-and-discard. We rely
-    /// on the fast path, so guard the ordering.
-    #[test]
-    fn ffmpeg_args_include_ss_before_input_for_keyframe_seek() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            15.5,
-            45.5,
-            Path::new("C:/out/match1.mp4"),
-            &ExportCodec::Copy,
-            H264Encoder::Libx264,
-        );
-        let ss_pos = args.iter().position(|a| a == "-ss").expect("-ss present");
-        let i_pos = args.iter().position(|a| a == "-i").expect("-i present");
-        assert!(
-            ss_pos < i_pos,
-            "-ss (at {}) must precede -i (at {}): {:?}",
-            ss_pos,
-            i_pos,
-            args
-        );
-    }
-
-    /// #466 -- argv must include a `-t <duration>` pair whose value equals
-    /// `end_seconds - start_seconds`. This is the cross-check that
-    /// `export_match` actually delivers the requested clip length, not
-    /// trailing footage from the source.
-    #[test]
-    fn ffmpeg_args_encode_duration_as_t_flag() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            10.0,
-            40.5,
-            Path::new("C:/out/match1.mp4"),
-            &ExportCodec::Copy,
-            H264Encoder::Libx264,
-        );
-        let t_pos = args.iter().position(|a| a == "-t").expect("-t present");
-        let duration = args.get(t_pos + 1).expect("value after -t");
-        let parsed: f64 = duration.parse().expect("parse duration");
-        assert!(
-            (parsed - 30.5).abs() < 1e-6,
-            "expected 30.5, got {} (all: {:?})",
-            parsed,
-            args
-        );
-    }
-
-    // -- #591 -- H264Encoder + select_h264_encoder + ffmpeg_args_for_export
-    // vendor 別 args の単体テスト群。
-
-    fn _vendor_strs(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| (*s).to_string()).collect()
-    }
-
-    fn _default_preference() -> Vec<String> {
-        _vendor_strs(&["nvidia", "amd", "intel"])
-    }
-
-    /// #591 -- NVIDIA があれば preference 順で最優先選択。
-    #[test]
-    fn select_h264_encoder_picks_nvenc_for_nvidia_first() {
-        let vendors = _vendor_strs(&["nvidia", "amd"]);
-        assert_eq!(
-            select_h264_encoder(&vendors, &_default_preference()),
-            H264Encoder::Nvenc
-        );
-    }
-
-    /// #591 -- Intel iGPU 単独環境では QSV を選ぶ。
-    #[test]
-    fn select_h264_encoder_picks_qsv_for_intel_only() {
-        let vendors = _vendor_strs(&["intel"]);
-        assert_eq!(
-            select_h264_encoder(&vendors, &_default_preference()),
-            H264Encoder::Qsv
-        );
-    }
-
-    /// #591 -- AMD のみなら AMF を選ぶ (Windows 限定だが pure 関数として
-    /// は OS 非依存に動作)。
-    #[test]
-    fn select_h264_encoder_picks_amf_for_amd_only() {
-        let vendors = _vendor_strs(&["amd"]);
-        assert_eq!(
-            select_h264_encoder(&vendors, &_default_preference()),
-            H264Encoder::Amf
-        );
-    }
-
-    /// #591 -- vendor 不在 (CPU only / 空 system_info) は Libx264 fallback。
-    #[test]
-    fn select_h264_encoder_falls_back_to_libx264_when_empty() {
-        let vendors: Vec<String> = vec![];
-        assert_eq!(
-            select_h264_encoder(&vendors, &_default_preference()),
-            H264Encoder::Libx264
-        );
-    }
-
-    /// #591 -- preference 順で選ぶ (vendors の出現順は無視される)。
-    #[test]
-    fn select_h264_encoder_respects_preference_order() {
-        let vendors = _vendor_strs(&["amd", "nvidia"]);
-        // preference = nvidia > amd > intel なので NVIDIA が先。
-        assert_eq!(
-            select_h264_encoder(&vendors, &_default_preference()),
-            H264Encoder::Nvenc
-        );
-    }
-
-    /// #591 -- 知らない vendor 名は無視されて libx264 へ。
-    #[test]
-    fn select_h264_encoder_ignores_unknown_vendors() {
-        let vendors = _vendor_strs(&["wgpu", "moltenvk"]);
-        assert_eq!(
-            select_h264_encoder(&vendors, &_default_preference()),
-            H264Encoder::Libx264
-        );
-    }
-
-    /// #591 -- NVENC 選択時の ffmpeg argv は h264_nvenc + -cq 19 + -preset p5。
-    #[test]
-    fn ffmpeg_args_for_export_h264_nvenc_uses_h264_nvenc() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            0.0,
-            30.0,
-            Path::new("C:/out/m.mp4"),
-            &ExportCodec::H264,
-            H264Encoder::Nvenc,
-        );
-        let joined = args.join(" ");
-        assert!(joined.contains("-c:v h264_nvenc"), "args: {}", joined);
-        assert!(joined.contains("-cq 19"), "args: {}", joined);
-        assert!(joined.contains("-preset p5"), "args: {}", joined);
-        assert!(joined.contains("-c:a copy"), "args: {}", joined);
-        assert!(!joined.contains("libx264"), "args: {}", joined);
-    }
-
-    /// #591 -- QSV 選択時は h264_qsv + -global_quality 20 + -look_ahead 1。
-    #[test]
-    fn ffmpeg_args_for_export_h264_qsv_uses_h264_qsv() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            0.0,
-            30.0,
-            Path::new("C:/out/m.mp4"),
-            &ExportCodec::H264,
-            H264Encoder::Qsv,
-        );
-        let joined = args.join(" ");
-        assert!(joined.contains("-c:v h264_qsv"), "args: {}", joined);
-        assert!(joined.contains("-global_quality 20"), "args: {}", joined);
-        assert!(joined.contains("-look_ahead 1"), "args: {}", joined);
-        assert!(joined.contains("-c:a copy"), "args: {}", joined);
-        assert!(!joined.contains("libx264"), "args: {}", joined);
-    }
-
-    /// #591 -- AMF 選択時は h264_amf + -rc cqp + -qp_i 19 + -qp_p 21。
-    #[test]
-    fn ffmpeg_args_for_export_h264_amf_uses_h264_amf() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            0.0,
-            30.0,
-            Path::new("C:/out/m.mp4"),
-            &ExportCodec::H264,
-            H264Encoder::Amf,
-        );
-        let joined = args.join(" ");
-        assert!(joined.contains("-c:v h264_amf"), "args: {}", joined);
-        assert!(joined.contains("-rc cqp"), "args: {}", joined);
-        assert!(joined.contains("-qp_i 19"), "args: {}", joined);
-        assert!(joined.contains("-qp_p 21"), "args: {}", joined);
-        assert!(joined.contains("-c:a copy"), "args: {}", joined);
-        assert!(!joined.contains("libx264"), "args: {}", joined);
-    }
-
-    /// #591 -- Copy codec では h264_encoder の値に関わらず -c copy 経路を取る。
-    /// h264_encoder=Nvenc を渡しても、ExportCodec::Copy なら NVENC は使われない。
-    #[test]
-    fn ffmpeg_args_for_export_copy_ignores_h264_encoder_value() {
-        let args = ffmpeg_args_for_export(
-            Path::new("C:/videos/in.mp4"),
-            0.0,
-            30.0,
-            Path::new("C:/out/m.mp4"),
-            &ExportCodec::Copy,
-            H264Encoder::Nvenc,
-        );
-        let joined = args.join(" ");
-        assert!(joined.contains("-c copy"), "args: {}", joined);
-        assert!(!joined.contains("h264_nvenc"), "args: {}", joined);
-        assert!(!joined.contains("-cq"), "args: {}", joined);
-    }
-
-    /// #591 -- H264Encoder::display_label は GUI sub label 用の固定文字列を返す。
-    #[test]
-    fn h264_encoder_display_labels() {
-        assert_eq!(H264Encoder::Libx264.display_label(), "libx264 (CPU)");
-        assert_eq!(H264Encoder::Nvenc.display_label(), "NVENC");
-        assert_eq!(H264Encoder::Qsv.display_label(), "QSV");
-        assert_eq!(H264Encoder::Amf.display_label(), "AMF");
-    }
-
-    /// #591 -- ffmpeg_codec_name は ffmpeg `-c:v` で使う識別子を返す。
-    #[test]
-    fn h264_encoder_ffmpeg_codec_names() {
-        assert_eq!(H264Encoder::Libx264.ffmpeg_codec_name(), "libx264");
-        assert_eq!(H264Encoder::Nvenc.ffmpeg_codec_name(), "h264_nvenc");
-        assert_eq!(H264Encoder::Qsv.ffmpeg_codec_name(), "h264_qsv");
-        assert_eq!(H264Encoder::Amf.ffmpeg_codec_name(), "h264_amf");
-    }
-
-    // -- #591 Phase 3 -- is_gpu_encoder_failure detector tests.
-
-    /// NVENC の代表的初期化エラー文字列を検出。
-    #[test]
-    fn is_gpu_encoder_failure_detects_nvenc_unavailable() {
-        let stderr = "[h264_nvenc @ 0x1234] No NVENC capable devices found\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-    }
-
-    /// nvEncodeAPI DLL がロードできないケース。
-    #[test]
-    fn is_gpu_encoder_failure_detects_nvenc_dll_missing() {
-        let stderr = "[h264_nvenc @ 0x1] Cannot load nvEncodeAPI.dll\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-    }
-
-    /// #604 実機検証: ffmpeg 8.1 BtbN LGPL を Intel iGPU only host で
-    /// h264_nvenc 強制起動 -> NVIDIA driver 不在で nvcuda.dll が見つからず
-    /// 失敗。pre-#604 の pattern (`No NVENC capable devices found` /
-    /// `Cannot load nvEncodeAPI` / `OpenEncodeSessionEx failed`) は 1 つも
-    /// hit せず libx264 retry が走らない bug があった (#596 QSV と同型)。
-    #[test]
-    fn is_gpu_encoder_failure_detects_nvenc_nvcuda_dll_missing() {
-        let stderr = "\
-[h264_nvenc @ 0x1] Cannot load nvcuda.dll\n\
-[vost#0:0/h264_nvenc @ 0x2] Could not open encoder before EOF\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-    }
-
-    /// Intel QSV の MFX session 初期化失敗 (ffmpeg 7.x 系ワード)。
-    #[test]
-    fn is_gpu_encoder_failure_detects_qsv_init_error() {
-        let stderr = "[h264_qsv] Error initializing an internal MFX session: -3\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
-    }
-
-    /// #591 PR review 実機検証: ffmpeg 8.1 の QSV failure stderr 実例
-    /// (RTX 5090 + AMD iGPU 環境で h264_qsv 強制起動 -> Intel iGPU 不在で
-    /// MFX session creation 失敗)。pre-fix の pattern では検出漏れし
-    /// libx264 retry が走らない bug があった。
-    #[test]
-    fn is_gpu_encoder_failure_detects_qsv_mfx_session_creation_error() {
-        let stderr = "\
-[h264_qsv @ 0x1] Error creating a MFX session: -9.\n\
-[h264_qsv @ 0x1] The current mfx implementation is not supported, try next mfx implementation.\n\
-[vost#0:0/h264_qsv @ 0x2] Could not open encoder before EOF\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
-    }
-
-    /// `Could not open encoder` は generic message なので、`h264_qsv`
-    /// context が無ければ Qsv の failure と扱わない (libx264 でこの
-    /// メッセージが出ても誤って GPU 失敗判定しないため)。
-    #[test]
-    fn is_gpu_encoder_failure_qsv_requires_h264_qsv_context_for_generic_open_error() {
-        let stderr_generic = "[some_codec] Could not open encoder before EOF\n";
-        assert!(!is_gpu_encoder_failure(stderr_generic, H264Encoder::Qsv));
-    }
-
-    /// AMD AMF runtime ロード失敗。
-    #[test]
-    fn is_gpu_encoder_failure_detects_amf_load_error() {
-        let stderr = "[h264_amf] AMF runtime not initialized\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Amf));
-    }
-
-    /// #604 実機検証: ffmpeg 8.1 BtbN LGPL を Intel iGPU only host で
-    /// h264_amf 強制起動 -> AMD driver 不在で amfrt64.dll が開けず失敗。
-    /// pre-#604 の pattern (`AMF runtime not initialized` / `DLL load
-    /// failed` / `Could not initialize AMFContext`) は 1 つも hit せず
-    /// libx264 retry が走らない bug があった (#596 QSV と同型)。
-    #[test]
-    fn is_gpu_encoder_failure_detects_amf_amfrt64_dll_missing() {
-        let stderr = "\
-[AMF @ 0x1] DLL amfrt64.dll failed to open\n\
-[h264_amf @ 0x2] Failed to create  hardware device context (AMF) : Unknown error occurred\n\
-[vost#0:0/h264_amf @ 0x3] Could not open encoder before EOF\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Amf));
-    }
-
-    /// libx264 失敗は GPU encoder 由来でないので false (encoder 切替で
-    /// 救えないため retry させない)。
-    #[test]
-    fn is_gpu_encoder_failure_returns_false_for_libx264() {
-        let stderr = "[libx264 @ 0x1] some error\n";
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Libx264));
-    }
-
-    /// 「ファイルが見つからない」のような GPU 関係ない失敗は false (誤って
-    /// libx264 retry すると 2 倍時間かかる)。
-    #[test]
-    fn is_gpu_encoder_failure_returns_false_for_unrelated_error() {
-        let stderr = "Error: No such file or directory\n";
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-    }
-
-    /// AMF 検出パターンが NVENC stderr に一致しないこと (cross-encoder
-    /// false-positive 防止)。
-    #[test]
-    fn is_gpu_encoder_failure_qsv_pattern_does_not_match_nvenc() {
-        let stderr = "[h264_qsv] Error initializing an internal MFX session\n";
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
-    }
-
-    /// #604 false-positive 防止: NVENC pattern (`Cannot load nvcuda.dll`)
-    /// が AMF / QSV stderr context では false を返すこと (retry 暴走防止)。
-    /// QSV の `Could not open encoder` generic message に対する
-    /// `is_gpu_encoder_failure_qsv_requires_h264_qsv_context_for_generic_open_error`
-    /// と同種の cross-encoder context test。
-    #[test]
-    fn is_gpu_encoder_failure_nvenc_nvcuda_pattern_does_not_match_other_encoders() {
-        let stderr = "[h264_nvenc @ 0x1] Cannot load nvcuda.dll\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Amf));
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
-    }
-
-    /// #604 false-positive 防止: AMF pattern (`DLL amfrt64.dll failed to open`)
-    /// が NVENC / QSV stderr context では false を返すこと (retry 暴走防止)。
-    #[test]
-    fn is_gpu_encoder_failure_amf_amfrt64_pattern_does_not_match_other_encoders() {
-        let stderr = "[AMF @ 0x1] DLL amfrt64.dll failed to open\n";
-        assert!(is_gpu_encoder_failure(stderr, H264Encoder::Amf));
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Nvenc));
-        assert!(!is_gpu_encoder_failure(stderr, H264Encoder::Qsv));
-    }
-
     /// ExportProgress::fallback_from が serde で正しく往復する。
     #[test]
     fn export_progress_fallback_from_serde_roundtrip() {
@@ -4794,54 +5470,6 @@ mod tests {
         assert!(!json.contains("message"));
     }
 
-    /// #466 -- a missing video path must fail validation before ffmpeg is
-    /// touched. The error message must contain "not found" so the frontend
-    /// can distinguish it from generic ffmpeg errors.
-    #[test]
-    fn export_match_rejects_missing_video_path() {
-        let tmp = TempDir::new().unwrap();
-        let missing = tmp.path().join("nope.mp4");
-        let err = validate_export_request(&missing, 0.0, 10.0).unwrap_err();
-        assert!(err.message.contains("not found"), "got: {}", err);
-    }
-
-    /// #466 -- `end <= start` must fail immediately (otherwise ffmpeg's
-    /// `-t` flag would receive 0 or negative and silently write an empty
-    /// file).
-    #[test]
-    fn export_match_rejects_end_le_start() {
-        let tmp = TempDir::new().unwrap();
-        let video = tmp.path().join("clip.mp4");
-        fs::write(&video, b"fake mp4").unwrap();
-        let err_equal = validate_export_request(&video, 10.0, 10.0).unwrap_err();
-        assert!(err_equal.message.contains("end_seconds"), "got: {}", err_equal);
-        let err_lt = validate_export_request(&video, 20.0, 10.0).unwrap_err();
-        assert!(err_lt.message.contains("end_seconds"), "got: {}", err_lt);
-    }
-
-    /// #466 -- negative start times are rejected. ffmpeg treats `-ss <0`
-    /// inconsistently across builds; better to refuse up front.
-    #[test]
-    fn export_match_rejects_negative_start() {
-        let tmp = TempDir::new().unwrap();
-        let video = tmp.path().join("clip.mp4");
-        fs::write(&video, b"fake mp4").unwrap();
-        let err = validate_export_request(&video, -1.0, 10.0).unwrap_err();
-        assert!(err.message.contains("start_seconds"), "got: {}", err);
-    }
-
-    /// #466 -- NaN / non-finite values are rejected (they would otherwise
-    /// propagate into ffmpeg argv as "NaN" and fail opaquely).
-    #[test]
-    fn export_match_rejects_non_finite_values() {
-        let tmp = TempDir::new().unwrap();
-        let video = tmp.path().join("clip.mp4");
-        fs::write(&video, b"fake mp4").unwrap();
-        let err_nan_start = validate_export_request(&video, f64::NAN, 10.0).unwrap_err();
-        assert!(err_nan_start.message.contains("start_seconds"), "got: {}", err_nan_start);
-        let err_inf_end = validate_export_request(&video, 0.0, f64::INFINITY).unwrap_err();
-        assert!(err_inf_end.message.contains("end_seconds"), "got: {}", err_inf_end);
-    }
 
     /// #466 review #4: 出力先親ディレクトリが存在しなければエラー。
     /// 以前の `create_dir_all` (silent mkdir) は廃止されたので、存在しない
@@ -4899,7 +5527,7 @@ mod tests {
     }
 
     /// #545 mystifying-ptolemy-d112b5 review (2026-04-25): track_child →
-    /// untrack_child の往復で正しく Some が返ること。`export_match` の
+    /// untrack_child の往復で正しく Some が返ること。`start_export` の
     /// happy-path cleanup の core ロジック。
     ///
     /// Windows 用 dummy プロセスとして `cmd /c rem` を spawn (即終了 no-op)、
@@ -4936,7 +5564,7 @@ mod tests {
 
     /// #545 mystifying-ptolemy-d112b5 review (2026-04-25): track_child のあと
     /// `kill_tracked_processes` が drain した場合、untrack_child は None を
-    /// 返す。`export_match` の cancel 検出 (`untrack` 結果が None なら
+    /// 返す。`start_export` の cancel 検出 (`untrack` 結果が None なら
     /// 既に kill された = 中断) のセマンティクス確認。
     #[tokio::test]
     async fn untrack_child_after_kill_tracked_returns_none() {
@@ -4961,16 +5589,6 @@ mod tests {
             recovered.is_none(),
             "untrack_child should return None after kill_tracked_processes drained the tracker"
         );
-    }
-
-    /// #466 -- happy path: real file, sane start/end, validator returns Ok.
-    #[test]
-    fn export_match_accepts_valid_request() {
-        let tmp = TempDir::new().unwrap();
-        let video = tmp.path().join("clip.mp4");
-        fs::write(&video, b"fake mp4").unwrap();
-        validate_export_request(&video, 0.0, 10.0).unwrap();
-        validate_export_request(&video, 5.5, 6.25).unwrap();
     }
 
     /// #466 -- `out_time_ms=` (actually microseconds per the ffmpeg
@@ -5023,6 +5641,156 @@ mod tests {
     fn tail_string_returns_whole_buffer_when_small() {
         let buf = b"  short message\n";
         assert_eq!(tail_string(buf, 2048), "short message");
+    }
+
+    // #837 (P2-15) -- bounded tail accumulator。max_tail*2 を超えたら末尾
+    // max_tail バイト程度まで切り詰める (start_export の stderr drain が
+    // 大量出力でも有界に保つことを pin。発火する側 = drain の cap を観測)。
+    #[test]
+    fn append_bounded_tail_caps_to_about_max() {
+        let mut tail: Vec<u8> = Vec::new();
+        for _ in 0..10 {
+            append_bounded_tail(&mut tail, &vec![b'x'; 1000], 2048);
+        }
+        assert!(tail.len() <= 4096, "tail must stay bounded, got {}", tail.len());
+        assert!(tail.len() >= 2048, "tail should retain trailing bytes, got {}", tail.len());
+    }
+
+    #[test]
+    fn append_bounded_tail_keeps_small_buffer_intact() {
+        let mut tail: Vec<u8> = Vec::new();
+        append_bounded_tail(&mut tail, b"short", 2048);
+        assert_eq!(tail, b"short");
+    }
+
+    // #837 codex review -- the stderr drain must bound memory for newline-free
+    // and CR-only (ffmpeg progress) streams, not just newline-delimited output.
+    #[tokio::test]
+    async fn drain_to_bounded_tail_bounds_newline_free_stream() {
+        let huge = vec![b'x'; 100_000]; // no '\n' anywhere
+        let tail = drain_to_bounded_tail(&huge[..], 2048).await;
+        assert!(tail.len() <= 4096, "tail must stay bounded, got {}", tail.len());
+        assert!(tail.len() >= 2048, "tail should retain trailing bytes, got {}", tail.len());
+        assert!(tail.iter().all(|&b| b == b'x'));
+    }
+
+    #[tokio::test]
+    async fn drain_to_bounded_tail_bounds_cr_only_progress() {
+        // ffmpeg-style '\r'-delimited progress, no '\n'
+        let mut data: Vec<u8> = Vec::new();
+        for i in 0..5000 {
+            data.extend_from_slice(format!("frame={i}\r").as_bytes());
+        }
+        let tail = drain_to_bounded_tail(&data[..], 2048).await;
+        assert!(tail.len() <= 4096, "tail must stay bounded, got {}", tail.len());
+        assert!(tail.ends_with(b"frame=4999\r"), "most recent progress retained");
+    }
+
+    // #838 anti-regression guard -- start_detect must delegate its stderr drain
+    // to the bounded helper `drain_to_bounded_tail` (same as start_export, #837),
+    // not re-introduce an inline `read_until`-based accumulator that only bounds
+    // after a whole line and so grows without limit on newline-free / CR-only
+    // streams. The drain runs inside a `#[tauri::command]` that spawns a real
+    // subprocess and is not unit-testable in isolation; the boundedness behavior
+    // itself is covered by `drain_to_bounded_tail_bounds_*` above. This guard pins
+    // the wiring and fires (RED) if the delegation is removed.
+    //
+    // codex #838 adversarial review (rounds 1-2): scope the assertion to the
+    // `let stderr_handle =` initializer LINE (code only -- any trailing `//`
+    // comment is stripped), not the whole start_detect body. A whole-body scan
+    // false-greens when the helper name appears in a comment/string while the
+    // stderr task regresses to an inline read_until drain (including via an
+    // aliased pipe such as `let p = stderr; BufReader::new(p)`, which dodges a
+    // `BufReader::new(stderr)` substring check). The initializer line must BE the
+    // bounded delegation expression. (Idios-approved approach A; a syn AST check
+    // was the considered-heavier alternative.)
+    #[test]
+    fn start_detect_delegates_stderr_drain_to_bounded_helper() {
+        let src = include_str!("lib.rs");
+        let start = src
+            .find("async fn start_detect(")
+            .expect("start_detect must exist");
+        let rest = &src[start + "async fn start_detect(".len()..];
+        let end = rest
+            .find("\nasync fn ")
+            .expect("a function must follow start_detect");
+        let body = &rest[..end];
+
+        // The `let stderr_handle = ...;` initializer, code portion only: drop any
+        // trailing `// comment` so a crafted comment on this line cannot satisfy
+        // the check. start_detect's stdout reader is a separate `let mut reader`
+        // binding, so scoping to `let stderr_handle` isolates the stderr drain.
+        let init_start = body
+            .find("let stderr_handle")
+            .expect("start_detect must bind stderr_handle");
+        let init_line_end = body[init_start..]
+            .find('\n')
+            .map(|i| init_start + i)
+            .unwrap_or(body.len());
+        let init_code = body[init_start..init_line_end]
+            .split("//")
+            .next()
+            .unwrap_or("");
+
+        // Positive: the initializer IS the bounded-helper delegation expression
+        // (the full `(stderr, 2048).await` call cannot be produced by prose, and
+        // a regressed inline drain pushes the spawn body onto later lines so this
+        // single-line check no longer matches).
+        assert!(
+            init_code.contains("drain_to_bounded_tail(stderr, 2048).await"),
+            "start_detect's stderr_handle must be the bounded delegation \
+             tokio::spawn(async move {{ drain_to_bounded_tail(stderr, 2048).await }}) \
+             (#838); a regressed inline read_until drain grows unbounded on \
+             newline-free / CR-only streams. Got: {init_code:?}"
+        );
+        // Negative: the bounded delegation needs no read_until; its presence on
+        // the stderr_handle initializer line means an inline accumulator returned.
+        assert!(
+            !init_code.contains("read_until"),
+            "start_detect's stderr_handle initializer must not use read_until \
+             (#838 inline drain regression); delegate to drain_to_bounded_tail. \
+             Got: {init_code:?}"
+        );
+    }
+
+    // -- #813 run-id stamping (越境イベント遮断) ---------------------------
+
+    #[test]
+    fn stamp_run_id_sets_field() {
+        let p = DetectProgress {
+            phase: "scan".to_string(),
+            ..Default::default()
+        };
+        let stamped = stamp_run_id(p, "run-abc");
+        assert_eq!(stamped.run_id.as_deref(), Some("run-abc"));
+    }
+
+    #[test]
+    fn stamp_run_id_serializes_into_payload() {
+        let stamped = stamp_run_id(
+            DetectProgress {
+                phase: "done".to_string(),
+                ..Default::default()
+            },
+            "run-xyz",
+        );
+        let json = serde_json::to_string(&stamped).expect("serialize");
+        assert!(
+            json.contains("\"run_id\":\"run-xyz\""),
+            "run_id missing from emitted payload: {json}"
+        );
+    }
+
+    #[test]
+    fn detect_progress_omits_run_id_when_unset() {
+        // skip_serializing_if pin: 未 stamp の event は run_id を wire に
+        // 載せない (forward-compat、CLI が将来 run_id を持たない前提)。
+        let p = DetectProgress {
+            phase: "scan".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&p).expect("serialize");
+        assert!(!json.contains("run_id"), "run_id leaked when unset: {json}");
     }
 
     // -- #569 detect progress streaming -----------------------------------
@@ -5685,5 +6453,197 @@ mod tests {
         assert_eq!(lines.len(), 500);
         assert_eq!(lines[0], "line 0");
         assert_eq!(lines[499], "line 499");
+    }
+}
+
+#[cfg(test)]
+mod enumerate_h264_encoders_tests {
+    use super::*;
+
+    #[test]
+    fn parses_python_json_array_output() {
+        let raw = r#"[
+            {"slot_index": 0, "encoder_kind": "Nvenc", "display_label": "NVENC #1"},
+            {"slot_index": 1, "encoder_kind": "Nvenc", "display_label": "NVENC #2"}
+        ]"#;
+        let parsed: Vec<EncoderSlotJson> = serde_json::from_str(raw).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].encoder_kind, "Nvenc");
+    }
+
+    #[test]
+    fn empty_array_is_valid() {
+        let raw = r#"[]"#;
+        let parsed: Vec<EncoderSlotJson> = serde_json::from_str(raw).unwrap();
+        assert!(parsed.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod start_export_wire_tests {
+    use super::*;
+
+    #[test]
+    fn parses_progress_line() {
+        let line = r#"{"type":"progress","match_index":2,"percent":33.5,"stage":"encoding"}"#;
+        let ev = parse_wire_event(line).expect("parse");
+        match ev {
+            WireEvent::Progress { match_index, percent, stage } => {
+                assert_eq!(match_index, 2);
+                assert!((percent - 33.5).abs() < 0.001);
+                assert_eq!(stage, "encoding");
+            }
+            _ => panic!("expected Progress"),
+        }
+    }
+
+    #[test]
+    fn parses_summary_line() {
+        let line = r#"{"type":"summary","success":3,"failure":1,"skipped":0,"cancelled":false}"#;
+        let ev = parse_wire_event(line).expect("parse");
+        match ev {
+            WireEvent::Summary { success, failure, skipped, cancelled } => {
+                assert_eq!(success, 3);
+                assert_eq!(failure, 1);
+                assert_eq!(skipped, 0);
+                assert!(!cancelled);
+            }
+            _ => panic!("expected Summary"),
+        }
+    }
+
+    #[test]
+    fn ignores_unknown_type() {
+        let line = r#"{"type":"future_unknown","extra":"foo"}"#;
+        assert!(matches!(parse_wire_event(line), Some(WireEvent::Unknown)));
+    }
+
+    #[test]
+    fn ignores_malformed_json() {
+        assert!(parse_wire_event("not json {").is_none());
+    }
+
+    #[test]
+    fn ignores_empty_line() {
+        assert!(parse_wire_event("").is_none());
+    }
+
+    // -- #893 build_minimap_argv tests ----------------------------------------
+
+    #[test]
+    fn minimap_argv_includes_region_and_expected_mtime() {
+        let req = StartMinimapRequest {
+            metadata_path: "C:/x/metadata.json".into(),
+            region: "10,20,300,400".into(),
+            output_dir: "C:/x/minimap".into(),
+            name_pattern: "{idx:03}_{type}_{start}_minimap.mp4".into(),
+            excluded_indexes: vec![2, 3],
+            expected_mtime_ms: Some(1_700_000_000_000),
+            overwrite: false,
+        };
+        let argv = build_minimap_argv(&req);
+        assert!(argv.contains(&"minimap".to_string()));
+        assert!(argv.contains(&"C:/x/metadata.json".to_string()));
+        assert!(argv.contains(&"--json".to_string()));
+        assert!(argv.windows(2).any(|w| w[0] == "--region" && w[1] == "10,20,300,400"));
+        assert!(argv.windows(2).any(|w| w[0] == "--expected-mtime" && w[1] == "1700000000000"));
+        assert!(argv.windows(2).any(|w| w[0] == "--exclude" && w[1] == "2,3"));
+    }
+
+    /// overwrite=true with a stale mtime: --expected-mtime must be ABSENT
+    /// (the guard already accepted the call; Python skips CAS = deliberate overwrite).
+    #[test]
+    fn minimap_argv_omits_expected_mtime_when_overwrite() {
+        let req = StartMinimapRequest {
+            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
+            output_dir: "o".into(), name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![], expected_mtime_ms: None,
+            overwrite: true,
+        };
+        let argv = build_minimap_argv(&req);
+        assert!(!argv.iter().any(|a| a == "--expected-mtime"));
+        assert!(!argv.iter().any(|a| a == "--exclude"));
+    }
+
+    /// overwrite=true drops --expected-mtime even when a stale mtime is present.
+    #[test]
+    fn minimap_argv_overwrite_true_drops_expected_mtime_even_with_mtime_present() {
+        let req = StartMinimapRequest {
+            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
+            output_dir: "o".into(), name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![], expected_mtime_ms: Some(123),
+            overwrite: true,
+        };
+        let argv = build_minimap_argv(&req);
+        assert!(!argv.iter().any(|a| a == "--expected-mtime"),
+            "overwrite=true must suppress --expected-mtime regardless of expected_mtime_ms");
+    }
+
+    // -- #893 minimap_write_guard tests (Codex R2 HIGH) -----------------------
+
+    #[test]
+    fn minimap_write_guard_rejects_missing_mtime_without_overwrite() {
+        // Case A: !overwrite + None mtime -> Err (the dangerous accidental path)
+        let req_a = StartMinimapRequest {
+            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
+            output_dir: "o".into(), name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![], expected_mtime_ms: None,
+            overwrite: false,
+        };
+        let err = minimap_write_guard(&req_a).expect_err("should reject None mtime without overwrite");
+        assert_eq!(err.code, "state.mtime_required",
+            "error code must be state.mtime_required, got: {}", err.code);
+
+        // Case B: !overwrite + Some(mtime) -> Ok (normal guarded path)
+        let req_b = StartMinimapRequest {
+            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
+            output_dir: "o".into(), name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![], expected_mtime_ms: Some(1_700_000_000_000),
+            overwrite: false,
+        };
+        minimap_write_guard(&req_b).expect("!overwrite + Some(mtime) must pass guard");
+
+        // Case C: overwrite=true + None mtime -> Ok (deliberate overwrite, no mtime needed)
+        let req_c = StartMinimapRequest {
+            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
+            output_dir: "o".into(), name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![], expected_mtime_ms: None,
+            overwrite: true,
+        };
+        minimap_write_guard(&req_c).expect("overwrite=true + None mtime must pass guard");
+
+        // Case D: overwrite=true + Some(mtime) -> Ok (also fine; overwrite wins)
+        let req_d = StartMinimapRequest {
+            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
+            output_dir: "o".into(), name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![], expected_mtime_ms: Some(42),
+            overwrite: true,
+        };
+        minimap_write_guard(&req_d).expect("overwrite=true + Some(mtime) must pass guard");
+    }
+
+    // -- #893 parse_proposal_line tests ----------------------------------------
+
+    #[test]
+    fn parse_proposal_line_reads_region_fields() {
+        let line = r#"{"type":"proposal","match_index":2,"region":{"x":19,"y":22,"w":288,"h":216},"confidence":0.9,"scattered":false}"#;
+        let p = parse_proposal_line(line).expect("parsed");
+        assert_eq!(p.match_index, 2);
+        let r = p.region.expect("region");
+        assert_eq!((r.x, r.y, r.w, r.h), (19, 22, 288, 216));
+        assert_eq!(p.confidence, 0.9);
+        assert_eq!(p.scattered, false);
+    }
+
+    #[test]
+    fn parse_proposal_line_null_region() {
+        let line = r#"{"type":"proposal","match_index":3,"region":null,"confidence":0.0,"scattered":false}"#;
+        let p = parse_proposal_line(line).expect("parsed");
+        assert!(p.region.is_none());
+    }
+
+    #[test]
+    fn parse_proposal_line_ignores_non_proposal() {
+        assert!(parse_proposal_line(r#"{"type":"summary","success":1}"#).is_none());
     }
 }

@@ -45,7 +45,21 @@
 
 > `l2c-guard` ラベルは 2026-04-21 廃止 (guard との program integration 構想を破棄、#454 参照)。関連 doc 整備は `l2-workflow` で追跡。
 
-L3 以降のレイヤーは着手時に適切なスコープラベルを新設する。
+L3 以降のレイヤーは着手時に運用ルールを判断する。v0.3.0 (新 L3) は新規ラベルを追加せず title prefix で識別する (詳細は下の §v0.3.0 新 L3 work の title prefix 規約 参照)。
+
+#### v0.3.0 新 L3 work の title prefix 規約
+
+v0.3.0 (= 新 L3) work では **新規 layer label を追加しない**。issue title prefix で識別する:
+
+```text
+[type] L3: <要約>                                    ← 新 L3 (minimap+masked+perf+VTuber。VTuber は 2026-07-17 再開 #895)
+[type] L4 (former L3): <要約>                        ← 旧 L3 (OCR/Whisper), L4 にスライド
+[type] L5 (former L4): <要約>                        ← 旧 L4 (ML)
+[type] L6 (former L5): <要約>                        ← 旧 L5 (auto edit)
+[type] L7 (former L6): <要約>                        ← 旧 L6 (privacy)
+```
+
+詳細は [`docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md`](superpowers/specs/2026-05-18-v030-l3-redefinition-design.md) §5 を参照。
 
 ### 優先度ラベル
 
@@ -61,11 +75,58 @@ issue の優先度を示すラベル。全 issue に必須ではなく、優先�
 - 優先度ラベルは prefix ラベル・スコープラベルと併用する
 - 判断が難しい場合はラベルなしでよい（未付与 = 未判定）
 
+### path↔scope 対応表 (preuse.py scope check 用、M7)
+
+`.claude/hooks/preuse.py` の git commit pre-hook がこの表を参照して **multi-scope detection** を行う。新規 top-level dir を repo に追加した時は本表も同時に更新すること (path↔scope のメンテ責任)。
+
+| path glob (regex 風) | scope label | 該当 prefix label |
+| --- | --- | --- |
+| `^allaganeye/` | l1-cli | bug / refactor / task |
+| `^tests/` | l1-cli | test |
+| `^gui/src/` | l2a-gui | feat(gui) / fix(gui) |
+| `^gui/src-tauri/` | l2a-gui | feat(gui) / refactor(gui) |
+| `^gui/scripts/` | l2a-gui | task |
+| `^gui/[^/]+$` (catch-all、`gui/` 直下の package.json / vite.config.ts / index.html / tsconfig*.json / eslint.config.js / .prettierrc.json / README.md / .gitignore / package-lock.json 等) | l2a-gui | feat(gui) / chore(gui) |
+| `^scripts/` | l2b-installer | feat(installer) / fix(installer) |
+| `^\.github/workflows/` | l2-ci | ci |
+| `^\.github/ISSUE_TEMPLATE/` | l2-workflow | task / doc |
+| `^\.claude/` | l2-workflow | refactor(skill) / chore(hooks) |
+| `^docs/` | l2-docs | doc |
+| `^CLAUDE\.md$` | l2-docs | doc |
+| `^README\.md$` | l2-docs | doc |
+| `^pyproject\.toml$` | l1-cli | chore |
+| `^\.markdownlint-cli2\.yaml$` | l2-ci | chore(ci) |
+| `^\.gitignore$` | l2-workflow | chore |
+
+#### 判定規則
+
+- **distinct scope 数 ≥ 2**: multi-scope commit。preuse.py が `permissionDecision=ask` で 3 択 (a) revert / (b) 別 issue / (c) scope 拡大 を user に提示
+- **unknown path**: 上記表に hit しない path が staged されている。preuse.py が ask 判定。本表に追記するか、確かに新規 scope なら scope 拡大として user 承認
+
+#### メンテナンス
+
+新規 top-level dir (例: `audit/` 新設) を repo に追加するときは:
+
+1. 本表に対応行を追加 (scope label を決める)
+2. `.claude/hooks/preuse.py` の `_PATH_SCOPE_MAP` (in-source の正本) も同期更新
+
+doc と source の同期は CI で drift check 可能 (future)。
+
 ---
 
 ## 3. 本文フォーマット
 
 prefix に応じて以下のテンプレートを使用する。
+
+### preamble 規約 (refactor / task / risk のみ)
+
+`refactor` / `task` / `risk` の 3 prefix では、`## 概要` 直後に以下 3 section を **必須** preamble として含める:
+
+- `## 期待値 (あるべき姿)`: 2-4 文。完了後にコード or 状態がどうあるべきか + なぜ目指すか
+- `## 現状`: 2-4 文。今どうなっているか + 期待値とのギャップ
+- `## ユーザー影響・重要性`: **1 行で** 位置付け (1 行を超える場合は別 section に分離: refactor=ブロッカー / risk=顕在化時被害詳細)
+
+書けないなら起票しない (= まだ issue 化に値する整理ができていない signal)。`bug` / `doc` / `question` は現行どおり preamble 不要 (既に「現状 / 問題」が分離されている)。
 
 ### [bug] テンプレート
 
@@ -103,16 +164,33 @@ prefix に応じて以下のテンプレートを使用する。
 
 ```markdown
 ## 概要
-<何を改善したいか>
+<1-2 文で何を refactor する issue か>
+
+## 期待値 (あるべき姿)
+<2-4 文。完了後にコードがどうあるべきか + なぜ目指すかの理由>
+
+## 現状
+<2-4 文。今のコードがどうなっているか + 期待値とのギャップ>
+
+## ユーザー影響・重要性
+<1 行で位置付け。例:「ユーザー影響なし、メンテ性負債」「将来のセキュリティ整合性」>
 
 ## 該当箇所
 <ファイルパス:行番号>
 
-## 問題
-<現状の何が問題か>
+## ブロッカー / なぜ現状で止まっているか
+<実装上のハードル、後回しの理由。不要なら省略可>
 
 ## 対応方針
 <改善方法の案>
+
+## 受け入れ条件 (任意)
+- [ ] ...
+
+## 関連 (任意)
+- 元 umbrella: #...
+- spec: ...
+- 関連 PR: ...
 ```
 
 ### [question] テンプレート
@@ -135,26 +213,47 @@ prefix に応じて以下のテンプレートを使用する。
 
 ```markdown
 ## 概要
-<どんなリスク・懸念があるか>
+<1-2 文でどんなリスク・懸念か>
+
+## 期待値 (あるべき姿)
+<2-4 文。リスクが低減された後の状態 + なぜ目指すか>
 
 ## 現状
-<現在の状態>
+<2-4 文。今のリスク状態 + どこに risk が存在するか>
 
-## 問題
-<何がリスクになるか、どんな被害が起きうるか>
+## ユーザー影響・重要性
+<1 行で位置付け: 顕在化時の被害規模・誰に影響するか>
+
+## 該当箇所 (任意)
+<ファイルパス:行番号 など>
+
+## 顕在化時の被害詳細
+<具体的な被害ストーリー、攻撃ベクター、影響範囲>
 
 ## 対応方針
 <リスク低減策の案>
+
+## 受け入れ条件 (任意)
+- [ ] ...
 ```
 
 ### [task] テンプレート
 
 ```markdown
 ## 概要
-<何をするタスクか>
+<1-2 文で何をするタスクか>
 
-## 背景
-<なぜこのタスクが必要か>
+## 期待値 (あるべき姿)
+<2-4 文。完了後にどういう状態になるか + なぜ必要か>
+
+## 現状
+<2-4 文。今どうなっているか + 期待値とのギャップ>
+
+## ユーザー影響・重要性
+<1 行で位置付け。例:「ユーザー直結機能」「内部観察記録」「依存タスクの前提」>
+
+## 背景 (任意)
+<経緯 / 依存タスク / 関連 issue/PR の解説 (期待値とは別)>
 
 ## 確認項目 / 作業項目
 - [ ] 項目1
@@ -162,6 +261,9 @@ prefix に応じて以下のテンプレートを使用する。
 
 ## 対応方針
 <作業の進め方・完了条件>
+
+## 受け入れ条件 (任意)
+- [ ] ...
 ```
 
 ---
@@ -273,6 +375,42 @@ issue 本文に未チェックの項目（`- [ ]`）が残っている場合、�
 - **見直しタイミング**: バージョンリリース（タグ打ち）時にユーザー (Idios) が全 `deferred` issue をレビューし、次バージョンのスコープに含めるか判断する
 - **スコープに含める場合**: `deferred` を外し、適切なスコープラベル + 優先度ラベルに変更する
 - **引き続き先送りの場合**: そのまま残す
+
+#### v0.3.0 期間中の運用 (2026-05-18 以降)
+
+**`deferred` ラベルを外す = v0.3.0 (新 L3) で必須対応** と扱う:
+
+- v0.3.0 着手対象に選定された issue: `deferred` を外す
+- それ以外の issue (旧 L3 = L4 へ繰り下げ、旧 L4-L6 等): `deferred` を維持
+- 検索: v0.3.0 アクティブセット = `is:open -label:deferred`
+
+詳細は [`docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md`](superpowers/specs/2026-05-18-v030-l3-redefinition-design.md) §5.2 を参照。
+
+#### `l1-residual` + `deferred` dual-label 規約
+
+`l1-residual` ラベル**単独では** v0.2.0 (L2) scope から自動で外れない。L1 期間積み残し issue を現バージョン (L2 以降) scope 外と明示するには **`deferred` + `l1-residual` の dual-label** が必要。両ラベルは別目的:
+
+- `deferred` = scope 判定 (現バージョンで対応しない、release 時にレビュー)
+- `l1-residual` = 起源カテゴリ (L1 期間の積み残し)
+
+scope 判定には `deferred` が必須。実在の dual-label 運用例: [#412](https://github.com/Idios/kobutachan-allaganeye/issues/412) `[enhancement,deferred,l1-residual]`、[#634](https://github.com/Idios/kobutachan-allaganeye/issues/634) `[P3-low,doc,deferred,l1-residual]`。
+
+棚卸し時に分類漏れを検出する query:
+
+```bash
+# l1-residual だけ付いて deferred 不在 = 分類漏れ
+gh issue list --state open --label l1-residual \
+  --json number,labels \
+  --jq '.[] | select(([.labels[].name] | index("deferred")) | not) | "#\(.number) needs deferred"'
+```
+
+## GitHub Issue Forms の制約 (URL pre-fill 不可)
+
+GitHub Issue Forms (`.yml` schema、`.github/ISSUE_TEMPLATE/bug_report.yml` 等) は **`title` / `labels` / `assignees` / `projects` / `template` 以外の custom field** (textarea / input / dropdown など、`id:` で指定する field) を **URL query string で pre-fill しない** (GitHub 仕様、2026-05 時点)。
+
+例えば `?template=bug_report.yml&actual=HELLO` でも `実際の動作` textarea は空のまま開く。Markdown 形式の従来 template (`*.md` ファイル) なら `?body=...` で pre-fill 可能だが、Issue Forms はサポートされない。長年の feature request あり (参考: <https://github.com/orgs/community/discussions/22335>) だが未実装。
+
+**設計時の代替策**: ErrorModal 等で「クラッシュ情報を自動添付」する設計が必要な場合、URL pre-fill ではなく **clipboard copy + 手動 paste** 方式を使う (Plan B、#669 / PR #726 で採用)。`navigator.clipboard.writeText()` で Markdown 本文を組み立てて、user が form の textarea にペーストする UX が standard。
 
 ---
 

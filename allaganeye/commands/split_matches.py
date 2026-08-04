@@ -2,12 +2,14 @@
 
 import json
 import logging
+import math
+import os
 import re
 import shutil
 import sys
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, cast
 
@@ -16,19 +18,33 @@ from click._termui_impl import ProgressBar as _ClickProgressBar  # subclass 用 
 
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.config import SplitConfig
+from allaganeye.detection.format import (
+    format_duration as _format_duration,
+    format_timestamp as _format_timestamp,
+    iso_utc_now as _iso_utc_now,
+)
 from allaganeye.detection.metadata_writer import (
     read_metadata,
+    resolve_source_path,
     write_metadata_atomic,
 )
 from allaganeye.detection.progress_emitter import ProgressEmitter
-from allaganeye.detection.warnings import build_warnings
+from allaganeye.detection.warnings import build_warnings, sanitize_warnings
 from allaganeye.exceptions import (
     AllaganEyeError,
     DetectionError,
     InputFileError,
     VideoProcessingError,
 )
-from allaganeye.metadata_types import BrightnessSamples, Metadata, SystemInfo
+from allaganeye.metadata_types import (
+    BrightnessSamples,
+    CaptureRegions,
+    Match,
+    Metadata,
+    MetadataWarning,
+    SystemInfo,
+)
+from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
 from allaganeye.video.detector import (
     DetectionStats,
     MatchBoundary,
@@ -48,7 +64,40 @@ class Gap(TypedDict):
 
 logger = logging.getLogger(__name__)
 
-_CACHE_VERSION = 2
+# v3 (#821): masked auto-fallback (flag なしでも 0-blackout で発火) の導入で
+# 「missing masked = 標準 path と同一挙動」が成立しなくなったため、pre-#821
+# cache を全面 invalidate する (v2 cache が hit し続けると masked 動画の誤結果
+# が再利用され、新 detector が走らない)。
+# v4 (#805 段階2): post-match trailing の disposition が削除 (旧 = post_match
+# segment を drop した shape) から非破壊フラグ (新 = post_match=True で残す shape)
+# に変わったため、検出出力 (cached boundaries) の shape が変わる。旧 v3 cache が
+# hit し続けると削除済み結果 (試合 1 本欠落) が silent に再利用されるので bump
+# する。cache key params (keep_trailing 含む) 自体は不変。
+_CACHE_VERSION = 4
+
+# masked_algo version: identifies the masked-path detection algorithm baked
+# into cached boundaries. Only used for cache invalidation on masked-affected
+# runs (params.masked=True or auto-fallback used).
+# version 1 = pre-#822 position-independent localize masked path
+# version 2 = #822 anchor presence + Layer 2 (9-probe strict majority)
+# version 3 = #822 Onsal recalibration: 15-probe quorum>=2 + zero-gap merge
+_MASKED_ALGO_VERSION = 3
+
+# vtuber_algo version: identifies the vtuber-path detection algorithm baked
+# into cached boundaries. Only used for cache invalidation on vtuber-affected
+# runs (config.vtuber=True or params.vtuber=True).
+# version 1 = pre-#895 legacy band-crop blackout path (key absent = 1)
+# version 2 = #895 timeline segmentation (V0-V2, presence x motion)
+# version 3 = #895 P2 V3/V4 integration (gap refinement + at-anchor validation)
+# version 4 = #895 P3 snap physical edge (frozen exclude + blackout adjacency limit + +-45s ext)
+# version 5 = #895 P3 adjudicate_gap blackout run in-match guard (Codex HIGH, snap rule unification)
+# version 6 = #895 P3 review: blackout boundary rule single-source (_boundary_blackout_runs)
+#             = merge override / snap Priority 2 にも in-match guard 適用 + UNKNOWN 分断 +
+#               outer edge snap の粗 edge semantics / 交差 guard + rescue の evidence 実数化
+# version 7 = #895 P3 R1d: INTRA_MATCH_FLICKER_MAX_PROBES -- in-match guard を短い run
+#             (run 長 <= 4) のみに適用し、長い run (5+) は guard スキップで常に境界採用
+#             (shirurori M3 9 probe zone-in が前後 evidence ありでも境界と認識されるように)
+_VTUBER_ALGO_VERSION = 7
 
 
 def run_split(
@@ -97,9 +146,9 @@ def run_split(
     # Check detection cache
     cache_path = config.output_dir / ".detection_cache.json"
     if not config.no_cache:
-        cached = _load_cache(cache_path, video_path, effective_interval, config)
-        if cached is not None:
-            boundaries = cached
+        hit = _load_cache_hit(cache_path, video_path, effective_interval, config)
+        if hit is not None:
+            boundaries = hit.boundaries
             # Surface the detection context that the cached run used (#380).
             # Without this, verbose+cached prints only "Detected ... (cached)"
             # which strips the parameter summary users rely on for
@@ -116,8 +165,12 @@ def run_split(
                     typer.echo("\nDry run: skipping split")
                 _emit_total_time(total_start, verbose, show)
                 return
+            # #805 段階2: cache が post_match=True の shape を保持しうる (v4 cache
+            # bump)。post_match (MP4 不生成) は disk 予算に計上しない。active のみ
+            # 渡す (post_match が無い常態では active == boundaries で bit-exact)。
+            active_boundaries, _ = _partition_post_match(boundaries)
             _check_disk_space(
-                video_path, boundaries, metadata["duration"], config, show=show
+                video_path, active_boundaries, metadata["duration"], config, show=show
             )
             # #591 -- cache hit でも GUI export が使う system_info は
             # 「現在の環境」を反映したい (録画から数日後に GPU 構成を
@@ -139,9 +192,14 @@ def run_split(
                 effective_interval=effective_interval,
                 detected_at=detected_at,
                 system_info=cached_system_info,
+                # cache-hit: resolved path は当該 boundaries を生成した検出の
+                # 記録値 (cache top-level) を引き継ぐ。
+                masked_fallback_used=hit.masked_fallback_used,
+                capture_regions=hit.capture_regions,
                 quiet=quiet,
             )
-            _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
+            # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
+            _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
             _emit_total_time(total_start, verbose, show)
             return
 
@@ -176,7 +234,9 @@ def run_split(
             f"workers={_workers_summary_str(config.workers)}, "
             f"min_match={config.min_match_duration}s, "
             f"min_blackout={config.min_blackout_duration}s, "
-            f"audio={_audio_status_str(config.no_audio)})"
+            f"audio={_audio_status_str(config.no_audio)}, "
+            f"vtuber={'on' if config.vtuber else 'off'}, "
+            f"masked={'on' if config.masked else 'off'})"
         )
 
     detect_stats: DetectionStats | None = {} if verbose else None
@@ -191,6 +251,20 @@ def run_split(
     def _on_brightness(samples: dict[float, float]) -> None:
         captured_brightness.update(samples)
 
+    # #821 -- masked fallback の resolved path を捕捉 (request flag と分離)。
+    masked_fallback_used = False
+
+    def _on_masked_fallback() -> None:
+        nonlocal masked_fallback_used
+        masked_fallback_used = True
+
+    # #810 -- 最終的に有効だった capture region を捕捉して cache / metadata へ。
+    captured_region: CaptureRegions | None = None
+
+    def _on_region(timeline: RegionTimeline) -> None:
+        nonlocal captured_region
+        captured_region = cast("CaptureRegions", timeline.to_dict())
+
     boundaries = _run_detection(
         video_path,
         metadata,
@@ -202,6 +276,8 @@ def run_split(
         use_gpu=use_gpu,
         gpu_vendor=gpu_vendor,
         brightness_callback=_on_brightness,
+        masked_fallback_callback=_on_masked_fallback,
+        region_callback=_on_region,
     )
 
     if not boundaries:
@@ -221,6 +297,8 @@ def run_split(
     # Display pipeline statistics (verbose only)
     if verbose and show and detect_stats is not None:
         _print_detection_stats(detect_stats)
+        if captured_region is not None:
+            typer.echo(f"  Region: {_format_region_token(captured_region)}")
 
     # Display detection results
     if show:
@@ -233,7 +311,14 @@ def run_split(
 
     # Save detection cache
     _save_cache(
-        cache_path, video_path, metadata, effective_interval, config, boundaries
+        cache_path,
+        video_path,
+        metadata,
+        effective_interval,
+        config,
+        boundaries,
+        masked_fallback_used=masked_fallback_used,
+        capture_regions=captured_region,
     )
 
     # Step 3: Split (unless dry-run)
@@ -243,7 +328,12 @@ def run_split(
         _emit_total_time(total_start, verbose, show)
         return
 
-    _check_disk_space(video_path, boundaries, metadata["duration"], config, show=show)
+    # #805 段階2: post_match (MP4 不生成) は disk 予算に計上しない。active
+    # のみ渡す (post_match が無い常態では active == boundaries で bit-exact)。
+    active_boundaries, _ = _partition_post_match(boundaries)
+    _check_disk_space(
+        video_path, active_boundaries, metadata["duration"], config, show=show
+    )
     # #591 -- detect 経路で確定した vendor を vendor_used に記録。CPU
     # 強制 (use_gpu=False) のときは vendor_used=None (実際使ってない)。
     detected_system_info = _build_system_info(
@@ -268,9 +358,17 @@ def run_split(
         detected_at=detected_at,
         system_info=detected_system_info,
         brightness_samples=brightness_samples,
+        masked_fallback_used=masked_fallback_used,
+        # #805 段階2: warnings is always empty -- the W1
+        # post_match_trailing_dropped emission was removed; the non-destructive
+        # post_match flag on the Match now records a post-match trailing segment.
+        warnings=build_warnings(),
+        capture_regions=captured_region,
         quiet=quiet,
     )
-    _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
+    # #805 段階2: MP4 化したのは active のみ (post_match は除外)。verbose の
+    # split 件数は書き出した MP4 数を報告する。
+    _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
     _emit_total_time(total_start, verbose, show)
 
 
@@ -287,9 +385,11 @@ def run_split_from_metadata(
     ``allaganeye split <video>`` run), resolves the source video path, and
     runs only the ffmpeg ``-c copy`` split phase.  Detection is skipped.
 
-    The source path stored in ``metadata.json`` is resolved relative to the
-    metadata file's directory when it is not absolute, so a metadata file
-    that travels alongside its output directory keeps working after a move.
+    The source path stored in ``metadata.json`` is resolved by the shared
+    :func:`resolve_source_path` helper (#930): absolute verbatim, relative
+    against the metadata file's directory, so a metadata file that travels
+    alongside its output directory keeps working after a move -- and so
+    ``export`` / ``minimap`` land on the exact same video file.
 
     Output files are written into ``config.output_dir`` (not necessarily the
     metadata file's directory), and the metadata file is **rewritten** with
@@ -300,18 +400,7 @@ def run_split_from_metadata(
 
     payload = read_metadata(metadata_path)
 
-    source_value = payload.get("source")
-    if not isinstance(source_value, str) or not source_value:
-        raise InputFileError(
-            f"metadata file {metadata_path} missing required field 'source'"
-        )
-    source_path = Path(source_value)
-    if not source_path.is_absolute():
-        source_path = (metadata_path.parent / source_path).resolve()
-    if not source_path.exists():
-        raise InputFileError(
-            f"source video referenced by {metadata_path} not found: {source_path}"
-        )
+    source_path = resolve_source_path(payload, metadata_path)
 
     matches = payload.get("matches")
     if not isinstance(matches, list) or not matches:
@@ -334,7 +423,15 @@ def run_split_from_metadata(
                 f"start_time/end_time: {e}"
             ) from e
         type_value = entry.get("type", "unknown")
-        boundaries.append({"start": start, "end": end, "type": type_value})
+        boundary: MatchBoundary = {"start": start, "end": end, "type": type_value}
+        # #805 段階2: detect 由来の post_match Match を再 split で MP4 化せず、
+        # 新 metadata でも flag を保持するため boundary に復元する。truthy のとき
+        # のみ set (通常 match は flag-free のまま = detector の convention 準拠)。
+        # `_split_and_write_metadata` の partition が active と分離し、active のみ
+        # split + output_file 付与、post_match は除外 + flag 保持で rewrite する。
+        if entry.get("post_match"):
+            boundary["post_match"] = True
+        boundaries.append(boundary)
 
     gaps_raw = payload.get("gaps", [])
     gaps: list[Gap] = []
@@ -381,12 +478,37 @@ def run_split_from_metadata(
     # JSON payload は Any 型なので isinstance チェック後に cast で
     # BrightnessSamples (TypedDict) に narrow する。schema 検証は
     # _build_metadata_payload 側の TypedDict 構造に委譲。
-    old_brightness_samples = payload.get("brightness_samples")
     preserve_brightness_samples: BrightnessSamples | None = (
-        cast("BrightnessSamples", old_brightness_samples)
-        if isinstance(old_brightness_samples, dict)
-        else None
+        _preserve_brightness_samples(payload)
     )
+
+    # #805 段階1 -- preserve warnings across `--from-metadata`. detect ->
+    # split --from-metadata -o <same dir> が記録済み warning を silent に
+    # 上書きしないよう、元 metadata の warnings を引き継ぐ (#586 timing /
+    # #644 brightness と同じ preserve パターン)。本ランは再検知しないので
+    # 新たな drop 痕跡は生成されない。writer は schema 検証しないため、壊れた
+    # entry や schema 違反 optional field が freshly written metadata.json に
+    # 漏れないよう sanitize_warnings で coerce する (非 dict / code 欠落 entry の
+    # drop + 不正 field の strip)。
+    preserve_warnings = sanitize_warnings(payload.get("warnings"))
+
+    # #810 -- preserve capture_regions across `--from-metadata`. 本ランは再検知
+    # しないため元 metadata の領域記録を引き継ぐ (#644 brightness_samples と
+    # 同じ preserve パターン)。
+    # codex adversarial-review F1 (2026-07-07 Idios confirmed): malformed preserve は
+    # sanitize して omit + warning (sanitize_warnings #805 と同型)。
+    # 元に capture_regions が absent (None) なら warning なし・欠落のまま。
+    old_capture_regions = payload.get("capture_regions")
+    if old_capture_regions is not None:
+        preserve_capture_regions = _sanitize_capture_regions(old_capture_regions)
+        if preserve_capture_regions is None:
+            logger.warning(
+                "Dropping malformed capture_regions from %s "
+                "(shape validation failed -- field omitted from rewritten metadata)",
+                metadata_path,
+            )
+    else:
+        preserve_capture_regions = None
 
     detection_params = payload.get("detection_params")
     if isinstance(detection_params, dict):
@@ -401,7 +523,12 @@ def run_split_from_metadata(
     if verbose and show:
         typer.echo(f"  Source: {source_path}")
 
-    _check_disk_space(source_path, boundaries, probe["duration"], config, show=show)
+    # #805 段階2: post_match (MP4 不生成) は disk 予算に計上しない。active
+    # のみ渡す (post_match が無い常態では active == boundaries で bit-exact)。
+    active_boundaries, _ = _partition_post_match(boundaries)
+    _check_disk_space(
+        source_path, active_boundaries, probe["duration"], config, show=show
+    )
     # #591 -- split-only path は detect しないので vendor_used=None。
     # GUI export が encoder 選択に使う「現在の環境」を反映するため、
     # ここで probe し直して metadata を更新する (前回 detect の値で
@@ -425,9 +552,18 @@ def run_split_from_metadata(
         detection_completed_at=preserve_completed_at,
         system_info=split_only_system_info,
         brightness_samples=preserve_brightness_samples,
+        # from-metadata: 入力 metadata に記録された resolved path を引き継ぐ
+        # (本ランは detect しないため)。
+        masked_fallback_used=bool(
+            (detection_params or {}).get("masked_fallback_used", False)
+        ),
+        # #805 段階1: 元 metadata の warnings を preserve (再検知しないため)。
+        warnings=preserve_warnings,
+        capture_regions=preserve_capture_regions,
         quiet=quiet,
     )
-    _emit_splitting_elapsed(split_start, len(boundaries), verbose, show)
+    # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
+    _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
     _emit_total_time(total_start, verbose, show)
 
 
@@ -472,6 +608,50 @@ def _display_gaps(gaps: list[Gap]) -> None:
         )
 
 
+_REGION_TOKEN_MAX_LEN = 32
+"""verbose region token に埋め込む free string の表示上限 (round-3 R3-4)。"""
+
+
+def _clean_region_text(value: object) -> str:
+    """改竄 cache 由来 free string の端末 hygiene (round-3 R3-4)。
+
+    非印字文字 (ANSI escape 等の制御文字) を '?' に置換し、長さを cap する。
+    raw 診断表示の意図 (round-1/2 裁定) は保ちつつ端末制御系の注入だけを塞ぐ。
+    """
+    text = str(value)
+    cleaned = "".join(ch if ch.isprintable() else "?" for ch in text)
+    if len(cleaned) > _REGION_TOKEN_MAX_LEN:
+        cleaned = cleaned[:_REGION_TOKEN_MAX_LEN] + "..."
+    return cleaned
+
+
+def _format_region_token(regions: object) -> str:
+    """capture region の verbose 1 行表示 (#810)。縮退を silent にしない。
+
+    cache-hit 経路では raw cache 記録値 (無検証) を受けるため、malformed 入力でも
+    crash しない tolerant contract: 欠落 / 非 dict は "unknown"、座標が実数でない
+    (bool 含む) 場合は "invalid" を返す (round-1 #1: 非数値 x/y/w/h で ``:.2f`` が
+    ValueError になる regression の防御)。free string (source / fallback_reason)
+    は `_clean_region_text` で端末 hygiene を通す (round-3 R3-4)。
+    """
+    if not isinstance(regions, dict):
+        return "unknown"
+    coarse = regions.get("coarse")
+    if not isinstance(coarse, dict):
+        return "unknown"
+    source = coarse.get("source", "?")
+    if source == "fallback":
+        label = "full_frame"
+    else:
+        coords = [coarse.get(k) for k in ("x", "y", "w", "h")]
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in coords):
+            return "invalid"
+        x, y, w, h = coords
+        label = f"{_clean_region_text(source)}({x:.2f},{y:.2f},{w:.2f},{h:.2f})"
+    reason = regions.get("fallback_reason")
+    return f"{label}, fallback={_clean_region_text(reason)}" if reason else label
+
+
 def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     """Echo the cached run's detection parameters for verbose + cache-hit (#380).
 
@@ -513,7 +693,38 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
     # Live-probe AUDIO_FROZEN so the verbose line mirrors `_run_audio_scan`
     # behaviour for the current run, same as the cache-miss summary.
     cached_no_audio = bool(params.get("no_audio", config.no_audio))
+    # vtuber / masked / keep_trailing は cache key に含まれるため hit 時は config と
+    # 一致するが、表示は cache 記録値を正とする (legacy cache は key なし = False)。
+    cached_vtuber = bool(params.get("vtuber", False))
+    cached_masked = bool(params.get("masked", False))
+    cached_keep_trailing = bool(params.get("keep_trailing", False))
+    # resolved path (top-level、key 非対象)。auto-fallback 時は masked=off でも
+    # masked_fallback=on になる (#821)。
+    cached_fallback = bool(data.get("masked_fallback_used", False))
+    # masked_algo は masked 影響 run のみ表示 (診断上意味を持つのは masked 経路のみ)。
+    # 破損 cache で int() 変換不能な値でも display 専用なので raise せず "?" にフォールバック
+    # (int 化可能な値 "3"/3.0 等は変換される; 安全性は値等価でのみ hit するため不変)。
+    try:
+        cached_algo: int | str = int(params.get("masked_algo", 1))
+    except (ValueError, TypeError):
+        cached_algo = "?"
+    # NOTE: _load_cache の masked_affected と異なり config.masked を含めない
+    # (こちらは cache 記録値の診断表示で、invalidation 判定ではない。live config
+    # と cache が食い違う case は params 比較が先に miss させるため到達しない)。
+    masked_affected = cached_masked or cached_fallback
+    # vtuber_algo は vtuber 影響 run のみ表示 (masked_algo と同型)。
+    try:
+        cached_vtuber_algo_display: int | str = int(params.get("vtuber_algo", 1))
+    except (ValueError, TypeError):
+        cached_vtuber_algo_display = "?"
+    # region も他 token 同様 raw cache 記録値を正として表示する (#810)。legacy
+    # cache では metadata.json 側が FULL_FRAME を合成しても表示は unknown の
+    # まま (「cache に何が記録されているか」の診断表示であり意図的な差)。
 
+    algo_token = f", masked_algo={cached_algo}" if masked_affected else ""
+    vtuber_algo_token = (
+        f", vtuber_algo={cached_vtuber_algo_display}" if cached_vtuber else ""
+    )
     typer.echo(header)
     typer.echo(
         "  "
@@ -521,7 +732,14 @@ def _display_cache_hit_params(cache_path: Path, config: SplitConfig) -> None:
         f"threshold={params.get('blackout_threshold', '?')}, "
         f"min_match={params.get('min_match_duration', '?')}s, "
         f"min_blackout={params.get('min_blackout_duration', '?')}s, "
-        f"audio={_audio_status_str(cached_no_audio)}"
+        f"audio={_audio_status_str(cached_no_audio)}, "
+        f"vtuber={'on' if cached_vtuber else 'off'}, "
+        f"masked={'on' if cached_masked else 'off'}, "
+        f"keep_trailing={'on' if cached_keep_trailing else 'off'}, "
+        f"masked_fallback={'on' if cached_fallback else 'off'}"
+        f"{algo_token}"
+        f"{vtuber_algo_token}, "
+        f"region={_format_region_token(data.get('capture_regions'))}"
     )
 
 
@@ -529,9 +747,10 @@ def _workers_summary_str(workers: int | None) -> str:
     """Format workers count for verbose summary, resolving ``auto`` (#389).
 
     When ``config.workers is None`` the CLI delegates to
-    ``_resolve_workers`` which picks ``min(cpu_count, 24)``.  Users with
-    performance issues need to see the *resolved* number to diagnose
-    under-parallelised runs, not just the ``auto`` placeholder.
+    ``_resolve_workers``, whose docstring is the source of truth for the
+    cap (#862).  Users with performance issues need to see the *resolved*
+    number to diagnose under-parallelised runs, not just the ``auto``
+    placeholder.
     """
     if workers is not None:
         return str(workers)
@@ -699,20 +918,24 @@ def _build_system_info(
     available_vendors: list[str],
     vendor_used: str | None,
 ) -> SystemInfo:
-    """Build the ``system_info`` dict for ``metadata.json`` (#591).
+    """Build the ``system_info`` dict for ``metadata.json`` (#591, extended #761).
 
-    GUI export 画面 (Phase 4 / `select_h264_encoder_for_export`) が
+    GUI export 画面 (Phase 4 / `enumerate_h264_encoders`) が
     ``gpu_vendors_available`` と ``vendor_preference`` を読んで NVENC /
     QSV / AMF / libx264 を auto-select する。``gpu_vendor_used`` は
     実際 detect 経路で使った vendor (CPU 強制 / cache hit / split-only
-    では ``None``)。
+    では ``None``)。``gpu`` は GPU モデル名の文字列リスト (#761) で、
+    GUI export の NVENC parallel slot 数 SKU 検索 (``probe_nvenc_engine_count``)
+    に使用する。
     """
+    from allaganeye.system_info import get_gpu_info_lines
     from allaganeye.video.gpu_detector import _VENDOR_PREFERENCE
 
     return {
         "gpu_vendors_available": list(available_vendors),
         "gpu_vendor_used": vendor_used,
         "vendor_preference": list(_VENDOR_PREFERENCE),
+        "gpu": get_gpu_info_lines(),
     }
 
 
@@ -729,6 +952,8 @@ def _run_detection(
     gpu_vendor: str | None = None,
     progress_emitter: ProgressEmitter | None = None,
     brightness_callback: Callable[[dict[float, float]], None] | None = None,
+    masked_fallback_callback: Callable[[], None] | None = None,
+    region_callback: Callable[[RegionTimeline], None] | None = None,
 ) -> list[MatchBoundary]:
     """Run detection with progress bars for each phase (#328, #329, #331).
 
@@ -750,12 +975,28 @@ def _run_detection(
         "min_blackout_duration": config.min_blackout_duration,
         "gpu_vendor": gpu_vendor,
         "use_gpu": use_gpu,
+        # L3 B6: VTuber game-inset recording -> scorebar-band anchor region.
+        # False (default) keeps FULL_FRAME = OBS bit-exact behavior.
+        "vtuber": config.vtuber,
+        # L3 masked-OBS (#753): chat-mask overlay -> mask-free region fallback.
+        # False (default) only auto-triggers on 0-blackout; True forces it.
+        "masked": config.masked,
         "workers": config.workers,
         "src_resolution": (metadata["width"], metadata["height"]),
         "codec": metadata.get("codec"),
         "audio_hits": audio_hits,
         "stats": stats,
         "brightness_callback": brightness_callback,
+        "masked_fallback_callback": masked_fallback_callback,
+        "region_callback": region_callback,
+        # #805: opt-out flag. keep_trailing skips the #797 post-match trailing
+        # flagging entirely so a trailing no-scorebar segment is left unflagged
+        # (default False = bit-exact).
+        "keep_trailing": config.keep_trailing,
+        # #576: rational fps propagation (probe -> detector).
+        "source_fps": metadata.get("fps"),
+        "source_fps_num": metadata.get("fps_num"),
+        "source_fps_den": metadata.get("fps_den"),
     }
 
     if progress_emitter is not None:
@@ -1185,6 +1426,20 @@ def _eta_progressbar(
     )
 
 
+def _partition_post_match(
+    boundaries: list[MatchBoundary],
+) -> tuple[list[MatchBoundary], list[MatchBoundary]]:
+    """Split boundaries into (active, post_match).
+
+    Active = boundaries written to MP4 + given an output_file. post_match =
+    non-destructive trailing flag (#805 段階2): retained in metadata, excluded
+    from MP4 output. Order-preserving; the two lists partition the input.
+    """
+    active = [b for b in boundaries if not b.get("post_match")]
+    post_match = [b for b in boundaries if b.get("post_match")]
+    return active, post_match
+
+
 def _split_and_write_metadata(
     video_path: Path,
     boundaries: list[MatchBoundary],
@@ -1198,6 +1453,9 @@ def _split_and_write_metadata(
     detection_completed_at: str | None = None,
     system_info: SystemInfo,
     brightness_samples: BrightnessSamples | None = None,
+    masked_fallback_used: bool = False,
+    warnings: list[MetadataWarning] | None = None,
+    capture_regions: CaptureRegions | None = None,
     quiet: bool = False,
 ) -> None:
     """Split video and write metadata.json (#591: system_info required).
@@ -1221,9 +1479,13 @@ def _split_and_write_metadata(
             f"Cannot create output directory {config.output_dir}: {e}"
         ) from e
 
+    # #805 段階2: active (MP4 生成対象) と post_match (flag 方式、MP4 不生成) に分離。
+    # post_match が無い場合は active == boundaries で現状と bit-exact。
+    active_boundaries, post_match_boundaries = _partition_post_match(boundaries)
+
     # Split with progress bar (#331)
     if show:
-        total = len(boundaries)
+        total = len(active_boundaries)
         with _eta_progressbar(total, "Splitting") as progress:
 
             def on_split_progress(completed: int, total: int) -> None:
@@ -1231,12 +1493,12 @@ def _split_and_write_metadata(
 
             output_files = split_video(
                 video_path,
-                boundaries,
+                active_boundaries,
                 config.output_dir,
                 progress_callback=on_split_progress,
             )
     else:
-        output_files = split_video(video_path, boundaries, config.output_dir)
+        output_files = split_video(video_path, active_boundaries, config.output_dir)
 
     # Write metadata (#463: ``note`` field retired; caveats documented in
     # docs/cli-spec.md and docs/metadata-spec.md instead of being embedded
@@ -1254,19 +1516,31 @@ def _split_and_write_metadata(
         detection_completed_at=detection_completed_at,
         effective_interval=effective_interval,
         config=config,
-        boundaries=boundaries,
+        boundaries=active_boundaries,
+        post_match_boundaries=post_match_boundaries,
         output_files=output_files,
         gaps=gaps,
         system_info=system_info,
         brightness_samples=brightness_samples,
+        masked_fallback_used=masked_fallback_used,
+        warnings=warnings,
+        capture_regions=capture_regions,
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, result)
 
-    typer.echo(f"\nOutput: {config.output_dir}")
+    # Report where the files actually landed, not the raw ``-o`` string
+    # (PR #930 did this for export / minimap, detect.py for its own line).
+    # A relative ``-o`` -- including a Windows drive-relative one like
+    # ``E:out``, which a lost shell quote turns ``E:\a\b`` into -- otherwise
+    # reaches the user as a path that does not say where anything was written.
+    # ``abspath`` normalises against the cwd without resolving symlinks, so the
+    # reported location is the one we wrote to, and ``Path`` keeps the
+    # platform's own separators so the line can be pasted into a shell.
+    typer.echo(f"\nOutput: {Path(os.path.abspath(config.output_dir))}")
     for f in output_files:
         typer.echo(f"  {f.name}")
-    typer.echo(f"Metadata: {metadata_path}")
+    typer.echo(f"Metadata: {Path(os.path.abspath(metadata_path))}")
 
 
 def _build_metadata_payload(
@@ -1280,12 +1554,16 @@ def _build_metadata_payload(
     effective_interval: float,
     config: SplitConfig,
     boundaries: list[MatchBoundary],
+    post_match_boundaries: list[MatchBoundary] | None = None,
     output_files: list[Path],
     gaps: list[Gap],
     system_info: SystemInfo,
     brightness_samples: BrightnessSamples | None = None,
+    masked_fallback_used: bool = False,
+    warnings: list[MetadataWarning] | None = None,
+    capture_regions: CaptureRegions | None = None,
 ) -> Metadata:
-    """Build the ``metadata.json`` payload dict (schema v1, #463 / #569 / #586 / #591).
+    """Build the ``metadata.json`` payload dict (schema v1, #463 / #569 / #586 / #591 / #810).
 
     Kept private to this module; ``commands.detect`` builds a variant
     (no ``output_files``) via its own helper.
@@ -1323,9 +1601,20 @@ def _build_metadata_payload(
     #612). Drift between this builder and the JSON Schema is caught
     statically by pyright.
     """
+    # #805 段階2: post_match_boundaries が None のときは空リストで統一
+    post_match_boundaries = post_match_boundaries or []
     payload: Metadata = {
         "schema_version": "1",
-        "source": str(video_path),
+        # #930 B2: `source` is contractually ABSOLUTE (see the field
+        # description in schemas/metadata.schema.json and docs/metadata-spec.md).
+        # `video_path` is the argv value, which is cwd-relative whenever the
+        # user typed a relative path -- persisting it verbatim made the file
+        # only interpretable from the cwd that produced it, and the readers
+        # (which anchor relative values on the metadata directory) then
+        # resolved it somewhere else entirely. `os.path.abspath` rather than
+        # `Path.resolve` so symlinks stay intact and the recorded path is
+        # byte-identical to what ffmpeg was handed.
+        "source": os.path.abspath(video_path),
         "source_duration": source_duration,
         "source_duration_display": _format_timestamp(source_duration),
         "source_fps": source_fps,
@@ -1340,26 +1629,55 @@ def _build_metadata_payload(
             "no_audio": config.no_audio,
             "use_gpu": config.use_gpu,
             "workers": config.workers,
+            # vtuber/masked は検出 path の provenance (PR #823 R1 deferred 分)。
+            # schema 上は optional (導入前 metadata との後方互換)。masked は
+            # request flag、masked_fallback_used は resolved path (auto-fallback
+            # 含む) で、両者は 0-blackout auto-trigger 時に乖離する (#821)。
+            "vtuber": config.vtuber,
+            "masked": config.masked,
+            "masked_fallback_used": masked_fallback_used,
         },
         "system_info": system_info,
-        "matches": [
-            {
-                "index": i + 1,
-                "start_time": b["start"],
-                "end_time": b["end"],
-                "start_display": _format_timestamp(b["start"]),
-                "end_display": _format_timestamp(b["end"]),
-                "duration": b["end"] - b["start"],
-                "duration_display": _format_duration(b["end"] - b["start"]),
-                # Narrow MatchBoundary's open-ended `type: str` (detector.py)
-                # to the JSON Schema literal so pyright accepts the assignment.
-                # Anything other than "fl_match" is normalized to "unknown"
-                # -- matches the prior dict.get fallback semantics.
-                "type": "fl_match" if b.get("type") == "fl_match" else "unknown",
-                "output_file": f.as_posix(),
-            }
-            for i, (b, f) in enumerate(zip(boundaries, output_files, strict=True))
-        ],
+        # #805 段階2: active matches (output_file 有り) と post_match matches
+        # (output_file 無し、post_match=True) を index 連番で結合。
+        # list + list の型推論が dict[str, Unknown] になるため cast で Match に narrow。
+        "matches": cast(
+            "list[Match]",
+            [
+                {
+                    "index": i + 1,
+                    "start_time": b["start"],
+                    "end_time": b["end"],
+                    "start_display": _format_timestamp(b["start"]),
+                    "end_display": _format_timestamp(b["end"]),
+                    "duration": b["end"] - b["start"],
+                    "duration_display": _format_duration(b["end"] - b["start"]),
+                    # Narrow MatchBoundary's open-ended `type: str` (detector.py)
+                    # to the JSON Schema literal so pyright accepts the assignment.
+                    # Anything other than "fl_match" is normalized to "unknown"
+                    # -- matches the prior dict.get fallback semantics.
+                    "type": "fl_match" if b.get("type") == "fl_match" else "unknown",
+                    "output_file": f.as_posix(),
+                }
+                for i, (b, f) in enumerate(zip(boundaries, output_files, strict=True))
+            ]
+            + [
+                {
+                    "index": len(boundaries) + j + 1,
+                    "start_time": b["start"],
+                    "end_time": b["end"],
+                    "start_display": _format_timestamp(b["start"]),
+                    "end_display": _format_timestamp(b["end"]),
+                    "duration": b["end"] - b["start"],
+                    "duration_display": _format_duration(b["end"] - b["start"]),
+                    "type": "fl_match" if b.get("type") == "fl_match" else "unknown",
+                    # #805 段階2: post_match segment は MP4 を生成しないため
+                    # output_file は付けない (NotRequired)。post_match flag を付与。
+                    "post_match": True,
+                }
+                for j, b in enumerate(post_match_boundaries)
+            ],
+        ),
         "gaps": [
             {
                 "start_time": g["start"],
@@ -1371,10 +1689,19 @@ def _build_metadata_payload(
             }
             for g in gaps
         ],
-        "warnings": build_warnings(),
+        # ``warnings`` defaults to None -> ``build_warnings()`` ([]) so existing
+        # callers/tests stay byte-identical. A caller may still pass a pre-built
+        # list (e.g. preserved from an older metadata.json) which is emitted
+        # verbatim. #805 段階2 removed the only emitter (post_match_trailing_
+        # dropped), so fresh-detection writes now always pass an empty list.
+        "warnings": build_warnings() if warnings is None else warnings,
     }
     if brightness_samples is not None:
         payload["brightness_samples"] = brightness_samples
+    # #810 -- capture region timeline。None (pre-#810 cache hit で領域未知の
+    # 経路 / callback 未発火) では key 自体を省略する (brightness_samples と同型)。
+    if capture_regions is not None:
+        payload["capture_regions"] = capture_regions
     return payload
 
 
@@ -1444,6 +1771,7 @@ def _print_environment_header(
         get_disk_info,
         get_gpu_info_lines,
         get_memory_info,
+        gpu_vendor_probe_warning,
     )
 
     ffmpeg_version = _probe_ffmpeg_version()
@@ -1463,6 +1791,9 @@ def _print_environment_header(
         typer.echo("  GPU:")
         for gpu in gpus:
             typer.echo(f"    - {gpu}")
+    gpu_warning = gpu_vendor_probe_warning()
+    if gpu_warning is not None:
+        typer.echo(f"  ! {gpu_warning}")
     typer.echo(f"  Memory: {get_memory_info()}")
     disk_target = output_dir if output_dir is not None else Path.cwd()
     typer.echo(f"  Disk: {get_disk_info(disk_target)}")
@@ -1606,6 +1937,20 @@ def _print_detection_stats(stats: DetectionStats) -> None:
         if drops.get("other", 0) > 0:
             typer.echo(f"    {drops['other']} dropped (other)")
 
+    masked_dropped = stats.get("masked_segments_dropped", 0)
+    if masked_dropped > 0:
+        typer.echo(
+            f"  masked L2 validation: {masked_dropped} segment(s) dropped"
+            " (below quorum)"
+        )
+
+    masked_merges = stats.get("masked_l2_zero_gap_merges", 0)
+    if masked_merges > 0:
+        typer.echo(
+            f"  masked L2 zero-gap merge: {masked_merges} pair(s) merged"
+            " (flank flicker split)"
+        )
+
     # Unknown match accounting (#433): recordings starting / ending mid-match
     # produce ``type=unknown`` segments at the timeline edges. They are part
     # of Detected count but not of the Filter "kept" formula (candidates
@@ -1616,14 +1961,20 @@ def _print_detection_stats(stats: DetectionStats) -> None:
         label = "match" if unknown_count == 1 else "matches"
         typer.echo(f"  + {unknown_count} unknown {label} (録画途中試合)")
 
-
-def _format_timestamp(seconds: float) -> str:
-    """Format seconds as MM:SS or H:MM:SS."""
-    m, s = divmod(int(seconds), 60)
-    h, m = divmod(m, 60)
-    if h:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m:02d}:{s:02d}"
+    # VTuber timeline stats (#895 P2): only present on --vtuber path; OBS run
+    # has no vtuber_timeline_probes key and this block is entirely skipped.
+    if "vtuber_timeline_probes" in stats:
+        typer.echo(
+            f"  Timeline (vtuber): {stats['vtuber_timeline_probes']} probes, "
+            f"anchor conf {stats.get('vtuber_anchor_confidence', 0.0):.2f}"
+        )
+        typer.echo(
+            f"  V3: {stats.get('vtuber_gaps_tested', 0)} gaps tested, "
+            f"{stats.get('vtuber_gaps_merged', 0)} merged, "
+            f"{stats.get('vtuber_merge_overridden', 0)} peek-overridden; "
+            f"V4: {stats.get('vtuber_v4_dropped', 0)} dropped, "
+            f"{stats.get('vtuber_low_confidence_segments', 0)} low-confidence"
+        )
 
 
 def _format_eta(seconds: float) -> str:
@@ -1642,16 +1993,6 @@ def _format_eta(seconds: float) -> str:
     return f"{h}h{m:02d}m"
 
 
-def _format_duration(seconds: float) -> str:
-    """Format duration as e.g. '14m02s' or '1h05m'."""
-    total = int(seconds)
-    m, s = divmod(total, 60)
-    h, m = divmod(m, 60)
-    if h:
-        return f"{h}h{m:02d}m"
-    return f"{m}m{s:02d}s"
-
-
 def _emit_total_time(total_start: float, verbose: bool, show: bool) -> None:
     """Print ``Total: HH:MM:SS`` wall-clock for the split pipeline (#381).
 
@@ -1661,15 +2002,6 @@ def _emit_total_time(total_start: float, verbose: bool, show: bool) -> None:
     """
     if verbose and show:
         typer.echo(f"Total: {_format_duration(time.monotonic() - total_start)}")
-
-
-def _iso_utc_now() -> str:
-    """UTC timestamp in ISO 8601 with 'Z' suffix, e.g. '2026-04-19T12:34:56Z'.
-
-    Used for metadata.json `detected_at` (#370).  Second precision keeps the
-    string human-readable without losing practical reproducibility.
-    """
-    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _auto_sample_interval(duration: float, configured_interval: float) -> float:
@@ -1708,6 +2040,9 @@ def _save_cache(
     effective_interval: float,
     config: SplitConfig,
     boundaries: list[MatchBoundary],
+    *,
+    masked_fallback_used: bool = False,
+    capture_regions: "CaptureRegions | None" = None,
 ) -> None:
     """Save detection results to cache file."""
     resolved = video_path.resolve()
@@ -1734,9 +2069,22 @@ def _save_cache(
             "min_match_duration": config.min_match_duration,
             "min_blackout_duration": config.min_blackout_duration,
             "no_audio": config.no_audio,
+            "vtuber": config.vtuber,
+            "masked": config.masked,
+            "keep_trailing": config.keep_trailing,
+            "masked_algo": _MASKED_ALGO_VERSION,
+            "vtuber_algo": _VTUBER_ALGO_VERSION,
         },
+        # resolved path は key (params) ではなく top-level に記録する: auto-masked
+        # 動画の cache 再利用は request flag の一致で正しく機能させ、provenance
+        # は表示/metadata 引き継ぎ用に保持する (#821)。
+        "masked_fallback_used": masked_fallback_used,
         "boundaries": boundaries,
     }
+    # #810: None は key 省略 (null を書かない) -- metadata.json と同じ省略 semantics
+    # (read 側は key 欠落を legacy と同じ合成ロジックで扱う)。
+    if capture_regions is not None:
+        cache_data["capture_regions"] = capture_regions
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(
@@ -1746,44 +2094,247 @@ def _save_cache(
         logger.debug("Failed to write detection cache to %s", cache_path)
 
 
-def _load_cache(
+def _masked_fallback_from_cache_data(data: dict) -> bool:
+    """Pure parser: resolved masked fallback flag from an already-parsed cache dict (#879)."""
+    return bool(data.get("masked_fallback_used", False))
+
+
+_BRIGHTNESS_SAMPLES_KEYS = frozenset({"interval_s", "values"})
+
+
+def _preserve_brightness_samples(payload: dict) -> "BrightnessSamples | None":
+    """Sanitize brightness_samples from a --from-metadata payload for preserve (#879).
+
+    Returns the sanitized value, or None when absent or malformed. A
+    present-but-malformed value is dropped with a warning (same pattern as
+    warnings / capture_regions preserve).
+    """
+    old = payload.get("brightness_samples")
+    sanitized = _sanitize_brightness_samples(old)
+    if old is not None and sanitized is None:
+        logger.warning(
+            "Dropping malformed brightness_samples from metadata "
+            "(corrupted or hand-edited value)"
+        )
+    return sanitized
+
+
+def _sanitize_brightness_samples(value: object) -> "BrightnessSamples | None":
+    """Structural sanitizer for a BrightnessSamples payload from metadata.json.
+
+    Mirrors BrightnessSamplesSchema (gui/src/types/metadata.schema.ts) with a
+    pure-Python check. Returns the value cast to BrightnessSamples when fully
+    valid, else None. Same contract/style as ``_sanitize_capture_regions``:
+    bool は数値として拒否、NaN / +-Infinity は reject (``json.dumps`` allow_nan
+    が非標準 token を emit し GUI serde_json / JSON.parse が全体 reject するため)。
+
+    - value は key が厳密に {interval_s, values} の dict。
+    - interval_s は有限実数 (int/float、bool 排除) で > 0。
+    - values は list で各要素が有限実数 (bool 排除) かつ 0 <= v <= 255。
+    """
+    if not isinstance(value, dict):
+        return None
+    if set(value.keys()) != _BRIGHTNESS_SAMPLES_KEYS:
+        return None
+    interval_s = value.get("interval_s")
+    if (
+        isinstance(interval_s, bool)
+        or not isinstance(interval_s, (int, float))
+        or not math.isfinite(interval_s)
+        or interval_s <= 0
+    ):
+        return None
+    values = value.get("values")
+    if not isinstance(values, list):
+        return None
+    for v in values:
+        if (
+            isinstance(v, bool)
+            or not isinstance(v, (int, float))
+            or not math.isfinite(v)
+            or not (0.0 <= v <= 255.0)
+        ):
+            return None
+    return cast("BrightnessSamples", value)
+
+
+_CAPTURE_REGIONS_TOP_KEYS = frozenset({"coarse", "segments", "fallback_reason"})
+_CAPTURE_REGION_COORD_KEYS = frozenset({"x", "y", "w", "h", "confidence"})
+_CAPTURE_REGION_REQUIRED_KEYS = frozenset({"x", "y", "w", "h", "confidence", "source"})
+
+
+def _sanitize_capture_regions(value: object) -> "CaptureRegions | None":
+    """Structural sanitizer for a CaptureRegions payload read from metadata.json or cache.
+
+    Mirrors the CaptureRegions shape in schemas/metadata.schema.json with a
+    pure-Python check (no jsonschema runtime dependency). Returns the value cast
+    to CaptureRegions when fully valid, else None.
+
+    Validity contract (strict writer contract, additionalProperties:false equivalent):
+    - value is a dict with exactly the keys {coarse, segments, fallback_reason}.
+    - coarse is a dict with exactly the keys {x, y, w, h, confidence, source};
+      x/y/w/h/confidence are real numbers (int or float; bool is explicitly rejected)
+      in [0, 1]; source is a non-empty str.
+    - segments is a list; each entry is a dict with exactly {time_range, region};
+      time_range is a list of exactly 2 finite real numbers each >= 0
+      (NaN / +-Infinity は reject -- round-3 R3-1: ``json.dumps`` は
+      allow_nan=True で非標準 token を再 emit し、strict reader (GUI serde_json /
+      JSON.parse) が metadata.json 全体を reject するため sanitize 側で塞ぐ);
+      region follows the same rules as coarse.
+    - fallback_reason is a str or None (free string, any value OK).
+
+    Pattern and docstring style mirrors sanitize_warnings in
+    allaganeye/detection/warnings.py.
+    codex adversarial-review F1 (2026-07-07 Idios confirmed):
+    malformed preserve -> sanitize + omit + warning (sanitize_warnings #805 same pattern).
+    """
+    if not isinstance(value, dict):
+        return None
+    if set(value.keys()) != _CAPTURE_REGIONS_TOP_KEYS:
+        return None
+
+    coarse = value.get("coarse")
+    if not _is_valid_capture_region(coarse):
+        return None
+
+    segments = value.get("segments")
+    if not isinstance(segments, list):
+        return None
+    for seg in segments:
+        if not isinstance(seg, dict):
+            return None
+        if set(seg.keys()) != {"time_range", "region"}:
+            return None
+        tr = seg.get("time_range")
+        if not isinstance(tr, list) or len(tr) != 2:
+            return None
+        for t in tr:
+            if (
+                isinstance(t, bool)
+                or not isinstance(t, (int, float))
+                or not math.isfinite(t)
+                or t < 0
+            ):
+                return None
+        if not _is_valid_capture_region(seg.get("region")):
+            return None
+
+    fallback_reason = value.get("fallback_reason")
+    if fallback_reason is not None and not isinstance(fallback_reason, str):
+        return None
+
+    return cast("CaptureRegions", value)
+
+
+def _is_valid_capture_region(region: object) -> bool:
+    """Return True iff region is a well-formed CaptureRegion dict.
+
+    Helper for _sanitize_capture_regions. Checks exact key set, numeric
+    coordinates in [0, 1] (bool explicitly rejected), and non-empty source str.
+    """
+    if not isinstance(region, dict):
+        return False
+    if set(region.keys()) != _CAPTURE_REGION_REQUIRED_KEYS:
+        return False
+    for key in _CAPTURE_REGION_COORD_KEYS:
+        v = region[key]
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return False
+        if not (0.0 <= v <= 1.0):
+            return False
+    source = region.get("source")
+    if not isinstance(source, str) or not source:
+        return False
+    return True
+
+
+def _capture_regions_from_cache_data(data: dict) -> "CaptureRegions | None":
+    """Pure parser: capture region timeline from an already-parsed cache dict (#810/#879).
+
+    (元 _read_cached_capture_regions の synthesis ロジックをそのまま移設:
+    present は sanitize、absent+non-vtuber+non-masked は FULL_FRAME 合成、
+    それ以外は None。)
+
+    pre-#810 legacy cache (field なし / explicit null) は、cache 記録の
+    params.vtuber == False かつ masked_fallback_used == False なら標準 path 確定
+    (領域は決定的に FULL_FRAME) なので合成して返す。vtuber / masked fallback 採用
+    の legacy cache は領域が未知のため None (metadata では field 省略 = 領域不明を
+    偽装しない)。
+
+    合成条件に params.masked (request flag) を含めないのは意図的 (round-2 codex
+    裁定 2026-07-07): (a) ``"masked"`` cache param と ``masked_fallback_used``
+    記録は同一 commit (PR #826) で共導入のため「masked=True だが resolved flag
+    未記録」の cache は歴史的に存在しない、(b) masked 要求で fallback 不採用
+    (mask 不発見) の run は標準 path が FULL_FRAME で Pass 1 計測しているため、
+    合成は決定的に正。resolved flag (masked_fallback_used) が正の述語。
+
+    cache に capture_regions が present (非 null) な場合は _sanitize_capture_regions
+    で shape 検証する: valid -> そのまま返す; invalid -> logger.warning + None 返す。
+    present-but-garbage は "cache が破損/改竄" を意味し FULL_FRAME 合成に fall-through
+    しない (present-but-garbage != legacy absent = 標準 path 確定)。
+    codex adversarial-review F1 (2026-07-07 Idios confirmed): sanitize hardening.
+    """
+    cached = data.get("capture_regions")
+    if cached is not None:
+        # present value: sanitize. invalid means cache corruption/tampering;
+        # do NOT fall through to FULL_FRAME synthesis.
+        sanitized = _sanitize_capture_regions(cached)
+        if sanitized is None:
+            logger.warning(
+                "Dropping malformed capture_regions from cache "
+                "(corrupted or hand-edited cache value -- region unknown)"
+            )
+        return sanitized
+    # cached is None: key absent or explicit null -- legacy absent semantics.
+    params = data.get("params", {})
+    if not params.get("vtuber", False) and not data.get("masked_fallback_used", False):
+        return cast("CaptureRegions", RegionTimeline(coarse=FULL_FRAME).to_dict())
+    return None
+
+
+@dataclass(frozen=True)
+class CacheHit:
+    """Single-read cache-hit result: boundaries + provenance from one snapshot (#879)."""
+
+    boundaries: list[MatchBoundary]
+    masked_fallback_used: bool
+    capture_regions: "CaptureRegions | None"
+
+
+def _load_cache_hit(
     cache_path: Path,
     video_path: Path,
     effective_interval: float,
     config: SplitConfig,
-) -> list[MatchBoundary] | None:
-    """Load and validate detection cache. Returns boundaries or None."""
+) -> "CacheHit | None":
+    """Load + validate cache, returning boundaries and provenance from ONE read (#879).
+
+    三重 file open (旧: _load_cache + _read_cached_masked_fallback +
+    _read_cached_capture_regions) を単一 read に統合し、検証済み boundaries と
+    provenance が必ず同一 snapshot 由来になるようにする (codex F2)。
+    """
     if not cache_path.is_file():
         return None
-
     try:
         data = json.loads(cache_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         logger.debug("Detection cache unreadable: %s", cache_path)
         return None
 
+    # --- key validation (identical to _load_cache) ---
     if data.get("cache_version") != _CACHE_VERSION:
-        logger.debug("Cache version mismatch")
         return None
-
     resolved = video_path.resolve()
     if data.get("source") != str(resolved):
-        logger.debug("Cache source path mismatch")
         return None
-
     try:
         stat = resolved.stat()
     except OSError:
         return None
-
     if data.get("source_size") != stat.st_size:
-        logger.debug("Cache source size mismatch")
         return None
-
     if data.get("source_mtime") != stat.st_mtime:
-        logger.debug("Cache source mtime mismatch")
         return None
-
     params = data.get("params", {})
     if (
         params.get("sample_interval") != effective_interval
@@ -1791,13 +2342,38 @@ def _load_cache(
         or params.get("min_match_duration") != config.min_match_duration
         or params.get("min_blackout_duration") != config.min_blackout_duration
         or params.get("no_audio") != config.no_audio
+        or params.get("vtuber", False) != config.vtuber
+        or params.get("masked", False) != config.masked
+        or params.get("keep_trailing", False) != config.keep_trailing
     ):
-        logger.debug("Cache parameter mismatch")
+        return None
+    _raw_cached_algo = params.get("masked_algo", 1)
+    try:
+        cached_algo = int(_raw_cached_algo)
+    except (ValueError, TypeError):
+        cached_algo = -1
+    masked_affected = (
+        data.get("masked_fallback_used", False)
+        or params.get("masked", False)
+        or config.masked
+    )
+    if masked_affected and cached_algo != _MASKED_ALGO_VERSION:
+        return None
+    _raw_cached_vtuber_algo = params.get("vtuber_algo", 1)
+    try:
+        cached_vtuber_algo = int(_raw_cached_vtuber_algo)
+    except (ValueError, TypeError):
+        cached_vtuber_algo = -1
+    vtuber_affected = params.get("vtuber", False) or config.vtuber
+    if vtuber_affected and cached_vtuber_algo != _VTUBER_ALGO_VERSION:
         return None
 
     boundaries = data.get("boundaries")
     if not isinstance(boundaries, list):
-        logger.debug("Cache boundaries invalid")
         return None
 
-    return boundaries
+    return CacheHit(
+        boundaries=boundaries,
+        masked_fallback_used=_masked_fallback_from_cache_data(data),
+        capture_regions=_capture_regions_from_cache_data(data),
+    )

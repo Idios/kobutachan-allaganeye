@@ -14,27 +14,47 @@ on:
   # 含む (v0.2.0 実績で paths 対象を多数 touch) ため tag push 時の paths filter は
   # 実用上問題ない。万一 paths にマッチしない tag commit が必要になった場合は
   # workflow_dispatch で手動実行できる。
+  # /iterate-review Round 2 R2-1 fix + Round 3 R3-1 訂正 (PR #775): push trigger の paths filter を撤去。
+  # 経緯: 元は paths filter でファイル絞り込みしていたが、GitHub Actions の挙動として
+  # branches/tags filter unmatch (claude/* 等) でも paths match で workflow run が
+  # phantom 作成され conclusion=failure として記録される問題があった
+  # (claude/nervous-hoover-464244 で 5 連続 failure を実証)。
+  # paths を撤去することで branches=[main, develop-*] + tags=[v*.*.*] の strict
+  # 判定のみとなり、claude/* push では run 自体が作成されなくなる**期待**。
+  # 代償として main / develop-* / tag への無関係 path 変更 push でも release.yml
+  # が起動するが、これらは元々頻度低 + cache warm-up 用途 (#770) として有用なため許容。
+  # pull_request 側の paths filter は維持 (PR validation 範囲を絞る)。
+  #
+  # R3-1 訂正 (重要): R2 fix の empirical 検証は **post-merge (develop-0.3.0 → main
+  # 反映) 以降の future push で初めて可能**。本 PR 期間中は GitHub Actions が
+  # `push.paths` filter を default branch (main) の workflow 定義で評価する known
+  # behavior により、main の release.yml が旧 paths filter を保持している間は claude/*
+  # push の phantom run 作成は継続する (commit 2d17747 push 自体が phantom run
+  # 25985396510 を作成した事実で実証)。defense-in-depth `if:` 条件は phantom run の
+  # 0 jobs 維持 (= conclusion=failure だが functional 影響ゼロ) を担保。
+  #
+  # Retrospective (issue #786 / PR #788): 上記 R3-1 訂正の「main paths filter で
+  # gating」仮説は **誤り** だった。真の root cause = `shell: ${{ matrix.shell }}` が
+  # GitHub Actions schema-invalid (`jobs.<job_id>.steps[*].shell` field は matrix
+  # context をサポートしない、公式 context availability table 参照)。Codex
+  # /codex:rescue (agentId a9a21c7545477c99c) で独立調査により確定。PR #788 で
+  # `build-windows.defaults.run.shell: ${{ matrix.shell }}` 移行 + step 個別
+  # `shell: ${{ matrix.shell }}` 削除 (9 箇所) により解消。R2 fix の paths filter
+  # 撤去自体は別目的 (push trigger を strict 判定にして無関係 path push の run 抑止)
+  # で benefit があるため維持しているが、phantom run の真因ではなかった。詳細は
+  # PR #786 / #788 / docs/superpowers/specs/2026-05-17-v020-v021-retro-codex-integration-design.md §9 を参照。
   push:
     branches: [main, "develop-*"]
     tags:
       - 'v*.*.*'
-    paths:
-      - '.github/workflows/release.yml'
-      - 'scripts/build-portable-zip.ps1'
-      - 'scripts/extract_release_notes.py'
-      - 'pyproject.toml'
-      - 'gui/package.json'
-      - 'gui/package-lock.json'
-      - 'gui/src-tauri/**'
-      - 'gui/src/**'
-      - 'gui/index.html'
-      - 'gui/vite.config.ts'
-      - 'gui/tsconfig*.json'
   pull_request:
     paths:
       - '.github/workflows/release.yml'
       - 'scripts/build-portable-zip.ps1'
       - 'scripts/extract_release_notes.py'
+      # #911: version-check job が呼ぶバージョン突合スクリプト。単独変更でも
+      # release CI で実際に走らせて、ガードが壊れたまま merge されるのを防ぐ。
+      - 'scripts/check_version_consistency.py'
       - 'pyproject.toml'
       # GUI 関連: tauri build を release CI で実行するため (#570)。
       # tauri.conf.json / Cargo.toml / Rust src / TS src / vite config の単独変更でも
@@ -55,6 +75,12 @@ on:
 
 jobs:
   version-check:
+    # /iterate-review Round 1 Finding 3 fix: push event の branches filter unmatch
+    # (claude/* 等) でも paths filter match で workflow run が created され
+    # startup_failure として記録される GitHub Actions 挙動を回避。
+    # 各 job entry で event/ref を明示判定し、main / develop-* / v*.*.* tag 以外の
+    # push は skipped に倒す。pull_request / workflow_dispatch は影響なし。
+    if: github.event_name != 'push' || github.ref_name == 'main' || startsWith(github.ref_name, 'develop-') || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.parse.outputs.version }}
@@ -65,21 +91,28 @@ jobs:
         with:
           python-version: '3.11.9'
 
-      - name: Resolve and verify version
+      # #911: バージョン保持箇所は pyproject.toml だけではない (実測 6 ファイル)。
+      # 箇所リストの正は scripts/check_version_consistency.py の VERSION_LOCATIONS。
+      # tag push 時は tag とも突合し、それ以外の起動 (PR / workflow_dispatch /
+      # branch push) では箇所間の相互一致だけを検証する。
+      - name: Verify version consistency across all locations
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            python scripts/check_version_consistency.py --tag "${GITHUB_REF#refs/tags/}"
+          else
+            python scripts/check_version_consistency.py
+          fi
+
+      - name: Resolve version
         id: parse
         shell: bash
         run: |
           set -euo pipefail
           PYPROJECT_VERSION=$(python -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
-          echo "pyproject.toml version: $PYPROJECT_VERSION"
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-            echo "tag version: $TAG_VERSION"
-            if [[ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]]; then
-              echo "::error::Tag v$TAG_VERSION does not match pyproject.toml version $PYPROJECT_VERSION"
-              exit 1
-            fi
-            VERSION="$TAG_VERSION"
+            VERSION="${GITHUB_REF#refs/tags/v}"
           else
             OVERRIDE='${{ inputs.version_override }}'
             VERSION="${OVERRIDE:-$PYPROJECT_VERSION}"
@@ -90,6 +123,24 @@ jobs:
   build-windows:
     needs: version-check
     runs-on: windows-latest
+    # M1 (Refs spec L-α, Refs #737): PS 7+ (pwsh) と PS 5.1 (powershell) を dual matrix で実行。
+    # PS 5.1 silent regression (F1 #729 BOM 系) を CI で検出する。
+    # upload-artifact は pwsh のみ (matrix.shell == 'pwsh' で gate)、PS 5.1 は smoke-test 専用。
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [pwsh, powershell]
+    name: build-windows (${{ matrix.shell }})
+    # build-windows job は matrix.shell (pwsh / powershell dual matrix) を
+    # `defaults.run.shell` 経由で適用する。GitHub Actions schema 仕様で
+    # `jobs.<job_id>.steps[*].shell` field は matrix context をサポートしない
+    # ため (PR #788 / issue #786 で確定)、step 個別の `shell:` 指定では matrix.shell
+    # を展開できない。`defaults.run.shell` field は matrix context 参照可能。
+    # version-check / release job は ubuntu-latest 上で意図的に `shell: bash`
+    # を step 個別指定しているが、これは shell variation 不要なため。
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     env:
       # build-portable-zip.ps1 reuses the BtbN FFmpeg zip from this directory
       # when the digest matches, and saves freshly downloaded copies here.
@@ -132,24 +183,30 @@ jobs:
       # release CI では package-lock.json と一致する厳密な再現を保証したい。
       # npm cache (setup-node) と組み合わせて再現性向上 + 速度向上。
       - name: Install GUI dependencies (#570)
-        shell: pwsh
         working-directory: gui
         run: npm ci --no-audit --no-fund
 
       - name: Build Tauri GUI binary (#570)
-        shell: pwsh
         working-directory: gui
         run: npm run tauri build
 
+      # #752 -- PyInstaller install. build-portable-zip.ps1 creates its own
+      # venv and installs PyInstaller there, so this base Python install is
+      # NOT strictly required for the build itself. We do it here anyway to
+      # surface version pin issues early (before the build script noise) and
+      # for actions/cache to amortize PyInstaller wheel downloads across runs.
+      - name: Install PyInstaller (#752)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r scripts/installer/requirements-pyinstaller.txt
+
       - name: Build Portable ZIP (skip archive)
-        shell: pwsh
         run: ./scripts/build-portable-zip.ps1 -Version '${{ needs.version-check.outputs.version }}' -SkipArchive
 
       # build-portable-zip.ps1 は Tauri exe が見つからない場合 Write-Warning で
       # 続行する (CLI-only ZIP として artifact 化) ため、payload に exe が含まれない
       # 回帰を smoke test の前に明示 fail させる (#570 受け入れ条件 #3)。
       - name: Verify allaganeye-gui.exe is bundled (#570)
-        shell: pwsh
         run: |
           $version = '${{ needs.version-check.outputs.version }}'
           $exePath = "build/portable/allaganeye-v$version/allaganeye-gui.exe"
@@ -159,8 +216,34 @@ jobs:
           $size = (Get-Item $exePath).Length / 1MB
           Write-Host "allaganeye-gui.exe bundled at $exePath ($([math]::Round($size, 2)) MB)"
 
+      # #752 -- baseline measurement: capture file count + size by top-dir /
+      # extension for PR before/after comparison. The JSON artifact is reused
+      # in the Pester regression assertion that locks in the reduction floor.
+      - name: Measure Portable ZIP baseline (#752)
+        if: matrix.shell == 'pwsh' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch')
+        run: |
+          $version = '${{ needs.version-check.outputs.version }}'
+          $payload = "build/portable/allaganeye-v$version"
+          $outFile = "build/portable/baseline.json"
+          $json = & ./scripts/measure-portable-zip-baseline.ps1 -PayloadDir $payload -Format Json
+          # #752 -- BOM-less UTF-8 で書き出す。Out-File -Encoding utf8 は PS 5.1
+          # で BOM 付き、PS 7+ で BOM-less と version 依存になるため [IO.File]
+          # 経由で encoding を explicit に揃える (PR #736 / #729 と同じ canonical
+          # pattern、`feedback_ps_setcontent_utf8_bom.md` 参照)。
+          [System.IO.File]::WriteAllText(
+            (Join-Path (Get-Location) $outFile),
+            $json,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+          Write-Host "--- Baseline measurement (#752) ---"
+          & ./scripts/measure-portable-zip-baseline.ps1 -PayloadDir $payload -Format Human
+          Write-Host "Saved baseline JSON to: $outFile"
+
+      # branch push (warm-up 目的、artifact upload なし) では smoke test を skip
+      # する (~5min 短縮)。PR validation と release tag push、workflow_dispatch
+      # の手動実行では従来通り実行 (CI-3, v0.3.0 cycle 改善)。
       - name: Smoke test (run launcher --version from built payload)
-        shell: pwsh
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
         run: |
           $version = '${{ needs.version-check.outputs.version }}'
           $payload = "build/portable/allaganeye-v$version"
@@ -189,7 +272,7 @@ jobs:
           }
 
       - name: Smoke test Level B (run launcher detect on 3s fixture)
-        shell: pwsh
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
         run: |
           # GitHub Actions の `shell: pwsh` は暗黙的に
           # `$PSNativeCommandUseErrorActionPreference = $true` を設定するため、
@@ -244,7 +327,7 @@ jobs:
       # active for release profile builds and that
       # `integrity-manifest.json` is generated by the build script.
       - name: Smoke test (integrity-check fall-through, expect exit 7)
-        shell: pwsh
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
           $version = '${{ needs.version-check.outputs.version }}'
@@ -263,7 +346,12 @@ jobs:
           }
 
           # Remove a bundled file the manifest is known to track.
-          $victim = Join-Path $verifyDir 'lib\allaganeye\audio\refs\fanfare.npz'
+          # #752: lib/ ディレクトリは PyInstaller --onedir 化で廃止。frozen bundle
+          # entry point の allaganeye/allaganeye.exe を消すと bat → allaganeye.exe
+          # 起動自体が失敗するため、_internal/ 内の fanfare.npz を victim に変更
+          # (manifest 対象ファイル、削除しても bat → allaganeye.exe 起動は成功 →
+          # exit 7 を辿れる)。
+          $victim = Join-Path $verifyDir 'allaganeye\_internal\allaganeye\audio\refs\fanfare.npz'
           if (-not (Test-Path $victim)) {
             throw "expected bundled file not present (build broken?): $victim"
           }
@@ -295,11 +383,27 @@ jobs:
       # #770 -- main / develop-* への branch push は rust-cache warm-up が目的で
       # release artifact は不要なため skip する。tag push (release tag) と
       # pull_request (build 確認用) では従来通り upload する。
+      #
+      # M1 (Refs spec L-α): matrix で 2 shell 並列実行する場合、artifact 名衝突を
+      # 避けるため pwsh のみで upload。PS 5.1 job は smoke-test 専用で artifact 不要。
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+        if: matrix.shell == 'pwsh' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))
         with:
           name: allaganeye-windows-v${{ needs.version-check.outputs.version }}
           path: build/portable/allaganeye-v${{ needs.version-check.outputs.version }}
+          if-no-files-found: error
+
+      # #752 -- Upload baseline.json separately so PR review / Task 19 PR-body
+      # update can retrieve before/after numbers via `gh run download`. The main
+      # `allaganeye-windows-v*` artifact only contains the payload subdir; the
+      # baseline JSON lives at the parent (build/portable/) so it needs its
+      # own upload step. Gated to pwsh-only matching the main upload gate
+      # (avoid duplicate artifacts from powershell.exe runner).
+      - uses: actions/upload-artifact@v4
+        if: matrix.shell == 'pwsh' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))
+        with:
+          name: allaganeye-baseline-v${{ needs.version-check.outputs.version }}
+          path: build/portable/baseline.json
           if-no-files-found: error
 
   release:

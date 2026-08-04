@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from allaganeye.audio.matcher import BgmHit
+from allaganeye.video.capture_region import CaptureRegion
 from allaganeye.video.detector import (
     _SAMPLE_WIDTH,
     _SCOREBAR_CHANNEL_STD_THRESHOLD,
@@ -16,13 +17,16 @@ from allaganeye.video.detector import (
     _has_scorebar,
     _scaled_height,
 )
+from allaganeye.video import scorebar as sb
 from allaganeye.video.scorebar import (
+    _band_mad_min,
     _is_static_from_frames,
     _majority_scorebar,
     _probe_scorebar_context,
     classify_blackout,
     filter_blackouts_with_scorebar,
 )
+from allaganeye.video.probe_state import PresenceState
 
 _HEIGHT = 180  # 16:9 scaled height
 _FAKE_FRAME = b"\x00" * (_SAMPLE_WIDTH * _HEIGHT * 3)  # dummy frame for mocks
@@ -221,8 +225,8 @@ class TestClassifyBlackout:
         """Both sides have scorebar, not static -> in_match."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([True, True, True], [f, f, f]),  # pre
-            ([True, True, True], [f, f, f]),  # post
+            ([True, True, True], [f, f, f], [None, None, None]),  # pre
+            ([True, True, True], [f, f, f], [None, None, None]),  # post
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "in_match"
@@ -233,8 +237,8 @@ class TestClassifyBlackout:
         """Both sides scorebar, but post is static -> match_boundary."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([True, True, True], [f, f, f]),  # pre
-            ([True, True, True], [f, f, f]),  # post
+            ([True, True, True], [f, f, f], [None, None, None]),  # pre
+            ([True, True, True], [f, f, f], [None, None, None]),  # post
         ]
         mock_static.return_value = True  # post side is static screen
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
@@ -247,8 +251,8 @@ class TestClassifyBlackout:
         """Both sides scorebar, post not static but pre is -> match_boundary."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([True, True, True], [f, f, f]),  # pre
-            ([True, True, True], [f, f, f]),  # post
+            ([True, True, True], [f, f, f], [None, None, None]),  # pre
+            ([True, True, True], [f, f, f], [None, None, None]),  # post
         ]
         mock_static.side_effect = [False, True]  # post=not static, pre=static
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
@@ -260,8 +264,8 @@ class TestClassifyBlackout:
         """Pre=False, Post=True -> match_boundary (match start)."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([False, False, False], [f, f, f]),  # pre
-            ([True, True, True], [f, f, f]),  # post
+            ([False, False, False], [f, f, f], [None, None, None]),  # pre
+            ([True, True, True], [f, f, f], [None, None, None]),  # post
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "match_boundary"
@@ -271,8 +275,8 @@ class TestClassifyBlackout:
         """Pre=True, Post=False -> match_boundary (match end)."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([True, True, True], [f, f, f]),  # pre
-            ([False, False, False], [f, f, f]),  # post
+            ([True, True, True], [f, f, f], [None, None, None]),  # pre
+            ([False, False, False], [f, f, f], [None, None, None]),  # post
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "match_boundary"
@@ -282,10 +286,10 @@ class TestClassifyBlackout:
         """Neither side has scorebar -> non_fl (re-probe also confirms)."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([False, False, False], [f, f, f]),  # pre initial
-            ([False, False, False], [f, f, f]),  # post initial
-            ([False, False], [f, f]),  # pre re-probe (#524)
-            ([False, False], [f, f]),  # post re-probe (#524)
+            ([False, False, False], [f, f, f], [None, None, None]),  # pre initial
+            ([False, False, False], [f, f, f], [None, None, None]),  # post initial
+            ([False, False], [f, f], [None, None]),  # pre re-probe (#524)
+            ([False, False], [f, f], [None, None]),  # post re-probe (#524)
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "non_fl"
@@ -294,10 +298,14 @@ class TestClassifyBlackout:
     def test_all_probes_failed(self, mock_probe):
         """All probes failed (initial+re-probe) -> unknown."""
         mock_probe.side_effect = [
-            ([None, None, None], [None, None, None]),  # pre initial
-            ([None, None, None], [None, None, None]),  # post initial
-            ([None, None], [None, None]),  # pre re-probe (#524)
-            ([None, None], [None, None]),  # post re-probe (#524)
+            ([None, None, None], [None, None, None], [None, None, None]),  # pre initial
+            (
+                [None, None, None],
+                [None, None, None],
+                [None, None, None],
+            ),  # post initial
+            ([None, None], [None, None], [None, None]),  # pre re-probe (#524)
+            ([None, None], [None, None], [None, None]),  # post re-probe (#524)
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "unknown"
@@ -307,8 +315,8 @@ class TestClassifyBlackout:
         """Pre all failed, post has scorebar -> unknown (safe side)."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([None, None, None], [None, None, None]),  # pre
-            ([True, True, True], [f, f, f]),  # post
+            ([None, None, None], [None, None, None], [None, None, None]),  # pre
+            ([True, True, True], [f, f, f], [None, None, None]),  # post
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "unknown"
@@ -318,8 +326,12 @@ class TestClassifyBlackout:
         """Partial failures with majority vote."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([True, True, None], [f, f, None]),  # pre: 2/2 True
-            ([False, None, None], [f, None, None]),  # post: 1/1 False
+            ([True, True, None], [f, f, None], [None, None, None]),  # pre: 2/2 True
+            (
+                [False, None, None],
+                [f, None, None],
+                [None, None, None],
+            ),  # post: 1/1 False
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 102.0), 300.0, _HEIGHT)
         assert result == "match_boundary"
@@ -841,8 +853,8 @@ class TestClassifyBlackoutBoundary:
         """Region near start (0.5s) -> pre timestamps clamp to 0.0."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([True], [f]),  # pre: only 1 unique timestamp after dedup
-            ([True, True, True], [f, f, f]),  # post: 3 timestamps
+            ([True], [f], [None]),  # pre: only 1 unique timestamp after dedup
+            ([True, True, True], [f, f, f], [None, None, None]),  # post: 3 timestamps
         ]
         result = classify_blackout(Path("v.mp4"), (0.5, 3.0), 300.0, _HEIGHT)
         assert result == "in_match"
@@ -862,9 +874,9 @@ class TestClassifyBlackoutBoundary:
         """
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([False, False, False], [f, f, f]),  # pre initial
-            ([False], [f]),  # post initial: collapsed
-            ([False, False, False], [f, f, f]),  # pre re-probe
+            ([False, False, False], [f, f, f], [None, None, None]),  # pre initial
+            ([False], [f], [None]),  # post initial: collapsed
+            ([False, False, False], [f, f, f], [None, None, None]),  # pre re-probe
         ]
         result = classify_blackout(Path("v.mp4"), (297.0, 299.5), 300.0, _HEIGHT)
         assert result == "non_fl"
@@ -884,10 +896,10 @@ class TestClassifyBlackoutReProbe:
         """Both pre/post initial=False -> re-probe finds post=True -> match_boundary."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([False, False, False], [f, f, f]),  # pre initial
-            ([False, False, False], [f, f, f]),  # post initial
-            ([False, False, False], [f, f, f]),  # pre re-probe
-            ([True, True, True], [f, f, f]),  # post re-probe
+            ([False, False, False], [f, f, f], [None, None, None]),  # pre initial
+            ([False, False, False], [f, f, f], [None, None, None]),  # post initial
+            ([False, False, False], [f, f, f], [None, None, None]),  # pre re-probe
+            ([True, True, True], [f, f, f], [None, None, None]),  # post re-probe
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 108.0), 300.0, _HEIGHT)
         assert result == "match_boundary"
@@ -909,10 +921,18 @@ class TestClassifyBlackoutReProbe:
         """
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([None, None, None], [None, None, None]),  # pre initial
-            ([None, None, None], [None, None, None]),  # post initial
-            ([True, True, True], [f, f, f]),  # pre re-probe
-            ([False, False, False], [f, f, f]),  # post re-probe success False
+            ([None, None, None], [None, None, None], [None, None, None]),  # pre initial
+            (
+                [None, None, None],
+                [None, None, None],
+                [None, None, None],
+            ),  # post initial
+            ([True, True, True], [f, f, f], [None, None, None]),  # pre re-probe
+            (
+                [False, False, False],
+                [f, f, f],
+                [None, None, None],
+            ),  # post re-probe success False
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 108.0), 300.0, _HEIGHT)
         assert result == "match_boundary"
@@ -928,8 +948,8 @@ class TestClassifyBlackoutReProbe:
         """Initial pre=True (any-side True) -> re-probe skipped."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([True, True, True], [f, f, f]),  # pre initial
-            ([False, False, False], [f, f, f]),  # post initial
+            ([True, True, True], [f, f, f], [None, None, None]),  # pre initial
+            ([False, False, False], [f, f, f], [None, None, None]),  # post initial
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 108.0), 300.0, _HEIGHT)
         assert result == "match_boundary"
@@ -941,8 +961,8 @@ class TestClassifyBlackoutReProbe:
         """Initial post=True -> re-probe skipped."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([False, False, False], [f, f, f]),  # pre initial
-            ([True, True, True], [f, f, f]),  # post initial
+            ([False, False, False], [f, f, f], [None, None, None]),  # pre initial
+            ([True, True, True], [f, f, f], [None, None, None]),  # post initial
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 108.0), 300.0, _HEIGHT)
         assert result == "match_boundary"
@@ -954,10 +974,10 @@ class TestClassifyBlackoutReProbe:
         """Initial both False + re-probe both False -> non_fl preserved."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([False, False, False], [f, f, f]),  # pre initial
-            ([False, False, False], [f, f, f]),  # post initial
-            ([False, False, False], [f, f, f]),  # pre re-probe
-            ([False, False, False], [f, f, f]),  # post re-probe
+            ([False, False, False], [f, f, f], [None, None, None]),  # pre initial
+            ([False, False, False], [f, f, f], [None, None, None]),  # post initial
+            ([False, False, False], [f, f, f], [None, None, None]),  # pre re-probe
+            ([False, False, False], [f, f, f], [None, None, None]),  # post re-probe
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 108.0), 300.0, _HEIGHT)
         assert result == "non_fl"
@@ -969,10 +989,22 @@ class TestClassifyBlackoutReProbe:
         """Initial both None + re-probe both False -> non_fl (unknown -> non_fl)."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([None, None, None], [None, None, None]),  # pre initial
-            ([None, None, None], [None, None, None]),  # post initial
-            ([False, False, False], [f, f, f]),  # pre re-probe success False
-            ([False, False, False], [f, f, f]),  # post re-probe success False
+            ([None, None, None], [None, None, None], [None, None, None]),  # pre initial
+            (
+                [None, None, None],
+                [None, None, None],
+                [None, None, None],
+            ),  # post initial
+            (
+                [False, False, False],
+                [f, f, f],
+                [None, None, None],
+            ),  # pre re-probe success False
+            (
+                [False, False, False],
+                [f, f, f],
+                [None, None, None],
+            ),  # post re-probe success False
         ]
         result = classify_blackout(Path("v.mp4"), (100.0, 108.0), 300.0, _HEIGHT)
         assert result == "non_fl"
@@ -983,11 +1015,11 @@ class TestClassifyBlackoutReProbe:
         """Pre re-probe collapses to existing 0.0 -> skipped; post re-probe runs."""
         f = _FAKE_FRAME
         mock_probe.side_effect = [
-            ([False], [f]),  # pre initial (all 3 collapse to 0.0)
-            ([False, False, False], [f, f, f]),  # post initial
+            ([False], [f], [None]),  # pre initial (all 3 collapse to 0.0)
+            ([False, False, False], [f, f, f], [None, None, None]),  # post initial
             # pre re-probe: max(0, 0-(5+3/2/1)) = 0.0 -> dedupe vs {0.0} -> empty
             # post re-probe: 5+(5+1/2/3) = 11/12/13
-            ([True, True, True], [f, f, f]),  # post re-probe
+            ([True, True, True], [f, f, f], [None, None, None]),  # post re-probe
         ]
         # region (0.0, 5.0), duration=15, region_width=5.0
         result = classify_blackout(Path("v.mp4"), (0.0, 5.0), 15.0, _HEIGHT)
@@ -1184,7 +1216,7 @@ class TestProbeScorebarContext:
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=_FAKE_FRAME)
     def test_duplicate_timestamps_probed_once(self, mock_probe, mock_has):
         """Duplicate timestamps should be deduplicated -- probe called once."""
-        results, frames = _probe_scorebar_context(
+        results, frames, _loc = _probe_scorebar_context(
             Path("dummy.mp4"), [1.0, 1.0, 1.0], _HEIGHT, workers=1
         )
         assert mock_probe.call_count == 1
@@ -1199,7 +1231,7 @@ class TestProbeScorebarContext:
     def test_results_aligned_with_input_order(self, mock_probe, mock_has):
         """Returned lists must follow the original timestamps order."""
         ts = [3.0, 1.0, 2.0]
-        results, frames = _probe_scorebar_context(
+        results, frames, _loc = _probe_scorebar_context(
             Path("dummy.mp4"), ts, _HEIGHT, workers=2
         )
         assert len(results) == len(ts)
@@ -1211,7 +1243,7 @@ class TestProbeScorebarContext:
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=None)
     def test_probe_failure_returns_none(self, mock_probe, mock_has):
         """When _probe_frame_rgb returns None, results propagate None."""
-        results, frames = _probe_scorebar_context(
+        results, frames, _loc = _probe_scorebar_context(
             Path("dummy.mp4"), [1.0, 2.0], _HEIGHT, workers=1
         )
         assert results == [None, None]
@@ -1224,7 +1256,7 @@ class TestProbeScorebarContext:
         mock_probe.side_effect = lambda _path, t, _h: _FAKE_FRAME if t == 1.0 else None
         mock_has.side_effect = lambda raw, _h: True if raw is not None else None
 
-        results, frames = _probe_scorebar_context(
+        results, frames, _loc = _probe_scorebar_context(
             Path("dummy.mp4"), [1.0, 2.0, 1.0], _HEIGHT, workers=1
         )
         # ts=1.0 succeeds (True), ts=2.0 fails (None), ts=1.0 reuses result
@@ -1237,7 +1269,7 @@ class TestProbeScorebarContext:
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb", return_value=_FAKE_FRAME)
     def test_empty_timestamps(self, mock_probe, mock_has):
         """Empty timestamps list returns empty results."""
-        results, frames = _probe_scorebar_context(
+        results, frames, _loc = _probe_scorebar_context(
             Path("dummy.mp4"), [], _HEIGHT, workers=1
         )
         assert results == []
@@ -1253,8 +1285,833 @@ class TestProbeScorebarContext:
         mock_probe.side_effect = VideoProcessingError("ffmpeg not found")
         mock_has.side_effect = lambda raw, _h: True if raw is not None else None
 
-        results, frames = _probe_scorebar_context(
+        results, frames, _loc = _probe_scorebar_context(
             Path("dummy.mp4"), [1.0, 2.0], _HEIGHT, workers=1
         )
         assert results == [None, None]
         assert frames == [None, None]
+
+
+_W = 320
+
+
+def _solid_frame(height, fill):
+    return np.full((height, _W, 3), fill, dtype=np.uint8).tobytes()
+
+
+def test_is_static_default_uses_absolute_roi_unchanged():
+    h = 180
+    # two identical frames -> static (MAD 0) under default absolute ROI
+    frames = [_solid_frame(h, 50), _solid_frame(h, 50)]
+    assert _is_static_from_frames(frames, h) is True
+
+
+def test_is_static_band_region_argument_accepted():
+    import inspect
+
+    sig = inspect.signature(_is_static_from_frames)
+    assert "region" in sig.parameters
+    assert sig.parameters["region"].default is None
+
+
+def test_is_static_band_region_derives_from_normalized_region():
+    h = 180
+    # Build frames where the absolute scorebar ROI is identical (static) but
+    # a band region elsewhere differs between frames. With region given, the
+    # band-derived ROI must drive the MAD -> not static.
+    a = np.full((h, _W, 3), 50, dtype=np.uint8)
+    b = np.full((h, _W, 3), 50, dtype=np.uint8)
+    # Region = top-left quadrant (away from the bottom scorebar ROI).
+    region = CaptureRegion(0.0, 0.0, 0.25, 0.25)
+    bx1 = max(0, int(region.x * _W))
+    bx2 = min(_W, int((region.x + region.w) * _W))
+    by1 = max(0, int(region.y * h))
+    by2 = min(h, int((region.y + region.h) * h))
+    b[by1:by2, bx1:bx2, :] = 200  # large diff inside the band region only
+    frames = [a.tobytes(), b.tobytes()]
+
+    # Default absolute ROI sees no change -> static.
+    assert _is_static_from_frames(frames, h) is True
+    # Band region sees the change -> not static.
+    assert _is_static_from_frames(frames, h, region=region) is False
+
+
+def test_probe_context_3tuple_localize_none_by_default(monkeypatch):
+    # with_localize omitted -> 3rd element all None, scorebar/raw unchanged.
+    monkeypatch.setattr(sb, "_probe_frame_rgb", lambda v, t, h: f"lo{t}".encode())
+    monkeypatch.setattr(sb, "_probe_frame_rgb_hires", lambda v, t: f"hi{t}".encode())
+    monkeypatch.setattr(sb, "_has_scorebar_v2", lambda raw: True)
+    # _localize_present_from_raw must NOT be called when with_localize is False.
+    monkeypatch.setattr(
+        sb,
+        "_localize_present_from_raw",
+        lambda raw: (_ for _ in ()).throw(AssertionError("must not localize")),
+    )
+    scorebar, raw, loc = sb._probe_scorebar_context(
+        Path("x.mp4"), [1.0, 2.0], height=180, workers=1
+    )
+    assert scorebar == [True, True]
+    assert raw == [b"lo1.0", b"lo2.0"]
+    assert loc == [None, None]
+
+
+def test_probe_context_with_localize_populates_3rd(monkeypatch):
+    monkeypatch.setattr(sb, "_probe_frame_rgb", lambda v, t, h: b"lo")
+    monkeypatch.setattr(sb, "_probe_frame_rgb_hires", lambda v, t: f"hi{t}".encode())
+    monkeypatch.setattr(sb, "_has_scorebar_v2", lambda raw: False)
+    monkeypatch.setattr(
+        sb,
+        "_localize_present_from_raw",
+        lambda raw: PresenceState.PRESENT if raw == b"hi1.0" else PresenceState.ABSENT,
+    )
+    _scorebar, _raw, loc = sb._probe_scorebar_context(
+        Path("x.mp4"), [1.0, 2.0], height=180, workers=1, with_localize=True
+    )
+    assert loc == [PresenceState.PRESENT, PresenceState.ABSENT]
+
+
+# ---------------------------------------------------------------------------
+# _band_mad_min unit tests (Phase 2 B1)
+# ---------------------------------------------------------------------------
+
+
+def _rgb(height, fill):
+    return np.full((height, _W, 3), fill, dtype=np.uint8).tobytes()
+
+
+def test_band_mad_min_absolute_roi_matches_is_static():
+    # region=None path must stay bit-exact: identical frames -> MAD 0 -> static.
+    frames = [_rgb(180, 50), _rgb(180, 50)]
+    assert _band_mad_min(frames, 180) == 0.0
+    assert _is_static_from_frames(frames, 180) is True
+
+
+def test_band_mad_min_returns_none_for_degenerate_band():
+    # a band so thin it collapses to an empty crop -> None (not nan, not 0).
+    frames = [_rgb(180, 50), _rgb(180, 90)]
+    degenerate = CaptureRegion(0.5, 0.5, 0.0, 0.0)
+    assert _band_mad_min(frames, 180, degenerate) is None
+    # _is_static_from_frames must not raise / must be False for degenerate band.
+    assert _is_static_from_frames(frames, 180, degenerate) is False
+
+
+def test_band_mad_min_none_for_under_two_frames():
+    assert _band_mad_min([_rgb(180, 50)], 180) is None
+
+
+# ---------------------------------------------------------------------------
+# _classify_blackout_localize unit tests (Phase 2 B2)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_localize_truth_table(monkeypatch):
+    # Inject localize-present per probe set; assert the present-only labels.
+    from allaganeye.video import scorebar as sb
+
+    calls = {"n": 0}
+
+    def fake_probe(
+        video,
+        ts,
+        height,
+        workers,
+        *,
+        with_localize=False,
+        with_lowres=True,
+        anchor=None,
+    ):
+        # pre call first, post call second (region_width re-probe not triggered
+        # unless both not-True).
+        calls["n"] += 1
+        # pre present, post absent -> match_boundary
+        state = PresenceState.PRESENT if calls["n"] == 1 else PresenceState.ABSENT
+        return ([None] * len(ts), [b"f"] * len(ts), [state] * len(ts))
+
+    monkeypatch.setattr(sb, "_probe_scorebar_context", fake_probe)
+    monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 1.23)
+    cls = sb._classify_blackout_localize(
+        Path("x.mp4"), (100.0, 103.0), duration=400.0, height=180, workers=1
+    )
+    assert cls == "match_boundary"
+
+
+def test_classify_localize_both_present_is_in_match(monkeypatch):
+    from allaganeye.video import scorebar as sb
+
+    monkeypatch.setattr(
+        sb,
+        "_probe_scorebar_context",
+        lambda v, ts, h, w, *, with_localize=False, with_lowres=True, anchor=None: (
+            [None] * len(ts),
+            [b"f"] * len(ts),
+            [PresenceState.PRESENT] * len(ts),
+        ),
+    )
+    monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 5.0)
+    cls = sb._classify_blackout_localize(
+        Path("x.mp4"), (100.0, 101.0), duration=400.0, height=180, workers=1
+    )
+    assert cls == "in_match"
+
+
+def test_classify_localize_both_absent_is_non_fl(monkeypatch):
+    from allaganeye.video import scorebar as sb
+
+    monkeypatch.setattr(
+        sb,
+        "_probe_scorebar_context",
+        lambda v, ts, h, w, *, with_localize=False, with_lowres=True, anchor=None: (
+            [None] * len(ts),
+            [b"f"] * len(ts),
+            [PresenceState.ABSENT] * len(ts),
+        ),
+    )
+    monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 0.1)
+    cls = sb._classify_blackout_localize(
+        Path("x.mp4"), (100.0, 102.0), duration=400.0, height=180, workers=1
+    )
+    assert cls == "non_fl"
+
+
+def test_classify_localize_reprobe_rescues_to_boundary(monkeypatch):
+    # Pins the #524 re-probe rescue: the initial +1/2/3s probes both land
+    # absent (e.g. inside a fade), but the region_width-offset re-probe finds
+    # the scorebar on the pre side -> rescued from non_fl to match_boundary.
+    # Call ordering inside _classify_blackout_localize: pre (1), post (2),
+    # then pre_re (3), post_re (4) since both initial sides are not-True.
+    from allaganeye.video import scorebar as sb
+
+    calls = {"n": 0}
+    # call 1 pre absent, call 2 post absent, call 3 pre_re present, call 4 post_re absent
+    per_call_state = {
+        1: PresenceState.ABSENT,
+        2: PresenceState.ABSENT,
+        3: PresenceState.PRESENT,
+        4: PresenceState.ABSENT,
+    }
+
+    def fake_probe(
+        video,
+        ts,
+        height,
+        workers,
+        *,
+        with_localize=False,
+        with_lowres=True,
+        anchor=None,
+    ):
+        calls["n"] += 1
+        state = per_call_state[calls["n"]]
+        return ([None] * len(ts), [b"f"] * len(ts), [state] * len(ts))
+
+    monkeypatch.setattr(sb, "_probe_scorebar_context", fake_probe)
+    monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 1.23)
+    cls = sb._classify_blackout_localize(
+        Path("x.mp4"), (100.0, 103.0), duration=400.0, height=180, workers=1
+    )
+    # Without the re-probe block this region would be non_fl (both initial
+    # sides absent); the pre-side re-probe rescues it to match_boundary.
+    assert calls["n"] == 4  # all four probe sets were consulted
+    assert cls == "match_boundary"
+
+
+def test_classify_localize_all_none_is_unknown(monkeypatch):
+    # All probes (including the re-probe) return localize None -> the re-probe
+    # majority is None and must NOT override, leaving the side None -> unknown.
+    from allaganeye.video import scorebar as sb
+
+    monkeypatch.setattr(
+        sb,
+        "_probe_scorebar_context",
+        lambda v, ts, h, w, *, with_localize=False, with_lowres=True, anchor=None: (
+            [None] * len(ts),
+            [b"f"] * len(ts),
+            [None] * len(ts),
+        ),
+    )
+    monkeypatch.setattr(sb, "_band_mad_min", lambda *a, **k: 1.23)
+    cls = sb._classify_blackout_localize(
+        Path("x.mp4"), (100.0, 103.0), duration=400.0, height=180, workers=1
+    )
+    assert cls == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# classify_blackout localize selector unit tests (Phase 2 B3)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_blackout_vtuber_delegates_to_localize(monkeypatch):
+    from allaganeye.video import scorebar as sb
+    from allaganeye.video.capture_region import CaptureRegion
+
+    seen = {}
+
+    def fake_localize(
+        video, region, duration, height, workers=None, *, band_region, anchor=None
+    ):
+        seen["band"] = band_region
+        return "in_match"
+
+    monkeypatch.setattr(sb, "_classify_blackout_localize", fake_localize)
+    band = CaptureRegion(0.3, 0.0, 0.37, 0.04, source="band")
+    out = sb.classify_blackout(
+        Path("x.mp4"), (10.0, 11.0), 400.0, 180, localize=True, band_region=band
+    )
+    assert out == "in_match"
+    assert seen["band"] is band
+
+
+def test_classify_blackout_obs_does_not_call_localize(monkeypatch):
+    from allaganeye.video import scorebar as sb
+
+    monkeypatch.setattr(
+        sb,
+        "_classify_blackout_localize",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("OBS must not localize")),
+    )
+    # vtuber defaults False -> must take the v2 path (probe returns absent here).
+    monkeypatch.setattr(
+        sb,
+        "_probe_scorebar_context",
+        lambda v, ts, h, w, *, with_localize=False, with_lowres=True, anchor=None: (
+            [False] * len(ts),
+            [b"f"] * len(ts),
+            [None] * len(ts),
+        ),
+    )
+    out = sb.classify_blackout(Path("x.mp4"), (10.0, 12.0), 400.0, 180)
+    assert out == "non_fl"
+
+
+def test_filter_threads_vtuber_to_classify(monkeypatch):
+    from allaganeye.video import scorebar as sb
+    from allaganeye.video.capture_region import CaptureRegion
+
+    seen = []
+
+    def fake_classify(
+        video,
+        region,
+        duration,
+        height,
+        workers=None,
+        *,
+        band_region,
+        localize,
+        anchor=None,
+    ):
+        seen.append((localize, band_region.source))
+        return "match_boundary"
+
+    monkeypatch.setattr(sb, "classify_blackout", fake_classify)
+    monkeypatch.setattr(sb, "_merge_boundary_pairs", lambda *a, **k: (a[1], a[2]))
+    band = CaptureRegion(0.3, 0.0, 0.37, 0.04, source="band")
+    sb.filter_blackouts_with_scorebar(
+        Path("x.mp4"), [(10.0, 12.0)], 400.0, 180, band_region=band, localize=True
+    )
+    assert seen == [(True, "band")]
+
+
+def test_merge_gap_probe_uses_localize_path(monkeypatch):
+    from allaganeye.video import scorebar as sb
+    from allaganeye.video.capture_region import CaptureRegion
+
+    captured = {}
+
+    def fake_probe(
+        video,
+        points,
+        height,
+        workers,
+        *,
+        with_localize=False,
+        with_lowres=True,
+        anchor=None,
+    ):
+        captured["with_localize"] = with_localize
+        # gap shows no scorebar by either signal -> eligible to merge.
+        return (
+            [None] * len(points),
+            [b"f"] * len(points),
+            [PresenceState.ABSENT] * len(points),
+        )
+
+    monkeypatch.setattr(sb, "_probe_scorebar_context", fake_probe)
+    regions = [(10.0, 12.0), (30.0, 32.0)]
+    cls = ["match_boundary", "match_boundary"]
+    band = CaptureRegion(0.3, 0.0, 0.37, 0.04, source="band")
+    merged, _merged_cls = sb._merge_boundary_pairs(
+        Path("x.mp4"), regions, cls, 400.0, 180, None, band_region=band, localize=True
+    )
+    assert captured["with_localize"] is True
+    assert merged == [(10.0, 32.0)]  # localize-absent gap -> merged
+
+
+def test_classify_blackout_localize_selector_routes(monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.setattr(sb, "_classify_blackout_localize", lambda *a, **k: "LOCALIZED")
+    # localize=True routes to the position-independent classifier
+    assert (
+        sb.classify_blackout(Path("x.mp4"), (10.0, 12.0), 100.0, 180, localize=True)
+        == "LOCALIZED"
+    )
+    # localize=False takes the v2 path (must NOT be the localize sentinel).
+    monkeypatch.setattr(
+        sb,
+        "_probe_scorebar_context",
+        lambda *a, **k: ([False, False, False], [None, None, None], [None, None, None]),
+    )
+    assert (
+        sb.classify_blackout(Path("x.mp4"), (10.0, 12.0), 100.0, 180, localize=False)
+        != "LOCALIZED"
+    )
+
+
+# --- T5/T6: _probe_scorebar_context with_lowres + logger ---
+
+
+def test_probe_scorebar_context_with_lowres_false_skips_lowres(monkeypatch):
+    """with_lowres=False in v2 mode: low-res probe not called, result from hi-res."""
+    from unittest.mock import MagicMock
+    from pathlib import Path
+    from allaganeye.video import scorebar as sb
+
+    lo = MagicMock(return_value=b"\x00" * 10)
+    hi = MagicMock(return_value=b"\x00" * 10)
+    monkeypatch.setattr(sb, "_probe_frame_rgb", lo)
+    monkeypatch.setattr(sb, "_probe_frame_rgb_hires", hi)
+    monkeypatch.setattr(sb, "_has_scorebar_v2", lambda raw: True)  # opencv present
+    monkeypatch.setattr(sb, "_SCOREBAR_METHOD", "v2")
+    res, _frames, _ = sb._probe_scorebar_context(
+        Path("x.mkv"), [1.0, 2.0], 180, 2, with_lowres=False
+    )
+    lo.assert_not_called()  # low-res skipped (normal path, opencv present)
+    assert res == [True, True]  # decided by hi-res (bit-exact)
+
+
+def test_probe_scorebar_context_lazy_lowres_when_v2_none(monkeypatch):
+    """with_lowres=False + V2 returns None (no opencv): lazy low-res probe fires."""
+    from unittest.mock import MagicMock
+    from pathlib import Path
+    from allaganeye.video import scorebar as sb
+
+    lo = MagicMock(return_value=b"\x00" * 10)
+    monkeypatch.setattr(sb, "_probe_frame_rgb", lo)
+    monkeypatch.setattr(sb, "_probe_frame_rgb_hires", MagicMock(return_value=b""))
+    monkeypatch.setattr(sb, "_has_scorebar_v2", lambda raw: None)  # opencv absent
+    monkeypatch.setattr(sb, "_has_scorebar", lambda raw, h: False)  # V1 fallback
+    monkeypatch.setattr(sb, "_SCOREBAR_METHOD", "v2")
+    res, _, _ = sb._probe_scorebar_context(
+        Path("x.mkv"), [1.0], 180, 1, with_lowres=False
+    )
+    lo.assert_called()  # lazily probed for V1 fallback (no-opencv preserved)
+    assert res == [False]
+
+
+def test_probe_scorebar_context_logs_probe_failure(monkeypatch, caplog):
+    """VideoProcessingError in probe -> debug-logged (not silently swallowed)."""
+    import logging
+    from pathlib import Path
+    from allaganeye.exceptions import VideoProcessingError
+    from allaganeye.video import scorebar as sb
+
+    def boom(*a, **k):
+        raise VideoProcessingError("ffmpeg not found")
+
+    monkeypatch.setattr(sb, "_probe_frame_rgb", boom)
+    monkeypatch.setattr(sb, "_probe_frame_rgb_hires", boom)
+    with caplog.at_level(logging.DEBUG, logger="allaganeye.video.scorebar"):
+        sb._probe_scorebar_context(Path("x.mkv"), [1.0], 180, 1)
+    assert any("probe" in r.message.lower() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# #824 site 4/5: tri-state migration tests
+# ---------------------------------------------------------------------------
+
+
+def test_localize_present_from_raw_tristate():
+    # #824 site 4: 表現形式のみ変更 (semantics は docstring 分離済みのまま)。
+    assert sb._localize_present_from_raw(None) is PresenceState.UNKNOWN
+    blank = np.full((1080, 1920, 3), 40, dtype=np.uint8).tobytes()
+    assert sb._localize_present_from_raw(blank) is PresenceState.ABSENT
+
+
+def test_majority_presence_excludes_unknown_from_denominator():
+    P, A, U = PresenceState.PRESENT, PresenceState.ABSENT, PresenceState.UNKNOWN
+    assert sb._majority_presence([P, U, U]) is True  # 有効票 1, present 1
+    assert sb._majority_presence([P, A, U]) is True  # 有効票 2, present 1 >= ceil(2/2)
+    assert sb._majority_presence([A, A, P]) is False
+    assert sb._majority_presence([U, U, None]) is None  # 有効票ゼロ
+    assert sb._majority_presence([]) is None  # 有効票ゼロ (空入力) も None
+
+
+def test_probe_scorebar_context_localize_results_are_tristate(monkeypatch):
+    # with_localize=True で probe 失敗 frame は UNKNOWN、成功 miss は ABSENT。
+    # scorebar_results (bool|None) は従来のまま (OBS 不変 pin)。
+    from pathlib import Path
+
+    def fake_probe_rgb(v, t, h):
+        return b"lo"
+
+    def fake_probe_hires(v, t):
+        # t=1.0 -> None (probe failure) -> UNKNOWN; t=2.0 -> blank frame -> ABSENT
+        if t == 1.0:
+            return None
+        return np.full((1080, 1920, 3), 40, dtype=np.uint8).tobytes()
+
+    monkeypatch.setattr(sb, "_probe_frame_rgb", fake_probe_rgb)
+    monkeypatch.setattr(sb, "_probe_frame_rgb_hires", fake_probe_hires)
+    # has_scorebar_v2 returns False for both so scorebar_results are unchanged
+    monkeypatch.setattr(sb, "_has_scorebar_v2", lambda raw: False)
+
+    _scorebar, _raw, loc = sb._probe_scorebar_context(
+        Path("x.mp4"), [1.0, 2.0], height=180, workers=1, with_localize=True
+    )
+    # scorebar_results must remain bool (OBS path unaffected)
+    assert _scorebar == [False, False]
+    # localize results: probe failure -> UNKNOWN, blank frame -> ABSENT
+    assert loc[0] is PresenceState.UNKNOWN
+    assert loc[1] is PresenceState.ABSENT
+
+
+# ===========================================================================
+# B4: masked classification rules + anchor threading (#822)
+# ===========================================================================
+
+
+def _make_anchor():
+    """Synthetic ScorebarLocalization anchor for B4 tests."""
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    return ScorebarLocalization(
+        x_left=100, x_right=1820, y_top=12, y_bottom=48, confidence=1.0
+    )
+
+
+def test_masked_keep_rules_in_match_removed_any_duration(monkeypatch):
+    """spec 3.2: anchored localize path removes in_match at ANY duration (incl. >=3.5s).
+
+    Patches classify_blackout to always return "in_match".  A 5.0s region
+    (duration > _IN_MATCH_MAX_DURATION = 3.5s) must NOT appear in the kept
+    list when localize=True and anchor is resolved.
+    """
+    monkeypatch.setattr(sb, "classify_blackout", lambda *a, **kw: "in_match")
+    # Also stub _merge_boundary_pairs to be identity (no regions to merge anyway)
+    monkeypatch.setattr(
+        sb,
+        "_merge_boundary_pairs",
+        lambda vp, regions, cls, dur, height, workers, **kw: (regions, cls),
+    )
+    regions = [(100.0, 105.0)]  # 5.0s > _IN_MATCH_MAX_DURATION
+    result, clslist = filter_blackouts_with_scorebar(
+        Path("v.mp4"), regions, 400.0, _HEIGHT, localize=True, anchor=_make_anchor()
+    )
+    assert result == [], (
+        "in_match at any duration must be removed on anchored localize path"
+    )
+    assert clslist == []
+
+
+def test_masked_keep_rules_non_fl_kept(monkeypatch):
+    """spec 3.2: anchored localize path keeps non_fl as boundary candidate (staging frames)."""
+    monkeypatch.setattr(sb, "classify_blackout", lambda *a, **kw: "non_fl")
+    monkeypatch.setattr(
+        sb,
+        "_merge_boundary_pairs",
+        lambda vp, regions, cls, dur, height, workers, **kw: (regions, cls),
+    )
+    regions = [(100.0, 103.0)]
+    result, clslist = filter_blackouts_with_scorebar(
+        Path("v.mp4"), regions, 400.0, _HEIGHT, localize=True, anchor=_make_anchor()
+    )
+    assert result == regions, "non_fl must be kept on anchored localize path"
+    assert clslist == ["non_fl"]
+
+
+def test_obs_keep_rules_unchanged_pin(monkeypatch):
+    """Bit-exact OBS path pin: localize=False -> in_match>=3.5s KEEP, non_fl REMOVE."""
+    side_effects = ["in_match", "non_fl"]
+    monkeypatch.setattr(sb, "classify_blackout", lambda *a, **kw: side_effects.pop(0))
+    monkeypatch.setattr(
+        sb,
+        "_merge_boundary_pairs",
+        lambda vp, regions, cls, dur, height, workers, **kw: (regions, cls),
+    )
+    # in_match 8s (>=3.5s) + non_fl 3s; localize=False (OBS path)
+    regions = [(100.0, 108.0), (200.0, 203.0)]
+    result, clslist = filter_blackouts_with_scorebar(
+        Path("v.mp4"), regions, 400.0, _HEIGHT, localize=False
+    )
+    assert result == [(100.0, 108.0)], "OBS: long in_match must be KEPT"
+    assert clslist == ["in_match"]
+
+
+def test_degraded_masked_keep_rules_match_pre_pr(monkeypatch):
+    """spec section 5 degradation floor: localize=True + anchor=None uses pre-#822 rules.
+
+    A long in_match (>=3.5s) must be KEPT (boundary), and non_fl must be
+    REMOVED -- exactly the pre-#822 / OBS behavior.  This verifies the
+    degradation floor: an anchor-unresolved masked run is never WORSE than
+    the pre-PR baseline.
+    """
+    side_effects = ["in_match", "non_fl"]
+    monkeypatch.setattr(sb, "classify_blackout", lambda *a, **kw: side_effects.pop(0))
+    monkeypatch.setattr(
+        sb,
+        "_merge_boundary_pairs",
+        lambda vp, regions, cls, dur, height, workers, **kw: (regions, cls),
+    )
+    # long in_match (5.0s >= 3.5s) + non_fl -- degraded path (anchor=None)
+    regions = [(100.0, 105.0), (200.0, 203.0)]
+    result, clslist = filter_blackouts_with_scorebar(
+        Path("v.mp4"), regions, 400.0, _HEIGHT, localize=True, anchor=None
+    )
+    assert result == [(100.0, 105.0)], (
+        "degraded masked (anchor=None): long in_match must be KEPT (pre-#822 floor)"
+    )
+    assert clslist == ["in_match"]
+
+
+def test_vtuber_path_keep_rules_unchanged_pin(monkeypatch):
+    """spec section 8 (#480 defer): vtuber path (localize=True, anchor=None) keeps pre-#822 rules.
+
+    The vtuber shape is localize=True with no anchor resolved (detector.py
+    passes localize=vtuber, no anchor).  A long in_match (>=3.5s) must be
+    KEPT and a non_fl must be REMOVED -- same as OBS / degraded path.
+    This pins the #480 contract: vtuber classification rules are unchanged.
+    """
+    side_effects = ["in_match", "non_fl"]
+    monkeypatch.setattr(sb, "classify_blackout", lambda *a, **kw: side_effects.pop(0))
+    monkeypatch.setattr(
+        sb,
+        "_merge_boundary_pairs",
+        lambda vp, regions, cls, dur, height, workers, **kw: (regions, cls),
+    )
+    # vtuber call shape: localize=True, anchor=None (no anchor from detector)
+    regions = [(100.0, 108.0), (200.0, 203.0)]
+    result, clslist = filter_blackouts_with_scorebar(
+        Path("v.mp4"),
+        regions,
+        400.0,
+        _HEIGHT,
+        localize=True,
+        anchor=None,  # vtuber shape: no anchor
+    )
+    assert result == [(100.0, 108.0)], (
+        "vtuber path (localize=True, anchor=None): long in_match must be KEPT"
+        " (pre-#822 / #480 defer contract)"
+    )
+    assert clslist == ["in_match"]
+
+
+def test_presence_at_anchor_from_raw_raw_none(monkeypatch):
+    """raw=None -> UNKNOWN (probe failure path)."""
+    from allaganeye.video.scorebar import _presence_at_anchor_from_raw
+
+    result = _presence_at_anchor_from_raw(None, _make_anchor())
+    assert result is PresenceState.UNKNOWN
+
+
+def test_presence_at_anchor_from_raw_anchor_none_delegates(monkeypatch):
+    """anchor=None -> delegates to _localize_present_from_raw (position-independent)."""
+    from allaganeye.video.scorebar import _presence_at_anchor_from_raw
+
+    # patch the delegate so we can verify it is called
+    called = []
+    monkeypatch.setattr(
+        sb,
+        "_localize_present_from_raw",
+        lambda raw: called.append(raw) or PresenceState.ABSENT,
+    )
+    dummy_raw = b"\x00" * 10
+    result = _presence_at_anchor_from_raw(dummy_raw, None)
+    assert result is PresenceState.ABSENT
+    assert len(called) == 1
+
+
+def test_presence_at_anchor_from_raw_hit(monkeypatch):
+    """anchor specified and localize_from_rgb_bytes_at_anchor returns a hit -> PRESENT."""
+    from allaganeye.video.scorebar import _presence_at_anchor_from_raw
+
+    monkeypatch.setattr(
+        sb,
+        "localize_from_rgb_bytes_at_anchor",
+        lambda raw, anchor, height, width: _make_anchor(),
+    )
+    dummy_raw = b"\x00" * 10
+    result = _presence_at_anchor_from_raw(dummy_raw, _make_anchor())
+    assert result is PresenceState.PRESENT
+
+
+def test_presence_at_anchor_from_raw_miss(monkeypatch):
+    """anchor specified and localize_from_rgb_bytes_at_anchor returns None -> ABSENT."""
+    from allaganeye.video.scorebar import _presence_at_anchor_from_raw
+
+    monkeypatch.setattr(
+        sb,
+        "localize_from_rgb_bytes_at_anchor",
+        lambda raw, anchor, height, width: None,
+    )
+    dummy_raw = b"\x00" * 10
+    result = _presence_at_anchor_from_raw(dummy_raw, _make_anchor())
+    assert result is PresenceState.ABSENT
+
+
+def test_classify_localize_uses_anchor_presence(monkeypatch):
+    """anchor != None: _probe_scorebar_context calls _presence_at_anchor_from_raw."""
+    anchor = _make_anchor()
+    anchor_calls = []
+
+    def fake_presence_at_anchor(raw, anc):
+        anchor_calls.append((raw, anc))
+        return PresenceState.PRESENT
+
+    def fake_probe(
+        vp, ts, height, workers, *, with_localize=False, with_lowres=True, anchor=None
+    ):
+        # Return empty scorebar results + raw + localize_results
+        n = len(ts)
+        dummy_raw = b"\x00" * 10
+        if with_localize:
+            locs = [fake_presence_at_anchor(dummy_raw, anchor) for _ in ts]
+        else:
+            locs = [None] * n
+        return ([True] * n, [dummy_raw] * n, locs)
+
+    monkeypatch.setattr(sb, "_probe_scorebar_context", fake_probe)
+    monkeypatch.setattr(sb, "_band_mad_min", lambda frames, h, r=None: None)
+
+    from allaganeye.video.scorebar import _classify_blackout_localize
+
+    _classify_blackout_localize(
+        Path("v.mp4"), (10.0, 12.0), 300.0, _HEIGHT, anchor=anchor
+    )
+    # _presence_at_anchor_from_raw must have been called with the anchor
+    assert any(a is anchor for _, a in anchor_calls), (
+        "_presence_at_anchor_from_raw must receive the anchor"
+    )
+
+
+def test_probe_scorebar_context_routes_localize_through_anchor_presence(monkeypatch):
+    """#822 B4 junction pin: with_localize=True no localize_results generation routes
+    _presence_at_anchor_from_raw(raw, anchor) through the real _probe_scorebar_context
+    execution path (fake-probe threading tests give false-green for this regression,
+    #844 class).
+
+    Setup mirrors test_probe_scorebar_context_localize_results_are_tristate:
+    monkeypatch _probe_frame_rgb + _probe_frame_rgb_hires so no real ffmpeg is needed;
+    _has_scorebar_v2 returns False so the v2 scorebar side stays quiet.
+    Spy wraps the real _presence_at_anchor_from_raw and records calls.
+
+    Assertions:
+    (a) with anchor specified: spy receives the anchor object on each hi-res frame.
+    (b) with anchor=None: spy receives None (delegation path).
+    """
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    my_anchor = ScorebarLocalization(
+        x_left=614, x_right=1305, y_top=12, y_bottom=57, confidence=1.0
+    )
+
+    # Use a real hires frame (blank 1920x1080 RGB) so _presence_at_anchor_from_raw
+    # does not short-circuit on raw=None.
+    import numpy as np
+
+    hires_bytes = np.full((1080, 1920, 3), 40, dtype=np.uint8).tobytes()
+
+    monkeypatch.setattr(sb, "_probe_frame_rgb", lambda v, t, h: b"lo")
+    monkeypatch.setattr(sb, "_probe_frame_rgb_hires", lambda v, t: hires_bytes)
+    monkeypatch.setattr(sb, "_has_scorebar_v2", lambda raw: False)
+
+    # Spy: wrap the REAL _presence_at_anchor_from_raw and record call args.
+    real_fn = sb._presence_at_anchor_from_raw
+    spy_calls: list[tuple] = []
+
+    def spy_presence(raw, anc):
+        spy_calls.append((raw, anc))
+        return real_fn(raw, anc)
+
+    monkeypatch.setattr(sb, "_presence_at_anchor_from_raw", spy_presence)
+
+    # (a) anchor specified -> spy must receive my_anchor
+    spy_calls.clear()
+    sb._probe_scorebar_context(
+        Path("x.mp4"),
+        [1.0, 2.0],
+        height=180,
+        workers=1,
+        with_localize=True,
+        anchor=my_anchor,
+    )
+    assert len(spy_calls) == 2, (
+        f"expected 2 spy calls (one per unique ts), got {len(spy_calls)}"
+    )
+    assert all(anc is my_anchor for _, anc in spy_calls), (
+        "_presence_at_anchor_from_raw must receive the anchor for each frame"
+    )
+
+    # (b) anchor=None -> spy must receive None (position-independent delegation path)
+    spy_calls.clear()
+    sb._probe_scorebar_context(
+        Path("x.mp4"), [1.0], height=180, workers=1, with_localize=True, anchor=None
+    )
+    assert len(spy_calls) == 1
+    assert spy_calls[0][1] is None, (
+        "anchor=None must be forwarded to _presence_at_anchor_from_raw as None"
+    )
+
+
+def test_merge_gap_probes_at_anchor(monkeypatch):
+    """merge's 9 gap probes use at-anchor evaluation when anchor is specified.
+
+    Setup: two match_boundary regions; gap probes are set up so that the
+    at-anchor result returns ABSENT (no scorebar), but position-independent
+    localize would return PRESENT (lobby FP outside the anchor band).
+    With anchor=anchor, any_scorebar must be False -> merge succeeds.
+    """
+    anchor = _make_anchor()
+    probe_calls = []
+
+    def fake_probe(
+        vp, ts, height, workers, *, with_localize=False, with_lowres=True, anchor=None
+    ):
+        probe_calls.append(
+            {"with_localize": with_localize, "anchor": anchor, "n": len(ts)}
+        )
+        n = len(ts)
+        dummy = b"\x00" * 10
+        if with_localize:
+            # at-anchor: always ABSENT (gap is lobby, scorebar not at anchor position)
+            locs: list[PresenceState | None] = [PresenceState.ABSENT] * n
+        else:
+            locs = [None] * n
+        return ([False] * n, [dummy] * n, locs)
+
+    monkeypatch.setattr(sb, "_probe_scorebar_context", fake_probe)
+
+    regions = [(10.0, 15.0), (30.0, 35.0)]
+    clss = ["match_boundary", "match_boundary"]
+
+    from allaganeye.video.scorebar import _merge_boundary_pairs
+
+    merged, _merged_cls = _merge_boundary_pairs(
+        Path("v.mp4"),
+        regions,
+        clss,
+        300.0,
+        _HEIGHT,
+        None,
+        localize=True,
+        anchor=anchor,
+    )
+    # ABSENT-only gap -> all_valid and not any_scorebar -> merge happens
+    assert len(merged) == 1, f"merge should collapse 2->1, got {merged}"
+    assert merged[0] == (10.0, 35.0)
+    # The anchor must have been threaded to the probe call
+    anchor_probes = [c for c in probe_calls if c.get("with_localize")]
+    assert all(c["anchor"] is anchor for c in anchor_probes), (
+        "anchor must be threaded to gap probes"
+    )

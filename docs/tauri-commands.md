@@ -4,7 +4,7 @@
 
 ## エラー型 (migration 完了)
 
-- 戻り値型: **全 25 command が `Result<T, AppError>` または `bool` / 値直接 (`is_process_running` / `probe_environment_info`) を返す** (PR [#665](https://github.com/Idios/kobutachan-allaganeye/pull/665) で legacy `Result<T, String>` から完全 migration 済、PR #669 で `read_error_log_tail` / `probe_environment_info` 追加)
+- 戻り値型: **全 28 command が `Result<T, AppError>` または `bool` / 値直接 (`is_process_running` / `probe_environment_info`) を返す** (PR [#665](https://github.com/Idios/kobutachan-allaganeye/pull/665) で legacy `Result<T, String>` から完全 migration 済、PR #669 で `read_error_log_tail` / `probe_environment_info` 追加、PR #787 で `enumerate_h264_encoders` / `start_export` 追加・`export_match` / `select_h264_encoder_for_export` 削除、#893 で `start_minimap` / `detect_minimap_regions` 追加)
 - `AppError` 構造体 (`gui/src-tauri/src/error.rs`、PR [#661](https://github.com/Idios/kobutachan-allaganeye/pull/661) Refs [#614](https://github.com/Idios/kobutachan-allaganeye/issues/614) で導入) のフィールド: `code: String` (domain-specific identifier、例 `io.file_not_found`) / `message: String` / `hint: Option<String>` / `stacktrace: Option<String>`
 - `From<std::io::Error>` / `From<serde_json::Error>` / `From<String>` / `From<&str>` impl があり、`?` 演算子で自動変換される (PR #665 で追加)。`std::io::Error` は `ErrorKind` から domain code を派生 (例 `NotFound` → `io.file_not_found`)
 - frontend 側 narrowing: `gui/src/lib/appError.ts` の `toErrorState(e)` / `appErrorCodeIs(e, code)` / `isAppError(e)` ヘルパーを使う。Tauri は `AppError` を JSON object として frontend に渡し、invoke 失敗時 Promise.reject 値が AppError instance になる
@@ -27,7 +27,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | `load_metadata` | `path: String` | `Result<Value, AppError>` | I/O | (a) ファイル不在、(b) JSON parse 失敗、(c) 読み取り権限なし、(d) JSON root が object でない | (a) `io.file_not_found`、(b) `parse.json_invalid`、(c) `io.permission_denied`、(d) `parse.schema_invalid` |
 | 2 | `get_metadata_mtime` | `path: String` | `Result<Option<u64>, AppError>` | I/O | (a) ファイル不在 (= None で返却)、(b) 読み取り権限なし | (b) `io.permission_denied` |
-| 3 | `apply_changes` | `path: String, metadata: Value, expected_mtime_ms: Option<u64>` | `Result<u64, AppError>` | I/O + state-mutating | (a) mtime conflict (外部書き換え検出)、(b) backup 作成失敗、(c) atomic write 失敗、(d) JSON serialize 失敗、(e) post-apply mtime 取得失敗 (extreme case、書き込み直後にファイルが消失/権限変更等) | (a) `state.mtime_conflict`、(b) `io.backup_failed`、(c) `io.write_failed`、(d) `parse.json_serialize_failed`、(e) `io.read_failed` |
+| 3 | `apply_changes` | `path: String, metadata: Value, expected_mtime_ms: Option<u64>` | `Result<u64, AppError>` | I/O + state-mutating | (a) mtime conflict (外部書き換え検出)、(b) backup 作成失敗、(c) atomic write 失敗、(d) JSON serialize 失敗、(e) post-apply mtime 取得失敗 (extreme case、書き込み直後にファイルが消失/権限変更等)、(f) match/gap 境界不正 (start_time/end_time 欠損・非数値、match は end_time <= start_time / gap は end_time < start_time、#814)、(g) metadata 必須フィールド欠損・型不正 (source / source_duration / source_duration_display / detected_at / detection_params / matches / gaps、#814) | (a) `state.mtime_conflict`、(b) `io.backup_failed`、(c) `io.write_failed`、(d) `parse.json_serialize_failed`、(e) `io.read_failed`、(f) `validation.boundary_invalid`、(g) `parse.schema_invalid` |
 | 4 | `save_draft` | `path: String, draft: Value` | `Result<(), AppError>` | I/O + state-mutating | (a) sibling `.draft.json` への書き込み失敗 | (a) `io.write_failed` |
 | 5 | `load_draft` | `path: String` | `Result<Option<Value>, AppError>` | I/O | (a) draft ファイル不在 (= None で返却)、(b) JSON parse 失敗 | (b) `parse.json_invalid` |
 | 6 | `clear_draft` | `path: String` | `Result<(), AppError>` | I/O + state-mutating | (a) draft 削除失敗 (権限等) | (a) `io.delete_failed` |
@@ -43,14 +43,16 @@
 | 16 | `kill_tracked_processes` | (なし) | `Result<u32, AppError>` | subprocess + state-mutating | (a) kill コマンド失敗 | (a) `process.kill_failed` |
 | 17 | `force_exit_app` | `app: tauri::AppHandle` | (返り値なし) | state-mutating | (即時 app exit、エラーケースなし) | - |
 | 18 | `open_folder_in_explorer` | `path: String` | `Result<(), AppError>` | subprocess | (a) フォルダ不在、(b) explorer 起動失敗 | (a) `io.file_not_found`、(b) `subprocess.spawn_failed` |
-| 19 | `export_match` | `app: AppHandle, video_path: String, start_seconds: f64, end_seconds: f64, output_path: String, codec: ExportCodec, h264_encoder: Option<H264Encoder>, match_index: u32` | `Result<ExportResult, AppError>` | subprocess + I/O | (a) ffmpeg 不在、(b) GPU encoder 初期化失敗 (NVENC/QSV/AMF, libx264 fallback で recover)、(c) input video 不在、(d) output 書き込み失敗 | (a) `ffmpeg.not_found`、(b) `ffmpeg.encoder_init_failed`、(c) `io.file_not_found`、(d) `io.write_failed` |
-| 20 | `select_h264_encoder_for_export` | `vendors: Vec<String>, preference: Vec<String>` | `EncoderInfo` | pure | (純粋関数、エラーなし) | - |
-| 21 | `start_detect` | `app: AppHandle, video_path: String, output_dir: String, params: DetectParams` | `Result<DetectResult, AppError>` | subprocess | (a) python CLI 不在、(b) python -m fallback 失敗、(c) detect 実行中エラー | (a) `python.not_found`、(b) `subprocess.spawn_failed`、(c) `subprocess.exit_failed` |
+| 19 | `enumerate_h264_encoders` | `req: { vendors: string[], preference: string[], gpuModels: string[] }` (camelCase) | `Result<Vec<EncoderSlotJson>, AppError>` | subprocess | (a) python CLI 不在、(b) encoder-slots 異常終了、(c) JSON parse 失敗 | (a) `python.not_found`、(b) `subprocess.exit_failed`、(c) `parse.json_invalid` |
+| 20 | `start_export` | `req: { metadataJson: object, outputDir: string, codec: "copy"\|"h264", namePattern: string, excludedIndexes: number[] }` | `Result<ExportSummary, AppError>` | subprocess + I/O | (a) python CLI 不在、(b) export 異常終了 (per-match error は `export-progress` event 経由)、(c) output dir 書き込み失敗 | (a) `python.not_found`、(b) `subprocess.exit_failed`、(c) `io.write_failed` |
+| 21 | `start_detect` | `app: AppHandle, video_path: String, output_dir: String, params: DetectParams, run_id: String` | `Result<DetectResult, AppError>` | subprocess | (a) python CLI 不在、(b) python -m fallback 失敗、(c) detect 実行中エラー、(d) ユーザー中断 (kill_tracked_processes による drain) | (a) `python.not_found`、(b) `subprocess.spawn_failed`、(c) `subprocess.exit_failed`、(d) `subprocess.cancelled` |
 | 22 | `get_log_dir` | (なし) | `Result<String, AppError>` | pure | (a) install_dir 取得失敗 (極端ケース) | (a) `path.install_dir_unresolved` |
 | 23 | `read_error_log_tail` | `line_count: usize` | `Result<String, AppError>` | I/O | (a) install_dir 取得失敗、(b) log file の open / read 失敗 | (a) `path.install_dir_unresolved`、(b) `io.read_failed` |
 | 24 | `probe_environment_info` | (なし) | `EnvironmentProbe` | pure | (常に struct で返却、エラーケースなし — 個別 field は `None` で degrade) | - |
 | 25 | `extract_brightness_window` | `video_path: String, t_start: f64, t_end: f64, fps: f64` | `Result<BrightnessWindow, AppError>` | subprocess | (a) ffmpeg 不在/起動失敗、(b) ffmpeg 異常終了 | (a) `subprocess.spawn_failed`、(b) `subprocess.exit_failed` |
 | 26 | `dev_force_panic` | (なし) | `Result<(), AppError>` | state-mutating | **意図的 panic** (`#[cfg(debug_assertions)]` 限定、PR #661 E2E 検証用) | - (panic で異常終了が期待動作) |
+| 27 | `start_minimap` | `app: AppHandle, req: { metadataPath: string, region: string, outputDir: string, namePattern: string, excludedIndexes: number[], expectedMtimeMs?: number, overwrite: boolean }` (camelCase) | `Result<ExportSummary, AppError>` | subprocess + I/O + state-mutating | (a) python CLI 不在、(b) minimap crop 異常終了 (per-match error は `minimap-progress` event 経由)、(c) write-back CAS 衝突 (metadata 外部変更、CLI exit 6)、(d) `overwrite=false` かつ `expectedMtimeMs` 未指定 (fail-closed、spawn 前 reject、#893 R2) | (a) `python.not_found`、(b) `subprocess.exit_failed`、(c) `state.mtime_conflict`、(d) `state.mtime_required` |
+| 28 | `detect_minimap_regions` | `app: AppHandle, req: { metadataPath: string, excludedIndexes: number[] }` (camelCase) | `Result<Vec<MinimapProposal>, AppError>` | subprocess | (a) python CLI 不在、(b) 提案モード異常終了 (exit 4 = 提案成功として扱う、それ以外の非 0/4 が error) | (a) `python.not_found`、(b) `subprocess.exit_failed` |
 
 ## 補足
 
@@ -151,9 +153,10 @@ PR #669 で追加した 2 command (`read_error_log_tail` / `probe_environment_in
 | `subprocess.spawn_failed` | 外部プロセスの起動に失敗しました。ffmpeg / Python / 同梱 runtime が壊れていないか確認してください |
 | `subprocess.exit_failed` | 外部プロセスが異常終了しました。logs フォルダの最新ログから詳細を確認してください |
 | `subprocess.cancelled` | (hint なし: ユーザー操作によるキャンセルは UI 側で十分な情報を出す) |
-| `validation.path_invalid` | 入力されたパスが不正です。ファイル名と拡張子を確認してください (対応: mp4 / mkv / mov / m4v) |
+| `validation.path_invalid` | 入力されたパスが不正です。ファイル名と拡張子を確認してください (対応: mp4 / mkv / avi / mov) |
 | `validation.not_a_file` | 指定されたパスはファイルではありません (フォルダや symlink ではなく動画ファイルを選択してください) |
 | `validation.range_invalid` | 入力された数値が許容範囲外です。フォーム下のヒント表示を確認してください |
+| `validation.boundary_invalid` | 試合の終了 (OUT) が開始 (IN) 以前になっています。終了が開始より後になるよう境界を調整してください |
 | `path.install_dir_unresolved` | Portable ZIP の install dir を特定できませんでした。allaganeye-gui.exe を ZIP 展開後の元のフォルダ構成のまま起動してください |
 | `platform.unsupported` | 本機能は現在の OS では未対応です。Windows での起動が必要です |
 | `internal.error` | (hint なし: 内部エラーで具体的アクションがない、message 側で logs 参照を案内) |
@@ -164,4 +167,4 @@ PR #669 で追加した 2 command (`read_error_log_tail` / `probe_environment_in
 - AppError 型定義: `gui/src-tauri/src/error.rs` (PR [#661](https://github.com/Idios/kobutachan-allaganeye/pull/661), Refs [#614](https://github.com/Idios/kobutachan-allaganeye/issues/614))
 - frontend narrowing helper: `gui/src/lib/appError.ts` (PR #665 で新設)
 - frontend invoke の主な利用箇所: `gui/src/state/metadataStore.ts` / `gui/src/state/recentStore.ts` / `gui/src/lib/globalErrorListener.ts`
-- 関連実装 PR: [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) (`register_video` / `probe_video` / `generate_match_thumbnails`) / [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) (`kill_tracked_processes`) / [#591](https://github.com/Idios/kobutachan-allaganeye/issues/591) (`select_h264_encoder_for_export`) / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) (`start_detect`) / [#571](https://github.com/Idios/kobutachan-allaganeye/issues/571) (`read_recent` / `add_recent` / `clear_recent`)
+- 関連実装 PR: [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) (`register_video` / `probe_video` / `generate_match_thumbnails`) / [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) (`kill_tracked_processes`) / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) (`start_detect`) / [#571](https://github.com/Idios/kobutachan-allaganeye/issues/571) (`read_recent` / `add_recent` / `clear_recent`) / [#787](https://github.com/Idios/kobutachan-allaganeye/pull/787) (`enumerate_h264_encoders` / `start_export`、旧 `export_match` / `select_h264_encoder_for_export` 削除)

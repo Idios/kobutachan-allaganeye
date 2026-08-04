@@ -1,5 +1,9 @@
 # markdownlint-cli2 configuration (#474).
 #
+# Ignore pattern は `**/<name>/**` 形式 (1 階層 path は nested ケースで効かない)。
+# typical violation の fix recipe (MD028 / MD056 / MD060 等) と ignore pattern
+# 規約は docs/markdownlint-guide.md を参照。
+#
 # 段階導入方針: 既存ドキュメントで違反のあるルールは全て disable して CI を
 # green な状態で開始し、段階的に解除する (#474 follow-up)。新規コミット時に
 # 有効化済みルールが違反を検出すれば CI が失敗する。
@@ -53,3 +57,5 @@ ignores:
   - "**/kobutachan_allaganeye.egg-info/**"
   - "build/**"  # Portable ZIP build dry-run 出力 (third-party LICENSE/SKILL 誤検出回避、#723)
   - "build-cache/**"  # Portable ZIP build キャッシュ ($env:ALLAGANEYE_BUILD_CACHE_DIR、third-party LICENSE 誤検出回避、#723 sweep)
+  - "output/**"  # detect output / temp PR body draft 等の local 生成物 (.gitignore 済、#793 reexamination で導入)
+  - "**/.superpowers/**"  # superpowers SDD scratch (task brief/report/ledger、.gitignore 済、#481 PoC session で導入)

@@ -21,7 +21,7 @@ PR 作成後の review → fix → review ループを自動化する。指定�
 5. Step 4: Final summary comment (HEREDOC で投稿、AskUserQuestion 3 択で承認)
 6. Step 5: LGTM 候補通知 (user merge → /close-issue handoff)
 
-詳細仕様: [docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md](../../docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md)
+詳細仕様: [docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md](../../../docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md)
 
 ## 手順
 
@@ -57,6 +57,10 @@ base 最新化 + 直近マージ PR + 並行 worktree PR 重複確認は `/revie
 #### Step 2.1 Subagent dispatch
 
 `Agent` tool (subagent_type: `general-purpose`) で fresh subagent を spawn。**毎ラウンド新しい subagent** を起動 (context 汚染回避)。
+
+> **subagent 起動規約**: 本 dispatch は [`docs/l2-workflow.md` §subagent 起動規約](../../../docs/l2-workflow.md#subagent-起動規約-746-phase-c--741-task-5-教訓) に準拠する。`__ITERATE_REVIEW_SUBAGENT_MODE__` marker + `(A)*` / ambiguous_judgments の自己申告 (下記 prompt template の item 6 / 7) で HARD-GATE (Stop conditions / 独断 fix 禁止) を担保する。controller (本 skill) が Step 2.2 validation で「無視 / 観察のみ / スコープ対象外」キーワード単独行を parse error とすることで、subagent の独断 fix 倍数を 0 に抑える。F6 / F7 と同型の事象を再発させない。
+>
+> **Codex fallback (C6)**: subagent が `/review-pr` 内で Codex review (tier 1 = companion script `codex-companion.mjs review` の Bash 実行。slash `/codex:review` は `disable-model-invocation: true` のため agent から invoke 不可 = Idios 専用 tier 3、`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照) を実行して fail した場合は [`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback) の手順に従い superpowers `requesting-code-review` subagent を fallback として起動する。Round summary comment (Step 4) に「Codex fallback notice」を必須記載 (Iron Law 5 整合)。
 
 prompt template (固定):
 
@@ -138,6 +142,24 @@ Round N findings:
 
 `ambiguous_judgments` がある場合、追加 AskUserQuestion でユーザー判断を仰ぐ。1 AskUserQuestion call は最大 4 questions まで束ねられる仕様 (= AskUserQuestion tool 上限) を活用し、5 件以上は複数 call に分割。1 round あたりの AskUserQuestion 呼び出し総数は「Round summary 1 + ambiguous_judgments の必要分 + Step 2.5/2.7 の例外 gate」を上限とする。
 
+##### AskUserQuestion 設計規約 (scope 拡大選択肢を出さない、#732 教訓)
+
+subagent reviewer が「scope 外」(= (B) 起票 or (A) re-run 推奨) と判定した finding について、controller (主セッション) が AskUserQuestion を組み立てる際、**「本 PR 内修正 (scope 拡大)」を選択肢に追加しない**。subagent recommendation を**第一の選択肢 (Recommended)** に置き、subagent が挙げた選択肢のみ提示する。user が `Other` で明示提案するまで scope 拡大は出さない。
+
+**Why**: PR #732 (#708 = bash + docs scope) で Round 2/3 ともに、subagent reviewer が「(A) re-run」または「(B) 新規 issue 起票」を recommended と判定したが、controller が AskUserQuestion に「本 PR 内修正」を選択肢として追加 → user が選択 → 本 PR 内 commit (`8eff1d2` / `ee77e37`) で scope 拡大が発生。両回とも user が「scope 拡大」を選んだが、それは controller が **そもそも選択肢として提示した**から。subagent recommended のみを提示していれば scope creep は発生しなかった。「Round 2 で 1 件本 PR 内修正した実績がある」を Round 3 で sweep に倒した根拠にしたのも、典型的な Red Flag 「ついで」合理化。
+
+Iron Law 3 と CLAUDE.md plugin override 規約は「user の明示判断が最優先」だが、選択肢の提示自体が誘導である以上、user の選択を「user 判断」と扱って scope creep を正当化するのは責任転嫁。
+
+**How to apply**:
+
+1. subagent reviewer の recommendation を **第一の選択肢 (Recommended)** にする
+2. ambiguous_judgments の処置は subagent が挙げた選択肢のみ提示。controller が独自に「本 PR 内修正」「scope 拡大」を**追加しない**
+3. scope 拡大が本当に必要 (連続して同種 finding が出る等) と思ったら、user に AskUserQuestion で問う前に **`/scope-guard` skill** を呼び、scope 拡大の妥当性を独立判定する
+4. user が `Other` 経由で「本 PR 内修正したい」と明示した場合のみ scope 拡大に倒す
+5. 「Round N で同 root cause を 1 件本 PR 内修正した」は Round N+1 で sweep の根拠に**ならない**。各 finding は独立に subagent recommended に従う
+
+関連 PR: #732 (commit `8eff1d2`, `ee77e37` が scope creep 該当)。
+
 `<N>` には PR 番号 ($ARGUMENTS) を埋める。`<handoff_state を箇条書き>` には Step 1 で初期化した `handoff_state` の内容 (空なら "(なし)") を埋める。
 
 #### Step 2.4 (A) findings 修正
@@ -149,8 +171,10 @@ Round N findings:
 3. 変更 path に応じた local check (Iron Law 6 サブ条 = `docs/l2-workflow.md` §「PR 作成 path 別自動チェック」):
    - Python (`*.py`): `ruff check . && ruff format --check . && pyright && pytest`
    - GUI (`gui/src/**`, `gui/src-tauri/**`): `npm run lint && npm run typecheck && npm test && npm run build && cargo check`
-   - Markdown (`docs/**.md`, `*.md`): `bash scripts/check-markdownlint.sh`
+   - Markdown (`docs/**.md`, `*.md`): `bash scripts/check-markdownlint.sh` (violation fix recipe は [`docs/markdownlint-guide.md`](../../../docs/markdownlint-guide.md) §typical fixes を参照、M10)
 4. **1 round = 1 commit** で集約: 全 (A) を 1 つの commit にまとめる (round 単位の atomicity を確保、Round 別 SHA を summary コメントで参照しやすくするため)。message テンプレ: `fix(round-N): <要約> (Refs #<元 issue>)`。例外として、push 失敗で reset → 再 commit が必要な場合のみ複数 commit になる可能性を許容
+
+> **M5 同 issue 過去 PR 警告の併走**: `/review-pr` Step 1.1 で同 issue 過去 merged PR が ≥1 件検出された場合、その警告は subagent の Step 5b 表冒頭に転記されて return される。controller (本 skill) は Step 2.2 parse 後の Step 2.3 Round summary 提示時に user に再度明示する (root cause sweep 重点確認の促し)。
 
 #### Step 2.5 (B) findings handoff (新規 issue 起票、限定例外パス)
 
@@ -305,6 +329,16 @@ PR は <R> ラウンドの review-fix で収束。全 findings 解消完了。
 - (A) 残: 0 / (B) handoff: <#N1, #N2 or なし> / (C) handoff: <#M1 or なし>
 - 並行 PR: <検出ゼロ / [#X handled]>
 - base sync: <CLEAN / 取り込み済み>
+
+## Codex fallback notice (J-4 fix、C6 整合)
+
+(Round 内で Codex review (`codex-companion.mjs review`) が fail し fallback で代替実行した場合は以下を必須記載。fallback ゼロなら "(なし)" を残す)
+
+> **Codex fallback notice**: Round <N> で Codex CLI が <検出条件: rate.?limit / 429 / quota / auth / timeout 等> で fail したため、Claude Code (superpowers:requesting-code-review) で代替実行しました。
+> Codex 側の review は次セッションで再試行を推奨します。
+> stderr 要約: <stderr の先頭 200 字>
+
+(Iron Law 5 整合、Idios が Codex review 済と誤認するリスク回避)
 
 [<session-id>]
 `````

@@ -1,21 +1,31 @@
 """Tests for split_matches pipeline orchestration."""
 
 import json
+import os
 import re
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import pytest
 
+if TYPE_CHECKING:
+    from allaganeye.metadata_types import CaptureRegions
+
 from allaganeye.commands.split_matches import (
+    _CACHE_VERSION,
     _ETAProgressBar,
+    _MASKED_ALGO_VERSION,
     _PROGRESS_LABEL_WIDTH,
+    _VTUBER_ALGO_VERSION,
     _auto_sample_interval,
     _eta_progressbar,
-    _load_cache,
+    _format_region_token,
+    _load_cache_hit,
     _save_cache,
     run_split,
+    CacheHit,
 )
 from allaganeye.config import SplitConfig
 from allaganeye.exceptions import AllaganEyeError, DetectionError, VideoProcessingError
@@ -28,6 +38,8 @@ PROBE_RESULT: ProbeResult = {
     "width": 1920,
     "height": 1080,
     "fps": 30.0,
+    "fps_num": 30,
+    "fps_den": 1,
     "codec": "h264",
     "audio_codec": "aac",
 }
@@ -126,6 +138,40 @@ def test_pipeline_happy_path(mock_probe, mock_detect, mock_split, tmp_path):
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_pipeline_threads_vtuber_default_false(
+    mock_probe, mock_detect, mock_split, tmp_path
+):
+    """config.vtuber=False (default) reaches detect_match_boundaries (L3 B6)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    _, detect_kwargs = mock_detect.call_args
+    assert detect_kwargs["vtuber"] is False
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_pipeline_threads_vtuber_true(mock_probe, mock_detect, mock_split, tmp_path):
+    """config.vtuber=True is threaded into detect_kwargs (L3 B6)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, vtuber=True)
+
+    run_split(Path("input.mp4"), config)
+
+    _, detect_kwargs = mock_detect.call_args
+    assert detect_kwargs["vtuber"] is True
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_pipeline_metadata_json_content(mock_probe, mock_detect, mock_split, tmp_path):
     """metadata.json contains correct structure and values."""
     mock_probe.return_value = PROBE_RESULT
@@ -136,7 +182,9 @@ def test_pipeline_metadata_json_content(mock_probe, mock_detect, mock_split, tmp
     run_split(Path("input.mp4"), config)
 
     data = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
-    assert data["source"] == "input.mp4"
+    # #930 B2: `source` is persisted as an ABSOLUTE path (schema contract),
+    # even when argv carried a cwd-relative one.
+    assert data["source"] == os.path.abspath("input.mp4")
     assert data["source_duration"] == 1800.0
     # #465 review: source_fps is propagated from probe -> metadata.json
     assert data["source_fps"] == 30.0
@@ -453,6 +501,7 @@ def test_metadata_detection_params_present(
         no_audio=True,
         use_gpu=True,
         workers=8,
+        vtuber=True,
     )
 
     run_split(Path("input.mp4"), config)
@@ -469,10 +518,20 @@ def test_metadata_detection_params_present(
         "no_audio",
         "use_gpu",
         "workers",
+        "vtuber",
+        "masked",
+        "masked_fallback_used",
     }
     assert set(params) == expected_keys, (
         f"detection_params keys mismatch: {set(params) ^ expected_keys}"
     )
+
+    # vtuber/masked provenance (PR #823 R1 deferred -> PR (b) で一括): metadata
+    # からどの検出 path で生成されたかを判別可能にする。masked は request flag、
+    # masked_fallback_used は resolved path (auto-fallback 含む) を表す。
+    assert params["vtuber"] is True
+    assert params["masked"] is False
+    assert params["masked_fallback_used"] is False
 
     # Values must reflect runtime SplitConfig.  sample_interval is the
     # effective (post-auto-adjust) value to stay in sync with
@@ -989,6 +1048,7 @@ def test_pipeline_config_params_forwarded(
         sample_interval=2.0,
         blackout_threshold=20.0,
         min_match_duration=120.0,
+        keep_trailing=True,
     )
 
     run_split(Path("input.mp4"), config)
@@ -999,6 +1059,11 @@ def test_pipeline_config_params_forwarded(
     assert detect_kwargs["blackout_threshold"] == 20.0
     assert detect_kwargs["min_match_duration"] == 120.0
     assert detect_kwargs["min_blackout_duration"] == 3.0
+    # #805 段階2: keep_trailing flag still reaches the detector through
+    # _run_detection's detect_kwargs assembly. The trailing_drop_callback seam
+    # is removed (W1: warning emission stopped, post_match flag replaces it).
+    assert detect_kwargs["keep_trailing"] is True
+    assert "trailing_drop_callback" not in detect_kwargs
 
 
 # ============================================================
@@ -1038,8 +1103,9 @@ class TestCacheRoundTrip:
         _save_cache(
             cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
         )
-        result = _load_cache(cache_path, cache_video, 1.0, cache_config)
-        assert result == CACHE_BOUNDARIES
+        hit = _load_cache_hit(cache_path, cache_video, 1.0, cache_config)
+        assert hit is not None
+        assert hit.boundaries == CACHE_BOUNDARIES
 
     def test_size_mismatch(self, cache_video, cache_config, tmp_path):
         """source_size mismatch -> None."""
@@ -1049,7 +1115,7 @@ class TestCacheRoundTrip:
         )
         # Change file size
         cache_video.write_bytes(b"\x00" * 2048)
-        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+        assert _load_cache_hit(cache_path, cache_video, 1.0, cache_config) is None
 
     def test_mtime_mismatch(self, cache_video, cache_config, tmp_path):
         """source_mtime mismatch -> None."""
@@ -1061,7 +1127,7 @@ class TestCacheRoundTrip:
         data = json.loads(cache_path.read_text(encoding="utf-8"))
         data["source_mtime"] = 0.0
         cache_path.write_text(json.dumps(data), encoding="utf-8")
-        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+        assert _load_cache_hit(cache_path, cache_video, 1.0, cache_config) is None
 
     def test_param_mismatch_threshold(self, cache_video, cache_config, tmp_path):
         """blackout_threshold mismatch -> None."""
@@ -1072,7 +1138,7 @@ class TestCacheRoundTrip:
         different_config = SplitConfig(
             output_dir=tmp_path / "output", blackout_threshold=20.0
         )
-        assert _load_cache(cache_path, cache_video, 1.0, different_config) is None
+        assert _load_cache_hit(cache_path, cache_video, 1.0, different_config) is None
 
     def test_param_mismatch_interval(self, cache_video, cache_config, tmp_path):
         """sample_interval mismatch -> None."""
@@ -1080,7 +1146,7 @@ class TestCacheRoundTrip:
         _save_cache(
             cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
         )
-        assert _load_cache(cache_path, cache_video, 2.0, cache_config) is None
+        assert _load_cache_hit(cache_path, cache_video, 2.0, cache_config) is None
 
     def test_param_mismatch_no_audio(self, cache_video, cache_config, tmp_path):
         """no_audio mismatch -> None (cache must be keyed to audio pipeline, #288)."""
@@ -1089,7 +1155,181 @@ class TestCacheRoundTrip:
             cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
         )
         different_config = SplitConfig(output_dir=tmp_path / "output", no_audio=True)
-        assert _load_cache(cache_path, cache_video, 1.0, different_config) is None
+        assert _load_cache_hit(cache_path, cache_video, 1.0, different_config) is None
+
+    def test_param_mismatch_vtuber(self, cache_video, cache_config, tmp_path):
+        """標準 run の cache を vtuber run が再利用しない -> None (gate の cache bypass 防止)."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        vtuber_config = SplitConfig(output_dir=tmp_path / "output", vtuber=True)
+        assert _load_cache_hit(cache_path, cache_video, 1.0, vtuber_config) is None
+
+    def test_param_mismatch_vtuber_reverse(self, cache_video, cache_config, tmp_path):
+        """vtuber run の cache を標準 run が再利用しない -> None (released path 保護)."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        vtuber_config = SplitConfig(output_dir=tmp_path / "output", vtuber=True)
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, vtuber_config, CACHE_BOUNDARIES
+        )
+        assert _load_cache_hit(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_legacy_cache_without_vtuber_key(self, cache_video, cache_config, tmp_path):
+        """vtuber key なし legacy cache: 標準 run は有効 (後方互換)、vtuber run は無効。
+
+        --vtuber 導入前の cache はすべて標準 path の結果なので missing = False と
+        同値に扱う (既存ユーザーの cache を無駄に invalidate しない)。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("vtuber", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        _hit = _load_cache_hit(cache_path, cache_video, 1.0, cache_config)
+        assert _hit is not None and _hit.boundaries == CACHE_BOUNDARIES
+        vtuber_config = SplitConfig(output_dir=tmp_path / "output", vtuber=True)
+        assert _load_cache_hit(cache_path, cache_video, 1.0, vtuber_config) is None
+
+    def test_param_mismatch_masked(self, cache_video, cache_config, tmp_path):
+        """標準 run の cache を masked run が再利用しない -> None (vtuber key と同型)."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        masked_config = SplitConfig(output_dir=tmp_path / "output", masked=True)
+        assert _load_cache_hit(cache_path, cache_video, 1.0, masked_config) is None
+
+    def test_param_mismatch_masked_reverse(self, cache_video, cache_config, tmp_path):
+        """masked run の cache を標準 run が再利用しない -> None (released path 保護)."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        masked_config = SplitConfig(output_dir=tmp_path / "output", masked=True)
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, masked_config, CACHE_BOUNDARIES
+        )
+        assert _load_cache_hit(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_legacy_cache_without_masked_key(self, cache_video, cache_config, tmp_path):
+        """masked key なし legacy cache: 標準 run は有効、masked run は無効。
+
+        --masked 導入前の cache はすべて標準 path の結果なので missing = False と
+        同値に扱う (vtuber key と同じ後方互換規約)。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("masked", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        _hit = _load_cache_hit(cache_path, cache_video, 1.0, cache_config)
+        assert _hit is not None and _hit.boundaries == CACHE_BOUNDARIES
+        masked_config = SplitConfig(output_dir=tmp_path / "output", masked=True)
+        assert _load_cache_hit(cache_path, cache_video, 1.0, masked_config) is None
+
+    def test_param_mismatch_keep_trailing(self, cache_video, cache_config, tmp_path):
+        """default run の cache を --keep-trailing run が再利用しない -> None。
+
+        keep_trailing は detect_match_boundaries の trailing-drop を skip して
+        検出境界を変える (#805 段階1) ので、cache 済み境界 (drop 済み) を
+        --keep-trailing run が再利用すると opt-out が silent に効かなくなる。
+        vtuber / masked key と同型に cache key へ含める。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        keep_config = SplitConfig(output_dir=tmp_path / "output", keep_trailing=True)
+        assert _load_cache_hit(cache_path, cache_video, 1.0, keep_config) is None
+
+    def test_param_mismatch_keep_trailing_reverse(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """--keep-trailing run の cache を default run が再利用しない -> None。
+
+        --keep-trailing cache (drop なし境界) を default path が再利用すると
+        #797 の trailing drop が抑止され released-default が regress するため、
+        reverse 方向も miss させる (vtuber/masked reverse と同型)。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        keep_config = SplitConfig(output_dir=tmp_path / "output", keep_trailing=True)
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, keep_config, CACHE_BOUNDARIES
+        )
+        assert _load_cache_hit(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_keep_trailing_cache_hit(self, cache_video, tmp_path):
+        """--keep-trailing 同士は hit する (round-trip)。"""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        keep_config = SplitConfig(output_dir=tmp_path / "output", keep_trailing=True)
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, keep_config, CACHE_BOUNDARIES
+        )
+        _hit = _load_cache_hit(cache_path, cache_video, 1.0, keep_config)
+        assert _hit is not None and _hit.boundaries == CACHE_BOUNDARIES
+
+    def test_legacy_cache_without_keep_trailing_key(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """keep_trailing key なし legacy cache: default run は有効、keep run は無効。
+
+        --keep-trailing 導入前の cache はすべて drop ON (= keep_trailing=False) の
+        結果なので missing = False と同値に扱う (vtuber/masked key と同じ後方互換
+        規約)。version bump 不要の根拠でもある。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("keep_trailing", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        _hit = _load_cache_hit(cache_path, cache_video, 1.0, cache_config)
+        assert _hit is not None and _hit.boundaries == CACHE_BOUNDARIES
+        keep_config = SplitConfig(output_dir=tmp_path / "output", keep_trailing=True)
+        assert _load_cache_hit(cache_path, cache_video, 1.0, keep_config) is None
+
+    def test_legacy_v2_cache_rejected(self, cache_video, cache_config, tmp_path):
+        """pre-#821 (v2) cache は version bump で全面 invalidate (Codex high finding).
+
+        masked auto-fallback (flag なしでも 0-blackout で発火) の導入により
+        「missing masked = False = 同一挙動」が成立しなくなった。v2 cache が
+        hit し続けると masked 動画の誤結果 (全滅 1-match) が再利用され、新
+        detector が永遠に走らないため、version で全面 invalidate する。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["cache_version"] = 2
+        for key in ("vtuber", "masked"):
+            data["params"].pop(key, None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        assert _load_cache_hit(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_cache_version_is_4(self):
+        """#805 段階2: detection output shape changed (post_match flag) -> v4."""
+        assert _CACHE_VERSION == 4
+
+    def test_legacy_v3_cache_rejected(self, cache_video, cache_config, tmp_path):
+        """#805 段階2: pre-段階2 (v3) cache は version bump で invalidate される.
+
+        旧 detector は post-match trailing を削除済み shape で cache した。新
+        detector は post_match flag 付きで残すため、v3 cache が hit し続けると
+        削除済み結果 (試合 1 本欠落) が silent に再利用される。version bump で
+        確実に miss させ再 detect させる。
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["cache_version"] = 3
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        assert _load_cache_hit(cache_path, cache_video, 1.0, cache_config) is None
 
     def test_version_mismatch(self, cache_video, cache_config, tmp_path):
         """cache_version mismatch -> None."""
@@ -1100,7 +1340,7 @@ class TestCacheRoundTrip:
         data = json.loads(cache_path.read_text(encoding="utf-8"))
         data["cache_version"] = 999
         cache_path.write_text(json.dumps(data), encoding="utf-8")
-        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+        assert _load_cache_hit(cache_path, cache_video, 1.0, cache_config) is None
 
     def test_path_mismatch(self, cache_video, cache_config, tmp_path):
         """source path mismatch -> None."""
@@ -1110,19 +1350,19 @@ class TestCacheRoundTrip:
         )
         other_video = tmp_path / "other.mp4"
         other_video.write_bytes(b"\x00" * 1024)
-        assert _load_cache(cache_path, other_video, 1.0, cache_config) is None
+        assert _load_cache_hit(cache_path, other_video, 1.0, cache_config) is None
 
     def test_file_not_found(self, cache_video, cache_config, tmp_path):
         """Cache file doesn't exist -> None."""
         cache_path = tmp_path / "nonexistent" / ".detection_cache.json"
-        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+        assert _load_cache_hit(cache_path, cache_video, 1.0, cache_config) is None
 
     def test_corrupted_json(self, cache_video, cache_config, tmp_path):
         """Corrupted cache file -> None (no exception)."""
         cache_path = tmp_path / "output" / ".detection_cache.json"
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text("not valid json{{{", encoding="utf-8")
-        assert _load_cache(cache_path, cache_video, 1.0, cache_config) is None
+        assert _load_cache_hit(cache_path, cache_video, 1.0, cache_config) is None
 
 
 # --- Progressbar tests (PR #233 gap coverage) ---
@@ -1193,6 +1433,680 @@ def test_progressbar_auto_interval(mock_probe, mock_detect, mock_split, tmp_path
     assert mock_bar.call_count >= 1
     detecting_call = mock_bar.call_args_list[0]
     assert detecting_call[1]["length"] == 2433
+
+
+class TestMaskedAlgoCache:
+    """#822: masked_algo cache key -- save/load/legacy OBS backward compat."""
+
+    def test_save_cache_writes_masked_algo(self, cache_video, cache_config, tmp_path):
+        """_save_cache always writes masked_algo == _MASKED_ALGO_VERSION."""
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert data["params"]["masked_algo"] == _MASKED_ALGO_VERSION
+
+    def test_cache_miss_on_masked_algo_mismatch(self, cache_video, tmp_path):
+        """Legacy masked cache (masked_algo absent = 1) misses with new code (3).
+
+        A cache saved by pre-#822 code with masked=True has no masked_algo key
+        (defaults to 1). Loading with the current code (_MASKED_ALGO_VERSION=3)
+        must return None -- the old masked-path result is stale.
+        """
+        masked_config = SplitConfig(
+            output_dir=tmp_path / "output",
+            sample_interval=1.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+            masked=True,
+        )
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, masked_config, CACHE_BOUNDARIES
+        )
+        # Simulate legacy pre-#822 cache: remove masked_algo from params
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("masked_algo", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        # Must miss: masked=True run with old (missing) algo key vs new version
+        assert _load_cache_hit(cache_path, cache_video, 1.0, masked_config) is None
+
+    def test_cache_hit_for_legacy_obs_cache_without_masked_algo(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """OBS cache (fallback unused, masked off) hits even without masked_algo.
+
+        Pre-#822 OBS caches have no masked_algo key. Since masked=False and
+        masked_fallback_used=False, the run was never masked-affected.
+        Legacy key absence == algo 1, and since it is not masked-affected,
+        the mismatch check does not fire -- the cache must still hit.
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        # Simulate legacy OBS cache: remove masked_algo key
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("masked_algo", None)
+        # Ensure masked_fallback_used is absent/False (standard OBS run)
+        data.pop("masked_fallback_used", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        # Must still hit: unaffected users must not be forced to re-detect
+        _hit = _load_cache_hit(cache_path, cache_video, 1.0, cache_config)
+        assert _hit is not None and _hit.boundaries == CACHE_BOUNDARIES
+
+    def test_cache_miss_when_fallback_used_and_algo_stale(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """Auto-fallback run (masked=False but masked_fallback_used=True) misses
+        when masked_algo key is absent (stale pre-#822 result).
+
+        masked_fallback_used=True means the run took the masked code path
+        regardless of the request flag, so the algo change invalidates it.
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        # Save a cache that records auto-fallback was used
+        _save_cache(
+            cache_path,
+            cache_video,
+            PROBE_RESULT,
+            1.0,
+            cache_config,
+            CACHE_BOUNDARIES,
+            masked_fallback_used=True,
+        )
+        # Simulate legacy pre-#822 cache: remove masked_algo
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("masked_algo", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        # Must miss: fallback-used run with stale algo
+        assert _load_cache_hit(cache_path, cache_video, 1.0, cache_config) is None
+
+    def test_masked_algo_version_is_3(self):
+        """Pin: _MASKED_ALGO_VERSION == 3 for #822 Onsal recalibration (15-probe quorum + zero-gap merge)."""
+        assert _MASKED_ALGO_VERSION == 3
+
+
+class TestVtuberAlgoCache:
+    """#895: vtuber_algo cache key -- save/load/legacy OBS backward compat."""
+
+    def test_save_cache_writes_vtuber_algo(self, cache_video, tmp_path):
+        """_save_cache always writes vtuber_algo == _VTUBER_ALGO_VERSION."""
+        vtuber_config = SplitConfig(
+            output_dir=tmp_path / "output",
+            sample_interval=1.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+            vtuber=True,
+        )
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, vtuber_config, CACHE_BOUNDARIES
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert data["params"]["vtuber_algo"] == _VTUBER_ALGO_VERSION
+
+    def test_cache_miss_on_vtuber_algo_mismatch(self, cache_video, tmp_path):
+        """Legacy vtuber cache (vtuber_algo absent = 1) misses with the current version.
+
+        A cache saved by pre-#895 code with vtuber=True has no vtuber_algo key
+        (defaults to 1). Loading with the current code (_VTUBER_ALGO_VERSION)
+        must return None -- the old band-crop result is stale (timeline path
+        was not yet implemented).
+        """
+        vtuber_config = SplitConfig(
+            output_dir=tmp_path / "output",
+            sample_interval=1.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+            vtuber=True,
+        )
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, vtuber_config, CACHE_BOUNDARIES
+        )
+        # Simulate legacy pre-#895 cache: remove vtuber_algo from params
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("vtuber_algo", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        # Must miss: vtuber=True run with old (missing) algo key vs new version
+        assert _load_cache_hit(cache_path, cache_video, 1.0, vtuber_config) is None
+
+    def test_cache_hit_for_legacy_obs_cache_without_vtuber_algo(
+        self, cache_video, cache_config, tmp_path
+    ):
+        """OBS cache (vtuber off) hits even without vtuber_algo.
+
+        Pre-#895 OBS caches have no vtuber_algo key. Since vtuber=False,
+        the run was never vtuber-affected. Legacy key absence == algo 1,
+        and since it is not vtuber-affected, the mismatch check does not
+        fire -- the cache must still hit (no needless re-detects for
+        unaffected users).
+        """
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, cache_config, CACHE_BOUNDARIES
+        )
+        # Simulate legacy OBS cache: remove vtuber_algo key
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"].pop("vtuber_algo", None)
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        # Must still hit: unaffected users must not be forced to re-detect
+        _hit = _load_cache_hit(cache_path, cache_video, 1.0, cache_config)
+        assert _hit is not None and _hit.boundaries == CACHE_BOUNDARIES
+
+    def test_load_cache_broken_vtuber_algo_misses(self, cache_video, tmp_path):
+        """Broken vtuber_algo (non-int string) in vtuber cache causes miss.
+
+        When a vtuber-affected cache has a non-int vtuber_algo value the
+        invalidation logic must treat it as a mismatch (miss direction) rather
+        than raising or hitting incorrectly.
+        """
+        vtuber_config = SplitConfig(
+            output_dir=tmp_path / "output",
+            sample_interval=1.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+            vtuber=True,
+        )
+        cache_path = tmp_path / "output" / ".detection_cache.json"
+        _save_cache(
+            cache_path, cache_video, PROBE_RESULT, 1.0, vtuber_config, CACHE_BOUNDARIES
+        )
+        # Inject a non-int vtuber_algo to simulate cache corruption
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        data["params"]["vtuber_algo"] = "x"
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+
+        result = _load_cache_hit(cache_path, cache_video, 1.0, vtuber_config)
+        assert result is None, "broken vtuber_algo must cause cache miss, not hit"
+
+    def test_vtuber_algo_version_is_7(self):
+        """Pin: _VTUBER_ALGO_VERSION == 7 for #895 P3 R1d (INTRA_MATCH_FLICKER_MAX_PROBES).
+
+        この green が見逃さないもの: 検出出力を変える fix で bump を忘れると
+        古い cache が config 越えに silent 再利用される。値そのものを pin する。
+        """
+        assert _VTUBER_ALGO_VERSION == 7
+
+
+def test_print_detection_stats_vtuber_timeline_section(capsys):
+    """timeline stats keys present -> vtuber section shown (OBS no-impact pin)."""
+    from allaganeye.commands.split_matches import _print_detection_stats
+
+    _print_detection_stats(
+        {
+            "vtuber_timeline_probes": 1449,
+            "vtuber_anchor_confidence": 0.589,
+            "vtuber_gaps_tested": 8,
+            "vtuber_gaps_merged": 4,
+            "vtuber_v4_dropped": 0,
+            "vtuber_low_confidence_segments": 0,
+        }
+    )
+    out = capsys.readouterr().out
+    assert "Timeline (vtuber): 1449 probes" in out
+    assert "anchor conf 0.59" in out
+    assert "8 gaps tested, 4 merged" in out
+    assert "V4: 0 dropped, 0 low-confidence" in out
+
+
+def test_print_detection_stats_vtuber_timeline_section_obs_no_impact(capsys):
+    """OBS stats (vtuber key absent) must not emit the timeline section."""
+    from allaganeye.commands.split_matches import _print_detection_stats
+
+    _print_detection_stats(
+        {"mode": "cpu", "pass1_samples": 0, "pass1_blackout_frames": 0}
+    )
+    out = capsys.readouterr().out
+    assert "Timeline (vtuber)" not in out
+
+
+class TestCaptureRegionsCache:
+    """#810: capture_regions の cache 保存 / 引継 / legacy 合成。"""
+
+    def _write_cache(self, cache_path, video_path, *, extra=None, params_extra=None):
+        # 既存 cache fixture (cache_video / cache_config) 群のヘルパに合わせて、
+        # _save_cache を直接使わず生 JSON を書いて legacy 形を再現する
+        import json
+
+        stat = video_path.resolve().stat()
+        from allaganeye.commands.split_matches import _CACHE_VERSION
+
+        data = {
+            "cache_version": _CACHE_VERSION,
+            "source": str(video_path.resolve()),
+            "source_size": stat.st_size,
+            "source_mtime": stat.st_mtime,
+            "probe": {
+                "duration": 100.0,
+                "width": 1920,
+                "height": 1080,
+                "fps": 60.0,
+                "codec": "h264",
+            },
+            "params": {
+                "sample_interval": 2.0,
+                "blackout_threshold": 15.0,
+                "min_match_duration": 300.0,
+                "min_blackout_duration": 3.0,
+                "no_audio": False,
+                "vtuber": False,
+                "masked": False,
+                "keep_trailing": False,
+                **(params_extra or {}),
+            },
+            "masked_fallback_used": False,
+            "boundaries": [{"start": 10.0, "end": 50.0, "type": "fl_match"}],
+            **(extra or {}),
+        }
+        cache_path.write_text(json.dumps(data), encoding="utf-8")
+
+    def test_save_cache_records_capture_regions(self, cache_video, tmp_path):
+        from typing import cast as _cast
+
+        from allaganeye.commands.split_matches import _save_cache
+        from allaganeye.metadata_types import CaptureRegions
+        import json
+
+        cache_path = tmp_path / ".detection_cache.json"
+        regions = _cast(
+            CaptureRegions,
+            {
+                "coarse": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "w": 1.0,
+                    "h": 1.0,
+                    "confidence": 1.0,
+                    "source": "fallback",
+                },
+                "segments": [],
+                "fallback_reason": None,
+            },
+        )
+        _save_cache(
+            cache_path,
+            cache_video,
+            {
+                "duration": 100.0,
+                "width": 1920,
+                "height": 1080,
+                "fps": 60.0,
+                "fps_num": 60,
+                "fps_den": 1,
+                "codec": "h264",
+                "audio_codec": "aac",
+            },
+            2.0,
+            SplitConfig(output_dir=tmp_path),
+            [{"start": 10.0, "end": 50.0, "type": "fl_match"}],
+            capture_regions=regions,
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert data["capture_regions"] == regions
+
+    def test_save_cache_omits_capture_regions_when_none(self, cache_video, tmp_path):
+        from allaganeye.commands.split_matches import _save_cache
+        import json
+
+        cache_path = tmp_path / ".detection_cache.json"
+        _save_cache(
+            cache_path,
+            cache_video,
+            {
+                "duration": 100.0,
+                "width": 1920,
+                "height": 1080,
+                "fps": 60.0,
+                "fps_num": 60,
+                "fps_den": 1,
+                "codec": "h264",
+                "audio_codec": "aac",
+            },
+            2.0,
+            SplitConfig(output_dir=tmp_path),
+            [{"start": 10.0, "end": 50.0, "type": "fl_match"}],
+            capture_regions=None,
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        # #810: None は key 省略 (null を書かない) -- metadata.json と同じ省略 semantics
+        assert "capture_regions" not in data
+
+    def test_read_cached_capture_regions_returns_recorded(self, cache_video, tmp_path):
+        from allaganeye.commands.split_matches import _capture_regions_from_cache_data
+
+        cache_path = tmp_path / ".detection_cache.json"
+        regions = {
+            "coarse": {
+                "x": 0.1,
+                "y": 0.0,
+                "w": 0.76,
+                "h": 0.042,
+                "confidence": 0.9,
+                "source": "band",
+            },
+            "segments": [],
+            "fallback_reason": None,
+        }
+        self._write_cache(cache_path, cache_video, extra={"capture_regions": regions})
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert _capture_regions_from_cache_data(data) == regions
+
+    def test_read_cached_capture_regions_legacy_standard_synthesizes_full_frame(
+        self, cache_video, tmp_path
+    ):
+        # pre-#810 cache + 標準 path (vtuber=False / masked_fallback_used=False)
+        # は FULL_FRAME 確定なので合成する
+        from allaganeye.commands.split_matches import _capture_regions_from_cache_data
+
+        cache_path = tmp_path / ".detection_cache.json"
+        self._write_cache(cache_path, cache_video)
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        regions = _capture_regions_from_cache_data(data)
+        assert regions is not None
+        assert regions["coarse"]["source"] == "fallback"
+        assert regions["coarse"]["x"] == 0.0 and regions["coarse"]["w"] == 1.0
+        assert regions["fallback_reason"] is None
+
+    def test_read_cached_capture_regions_legacy_vtuber_returns_none(
+        self, cache_video, tmp_path
+    ):
+        # pre-#810 vtuber cache は band 領域が未知 -> 合成せず None (field 省略)
+        from allaganeye.commands.split_matches import _capture_regions_from_cache_data
+
+        cache_path = tmp_path / ".detection_cache.json"
+        self._write_cache(cache_path, cache_video, params_extra={"vtuber": True})
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert _capture_regions_from_cache_data(data) is None
+
+    def test_read_cached_capture_regions_legacy_masked_returns_none(
+        self, cache_video, tmp_path
+    ):
+        from allaganeye.commands.split_matches import _capture_regions_from_cache_data
+
+        cache_path = tmp_path / ".detection_cache.json"
+        self._write_cache(cache_path, cache_video, extra={"masked_fallback_used": True})
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert _capture_regions_from_cache_data(data) is None
+
+    def test_read_cached_capture_regions_masked_requested_but_declined_synthesizes(
+        self, cache_video, tmp_path
+    ):
+        """round-2 codex 裁定 pin: masked=True (request) でも fallback 不採用
+        (masked_fallback_used=False) なら標準 path が FULL_FRAME で Pass 1 計測
+        しているため、FULL_FRAME 合成が意図した挙動。判定述語は resolved flag
+        であり request flag ではない (params.masked を除外条件に加えない)。"""
+        from allaganeye.commands.split_matches import _capture_regions_from_cache_data
+
+        cache_path = tmp_path / ".detection_cache.json"
+        self._write_cache(cache_path, cache_video, params_extra={"masked": True})
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        regions = _capture_regions_from_cache_data(data)
+        assert regions is not None
+        assert regions["coarse"]["source"] == "fallback"
+        assert regions["coarse"]["x"] == 0.0 and regions["coarse"]["w"] == 1.0
+        assert regions["fallback_reason"] is None
+
+    def test_read_cached_capture_regions_unreadable_returns_none(
+        self, cache_video, cache_config, tmp_path
+    ):
+        # IO エラー時の None は _load_cache_hit 経由で担保される (#879)
+        cache_path = tmp_path / "missing_dir" / ".detection_cache.json"
+        assert _load_cache_hit(cache_path, cache_video, 2.0, cache_config) is None
+
+    def test_read_cached_capture_regions_nan_time_range_returns_none(
+        self, cache_video, tmp_path
+    ):
+        """round-3 R3-1: NaN 混入 cache 値は sanitize で drop され、非標準 JSON
+        token が metadata.json へ再 emit されない (合成 fall-through もしない)。"""
+        from allaganeye.commands.split_matches import _capture_regions_from_cache_data
+
+        cache_path = tmp_path / ".detection_cache.json"
+        nan_regions = {
+            "coarse": {
+                "x": 0.1,
+                "y": 0.0,
+                "w": 0.76,
+                "h": 0.042,
+                "confidence": 0.9,
+                "source": "band",
+            },
+            "segments": [
+                {
+                    "time_range": [0.0, float("nan")],
+                    "region": {
+                        "x": 0.1,
+                        "y": 0.0,
+                        "w": 0.76,
+                        "h": 0.042,
+                        "confidence": 0.9,
+                        "source": "band",
+                    },
+                }
+            ],
+            "fallback_reason": None,
+        }
+        self._write_cache(
+            cache_path, cache_video, extra={"capture_regions": nan_regions}
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert _capture_regions_from_cache_data(data) is None
+
+    def test_read_cached_capture_regions_malformed_returns_none_not_synthesized(
+        self, cache_video, tmp_path
+    ):
+        """codex F1 -- cache read sanitize: malformed present value -> None (not FULL_FRAME).
+
+        cache に capture_regions が present だが malformed (coarse に "confidence" 欠落)。
+        sanitize で invalid -> None を返す。
+        vtuber=False / masked_fallback_used=False でも FULL_FRAME 合成に fall through しない
+        (present-but-garbage は "領域不明" であり、legacy 不在 = 標準 path 確定 とは異なる)。
+        """
+        from allaganeye.commands.split_matches import _capture_regions_from_cache_data
+
+        cache_path = tmp_path / ".detection_cache.json"
+        malformed_regions = {
+            "coarse": {
+                "x": 0.0,
+                "y": 0.0,
+                "w": 1.0,
+                "h": 1.0,
+                # "confidence" key missing -> invalid CaptureRegion
+                "source": "fallback",
+            },
+            "segments": [],
+            "fallback_reason": None,
+        }
+        self._write_cache(
+            cache_path, cache_video, extra={"capture_regions": malformed_regions}
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+        result = _capture_regions_from_cache_data(data)
+        assert result is None, (
+            "present but malformed capture_regions (missing confidence) must return "
+            "None -- must NOT synthesize FULL_FRAME"
+        )
+
+    def test_read_cached_capture_regions_null_value_treated_as_absent(
+        self, cache_video, tmp_path
+    ):
+        """codex F1 -- cache read: explicit null is treated same as absent key (legacy compat).
+
+        pre-fix builds wrote `"capture_regions": null` when the value was None.
+        null should be treated as absent (key missing), triggering legacy synthesis
+        for standard path (vtuber=False, masked_fallback_used=False) -> FULL_FRAME.
+        This pins the null-tolerance so future refactors don't break legacy caches.
+        """
+
+        from allaganeye.commands.split_matches import _capture_regions_from_cache_data
+
+        data = {
+            "params": {
+                "vtuber": False,
+                "masked": False,
+            },
+            "masked_fallback_used": False,
+            "capture_regions": None,  # explicit null -- legacy pre-fix behavior
+        }
+
+        result = _capture_regions_from_cache_data(data)
+        # explicit null treated as absent -> standard path -> FULL_FRAME synthesized
+        assert result is not None, (
+            "explicit null capture_regions should be treated as absent, "
+            "triggering FULL_FRAME synthesis for standard path"
+        )
+        assert result["coarse"]["source"] == "fallback"
+        assert result["coarse"]["x"] == 0.0 and result["coarse"]["w"] == 1.0
+
+
+# -- Direct unit tests for _sanitize_capture_regions --
+
+
+class TestSanitizeCaptureRegions:
+    """Unit tests for the new _sanitize_capture_regions helper (codex F1)."""
+
+    def _valid_region(self) -> dict:
+        return {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        }
+
+    def _valid_regions(self) -> dict:
+        return {
+            "coarse": self._valid_region(),
+            "segments": [],
+            "fallback_reason": None,
+        }
+
+    def test_valid_full_shape_returns_as_is(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = {
+            "coarse": self._valid_region(),
+            "segments": [
+                {
+                    "time_range": [0.0, 10.0],
+                    "region": self._valid_region(),
+                }
+            ],
+            "fallback_reason": "consensus_miss",
+        }
+        result = _sanitize_capture_regions(regions)
+        assert result == regions
+
+    def test_valid_minimal_returns_as_is(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        result = _sanitize_capture_regions(regions)
+        assert result == regions
+
+    def test_bool_coordinate_returns_none(self):
+        """bool is a subtype of int but must be rejected explicitly."""
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["coarse"]["x"] = True  # bool must be rejected
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_negative_confidence_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["coarse"]["confidence"] = -0.1
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_confidence_above_one_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["coarse"]["confidence"] = 1.5
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_empty_source_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["coarse"]["source"] = ""
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_time_range_of_length_one_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = {
+            "coarse": self._valid_region(),
+            "segments": [
+                {
+                    "time_range": [0.0],  # must be exactly 2 elements
+                    "region": self._valid_region(),
+                }
+            ],
+            "fallback_reason": None,
+        }
+        assert _sanitize_capture_regions(regions) is None
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [float("nan"), float("inf"), float("-inf")],
+        ids=["nan", "inf", "neg_inf"],
+    )
+    def test_time_range_non_finite_returns_none(self, bad_value):
+        """round-3 R3-1: NaN / +-Infinity は json.dumps (allow_nan=True) が
+        非標準 token を再 emit し strict reader (GUI serde_json / JSON.parse) が
+        metadata.json 全体を reject するため、sanitize 側で reject する。
+        (t < 0 比較は NaN で False になり素通りしていた regression の pin)"""
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = {
+            "coarse": self._valid_region(),
+            "segments": [
+                {
+                    "time_range": [0.0, bad_value],
+                    "region": self._valid_region(),
+                }
+            ],
+            "fallback_reason": None,
+        }
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_fallback_reason_non_str_non_none_returns_none(self):
+        """fallback_reason must be str or None; e.g. int 1 is invalid."""
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["fallback_reason"] = 1  # invalid -- must be str or None
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_missing_top_level_key_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        del regions["fallback_reason"]
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_extra_top_level_key_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        regions = self._valid_regions()
+        regions["extra_field"] = "unexpected"
+        assert _sanitize_capture_regions(regions) is None
+
+    def test_non_dict_returns_none(self):
+        from allaganeye.commands.split_matches import _sanitize_capture_regions
+
+        assert _sanitize_capture_regions("not a dict") is None
+        assert _sanitize_capture_regions(None) is None
+        assert _sanitize_capture_regions(42) is None
 
 
 class TestCachePipeline:
@@ -1293,6 +2207,7 @@ class TestRefineProgressBar:
             workers,
             *,
             progress_callback=None,
+            region=None,
         ):
             # Mimic Pass 2: publish total then advance per probe (#366)
             total_probes = 4
@@ -1347,6 +2262,7 @@ class TestRefineProgressBar:
             workers,
             *,
             progress_callback=None,
+            region=None,
         ):
             # Mimic Pass 2: publish total then advance per probe (#366)
             total_probes = 6
@@ -1382,6 +2298,8 @@ class TestRefineProgressBar:
                 h,
                 w,
                 *,
+                band_region=None,
+                localize=False,
                 audio_hits=None,
                 stats=None,
                 progress_callback=None,
@@ -1937,7 +2855,7 @@ class TestDiskSpaceCheck:
     @patch(f"{MODULE}.split_video")
     @patch(f"{MODULE}.detect_match_boundaries")
     @patch(f"{MODULE}.probe_video")
-    @patch(f"{MODULE}._load_cache")
+    @patch(f"{MODULE}._load_cache_hit")
     def test_cached_path_enforces_disk_check(
         self, mock_load, mock_probe, mock_detect, mock_split, tmp_path
     ):
@@ -1948,7 +2866,9 @@ class TestDiskSpaceCheck:
         is available before splitting.
         """
         mock_probe.return_value = PROBE_RESULT
-        mock_load.return_value = BOUNDARIES  # simulate cache hit
+        mock_load.return_value = CacheHit(
+            boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None
+        )  # simulate cache hit
         mock_split.return_value = _output_files(tmp_path)
         config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
 
@@ -1958,6 +2878,198 @@ class TestDiskSpaceCheck:
         mock_check.assert_called_once()
         # detect_match_boundaries must not be invoked (cache hit)
         mock_detect.assert_not_called()
+
+
+class TestPartitionPostMatch:
+    """`_partition_post_match` helper (#805 段階2)."""
+
+    def test_partition_splits_active_and_post_match(self):
+        """active (no post_match flag) and post_match are separated."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 600.0, "type": "unknown"},
+            {"start": 610.0, "end": 1200.0, "type": "unknown", "post_match": True},
+        ]
+        active, post_match = _partition_post_match(boundaries)
+
+        assert active == [{"start": 0.0, "end": 600.0, "type": "unknown"}]
+        assert post_match == [
+            {"start": 610.0, "end": 1200.0, "type": "unknown", "post_match": True}
+        ]
+
+    def test_partition_is_order_preserving_and_total(self):
+        """The two lists partition the input and preserve relative order."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 100.0, "type": "unknown"},
+            {"start": 200.0, "end": 300.0, "type": "unknown", "post_match": True},
+            {"start": 400.0, "end": 500.0, "type": "unknown"},
+            {"start": 600.0, "end": 700.0, "type": "unknown", "post_match": True},
+        ]
+        active, post_match = _partition_post_match(boundaries)
+
+        # Order-preserving within each partition
+        assert active == [
+            {"start": 0.0, "end": 100.0, "type": "unknown"},
+            {"start": 400.0, "end": 500.0, "type": "unknown"},
+        ]
+        assert post_match == [
+            {"start": 200.0, "end": 300.0, "type": "unknown", "post_match": True},
+            {"start": 600.0, "end": 700.0, "type": "unknown", "post_match": True},
+        ]
+        # Total: the two lists account for every input boundary
+        assert len(active) + len(post_match) == len(boundaries)
+
+    def test_partition_no_post_match_returns_all_active(self):
+        """No post_match flag -> active is the full list (bit-exact), post empty."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        active, post_match = _partition_post_match(BOUNDARIES)
+
+        assert active == BOUNDARIES
+        assert post_match == []
+
+    def test_partition_empty(self):
+        """Empty input -> two empty lists."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        active, post_match = _partition_post_match([])
+
+        assert active == []
+        assert post_match == []
+
+    def test_partition_post_match_false_is_active(self):
+        """An explicit ``post_match: False`` boundary counts as active."""
+        from allaganeye.commands.split_matches import _partition_post_match
+
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 100.0, "type": "unknown", "post_match": False},
+        ]
+        active, post_match = _partition_post_match(boundaries)
+
+        assert active == boundaries
+        assert post_match == []
+
+
+# Disk-budget regression fixtures (#805 段階2).
+# Source: 1.8 MB / 1800 s (matches PROBE_RESULT["duration"]).
+#   active  = 0-600s   -> ratio 1/3   -> est = 1.8M * (1/3) * 1.1 = 660_000
+#   all     = 0-1700s  -> ratio 17/18 -> est = 1.8M * (17/18)*1.1 = 1_870_000
+# free = 1_000_000:  est(active) <= free < est(active+post_match).
+_ACTIVE_AND_POST: list[MatchBoundary] = [
+    {"start": 0.0, "end": 600.0, "type": "unknown"},
+    {"start": 600.0, "end": 1700.0, "type": "unknown", "post_match": True},
+]
+_POST_MATCH_FREE_BYTES = 1_000_000
+
+
+def _post_match_fake_usage():
+    return type(
+        "Usage",
+        (),
+        {
+            "total": 10_000_000,
+            "used": 10_000_000 - _POST_MATCH_FREE_BYTES,
+            "free": _POST_MATCH_FREE_BYTES,
+        },
+    )
+
+
+class TestDiskSpacePostMatchBudget:
+    """Disk check must budget only active (MP4-written) boundaries (#805 段階2).
+
+    Regression for the Codex adversarial-review HIGH finding: a long
+    post_match trailing segment is retained in ``boundaries`` but is *not*
+    written to MP4.  Budgeting its duration in the pre-split disk check can
+    raise a false "Not enough disk space" error even though the space free
+    is sufficient for the matches that will actually be written.
+    """
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_run_split_does_not_false_fail_on_post_match_tail(
+        self, mock_probe, mock_detect, mock_split, tmp_path
+    ):
+        """run_split must not raise when only the post_match tail overflows."""
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = list(_ACTIVE_AND_POST)
+        # Only the single active match is written.
+        mock_split.return_value = [tmp_path / "match_001.mp4"]
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        # Real _check_disk_space; mock the OS free-space probe.
+        video = tmp_path / "input.mp4"
+        video.write_bytes(b"\x00" * 1_800_000)  # 1.8 MB
+
+        with patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=_post_match_fake_usage(),
+        ):
+            # Must NOT raise: active estimate (660_000) fits in free (1_000_000).
+            run_split(video, config)
+
+        mock_split.assert_called_once()
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    def test_run_split_passes_only_active_boundaries_to_disk_check(
+        self, mock_probe, mock_detect, mock_split, tmp_path
+    ):
+        """The disk check is called with active boundaries only (not post_match)."""
+        mock_probe.return_value = PROBE_RESULT
+        mock_detect.return_value = list(_ACTIVE_AND_POST)
+        mock_split.return_value = [tmp_path / "match_001.mp4"]
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        with patch(f"{MODULE}._check_disk_space") as mock_check:
+            run_split(Path("input.mp4"), config)
+
+        mock_check.assert_called_once()
+        passed_boundaries = mock_check.call_args.args[1]
+        assert passed_boundaries == [
+            {"start": 0.0, "end": 600.0, "type": "unknown"},
+        ]
+        assert all(not b.get("post_match") for b in passed_boundaries)
+
+    @patch(f"{MODULE}.split_video")
+    @patch(f"{MODULE}.detect_match_boundaries")
+    @patch(f"{MODULE}.probe_video")
+    @patch(f"{MODULE}._load_cache_hit")
+    def test_cache_hit_does_not_false_fail_on_post_match_tail(
+        self, mock_load, mock_probe, mock_detect, mock_split, tmp_path
+    ):
+        """cache-hit branch must also budget only active boundaries (#805).
+
+        The v4 cache stores the post_match=True shape, and the cache-hit
+        re-run is the documented recovery path from a disk-full failure, so
+        the cache branch's disk check must exclude the post_match tail too.
+        """
+        mock_probe.return_value = PROBE_RESULT
+        # Cache returns boundaries WITH a post_match tail.
+        mock_load.return_value = CacheHit(
+            boundaries=list(_ACTIVE_AND_POST),
+            masked_fallback_used=False,
+            capture_regions=None,
+        )
+        mock_split.return_value = [tmp_path / "match_001.mp4"]
+        config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+        video = tmp_path / "input.mp4"
+        video.write_bytes(b"\x00" * 1_800_000)  # 1.8 MB
+
+        with patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=_post_match_fake_usage(),
+        ):
+            run_split(video, config)
+
+        # cache hit -> detect must not run; split happens for the active match.
+        mock_detect.assert_not_called()
+        mock_split.assert_called_once()
 
 
 class TestResolveGpuMode:
@@ -2300,49 +3412,82 @@ class TestResolveGpuModeWithProbe:
 
 
 class TestBuildSystemInfo:
-    """``_build_system_info`` constructs the metadata.json system_info dict (#591)."""
+    """``_build_system_info`` constructs the metadata.json system_info dict (#591, extended #761)."""
 
     def test_basic_payload(self):
+        from unittest.mock import patch
+
         from allaganeye.commands.split_matches import _build_system_info
 
-        info = _build_system_info(
-            available_vendors=["nvidia", "amd"],
-            vendor_used="nvidia",
-        )
+        with patch(
+            "allaganeye.system_info.get_gpu_info_lines",
+            return_value=["NVIDIA GeForce RTX 5090 (32GB VRAM)"],
+        ):
+            info = _build_system_info(
+                available_vendors=["nvidia", "amd"],
+                vendor_used="nvidia",
+            )
         assert info["gpu_vendors_available"] == ["nvidia", "amd"]
         assert info["gpu_vendor_used"] == "nvidia"
         assert info["vendor_preference"] == ["nvidia", "amd", "intel"]
+        assert info.get("gpu") == ["NVIDIA GeForce RTX 5090 (32GB VRAM)"]
 
     def test_no_gpu_used_is_null(self):
         """CPU 強制 / cache hit / split-only path では vendor_used=None."""
+        from unittest.mock import patch
+
         from allaganeye.commands.split_matches import _build_system_info
 
-        info = _build_system_info(
-            available_vendors=["nvidia"],
-            vendor_used=None,
-        )
+        with patch("allaganeye.system_info.get_gpu_info_lines", return_value=[]):
+            info = _build_system_info(
+                available_vendors=["nvidia"],
+                vendor_used=None,
+            )
         assert info["gpu_vendor_used"] is None
         assert info["gpu_vendors_available"] == ["nvidia"]
+        assert info.get("gpu") == []
 
     def test_empty_available_vendors(self):
         """probe 失敗環境 (CPU only Linux CI など) でも payload を作れる."""
+        from unittest.mock import patch
+
         from allaganeye.commands.split_matches import _build_system_info
 
-        info = _build_system_info(
-            available_vendors=[],
-            vendor_used=None,
-        )
+        with patch("allaganeye.system_info.get_gpu_info_lines", return_value=[]):
+            info = _build_system_info(
+                available_vendors=[],
+                vendor_used=None,
+            )
         assert info["gpu_vendors_available"] == []
         assert info["gpu_vendor_used"] is None
         assert info["vendor_preference"] == ["nvidia", "amd", "intel"]
+        assert info.get("gpu") == []
 
     def test_preference_matches_gpu_detector_module(self):
         """``vendor_preference`` は ``gpu_detector._VENDOR_PREFERENCE`` のスナップショット."""
+        from unittest.mock import patch
+
         from allaganeye.commands.split_matches import _build_system_info
         from allaganeye.video.gpu_detector import _VENDOR_PREFERENCE
 
-        info = _build_system_info(available_vendors=[], vendor_used=None)
+        with patch("allaganeye.system_info.get_gpu_info_lines", return_value=[]):
+            info = _build_system_info(available_vendors=[], vendor_used=None)
         assert info["vendor_preference"] == list(_VENDOR_PREFERENCE)
+
+    def test_gpu_models_included_in_payload(self):
+        """``gpu`` field は ``get_gpu_info_lines()`` の結果を格納する (#761)."""
+        from unittest.mock import patch
+
+        from allaganeye.commands.split_matches import _build_system_info
+
+        gpu_models = ["NVIDIA GeForce RTX 5090 (32GB VRAM)", "Intel Arc A770"]
+        with patch(
+            "allaganeye.system_info.get_gpu_info_lines", return_value=gpu_models
+        ):
+            info = _build_system_info(
+                available_vendors=["nvidia"], vendor_used="nvidia"
+            )
+        assert info.get("gpu") == gpu_models
 
 
 class TestBuildMetadataPayloadSystemInfo:
@@ -3070,6 +4215,130 @@ def test_verbose_unknown_line_absent_when_stat_missing(
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.detect_match_boundaries")
 @patch(f"{MODULE}.probe_video")
+def test_verbose_masked_l2_drop_line_shown_when_nonzero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """masked_segments_dropped > 0 -> verbose emits 'masked L2 validation' line (#822)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["masked_segments_dropped"] = 2
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "masked L2 validation: 2 segment(s) dropped" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_masked_l2_drop_line_hidden_when_zero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """masked_segments_dropped == 0 -> no masked L2 line (terse output, #822)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["masked_segments_dropped"] = 0
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "masked L2" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_masked_l2_zero_gap_merge_line_shown_when_nonzero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """masked_l2_zero_gap_merges > 0 -> verbose emits 'masked L2 zero-gap merge' line (#822)."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["masked_l2_zero_gap_merges"] = 1
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "masked L2 zero-gap merge: 1 pair(s) merged" in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_masked_l2_zero_gap_merge_line_hidden_when_zero(
+    mock_probe, mock_detect, mock_split, tmp_path, capsys
+):
+    """masked_l2_zero_gap_merges == 0 -> no zero-gap merge line in verbose output."""
+    mock_probe.return_value = PROBE_RESULT
+
+    def populate_stats(*args, **kwargs):
+        stats = kwargs.get("stats")
+        if stats is not None:
+            stats["mode"] = "CPU"
+            stats["pass1_samples"] = 100
+            stats["pass1_blackout_frames"] = 3
+            stats["pass1_elapsed_s"] = 5.0
+            stats["pass2_regions"] = 2
+            stats["pass2_elapsed_s"] = 1.0
+            stats["masked_l2_zero_gap_merges"] = 0
+        return BOUNDARIES
+
+    mock_detect.side_effect = populate_stats
+    mock_split.return_value = _output_files(tmp_path)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config, verbose=True)
+    out = capsys.readouterr().out
+
+    assert "zero-gap merge" not in out
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
 def test_verbose_filter_section_skipped_on_whole_video_fallback(
     mock_probe, mock_detect, mock_split, tmp_path, capsys
 ):
@@ -3354,9 +4623,15 @@ def test_verbose_dry_run_emits_total(
     mock_split.assert_not_called()
 
 
-def _seed_cache(source: Path, output_dir: Path, config: SplitConfig) -> None:
+def _seed_cache(
+    source: Path,
+    output_dir: Path,
+    config: SplitConfig,
+    *,
+    capture_regions: dict | None = None,
+) -> None:
     """Write a .detection_cache.json entry matching ``config`` so ``_load_cache``
-    hits.  Helper for cache-hit tests (#381)."""
+    hits.  Helper for cache-hit tests (#381; capture_regions は #810 round-1)."""
     source.write_bytes(b"")
     output_dir.mkdir(parents=True, exist_ok=True)
     _save_cache(
@@ -3366,6 +4641,9 @@ def _seed_cache(source: Path, output_dir: Path, config: SplitConfig) -> None:
         config.sample_interval,
         config,
         BOUNDARIES,
+        # malformed 値を意図的に seed するテスト (round-1 #1 pin) があるため
+        # CaptureRegions に cast して writer の型契約を素通しする。
+        capture_regions=cast("CaptureRegions | None", capture_regions),
     )
 
 
@@ -3474,6 +4752,9 @@ def test_verbose_cache_hit_prints_detection_params(
     # (#384 contract: audio display is driven by the helper, not
     # config.no_audio directly).
     assert "audio=frozen" in out
+    # vtuber/masked provenance token (PR #823 R1 / PR (b)): 検出 mode を表示に含める。
+    assert "vtuber=off" in out
+    assert "masked=off" in out
 
 
 @patch(f"{MODULE}.split_video")
@@ -3526,6 +4807,331 @@ def test_verbose_cache_hit_audio_line_matches_cache_miss_path(
     tail = out[header_idx:]
     # When AUDIO_FROZEN=False and no_audio=False, audio=on.
     assert "audio=on" in tail, f"expected audio=on in cache hit summary: {tail[:400]!r}"
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_prints_vtuber_on_token(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """vtuber=True で生成した cache の hit 表示は vtuber=on (provenance 可視化).
+
+    cache key fix (PR #823) で mode 混在 hit は不可能になったが、表示にも
+    provenance を出して troubleshoot 報告から検出 mode を判別可能にする。
+    """
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, vtuber=True)
+    _seed_cache(source, tmp_path, config)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "vtuber=on" in out[header_idx:]
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_prints_masked_on_token(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """masked=True で生成した cache の hit 表示は masked=on (vtuber token と同型)."""
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, masked=True)
+    _seed_cache(source, tmp_path, config)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "masked=on" in out[header_idx:]
+
+
+class TestFormatRegionToken:
+    """#810 round-1: verbose region token の tolerant contract を pin する。
+
+    cache-hit 表示は raw cache 記録値 (無検証) を受けるため、malformed 入力でも
+    crash せず "invalid" / "unknown" を返す契約。
+    """
+
+    def _regions(self, **coarse_overrides) -> dict:
+        coarse = {
+            "x": 0.0,
+            "y": 0.0,
+            "w": 1.0,
+            "h": 1.0,
+            "confidence": 1.0,
+            "source": "fallback",
+        }
+        coarse.update(coarse_overrides)
+        return {"coarse": coarse, "segments": [], "fallback_reason": None}
+
+    def test_none_returns_unknown(self):
+        assert _format_region_token(None) == "unknown"
+
+    def test_non_dict_returns_unknown(self):
+        assert _format_region_token("garbage") == "unknown"
+
+    def test_missing_coarse_returns_unknown(self):
+        assert _format_region_token({"segments": []}) == "unknown"
+
+    def test_full_frame(self):
+        assert _format_region_token(self._regions()) == "full_frame"
+
+    def test_band_coordinates_formatted(self):
+        regions = self._regions(
+            x=0.1, y=0.0, w=0.76, h=0.042, confidence=0.9, source="band"
+        )
+        assert _format_region_token(regions) == "band(0.10,0.00,0.76,0.04)"
+
+    def test_fallback_reason_suffix(self):
+        regions = self._regions()
+        regions["fallback_reason"] = "consensus_miss"
+        assert _format_region_token(regions) == "full_frame, fallback=consensus_miss"
+
+    def test_malformed_non_numeric_coordinate_returns_invalid(self):
+        # round-1 #1: 非数値座標で :.2f が ValueError にならないこと (crash 防御)
+        regions = self._regions(x="oops", source="band")
+        assert _format_region_token(regions) == "invalid"
+
+    def test_bool_coordinate_returns_invalid(self):
+        regions = self._regions(x=True, source="band")
+        assert _format_region_token(regions) == "invalid"
+
+    def test_ansi_escape_in_source_is_neutralized(self):
+        # round-3 R3-4: 改竄 cache 由来の制御文字を端末に素通ししない
+        regions = self._regions(source="\x1b[31mevil\x1b[0m")
+        token = _format_region_token(regions)
+        assert "\x1b" not in token
+        assert "evil" in token
+
+    def test_overlong_source_is_capped(self):
+        regions = self._regions(source="s" * 500)
+        token = _format_region_token(regions)
+        assert len(token) < 100
+
+    def test_ansi_escape_in_fallback_reason_is_neutralized(self):
+        regions = self._regions()
+        regions["fallback_reason"] = "\x1b]0;pwn\x07"
+        token = _format_region_token(regions)
+        assert "\x1b" not in token
+        assert "\x07" not in token
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_prints_region_token(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """cache-hit params 行に region= token が出る (#810 round-1 #2 表示 pin)."""
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    band_regions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    _seed_cache(source, tmp_path, config, capture_regions=band_regions)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "region=band(0.10,0.00,0.76,0.04)" in out[header_idx:]
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_malformed_region_does_not_crash(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """malformed cached capture_regions で cache-hit verbose が crash しない
+    (#810 round-1 #1 regression pin)。
+
+    表示は raw cache 記録値を正とする設計のため、formatter が tolerant に
+    "invalid" を出して run は正常続行する (metadata 側は sanitize 済みで省略)。
+    """
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    malformed = {
+        "coarse": {
+            "x": "oops",
+            "y": 0.0,
+            "w": 0.5,
+            "h": 0.5,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    _seed_cache(source, tmp_path, config, capture_regions=malformed)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)  # must not raise
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "region=invalid" in out[header_idx:]
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_prints_keep_trailing_on_token(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """keep_trailing=True で生成した cache の hit 表示は keep_trailing=on。
+
+    cache key fix (#805 段階1) で mode 混在 hit は不可能になったが、表示にも
+    provenance を出して troubleshoot 報告から keep_trailing を判別可能にする
+    (vtuber/masked token と同型)。
+    """
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(
+        output_dir=tmp_path, min_match_duration=60.0, keep_trailing=True
+    )
+    _seed_cache(source, tmp_path, config)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "keep_trailing=on" in out[header_idx:]
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_miss_summary_includes_vtuber_token(
+    mock_probe, mock_split, mock_run_detection, tmp_path, capsys
+):
+    """cache-miss の Detecting summary に vtuber token が出る (provenance 可視化)."""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+    mock_run_detection.return_value = BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, no_cache=True, vtuber=True)
+    run_split(source, config, verbose=True)
+    assert "vtuber=on" in capsys.readouterr().out
+
+    config_off = SplitConfig(output_dir=tmp_path, no_cache=True)
+    run_split(source, config_off, verbose=True)
+    assert "vtuber=off" in capsys.readouterr().out
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_miss_summary_includes_masked_token(
+    mock_probe, mock_split, mock_run_detection, tmp_path, capsys
+):
+    """cache-miss の Detecting summary に masked token が出る (vtuber と同型)."""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+    mock_run_detection.return_value = BOUNDARIES
+
+    config = SplitConfig(output_dir=tmp_path, no_cache=True, masked=True)
+    run_split(source, config, verbose=True)
+    assert "masked=on" in capsys.readouterr().out
+
+    config_off = SplitConfig(output_dir=tmp_path, no_cache=True)
+    run_split(source, config_off, verbose=True)
+    assert "masked=off" in capsys.readouterr().out
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_records_masked_fallback_used(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """auto masked fallback の resolved path が metadata と cache に記録される.
+
+    Codex medium finding: gate は flag なしでも 0-blackout で fallback に入る
+    ため、request flag (masked) と resolved path (masked_fallback_used) を
+    分離して記録する。callback 配線は brightness_callback (#644) と同型。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("masked_fallback_callback")
+        assert cb is not None, (
+            "run_split must pass masked_fallback_callback to _run_detection"
+        )
+        cb()
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+    config = SplitConfig(output_dir=tmp_path, no_cache=True)
+    run_split(source, config)
+
+    data = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+    assert data["detection_params"]["masked"] is False
+    assert data["detection_params"]["masked_fallback_used"] is True
+
+    cache = json.loads((tmp_path / ".detection_cache.json").read_text(encoding="utf-8"))
+    # resolved path は cache key (params) ではなく top-level に記録する
+    # (auto-masked 動画の cache 再利用は request key で正しく機能させる)。
+    assert cache["masked_fallback_used"] is True
+    assert cache["params"]["masked"] is False
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_prints_masked_fallback_token(
+    mock_probe, mock_split, tmp_path, capsys
+):
+    """cache-hit 表示は resolved path (masked_fallback=on/off) も出す."""
+    source = tmp_path / "input.mp4"
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    _seed_cache(source, tmp_path, config)
+    cache_path = tmp_path / ".detection_cache.json"
+    data = json.loads(cache_path.read_text(encoding="utf-8"))
+    data["masked_fallback_used"] = True
+    cache_path.write_text(json.dumps(data), encoding="utf-8")
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_split.return_value = _output_files(tmp_path)
+
+    run_split(source, config, verbose=True)
+    out = capsys.readouterr().out
+
+    header_idx = out.find("Cache hit:")
+    assert header_idx >= 0
+    assert "masked_fallback=on" in out[header_idx:]
 
 
 def test_display_cache_hit_params_malformed_json_emits_unavailable(tmp_path, capsys):
@@ -3697,8 +5303,8 @@ def test_verbose_workers_auto_shows_resolved_count(
     """Verbose summary resolves workers=auto to the actual count (#389).
 
     ``workers=auto`` alone doesn't let users diagnose CPU under-utilisation
-    or hit the right number for their box; the resolved ``min(cpu_count,
-    24)`` must be shown alongside.
+    or hit the right number for their box; the number resolved by
+    ``_resolve_workers`` must be shown alongside.
     """
     mock_probe.return_value = PROBE_RESULT
     mock_detect.return_value = BOUNDARIES
@@ -3973,6 +5579,92 @@ def test_quiet_no_cache_only_output_listing(
 
 
 # ============================================================
+# 完了行の出力パス報告 (PR #930 の export / minimap と同じ方針)
+# ============================================================
+#
+# 上の `assert f"Output: {tmp_path}" in out` 系は tmp_path が絶対なので、
+# 生値をそのまま表示していても通ってしまう。cwd を移して**相対**の
+# output_dir を渡すことで「実際に書いた場所」を報告しているかを pin する。
+
+
+def _completion_line_value(stdout: str, label: str) -> str:
+    """Extract the path shown on the ``<label>: ...`` completion line."""
+    prefix = f"{label}:"
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if line.startswith(prefix):
+            return line.split(prefix, 1)[1].strip()
+    raise AssertionError(f"no {prefix!r} line in stdout: {stdout!r}")
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_split_completion_lines_absolute_for_relative_output_dir(
+    mock_probe, mock_detect, mock_split, tmp_path, monkeypatch, capsys
+):
+    """相対 ``-o`` でも Output / Metadata 行は絶対パスを出す。
+
+    Windows で quote を落として ``-o E:\\a\\b`` が ``E:ab`` (ドライブ相対) に
+    化けると、生値表示は実際の書き出し先と食い違う。
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(Path("out"))
+    config = SplitConfig(output_dir=Path("out"), min_match_duration=60.0, no_cache=True)
+
+    run_split(Path("input.mp4"), config)
+
+    out = capsys.readouterr().out
+    shown_output = Path(_completion_line_value(out, "Output"))
+    shown_metadata = Path(_completion_line_value(out, "Metadata"))
+
+    assert shown_output.is_absolute(), (
+        f"'Output:' must report an absolute path, got {str(shown_output)!r}"
+    )
+    assert shown_metadata.is_absolute(), (
+        f"'Metadata:' must report an absolute path, got {str(shown_metadata)!r}"
+    )
+    # ...and they must be where we actually wrote, not just any absolute path.
+    assert shown_output.resolve() == out_dir.resolve()
+    assert shown_metadata.resolve() == (out_dir / "metadata.json").resolve()
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_split_completion_lines_use_native_separators(
+    mock_probe, mock_detect, mock_split, tmp_path, monkeypatch, capsys
+):
+    """完了行は貼り戻せる OS ネイティブ区切りで出す (posix 化しない)。"""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    mock_split.return_value = _output_files(Path("./out"))
+    config = SplitConfig(
+        output_dir=Path("./out"), min_match_duration=60.0, no_cache=True
+    )
+
+    run_split(Path("input.mp4"), config)
+
+    out = capsys.readouterr().out
+    foreign_sep = "/" if os.sep == "\\" else "\\"
+    for label in ("Output", "Metadata"):
+        shown = _completion_line_value(out, label)
+        assert foreign_sep not in shown, (
+            f"'{label}:' must use {os.sep!r} separators, got {shown!r}"
+        )
+        assert "./" not in shown and ".\\" not in shown
+
+
+# ============================================================
 # #365: progress bar ETA ラベル付与の format 検証
 # ============================================================
 
@@ -4181,7 +5873,7 @@ def test_run_split_omits_brightness_samples_when_callback_silent(
 
 @patch("allaganeye.system_info.probe_gpu_vendors", return_value=[])
 @patch(f"{MODULE}._run_detection")
-@patch(f"{MODULE}._load_cache")
+@patch(f"{MODULE}._load_cache_hit")
 @patch(f"{MODULE}.split_video")
 @patch(f"{MODULE}.probe_video")
 def test_run_split_cache_hit_omits_brightness_samples(
@@ -4202,7 +5894,9 @@ def test_run_split_cache_hit_omits_brightness_samples(
     補完する。
     """
     mock_probe.return_value = PROBE_RESULT
-    mock_load_cache.return_value = BOUNDARIES  # cache hit -> Pass 1 skip
+    mock_load_cache.return_value = CacheHit(
+        boundaries=BOUNDARIES, masked_fallback_used=False, capture_regions=None
+    )  # cache hit -> Pass 1 skip
 
     output_dir = tmp_path / "out_cache_hit"
     mock_split.return_value = [
@@ -4226,3 +5920,1415 @@ def test_run_split_cache_hit_omits_brightness_samples(
         "cache hit 経路では Pass 1 を skip するため brightness_samples キー"
         "は欠落するはず (#644、metadata-spec.md 書き込みパス表と整合)"
     )
+
+
+# -- #810 capture_regions wiring through run_split (一気通貫) --
+
+# `MODULE` / `PROBE_RESULT` / `BOUNDARIES` / `_mock_audio_scan` (autouse)
+# は file 冒頭で既定義。brightness_samples #644 と同じ decorator / fixture 構成。
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_writes_capture_regions_when_callback_fires(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """#810 -- run_split (一気通貫) で region_callback が発火したら
+    capture_regions が metadata.json に書かれること。"""
+    from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+    mock_probe.return_value = PROBE_RESULT
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("region_callback")
+        assert cb is not None, (
+            "run_split must pass region_callback to _run_detection (#810)"
+        )
+        cb(RegionTimeline(coarse=FULL_FRAME))
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+
+    output_dir = tmp_path / "out"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["capture_regions"]["coarse"]["source"] == "fallback"
+    assert payload["capture_regions"]["fallback_reason"] is None
+    assert payload["capture_regions"]["coarse"]["x"] == 0.0
+    assert payload["capture_regions"]["coarse"]["w"] == 1.0
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_omits_capture_regions_when_callback_silent(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """#810 -- callback が発火しない run では field を書かない
+    (brightness_samples #644 と同型の防御契約)。"""
+    mock_probe.return_value = PROBE_RESULT
+    mock_run_detection.side_effect = lambda *a, **kw: BOUNDARIES
+
+    output_dir = tmp_path / "out2"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert "capture_regions" not in payload
+
+
+@patch("allaganeye.system_info.probe_gpu_vendors", return_value=[])
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}._load_cache_hit")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_cache_hit_carries_capture_regions(
+    mock_probe,
+    mock_split,
+    mock_load_cache,
+    mock_run_detection,
+    mock_probe_gpu,
+    tmp_path,
+):
+    """#810 round-1 #3 -- run_split cache-hit 経路で cache 記録の capture_regions
+    が metadata.json へ引き継がれる (detect 側 pin と対の integration test)。
+
+    `_load_cache_hit` を patch して CacheHit (with capture_regions) を返す (#879)。
+    """
+    band_regions: CaptureRegions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    output_dir = tmp_path / "out_cache_hit_regions"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_load_cache.return_value = CacheHit(
+        boundaries=BOUNDARIES,
+        masked_fallback_used=False,
+        capture_regions=band_regions,
+    )
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    mock_run_detection.assert_not_called()
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["capture_regions"] == band_regions
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_miss_prints_region_line(
+    mock_probe, mock_split, mock_run_detection, tmp_path, capsys
+):
+    """fresh 検知の verbose に Region: 行が出る (#810 round-1 #2 表示 wiring pin)."""
+    from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+    mock_probe.return_value = PROBE_RESULT
+
+    def fake_run_detection(*args, **kwargs):
+        cb = kwargs.get("region_callback")
+        assert cb is not None
+        cb(RegionTimeline(coarse=FULL_FRAME))
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+
+    output_dir = tmp_path / "out_region_line"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=True, quiet=False)
+    out = capsys.readouterr().out
+    assert "Region: full_frame" in out
+
+
+@patch("allaganeye.system_info.probe_gpu_vendors", return_value=[])
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}._load_cache_hit")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_verbose_cache_hit_omits_region_line(
+    mock_probe,
+    mock_split,
+    mock_load_cache,
+    mock_run_detection,
+    mock_probe_gpu,
+    tmp_path,
+    capsys,
+):
+    """cache-hit の verbose には Region: 行が出ない (#908 doc 記述の pin)。
+
+    `docs/output-spec.md` 行 12a は「`Region:` は cache miss 時のみ出力」と
+    記述する。cache-hit 経路も `captured_region` を cache 記録値から復元する
+    ため「値が無いから出ない」のではなく、`Region:` 行に到達する前に
+    return する (`split_matches.py` の cache-hit 分岐) から出ない。値が存在
+    することと表示されないことを同時に assert し、doc の主張が実装から
+    silent に乖離するのを防ぐ。
+    """
+    band_regions: CaptureRegions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    output_dir = tmp_path / "out_cache_hit_no_region_line"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    mock_probe.return_value = PROBE_RESULT
+    mock_load_cache.return_value = CacheHit(
+        boundaries=BOUNDARIES,
+        masked_fallback_used=False,
+        capture_regions=band_regions,
+    )
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    run_split(video, config, verbose=True, quiet=False)
+    out = capsys.readouterr().out
+
+    mock_run_detection.assert_not_called()
+    # positive anchor: verbose 出力経路自体は生きている (vacuous pass 防止)
+    assert "Cache hit: detection params from" in out
+    # ...それでも Region: は出ない
+    assert "Region:" not in out
+    # 値は cache から復元され metadata まで届いている = 「値が無いから
+    # 出ない」ではないことの裏取り
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["capture_regions"] == band_regions
+
+
+# -- #805 段階2: post_match_trailing_dropped warning emission stopped (W1) --
+
+# trailing_drop_callback の wiring は除去されたため、`_run_detection` を直接
+# patch して callback が渡されないこと + warnings が空のままなことを assert する
+# (post_match flag が warning を代替、brightness_samples #644 と同型の検証)。
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_does_not_pass_trailing_drop_callback(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """#805 段階2 (W1) -- run_split (一気通貫) は trailing_drop_callback を
+    `_run_detection` に渡さず、warnings は emit されない (空のまま)。
+
+    post_match flag が first-class 代替になったため、旧 callback チェーンは
+    除去された。callback kwarg が assemble されないこと + warnings が [] で
+    あることを assert する。
+    """
+    mock_probe.return_value = PROBE_RESULT
+
+    def fake_run_detection(*args, **kwargs):
+        assert "trailing_drop_callback" not in kwargs, (
+            "run_split must NOT pass trailing_drop_callback to _run_detection "
+            "(#805 段階2: callback removed, post_match flag replaces it)"
+        )
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+
+    output_dir = tmp_path / "out_drop"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0, no_cache=True)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["warnings"] == []
+
+
+@patch(f"{MODULE}._run_detection")
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_run_split_no_trailing_drop_writes_empty_warnings(
+    mock_probe, mock_split, mock_run_detection, tmp_path
+):
+    """#805 段階1 -- 何も drop されない (callback 不発) なら warnings は []。"""
+    mock_probe.return_value = PROBE_RESULT
+
+    def fake_run_detection(*args, **kwargs):
+        # callback を呼ばない (trailing drop なし)
+        return BOUNDARIES
+
+    mock_run_detection.side_effect = fake_run_detection
+
+    output_dir = tmp_path / "out_nodrop"
+    mock_split.return_value = [
+        output_dir / "match_001.mp4",
+        output_dir / "match_002.mp4",
+    ]
+
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0, no_cache=True)
+
+    run_split(video, config, verbose=False, quiet=True)
+
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["warnings"] == []
+
+
+def test_build_metadata_payload_round_trips_warnings(tmp_path):
+    """#805 -- `_build_metadata_payload(warnings=[...])` emits the list
+    verbatim; default (no arg) keeps the historical `[]` for existing callers.
+
+    The ``warnings`` param survives 段階2 (only the trailing_drop emission seam
+    was removed), so a pre-built list still round-trips unchanged.
+    """
+    from allaganeye.commands.split_matches import _build_metadata_payload
+
+    system_info = {
+        "gpu_vendors_available": [],
+        "gpu_vendor_used": None,
+        "vendor_preference": ["nvidia", "amd", "intel"],
+    }
+    common = dict(
+        video_path=tmp_path / "input.mp4",
+        source_duration=1800.0,
+        source_fps=30.0,
+        detected_at="2026-06-16T00:00:00Z",
+        detection_started_at="2026-06-16T00:00:00Z",
+        detection_completed_at="2026-06-16T00:01:00Z",
+        effective_interval=1.0,
+        config=SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0),
+        boundaries=BOUNDARIES,
+        output_files=_output_files(tmp_path / "out"),
+        gaps=[],
+        system_info=system_info,
+    )
+
+    # Default: no warnings arg -> [] (existing callers/tests stay green).
+    default_payload = _build_metadata_payload(**common)  # type: ignore[arg-type]
+    assert default_payload.get("warnings") == []
+
+    # A pre-built warnings list (any code) is forwarded verbatim, not rebuilt.
+    warned = [
+        {
+            "code": "some_warning_code",
+            "message_en": "example",
+            "severity": "warn",
+            "context": {"start": 1000.0, "end": 1800.0},
+        }
+    ]
+    payload = _build_metadata_payload(**common, warnings=warned)  # type: ignore[arg-type]
+    assert payload.get("warnings") == warned
+
+
+def test_split_matches_format_helpers_are_detection_format_aliases():
+    from allaganeye.commands import split_matches as sm
+    from allaganeye.detection import format as fmt
+
+    assert sm._format_timestamp is fmt.format_timestamp
+    assert sm._format_duration is fmt.format_duration
+    assert sm._iso_utc_now is fmt.iso_utc_now
+
+
+# -- #805 段階2: post_match boundary 除外 + metadata 搬送 --
+
+
+def _build_metadata_payload_common(tmp_path, boundaries, output_files):
+    """共通 kwargs を組み立てるヘルパ (既存テストのパターンを踏襲)。"""
+    from allaganeye.commands.split_matches import _build_metadata_payload
+    from allaganeye.config import SplitConfig
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    return _build_metadata_payload(  # type: ignore[arg-type]
+        video_path=tmp_path / "input.mp4",
+        source_duration=1800.0,
+        source_fps=30.0,
+        detected_at="2026-06-26T00:00:00Z",
+        detection_started_at="2026-06-26T00:00:00Z",
+        detection_completed_at="2026-06-26T00:01:00Z",
+        effective_interval=1.0,
+        config=config,
+        boundaries=boundaries,
+        output_files=output_files,
+        gaps=[],
+        system_info={
+            "gpu_vendors_available": [],
+            "gpu_vendor_used": None,
+            "vendor_preference": ["nvidia", "amd", "intel"],
+        },
+    )
+
+
+def test_build_metadata_payload_post_match_excluded_from_outputs(tmp_path):
+    """#805 段階2 -- post_match boundary は output_file なし・index 連番で matches に残る。
+
+    active (index 1) は output_file を持ち、post_match (index 2) は
+    output_file を持たず post_match=True が付く。
+    """
+    active: list[MatchBoundary] = [{"start": 0.0, "end": 600.0, "type": "fl_match"}]
+    post_match: list[MatchBoundary] = [
+        {"start": 600.0, "end": 700.0, "type": "unknown"}
+    ]
+    output_files = [tmp_path / "match_001.mp4"]  # active 分のみ
+
+    from allaganeye.commands.split_matches import _build_metadata_payload
+    from allaganeye.config import SplitConfig
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    payload = _build_metadata_payload(  # type: ignore[arg-type]
+        video_path=tmp_path / "input.mp4",
+        source_duration=1800.0,
+        source_fps=30.0,
+        detected_at="2026-06-26T00:00:00Z",
+        detection_started_at="2026-06-26T00:00:00Z",
+        detection_completed_at="2026-06-26T00:01:00Z",
+        effective_interval=1.0,
+        config=config,
+        boundaries=active,
+        post_match_boundaries=post_match,
+        output_files=output_files,
+        gaps=[],
+        system_info={
+            "gpu_vendors_available": [],
+            "gpu_vendor_used": None,
+            "vendor_preference": ["nvidia", "amd", "intel"],
+        },
+    )
+
+    matches = payload["matches"]
+    assert len(matches) == 2
+    # active match: index 1, output_file あり, post_match フラグ無し
+    assert matches[0]["index"] == 1
+    output_file = matches[0].get("output_file")
+    assert output_file is not None and "match_001.mp4" in output_file
+    assert "post_match" not in matches[0]
+    # post_match match: index 2, output_file なし, post_match=True
+    assert matches[1]["index"] == 2
+    assert matches[1].get("post_match") is True
+    assert "output_file" not in matches[1]
+
+
+def test_build_metadata_payload_no_post_match_is_bitexact(tmp_path):
+    """#805 段階2 -- post_match_boundaries 省略時は元の挙動と bit-exact。
+
+    weak assertion (len / index / key presence) だけでは値の swap や active list
+    の取り違えを検出できない。全フィールドを pin して構造的等価を保証する。
+    """
+    from allaganeye.commands.split_matches import _format_duration, _format_timestamp
+
+    boundaries: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "fl_match"},
+        {"start": 610.0, "end": 1200.0, "type": "unknown"},
+    ]
+    output_files = [tmp_path / "match_001.mp4", tmp_path / "match_002.mp4"]
+
+    payload = _build_metadata_payload_common(tmp_path, boundaries, output_files)
+
+    matches = payload["matches"]
+    assert matches == [
+        {
+            "index": 1,
+            "start_time": 0.0,
+            "end_time": 600.0,
+            "start_display": _format_timestamp(0.0),
+            "end_display": _format_timestamp(600.0),
+            "duration": 600.0,
+            "duration_display": _format_duration(600.0),
+            "type": "fl_match",
+            "output_file": (tmp_path / "match_001.mp4").as_posix(),
+        },
+        {
+            "index": 2,
+            "start_time": 610.0,
+            "end_time": 1200.0,
+            "start_display": _format_timestamp(610.0),
+            "end_display": _format_timestamp(1200.0),
+            "duration": 590.0,
+            "duration_display": _format_duration(590.0),
+            "type": "unknown",
+            "output_file": (tmp_path / "match_002.mp4").as_posix(),
+        },
+    ]
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.probe_video")
+def test_split_and_write_metadata_post_match_not_passed_to_split_video(
+    mock_probe, mock_split, tmp_path
+):
+    """#805 段階2 -- post_match boundary は split_video に渡されない。
+
+    active boundary のみが split_video の第 2 引数に渡されることを assert する。
+    """
+    from allaganeye.commands.split_matches import _split_and_write_metadata
+    from allaganeye.config import SplitConfig
+
+    active_b: MatchBoundary = {"start": 0.0, "end": 600.0, "type": "fl_match"}
+    # post_match フラグを持つ boundary は detector.py が将来付与する (Task 3)。
+    # Task 2 では dict として注入して routing ロジックを検証する。
+    post_match_b = {"start": 600.0, "end": 700.0, "type": "unknown", "post_match": True}
+    boundaries: list[MatchBoundary] = [active_b, post_match_b]  # type: ignore[list-item]
+
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    # split_video は active 分 (1件) の output file だけ返す
+    mock_split.return_value = [output_dir / "match_001.mp4"]
+
+    config = SplitConfig(output_dir=output_dir, min_match_duration=60.0)
+
+    _split_and_write_metadata(
+        video_path=tmp_path / "input.mp4",
+        boundaries=boundaries,
+        gaps=[],
+        metadata=PROBE_RESULT,
+        config=config,
+        effective_interval=1.0,
+        detected_at="2026-06-26T00:00:00Z",
+        system_info={  # type: ignore[arg-type]
+            "gpu_vendors_available": [],
+            "gpu_vendor_used": None,
+            "vendor_preference": ["nvidia", "amd", "intel"],
+        },
+        quiet=True,
+    )
+
+    # split_video は active (post_match でない) boundary だけで呼ばれる
+    assert mock_split.called
+    call_boundaries = mock_split.call_args[0][1]  # 第 2 引数 = boundaries
+    assert len(call_boundaries) == 1
+    assert call_boundaries[0] == active_b
+    # post_match boundary は渡されていない
+    assert not any(b.get("post_match") for b in call_boundaries)
+
+    # metadata.json に post_match match が出力_file なしで残っている
+    payload = json.loads((output_dir / "metadata.json").read_text(encoding="utf-8"))
+    matches = payload["matches"]
+    assert len(matches) == 2
+    assert "output_file" in matches[0]
+    assert matches[1].get("post_match") is True
+    assert "output_file" not in matches[1]
+
+
+# ===========================================================================
+# B6-M1: _display_cache_hit_params masked_algo token (#822)
+# ===========================================================================
+
+
+def test_display_cache_hit_params_masked_affected_shows_masked_algo(tmp_path, capsys):
+    """B6-M1: masked-affected cache-hit summary contains masked_algo token.
+
+    When the cache records masked=True (or masked_fallback_used=True), the
+    verbose cache-hit summary must include the masked_algo token so operators
+    can distinguish pre-#822 (masked_algo=1), post-#822 v2 (masked_algo=2),
+    and post-#822 v3 (masked_algo=3, 15-probe quorum + zero-gap merge)
+    results without re-running detection.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": True,
+                    "vtuber": False,
+                    "keep_trailing": False,
+                    "masked_algo": 2,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "masked_algo=2" in out, (
+        "masked-affected cache hit must include masked_algo token"
+    )
+
+
+def test_display_cache_hit_params_non_masked_omits_masked_algo(tmp_path, capsys):
+    """B6-M1 (negative): non-masked cache-hit summary must NOT contain masked_algo.
+
+    For standard OBS cache hits (masked=False, no masked_fallback), the
+    masked_algo token is irrelevant and must be absent to keep the summary
+    concise.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": False,
+                    "vtuber": False,
+                    "keep_trailing": False,
+                    "masked_algo": 2,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "masked_algo" not in out, (
+        "non-masked cache hit must NOT include masked_algo token"
+    )
+
+
+# ===========================================================================
+# B6-M2: broken cache masked_algo robustness (round-1 fix)
+# ===========================================================================
+
+
+def test_display_cache_hit_params_broken_masked_algo_shows_question_mark(
+    tmp_path, capsys
+):
+    """B6-M2a: broken masked_algo (non-int string) emits '?' token, does not raise.
+
+    A corrupted cache with masked_algo="x" must not crash the display helper.
+    The token should fall back to masked_algo=? so operators see a diagnostic
+    indicator rather than a silent gap.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": True,
+                    "vtuber": False,
+                    "keep_trailing": False,
+                    "masked_algo": "x",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "masked_algo=?" in out, (
+        "broken masked_algo must display '?' fallback, not raise"
+    )
+
+
+def test_load_cache_broken_masked_algo_misses(tmp_path, cache_video):
+    """B6-M2b: broken masked_algo (non-int string) in masked cache causes miss.
+
+    When a masked-affected cache has a non-int masked_algo value the invalidation
+    logic must treat it as a mismatch (miss direction) rather than raising or
+    hitting incorrectly.
+    """
+    masked_config = SplitConfig(
+        output_dir=tmp_path / "output",
+        sample_interval=1.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        masked=True,
+    )
+    cache_path = tmp_path / "output" / ".detection_cache.json"
+    _save_cache(
+        cache_path, cache_video, PROBE_RESULT, 1.0, masked_config, CACHE_BOUNDARIES
+    )
+    # Inject a non-int masked_algo to simulate cache corruption
+    data = json.loads(cache_path.read_text(encoding="utf-8"))
+    data["params"]["masked_algo"] = "x"
+    cache_path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = _load_cache_hit(cache_path, cache_video, 1.0, masked_config)
+    assert result is None, "broken masked_algo must cause cache miss, not hit"
+
+
+# ===========================================================================
+# B6-V1: _display_cache_hit_params vtuber_algo token (#895)
+# ===========================================================================
+
+
+def test_display_cache_hit_params_vtuber_shows_vtuber_algo(tmp_path, capsys):
+    """B6-V1: vtuber cache-hit summary contains vtuber_algo token.
+
+    When the cache records vtuber=True, the verbose cache-hit summary must
+    include the vtuber_algo token so operators can distinguish pre-#895
+    (vtuber_algo=1, band-crop) from post-#895 (vtuber_algo>=2, timeline)
+    results without re-running detection.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": False,
+                    "vtuber": True,
+                    "keep_trailing": False,
+                    "vtuber_algo": 2,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "vtuber_algo=2" in out, "vtuber cache hit must include vtuber_algo token"
+
+
+def test_display_cache_hit_params_non_vtuber_omits_vtuber_algo(tmp_path, capsys):
+    """B6-V1 (negative): non-vtuber cache-hit summary must NOT contain vtuber_algo.
+
+    For standard OBS cache hits (vtuber=False), the vtuber_algo token is
+    irrelevant and must be absent to keep the summary concise.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": False,
+                    "vtuber": False,
+                    "keep_trailing": False,
+                    "vtuber_algo": 2,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "vtuber_algo" not in out, (
+        "non-vtuber cache hit must NOT include vtuber_algo token"
+    )
+
+
+def test_display_cache_hit_params_broken_vtuber_algo_shows_question_mark(
+    tmp_path, capsys
+):
+    """B6-V2: broken vtuber_algo (non-int string) emits '?' token, does not raise.
+
+    A corrupted cache with vtuber_algo="x" must not crash the display helper.
+    The token should fall back to vtuber_algo=? so operators see a diagnostic
+    indicator rather than a silent gap.
+    """
+    from allaganeye.commands.split_matches import _display_cache_hit_params
+
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "params": {
+                    "sample_interval": 1.0,
+                    "blackout_threshold": 15.0,
+                    "min_match_duration": 300.0,
+                    "min_blackout_duration": 3.0,
+                    "no_audio": False,
+                    "masked": False,
+                    "vtuber": True,
+                    "keep_trailing": False,
+                    "vtuber_algo": "x",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=300.0)
+    _display_cache_hit_params(cache_path, config)
+    out = capsys.readouterr().out
+    assert "vtuber_algo=?" in out, (
+        "broken vtuber_algo must display '?' fallback, not raise"
+    )
+
+
+def test_print_detection_stats_empty_stats_no_crash(capsys):
+    """P1 契約 pin (#895): vtuber timeline path は DetectionStats を埋めずに
+    early return するため、`--vtuber -v` の verbose 表示は空 stats で呼ばれる。
+    _print_detection_stats の全 section が key-guarded で、空 stats では
+    crash せず何も出力しないことを固定する (P2 で timeline 固有統計を
+    設計するまでの回帰防止)。
+    """
+    from allaganeye.commands.split_matches import _print_detection_stats
+
+    _print_detection_stats({})
+
+
+def test_verbose_header_echoes_gpu_vendor_warning(capsys, monkeypatch, tmp_path):
+    """_print_verbose_header surfaces gpu_vendor_probe_warning() when set (#860)."""
+    from allaganeye.commands import split_matches
+
+    # Keep the header hermetic: stub the probe getters so no real subprocess runs.
+    monkeypatch.setattr("allaganeye.system_info.get_cpu_info", lambda: "CPU-X")
+    monkeypatch.setattr("allaganeye.system_info.get_gpu_info_lines", lambda: [])
+    monkeypatch.setattr("allaganeye.system_info.get_memory_info", lambda: "1.0 GB")
+    monkeypatch.setattr(
+        "allaganeye.system_info.gpu_vendor_probe_warning",
+        lambda: "WARN-GPU-SENTINEL",
+    )
+
+    split_matches._print_environment_header(tmp_path)
+
+    out = capsys.readouterr().out
+    assert "WARN-GPU-SENTINEL" in out
+    assert capsys.readouterr().out == ""
+
+
+# --- _sanitize_brightness_samples (#879) ---
+
+
+def test_sanitize_brightness_samples_accepts_valid():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    value = {"interval_s": 2.0, "values": [0.0, 128.0, 255.0]}
+    assert _sanitize_brightness_samples(value) == value
+
+
+def test_sanitize_brightness_samples_rejects_extra_key():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert (
+        _sanitize_brightness_samples({"interval_s": 2.0, "values": [], "x": 1}) is None
+    )
+
+
+def test_sanitize_brightness_samples_rejects_nonpositive_interval():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert _sanitize_brightness_samples({"interval_s": 0.0, "values": [1.0]}) is None
+
+
+def test_sanitize_brightness_samples_rejects_bool_interval():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert _sanitize_brightness_samples({"interval_s": True, "values": [1.0]}) is None
+
+
+def test_sanitize_brightness_samples_rejects_value_out_of_range():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert _sanitize_brightness_samples({"interval_s": 2.0, "values": [256.0]}) is None
+
+
+def test_sanitize_brightness_samples_rejects_nan_value():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert (
+        _sanitize_brightness_samples({"interval_s": 2.0, "values": [float("nan")]})
+        is None
+    )
+
+
+def test_sanitize_brightness_samples_rejects_values_not_list():
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert _sanitize_brightness_samples({"interval_s": 2.0, "values": "abc"}) is None
+
+
+def test_preserve_brightness_samples_warns_on_malformed(caplog):
+    """The preserve wiring drops a present-but-malformed value with a warning (#879)."""
+    from allaganeye.commands import split_matches
+
+    with caplog.at_level("WARNING"):
+        result = split_matches._preserve_brightness_samples(
+            {"brightness_samples": {"interval_s": -1.0, "values": [999.0]}}
+        )
+    assert result is None
+    assert "Dropping malformed brightness_samples" in caplog.text
+
+
+def test_preserve_brightness_samples_valid_passthrough_no_warn(caplog):
+    from allaganeye.commands import split_matches
+
+    valid = {"interval_s": 2.0, "values": [1.0]}
+    with caplog.at_level("WARNING"):
+        result = split_matches._preserve_brightness_samples(
+            {"brightness_samples": valid}
+        )
+    assert result == valid
+    assert "Dropping malformed" not in caplog.text
+
+
+def test_preserve_brightness_samples_absent_no_warn(caplog):
+    from allaganeye.commands import split_matches
+
+    with caplog.at_level("WARNING"):
+        result = split_matches._preserve_brightness_samples({})
+    assert result is None
+    assert "Dropping malformed" not in caplog.text
+
+
+def test_sanitize_brightness_samples_rejects_nan_interval(caplog):
+    from allaganeye.commands.split_matches import _sanitize_brightness_samples
+
+    assert (
+        _sanitize_brightness_samples({"interval_s": float("nan"), "values": []}) is None
+    )
+    assert (
+        _sanitize_brightness_samples({"interval_s": float("inf"), "values": []}) is None
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 4: CacheHit + _load_cache_hit single-read (#879)
+# ---------------------------------------------------------------------------
+
+
+def _write_cache(tmp_path, video_path, *, interval=2.0, extra=None):
+    """Minimal valid detection cache matching _load_cache_hit's key checks."""
+    import json as _json
+
+    from allaganeye.commands import split_matches
+
+    stat = video_path.stat()
+    data = {
+        "cache_version": split_matches._CACHE_VERSION,
+        "source": str(video_path.resolve()),
+        "source_size": stat.st_size,
+        "source_mtime": stat.st_mtime,
+        "params": {
+            "sample_interval": interval,
+            "blackout_threshold": 15.0,
+            "min_match_duration": 300.0,
+            "min_blackout_duration": 3.0,
+            "no_audio": False,
+            # masked_algo は masked_affected になりうる cache で key mismatch miss を
+            # 防ぐために _MASKED_ALGO_VERSION で pin する (#879 key validation)
+            "masked_algo": split_matches._MASKED_ALGO_VERSION,
+        },
+        "boundaries": [[0.0, 100.0]],
+    }
+    if extra:
+        data.update(extra)
+    cache_path = tmp_path / ".detection_cache.json"
+    cache_path.write_text(_json.dumps(data), encoding="utf-8")
+    return cache_path
+
+
+def _cache_config(tmp_path):
+    from allaganeye.commands.split_matches import SplitConfig
+
+    return SplitConfig(output_dir=tmp_path)
+
+
+def test_load_cache_hit_reads_file_once(tmp_path, monkeypatch):
+    """三重 read 解消の pin: cache-hit で read_text は 1 回だけ (#879)."""
+    from allaganeye.commands import split_matches
+
+    video = tmp_path / "v.mkv"
+    video.write_bytes(b"x" * 10)
+    cache_path = _write_cache(tmp_path, video, extra={"masked_fallback_used": True})
+
+    calls = {"n": 0}
+    real_read = split_matches.Path.read_text
+
+    def counting_read(self, *a, **k):
+        if self == cache_path:
+            calls["n"] += 1
+        return real_read(self, *a, **k)
+
+    monkeypatch.setattr(split_matches.Path, "read_text", counting_read)
+    hit = split_matches._load_cache_hit(cache_path, video, 2.0, _cache_config(tmp_path))
+    assert hit is not None
+    assert hit.boundaries == [[0.0, 100.0]]
+    assert hit.masked_fallback_used is True
+    assert calls["n"] == 1
+
+
+def test_load_cache_hit_miss_returns_none(tmp_path):
+    from allaganeye.commands import split_matches
+
+    video = tmp_path / "v.mkv"
+    video.write_bytes(b"x" * 10)
+    cache_path = _write_cache(tmp_path, video)
+    # interval mismatch -> miss
+    assert (
+        split_matches._load_cache_hit(cache_path, video, 999.0, _cache_config(tmp_path))
+        is None
+    )
+
+
+def test_load_cache_hit_synthesizes_legacy_full_frame(tmp_path):
+    """pre-#810 legacy cache (capture_regions 欠落, vtuber/masked off) は FULL_FRAME 合成 (#879 保持)."""
+    from allaganeye.commands import split_matches
+    from allaganeye.video.capture_region import FULL_FRAME, RegionTimeline
+
+    video = tmp_path / "v.mkv"
+    video.write_bytes(b"x" * 10)
+    cache_path = _write_cache(tmp_path, video)
+    hit = split_matches._load_cache_hit(cache_path, video, 2.0, _cache_config(tmp_path))
+    assert hit is not None
+    assert hit.capture_regions == RegionTimeline(coarse=FULL_FRAME).to_dict()
+
+
+def test_capture_regions_from_cache_data_pure(tmp_path):
+    from allaganeye.commands import split_matches
+
+    valid = {
+        "coarse": {
+            "x": 0.0,
+            "y": 0.0,
+            "w": 1.0,
+            "h": 1.0,
+            "confidence": 1.0,
+            "source": "full_frame",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    data = {"capture_regions": valid}
+    assert split_matches._capture_regions_from_cache_data(data) == valid
+
+
+def test_masked_fallback_from_cache_data_pure():
+    from allaganeye.commands import split_matches
+
+    assert (
+        split_matches._masked_fallback_from_cache_data({"masked_fallback_used": True})
+        is True
+    )
+    assert split_matches._masked_fallback_from_cache_data({}) is False
+
+
+# ---------------------------------------------------------------------------
+# metadata `source` の書き手 / 読み手契約 (#930 B2)
+#
+# 書き手 (`_build_metadata_payload`) は schema (`schemas/metadata.schema.json`
+# の "Absolute path of the source video file") / `docs/metadata-spec.md`
+# どおり絶対パスを書く。読み手 3 経路 (`split --from-metadata` / `export` /
+# `minimap`) は相対 source を metadata.json のディレクトリ起点で解決する
+# (`docs/metadata-spec.md` の「相対パスは metadata.json のディレクトリ起点」)。
+# 過去は書き手が argv 生値 (cwd 基準) を書き、読み手が metadata dir 基準 /
+# cwd 基準に割れていたため、同じ metadata から split と export が別ファイルを
+# 選び、両方 exit 0 で silent に食い違う経路があった。
+# ---------------------------------------------------------------------------
+
+_SOURCE_METADATA_SYSTEM_INFO = {
+    "gpu_vendors_available": [],
+    "vendor_preference": ["nvidia", "amd", "intel"],
+    "gpu": [],
+}
+
+
+def _write_source_metadata(meta_path: Path, source: str) -> Path:
+    """1 match だけ持つ最小 metadata.json を `source` 指定で書く。"""
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "source": source,
+                "source_duration": 25.0,
+                "matches": [
+                    {
+                        "index": 1,
+                        "start_time": 0.0,
+                        "end_time": 10.0,
+                        "type": "match",
+                    }
+                ],
+                "system_info": _SOURCE_METADATA_SYSTEM_INFO,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return meta_path
+
+
+def _legacy_relative_layout(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """metadata dir 相対の source + cwd 相対の decoy を用意する。
+
+    Returns ``(metadata_path, real_video, decoy_video)``.
+
+    ``real_video``  = ``<tmp>/out/media/sample.mp4`` (metadata dir 起点で正解)
+    ``decoy_video`` = ``<tmp>/media/sample.mp4``     (cwd 起点だと誤って当たる)
+    """
+    real_video = tmp_path / "out" / "media" / "sample.mp4"
+    real_video.parent.mkdir(parents=True, exist_ok=True)
+    real_video.write_bytes(b"")
+    decoy_video = tmp_path / "media" / "sample.mp4"
+    decoy_video.parent.mkdir(parents=True, exist_ok=True)
+    decoy_video.write_bytes(b"")
+    meta_path = _write_source_metadata(
+        tmp_path / "out" / "metadata.json", "media/sample.mp4"
+    )
+    return meta_path, real_video, decoy_video
+
+
+def _export_app():
+    import typer
+
+    from allaganeye.commands.export import register as register_export
+
+    a = typer.Typer()
+
+    @a.callback()
+    def _():
+        pass
+
+    register_export(a)
+    return a
+
+
+def _minimap_app():
+    import typer
+
+    from allaganeye.commands.minimap import register as register_minimap
+
+    a = typer.Typer()
+
+    @a.callback()
+    def _():
+        pass
+
+    register_minimap(a)
+    return a
+
+
+_MINIMAP_PROBE: ProbeResult = {
+    "duration": 25.0,
+    "width": 1920,
+    "height": 1080,
+    "fps": 60.0,
+    "fps_num": 60,
+    "fps_den": 1,
+    "codec": "h264",
+    "audio_codec": None,
+}
+
+
+def _source_seen_by_split(meta_path: Path, out_dir: Path) -> Path:
+    """``split --from-metadata`` が実際に開く動画パスを捕捉する。"""
+    from allaganeye.commands.split_matches import run_split_from_metadata
+
+    seen: list[Path] = []
+
+    def _probe(path: Path):
+        seen.append(Path(path))
+        return PROBE_RESULT
+
+    # split_video must hand back one path per match, otherwise the metadata
+    # rewrite's zip() raises.
+    n_matches = len(json.loads(meta_path.read_text(encoding="utf-8"))["matches"])
+    config = SplitConfig(output_dir=out_dir, min_match_duration=1.0)
+    with (
+        patch(f"{MODULE}.probe_video", side_effect=_probe),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / f"match_{i + 1:03}.mp4" for i in range(n_matches)],
+        ),
+        patch(f"{MODULE}._check_disk_space"),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+    assert seen, "probe_video was never called by split --from-metadata"
+    return seen[0]
+
+
+def _source_seen_by_export(meta_path: Path, out_dir: Path) -> Path:
+    """``export`` が実際に開く動画パスを捕捉する。"""
+    from typer.testing import CliRunner
+
+    from allaganeye.export.schema import ExportSummary
+
+    captured: dict[str, Path] = {}
+
+    def _fake_export(**kwargs):
+        captured["source_video"] = Path(kwargs["source_video"])
+        return ExportSummary(success=1, failure=0)
+
+    with patch("allaganeye.commands.export.export_matches", side_effect=_fake_export):
+        result = CliRunner().invoke(
+            _export_app(),
+            [
+                "export",
+                str(meta_path),
+                "--output-dir",
+                str(out_dir),
+                "--codec",
+                "copy",
+                "--quiet",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    return captured["source_video"]
+
+
+def _source_seen_by_minimap(meta_path: Path) -> Path:
+    """``minimap`` (提案モード) が実際に開く動画パスを捕捉する。"""
+    from typer.testing import CliRunner
+
+    seen: list[Path] = []
+
+    def _probe(path: Path):
+        seen.append(Path(path))
+        return _MINIMAP_PROBE
+
+    with (
+        patch("allaganeye.commands.minimap.probe_video", side_effect=_probe),
+        patch(
+            "allaganeye.commands.minimap.resolve_match_regions",
+            return_value=([], []),
+        ),
+    ):
+        result = CliRunner().invoke(
+            _minimap_app(), ["minimap", str(meta_path), "--quiet"]
+        )
+    # 提案モードは crop せず exit 4 (docs/cli-spec.md)。source 解決までは到達する。
+    assert result.exit_code == 4, result.output
+    assert seen, "probe_video was never called by minimap"
+    return seen[0]
+
+
+@patch(f"{MODULE}.split_video")
+@patch(f"{MODULE}.detect_match_boundaries")
+@patch(f"{MODULE}.probe_video")
+def test_split_writes_absolute_source_for_relative_argv(
+    mock_probe, mock_detect, mock_split, tmp_path, monkeypatch
+):
+    """argv が cwd 相対でも metadata の ``source`` は絶対で永続化される (#930 B2)."""
+    mock_probe.return_value = PROBE_RESULT
+    mock_detect.return_value = BOUNDARIES
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    mock_split.return_value = _output_files(out_dir)
+    (tmp_path / "input.mp4").write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    run_split(Path("input.mp4"), config)
+
+    written = Path(
+        json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))["source"]
+    )
+    assert written.is_absolute()
+    assert written.resolve() == (tmp_path / "input.mp4").resolve()
+
+
+def test_split_from_metadata_roundtrip_survives_relative_argv(tmp_path, monkeypatch):
+    """detect(相対 argv) -> split --from-metadata が同じ動画に着弾する (#930 B2 (a))."""
+    workdir = tmp_path / "work"
+    (workdir / "vid").mkdir(parents=True)
+    video = workdir / "vid" / "sample.mp4"
+    video.write_bytes(b"")
+    out_dir = workdir / "out1"
+    out_dir.mkdir()
+    monkeypatch.chdir(workdir)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE}.detect_match_boundaries", return_value=BOUNDARIES),
+        patch(f"{MODULE}.split_video", return_value=_output_files(out_dir)),
+    ):
+        run_split(
+            Path("vid/sample.mp4"),
+            SplitConfig(output_dir=out_dir, min_match_duration=60.0),
+        )
+
+    split_out = workdir / "out_split"
+    split_out.mkdir()
+    seen = _source_seen_by_split(out_dir / "metadata.json", split_out)
+    assert seen.resolve() == video.resolve()
+
+
+def test_relative_source_resolves_against_metadata_dir_in_all_readers(
+    tmp_path, monkeypatch
+):
+    """相対 source を持つ既存 metadata を 3 経路とも metadata dir 起点で解決する。
+
+    #930 B2 (b) の再発防止 pin: cwd 側に同名の decoy を置いても、
+    ``split --from-metadata`` / ``export`` / ``minimap`` の 3 経路が
+    **同じ 1 本の動画** を選ぶ。
+    """
+    meta_path, real_video, decoy_video = _legacy_relative_layout(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    split_out = tmp_path / "o_split"
+    split_out.mkdir()
+    export_out = tmp_path / "o_export"
+    export_out.mkdir()
+
+    from_split = _source_seen_by_split(meta_path, split_out)
+    from_export = _source_seen_by_export(meta_path, export_out)
+    from_minimap = _source_seen_by_minimap(meta_path)
+
+    assert from_split.resolve() == real_video.resolve()
+    assert from_export.resolve() == real_video.resolve()
+    assert from_minimap.resolve() == real_video.resolve()
+    assert from_split.resolve() != decoy_video.resolve()
+
+
+def test_missing_source_file_exits_2_in_all_readers(tmp_path, monkeypatch):
+    """source が実在しないとき 3 経路とも exit 2 (#930 B2 (c))."""
+    from typer.testing import CliRunner
+
+    from allaganeye.commands.split_matches import run_split_from_metadata
+    from allaganeye.exceptions import InputFileError
+
+    meta_path = _write_source_metadata(
+        tmp_path / "out" / "metadata.json", "media/gone.mp4"
+    )
+    monkeypatch.chdir(tmp_path)
+    out_dir = tmp_path / "o"
+    out_dir.mkdir()
+
+    with pytest.raises(InputFileError) as exc:
+        run_split_from_metadata(
+            meta_path,
+            SplitConfig(output_dir=out_dir, min_match_duration=1.0),
+            quiet=True,
+        )
+    assert exc.value.exit_code == 2
+
+    export_result = CliRunner().invoke(
+        _export_app(),
+        [
+            "export",
+            str(meta_path),
+            "--output-dir",
+            str(out_dir),
+            "--codec",
+            "copy",
+            "--quiet",
+        ],
+    )
+    assert export_result.exit_code == 2, export_result.output
+
+    minimap_result = CliRunner().invoke(
+        _minimap_app(), ["minimap", str(meta_path), "--quiet"]
+    )
+    assert minimap_result.exit_code == 2, minimap_result.output
+
+
+def test_export_stdin_resolves_relative_source_against_cwd(tmp_path, monkeypatch):
+    """``export --stdin`` は metadata dir を持たないので cwd 基準 (documented)."""
+    from typer.testing import CliRunner
+
+    from allaganeye.export.schema import ExportSummary
+
+    video = tmp_path / "media" / "sample.mp4"
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+
+    captured: dict[str, Path] = {}
+
+    def _fake_export(**kwargs):
+        captured["source_video"] = Path(kwargs["source_video"])
+        return ExportSummary(success=1, failure=0)
+
+    payload = json.dumps(
+        {
+            "schema_version": "1",
+            "source": "media/sample.mp4",
+            "matches": [
+                {"index": 1, "start_time": 0.0, "end_time": 5.0, "type": "match"}
+            ],
+            "system_info": _SOURCE_METADATA_SYSTEM_INFO,
+        }
+    )
+    out_dir = tmp_path / "o"
+    out_dir.mkdir()
+    with patch("allaganeye.commands.export.export_matches", side_effect=_fake_export):
+        result = CliRunner().invoke(
+            _export_app(),
+            [
+                "export",
+                "--stdin",
+                "--output-dir",
+                str(out_dir),
+                "--codec",
+                "copy",
+                "--quiet",
+            ],
+            input=payload,
+        )
+    assert result.exit_code == 0, result.output
+    assert captured["source_video"].resolve() == video.resolve()

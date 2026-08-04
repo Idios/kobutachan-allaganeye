@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -49,6 +49,51 @@ describe('PreviewScreen', () => {
     const input = screen.getByLabelText('match name') as HTMLInputElement;
     expect(input.value).toBe('match_004');
     expect(screen.getByText(/#004 · of 9/)).toBeInTheDocument();
+  });
+
+  // #834 -- sample mode は read-only。nudge ボタンは disabled 済だが keyboard が
+  // 貫通して境界を編集できていた。arrow nudge を sample mode で無効化する。
+  it('does not nudge boundaries via keyboard in sample mode (#834)', () => {
+    useMetadataStore.getState().loadSample();
+    const sampleIdx = useMetadataStore.getState().metadata!.matches[0].index;
+    useAppStateStore.getState().selectMatch(sampleIdx);
+    render(<PreviewScreen />);
+    const inTc = screen.getByLabelText('IN (start) timecode') as HTMLInputElement;
+    const before = inTc.value;
+    fireEvent.keyDown(window, { key: 'ArrowRight', shiftKey: true }); // +10s
+    expect(
+      (screen.getByLabelText('IN (start) timecode') as HTMLInputElement).value,
+    ).toBe(before);
+  });
+
+  // #834 (codex) -- sample mode must be read-only through the PLAYBACK path too,
+  // not just keyboard. Playing the pane video fires onTimeUpdate -> onTChange ->
+  // commitStart/commitEnd; in sample mode that must NOT move the boundary.
+  it('does not mutate boundaries via playback timeupdate in sample mode (#834)', async () => {
+    useMetadataStore.getState().loadSample();
+    const sampleIdx = useMetadataStore.getState().metadata!.matches[0].index;
+    useAppStateStore.getState().selectMatch(sampleIdx);
+    render(<PreviewScreen />);
+    const inTc = screen.getByLabelText('IN (start) timecode') as HTMLInputElement;
+    const before = inTc.value;
+    const video = (await screen.findByLabelText(
+      'IN (start) video',
+    )) as HTMLVideoElement;
+    // simulate playback: paused=false + advanced currentTime, then timeupdate.
+    // match[0] starts at 0.0 (IN = 0:00:00.00), so 12.5 is genuinely different.
+    Object.defineProperty(video, 'paused', { value: false, configurable: true });
+    Object.defineProperty(video, 'currentTime', {
+      value: 12.5,
+      configurable: true,
+    });
+    video.dispatchEvent(new Event('timeupdate'));
+    await new Promise((r) => setTimeout(r, 20));
+    // (a) the IN timecode must be unchanged ...
+    expect(
+      (screen.getByLabelText('IN (start) timecode') as HTMLInputElement).value,
+    ).toBe(before);
+    // ... and (b) a read-only-mode playback must not flip the store dirty.
+    expect(useMetadataStore.getState().dirty).toBe(false);
   });
 
   // #663 — Phase 4 / #694 — *ErrorState form: when applyErrorState is set in the
@@ -516,6 +561,9 @@ describe('PreviewScreen', () => {
   });
 
   it('ArrowRight key nudges the active timestamp forward by 1s', async () => {
+    // #834: keyboard nudge is now blocked in sample mode (read-only). Exit
+    // sample mode so the nudge mechanics under test stay exercisable.
+    useMetadataStore.setState({ filePath: '/x' });
     render(<PreviewScreen />);
     const before = (
       screen.getByLabelText('IN (start) timecode') as HTMLInputElement
@@ -528,6 +576,9 @@ describe('PreviewScreen', () => {
   });
 
   it('Shift+ArrowLeft nudges the active timestamp (10s step) — different value from plain ArrowLeft', async () => {
+    // #834: keyboard nudge is now blocked in sample mode (read-only). Exit
+    // sample mode so the nudge mechanics under test stay exercisable.
+    useMetadataStore.setState({ filePath: '/x' });
     render(<PreviewScreen />);
     const before = (
       screen.getByLabelText('IN (start) timecode') as HTMLInputElement
@@ -636,6 +687,10 @@ describe('PreviewScreen', () => {
   // #465 review 追加: 再生中の TC 表示は video.currentTime に追従する。
 
   it('TC display follows video.currentTime during playback (timeupdate event)', async () => {
+    // #834 (codex): TC が再生に追従するのは editable mode の挙動。commitStart/
+    // commitEnd は sample mode で no-op 化されたため、filePath を与えて編集可能
+    // mode に切り替える (sample mode の read-only 化は別 test で検証)。
+    useMetadataStore.setState({ filePath: '/x' });
     render(<PreviewScreen />);
     const video = (await screen.findByLabelText(
       'IN (start) video',
@@ -684,9 +739,12 @@ describe('PreviewScreen', () => {
   // なることを確認する。
 
   it('Alt+ArrowRight steps 1/120 sec when source_fps is 120', async () => {
-    // metadata.source_fps を 120 に上書き (state を直接書き換え)
+    // metadata.source_fps を 120 に上書き (state を直接書き換え)。
+    // #834: keyboard nudge は sample mode で無効化されたため filePath を与えて
+    // 編集可能 mode に切り替え、frame-step の挙動を検証可能にする。
     const sample = useMetadataStore.getState().metadata!;
     useMetadataStore.setState({
+      filePath: '/x',
       metadata: { ...sample, source_fps: 120 },
     });
     render(<PreviewScreen />);
@@ -704,8 +762,11 @@ describe('PreviewScreen', () => {
   });
 
   it('Alt+ArrowRight steps 1/240 sec when source_fps is 240', async () => {
+    // #834: keyboard nudge は sample mode で無効化されたため filePath を与えて
+    // 編集可能 mode に切り替える (上の 120fps test と同じ理由)。
     const sample = useMetadataStore.getState().metadata!;
     useMetadataStore.setState({
+      filePath: '/x',
       metadata: { ...sample, source_fps: 240 },
     });
     render(<PreviewScreen />);
@@ -739,6 +800,71 @@ describe('PreviewScreen', () => {
       'IN (start) timecode',
     ) as HTMLInputElement;
     expect(tc.value).toMatch(/^\d+:\d{2}:\d{2}\.\d{2}$/);
+  });
+
+  // #814 (AC1) -- editing IN past OUT is clamped so start never exceeds end.
+  it('clamps IN to keep a 1-frame gap below end on +10s nudge (#814)', async () => {
+    useMetadataStore.setState({
+      filePath: '/x/metadata.json',
+      metadata: {
+        ...useMetadataStore.getState().metadata!,
+        matches: [
+          {
+            index: 1,
+            start_time: 100,
+            end_time: 105,
+            start_display: '01:40',
+            end_display: '01:45',
+            duration: 5,
+            duration_display: '0m05s',
+            type: 'fl_match',
+            output_file: 'm1.mp4',
+          },
+        ],
+      } as never,
+    });
+    useAppStateStore.getState().selectMatch(1);
+    render(<PreviewScreen />);
+    // IN active by default; +10s -> 110 would pass end(105); clamp caps at 105.
+    fireEvent.click(screen.getByRole('button', { name: 'nudge +10s' }));
+    const inTc = screen.getByLabelText(
+      'IN (start) timecode',
+    ) as HTMLInputElement;
+    // +10s -> 110 would pass end(105); clamp caps start ~1 frame below end.
+    // Not the un-clamped 0:01:50.00, and strictly inside the 1:44.xx second.
+    expect(inTc.value).not.toBe('0:01:50.00');
+    expect(inTc.value).toMatch(/^0:01:44\./);
+    // boundary stays valid (start < end), so [適用] is enabled.
+    expect(screen.getByRole('button', { name: 'apply' })).not.toBeDisabled();
+  });
+
+  // #814 (AC1) -- [適用] is disabled (with a reason) when end <= start.
+  it('disables [適用] when the selected match has end <= start (#814)', () => {
+    useMetadataStore.setState({
+      filePath: '/x/metadata.json',
+      metadata: {
+        ...useMetadataStore.getState().metadata!,
+        matches: [
+          {
+            index: 1,
+            start_time: 200,
+            end_time: 100, // inverted
+            start_display: '03:20',
+            end_display: '01:40',
+            duration: 0,
+            duration_display: '0m00s',
+            type: 'fl_match',
+            output_file: 'm1.mp4',
+          },
+        ],
+      } as never,
+    });
+    useAppStateStore.getState().selectMatch(1);
+    render(<PreviewScreen />);
+    expect(screen.getByRole('button', { name: 'apply' })).toBeDisabled();
+    expect(
+      screen.getByText(/終了 \(OUT\) は開始 \(IN\) より後/),
+    ).toBeInTheDocument();
   });
 });
 
@@ -1063,4 +1189,121 @@ describe('#676 PreviewScreen header path display', () => {
 
     expect(queryByTestId('preview-path')).not.toBeInTheDocument();
   });
+});
+
+// #805 Phase 1: post_match match no-crash guard.
+// Rendering PreviewScreen with a post_match match (output_file undefined,
+// post_match: true) selected must not throw. This test LOCKS the no-crash
+// property for the preview boundary-edit flow.
+describe('#805 PreviewScreen post_match no-crash guard', () => {
+  const postMatchEntry = {
+    index: 2,
+    start_time: 1000,
+    end_time: 1120,
+    start_display: '16:40',
+    end_display: '18:40',
+    duration: 120,
+    duration_display: '2m00s',
+    type: 'unknown' as const,
+    // output_file deliberately absent -- post_match segment
+    post_match: true as const,
+  };
+  const metaWithPostMatch = {
+    source: 'C:\\videos\\rec.mkv',
+    source_duration: 1200,
+    source_duration_display: '20:00',
+    detected_at: '2026-06-26T00:00:00Z',
+    detection_params: {
+      sample_interval: 2,
+      blackout_threshold: 15,
+      min_match_duration: 300,
+      min_blackout_duration: 3,
+      no_audio: false,
+      use_gpu: null,
+      workers: null,
+    },
+    matches: [
+      {
+        index: 1,
+        start_time: 100,
+        end_time: 1000,
+        start_display: '01:40',
+        end_display: '16:40',
+        duration: 900,
+        duration_display: '15m00s',
+        type: 'fl_match' as const,
+        output_file: 'match_001.mp4',
+      },
+      postMatchEntry,
+    ],
+    gaps: [],
+  };
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'register_video')
+        return Promise.resolve({ url: 'http://127.0.0.1:0/video/test-token', token: 'test-token' });
+      if (cmd === 'generate_match_thumbnails') return Promise.resolve([]);
+      if (cmd === 'check_backup_exists') return Promise.resolve(false);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.setState({
+      metadata: metaWithPostMatch as never,
+      hasBackup: false,
+      filePath: null,
+    });
+    // Select the post_match match (index 2)
+    useAppStateStore.getState().selectMatch(2);
+    useAppStateStore.getState().navigate('preview');
+  });
+
+  it('renders post_match match without crashing (no-crash lock #805)', () => {
+    expect(() => render(<PreviewScreen />)).not.toThrow();
+  });
+
+  it('shows the post_match match in preview gracefully (no crash, index visible)', () => {
+    render(<PreviewScreen />);
+    // PreviewScreen renders if a match is found; index 2 is the post_match entry.
+    // The "#002 * of 2" meta line should be visible.
+    expect(screen.getByText(/#002 · of 2/)).toBeInTheDocument();
+  });
+
+  // #805 Phase 2: the editor header shows a 試合後 badge for post_match.
+  it('shows 試合後 badge in the header for a post_match match (Phase 2)', () => {
+    render(<PreviewScreen />);
+    const badge = screen.getByTestId('post-match-badge');
+    expect(badge).toHaveTextContent('試合後');
+  });
+
+  it('does not show the badge for a normal match (Phase 2)', () => {
+    useAppStateStore.getState().selectMatch(1);
+    render(<PreviewScreen />);
+    expect(screen.queryByTestId('post-match-badge')).toBeNull();
+  });
+
+  // iterate-review Round 2 #3: the Phase 2 badge markup goes through axe so
+  // all three post_match surfaces (Complete / Export / Preview) stay
+  // violation-free (docs/a11y-policy.md per-screen axe 方針)。The
+  // nested-interactive opt-out mirrors the existing #587 axe test — the
+  // preview pane pattern is unchanged by this PR.
+  it(
+    'has no axe violations with the post_match badge (#805 Phase 2)',
+    async () => {
+      const { container } = render(<PreviewScreen />);
+      await waitFor(() => {
+        expect(screen.getByTestId('post-match-badge')).toBeInTheDocument();
+      });
+      expect(
+        await axe(container, {
+          rules: {
+            'nested-interactive': { enabled: false },
+          },
+        }),
+      ).toHaveNoViolations();
+    },
+    15000,
+  );
 });

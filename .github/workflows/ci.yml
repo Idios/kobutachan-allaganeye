@@ -27,6 +27,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11.9"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
 
       - name: Cache FFmpeg archive
         id: cache-ffmpeg
@@ -95,6 +97,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11.9"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
         run: |
@@ -111,6 +115,25 @@ jobs:
 
       - name: Hook tests
         run: pytest tests/hooks/ -v --tb=short
+
+      # tests/scripts/test_*.sh は .github/scripts/ の error-hint-drift 検査
+      # (check-error-hint-drift.sh / extract-*.awk) の test harness。
+      # audit 2026-06-10 P3「CI 参照ゼロ」対応 (#816)。glob 配線にして
+      # 将来の test_*.sh 追加忘れを防ぎ、空 glob は配線退行として fail させる。
+      - name: Shell test harness (tests/scripts/test_*.sh)
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tests=(tests/scripts/test_*.sh)
+          if (( ${#tests[@]} == 0 )); then
+            echo "::error::tests/scripts/test_*.sh matched no files (wiring regression, audit 2026-06-10 P3 / #816)"
+            exit 1
+          fi
+          for t in "${tests[@]}"; do
+            echo "=== ${t} ==="
+            bash "$t"
+          done
 
   gui-frontend:
     runs-on: ubuntu-latest

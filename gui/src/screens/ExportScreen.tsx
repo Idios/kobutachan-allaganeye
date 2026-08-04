@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { InlineErrorHint } from '../components/InlineErrorHint';
@@ -9,7 +9,8 @@ import { SampleModeBanner } from '../components/SampleModeBanner';
 import { toErrorState } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
-import { joinPath, splitPath, stripExtendedPathPrefix } from '../utils/path';
+import { formatMatchFilename } from '../utils/filename';
+import { splitPath, stripExtendedPathPrefix } from '../utils/path';
 import pathStyles from '../styles/path-display.module.css';
 import { fmtMatchDuration, fmtTime } from '../utils/time';
 import { exportReducer } from './reducers/export';
@@ -49,35 +50,38 @@ interface ExportProgressPayload {
 }
 
 /**
- * #591 -- payload returned by `select_h264_encoder_for_export` Tauri
- * command. `encoder_kind` is the wire form sent back to `export_match`
- * via the `h264_encoder` argument.
+ * #761 -- payload returned by `enumerate_h264_encoders` Tauri command.
+ * Each slot represents one available H.264 encoder (e.g. NVENC, QSV, AMF,
+ * libx264). The frontend displays a badge like "NVENC ×3" when multiple
+ * GPU slots are available.
  */
-interface EncoderInfo {
-  encoder: string;
-  display_label: string;
+interface EncoderSlot {
+  slot_index: number;
   encoder_kind: 'Libx264' | 'Nvenc' | 'Qsv' | 'Amf';
+  display_label: string;
 }
 
 /**
- * #591 -- libx264 fallback used when metadata.json has no system_info
+ * #761 -- libx264 fallback used when metadata.json has no system_info
  * (pre-#591 metadata) or the probe came back empty (CPU-only env).
  */
-const LIBX264_INFO: EncoderInfo = {
-  encoder: 'libx264',
-  display_label: 'libx264 (CPU)',
+const LIBX264_SLOT: EncoderSlot = {
+  slot_index: 0,
   encoder_kind: 'Libx264',
+  display_label: 'libx264 (CPU)',
 };
 
-interface ExportResult {
-  match_index: number;
-  output_path: string;
-  duration_ms: number;
+interface ExportSummary {
+  success: number;
+  failure: number;
+  skipped: number;
+  cancelled: boolean;
 }
 
 /**
  * #466 Phase 4 export screen. Real ffmpeg invocation driven by the Rust
- * `export_match` command; per-match progress arrives via the
+ * `start_export` command (single invoke → Python pool spawns N parallel
+ * ffmpeg processes); per-match progress arrives via the
  * `export-progress` Tauri event.
  *
  * ## review 反映 (2026-04-25)
@@ -100,17 +104,17 @@ interface ExportResult {
  *   (出力先 / 命名 / コーデック / 試合選択) で再実行する用途。既存ファイル
  *   は ffmpeg `-y` で silent overwrite される。
  * - **#7 (boundary)**: `m.edited?.start_time ?? m.start_time` を
- *   `export_match` の `startSeconds` に渡す (`end_time` も同様)。preview で
- *   調整した境界が export に反映される。
+ *   `start_export` の metadata payload に含めて渡す (`end_time` も同様)。
+ *   preview で調整した境界が export に反映される。
  *
  * ## 2026-04-25 追加修正 (#545 実機テスト)
  *
  * - **filePath 早期 return 廃止**: 旧実装は `if (!metadata || !filePath)
  *   return` だったが、Phase 3 dummy detect が `loadSample()` のみで
  *   `filePath = null` のまま preview/export に来るため、書き出し開始ボタンが
- *   常に disable + クリックしても無反応になっていた。`export_match` invoke
- *   は `filePath` (metadata.json の path) を必要とせず `videoSource` (実
- *   video の path) だけで動くため、ガードを `!videoSource` に変更。
+ *   常に disable + クリックしても無反応になっていた。`start_export` invoke
+ *   は metadata JSON を stdin 経由で渡すため `filePath` 不要。`videoSource`
+ *   (実 video の path) がある限り動くため、ガードを `!videoSource` に変更。
  * - **list duration の edited 反映**: 旧実装は `m.duration_display` を
  *   そのまま表示していたため、preview で `m.edited.end_time` を変えても
  *   一覧の duration が CLI 初期値のまま固定だった。`m.edited` がある場合は
@@ -120,6 +124,7 @@ interface ExportResult {
 export function ExportScreen() {
   const metadata = useMetadataStore((s) => s.metadata);
   const navigate = useAppStateStore((s) => s.navigate);
+  const setLastExportOutputDir = useAppStateStore((s) => s.setLastExportOutputDir);
 
   // #466 review (C): drop で確定した実 path を最優先で使用する。sample mode
   // (selectedVideoPath = null) では metadata.source にフォールバック。
@@ -140,11 +145,11 @@ export function ExportScreen() {
   // にしておき、ユーザーに必須選択させる。
   const [outDir, setOutDir] = useState<string>(() => deriveDefaultOutDir(videoSource));
   const [codec, setCodec] = useState<Codec>('copy');
-  // #591 -- H.264 encoder is auto-selected from metadata.system_info on
-  // mount. Initial value defaults to libx264 so the sub label and
-  // export_match argument are always defined; useEffect overwrites with
-  // the real probe-derived encoder once metadata is loaded.
-  const [encoderInfo, setEncoderInfo] = useState<EncoderInfo>(LIBX264_INFO);
+  // #761 -- H.264 encoder slots are enumerated from metadata.system_info on
+  // every metadata change via `enumerate_h264_encoders`. Initial value
+  // defaults to [LIBX264_SLOT]; useEffect overwrites with the real
+  // probe-derived slots once metadata is loaded.
+  const [encoderSlots, setEncoderSlots] = useState<EncoderSlot[]>([LIBX264_SLOT]);
   const [namePattern, setNamePattern] = useState('match_{idx:03}.mp4');
   const [matchStates, setMatchStates] = useState<Record<number, MatchState>>({});
   // #466 review #1: per-match の選択 (default: 全選択 = 全試合書き出し)。
@@ -155,7 +160,6 @@ export function ExportScreen() {
   const [excludedIndexes, setExcludedIndexes] = useState<ReadonlySet<number>>(
     () => new Set(),
   );
-  const cancelRequestedRef = useRef(false);
   // #545 review #7 (2026-04-25): progress bar 下の「経過 / 残り」時間表示用。
   // START_CLICKED 時の wall-clock を記録し、`elapsedSec` / `remainingSec` を
   // 描画ループで更新する。残り時間は `(elapsed / done) * remaining` の線形
@@ -174,37 +178,47 @@ export function ExportScreen() {
     return () => clearInterval(iv);
   }, [exportStartMs, phase]);
 
-  // #591 -- resolve the H.264 encoder from metadata.system_info on
-  // every metadata change. Falls back to libx264 silently when the
-  // probe is empty / missing or when the Tauri command rejects (e.g.
-  // sample mode without a backing system_info). The effect intentionally
-  // calls setEncoderInfo synchronously in the no-system_info branch so
-  // that switching from a probe-equipped metadata back to a sample
+  // #761 -- enumerate H.264 encoder slots from metadata.system_info on
+  // every metadata source change. Falls back to [LIBX264_SLOT] silently
+  // when the probe is empty / missing or when the Tauri command rejects
+  // (e.g. sample mode without a backing system_info). The effect
+  // intentionally calls setEncoderSlots synchronously in the no-system_info
+  // branch so that switching from a probe-equipped metadata back to a sample
   // (legacy) one resets the sub label; per-frame cascading renders are
-  // not a concern here (encoderInfo updates are bounded and infrequent).
+  // not a concern here (encoderSlots updates are bounded and infrequent).
+  // `metadata?.source` is used as the dep so the effect re-runs when the
+  // user loads a different file (system_info changes with source).
   useEffect(() => {
-    const info = metadata?.system_info;
-    if (!info) {
+    if (!metadata?.system_info) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setEncoderInfo(LIBX264_INFO);
+      setEncoderSlots([LIBX264_SLOT]);
       return;
     }
-    invoke<EncoderInfo>('select_h264_encoder_for_export', {
-      vendors: info.gpu_vendors_available,
-      preference: info.vendor_preference,
+    invoke<EncoderSlot[]>('enumerate_h264_encoders', {
+      req: {
+        vendors: metadata.system_info.gpu_vendors_available ?? [],
+        preference: metadata.system_info.vendor_preference ?? ['nvidia', 'amd', 'intel'],
+        gpuModels: metadata.system_info.gpu ?? [],
+      },
     })
-      .then((resolved) => setEncoderInfo(resolved))
-      .catch(() => setEncoderInfo(LIBX264_INFO));
-  }, [metadata]);
+      .then((slots) => setEncoderSlots(slots.length > 0 ? slots : [LIBX264_SLOT]))
+      .catch(() => setEncoderSlots([LIBX264_SLOT]));
+  }, [metadata?.source]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // #591 -- CODECS list rebuilt from encoderInfo so the H.264 sub label
-  // reflects "(NVENC)" / "(QSV)" / "(AMF)" / "(libx264 (CPU))".
+  // #761 -- encoder badge: "NVENC ×3" when multiple GPU slots are available,
+  // single label otherwise. Rebuilt from encoderSlots so the H.264 sub label
+  // reflects "(NVENC ×3)" / "(NVENC)" / "(QSV)" / "(AMF)" / "(libx264 (CPU))".
+  const encoderBadge =
+    encoderSlots.length > 1
+      ? `${encoderSlots[0].display_label.split(' ')[0]} ×${encoderSlots.length}`
+      : encoderSlots[0].display_label;
+
   const codecs: { v: Codec; l: string; sub: string }[] = [
     { v: 'copy', l: '無損失 copy', sub: '高速 / 前 I フレーム吸着' },
     {
       v: 'h264',
       l: 'H.264 再エンコード',
-      sub: `遅い / 正確な秒指定 (${encoderInfo.display_label})`,
+      sub: `遅い / 正確な秒指定 (${encoderBadge})`,
     },
   ];
 
@@ -233,7 +247,8 @@ export function ExportScreen() {
     setExcludedIndexes((prev) => {
       const next = new Set(prev);
       for (const m of metadata.matches) {
-        if (m.type_override === 'skip') continue;
+        // #805 Phase 2: post_match は個別 checkbox 同様 bulk からも除外。
+        if (m.type_override === 'skip' || m.post_match) continue;
         if (selectAll) {
           next.delete(m.index);
         } else {
@@ -249,9 +264,38 @@ export function ExportScreen() {
   // encoder fails to initialise and the export retries with libx264.
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
+    // #837 (P3-a) -- unmount-before-listen-resolves race の guard。cleanup が
+    // 先に走った場合 disposed=true を見て、解決した unlisten を即時呼んで leak
+    // を防ぐ (DetectingScreen #813 と同パターン)。
+    let disposed = false;
+    // review R3 #1: 迷子 event warn の per-match dedup。invariant が実際に
+    // 破れた場合の毎秒 tick で同一 warn が数百件流れるのを 1 件/match に抑制。
+    const warnedStray = new Set<number>();
     (async () => {
-      unlisten = await listen<ExportProgressPayload>('export-progress', (event) => {
+      const u = await listen<ExportProgressPayload>('export-progress', (event) => {
         const p = event.payload;
+        // #805 Phase 2 (review R1 #2、P3-1 と同根): post_match 行への迷子
+        // event は state ごと無視する。mark の '—' pin (render 側) に加え、
+        // progress fill / error 行 / fallbackNotice も「export.py が emit
+        // しない前提」に依存させない。metadata は store から都度取得
+        // (deps [] の stale closure を回避)。
+        const strayTarget = useMetadataStore
+          .getState()
+          .metadata?.matches.find((mm) => mm.index === p.match_index);
+        if (strayTarget?.post_match === true) {
+          // review R2 #1: silent drop にしない。この event は Phase 1
+          // invariant (export.py は post_match を処理しない) の破れの
+          // 唯一の GUI 可視証拠なので、UI は凍結したまま dev console に
+          // 痕跡を残す (errorStore.ts の warn precedent と同方針)。
+          if (!warnedStray.has(p.match_index)) {
+            warnedStray.add(p.match_index);
+            console.warn(
+              '[export] dropped stray export-progress event for post_match match',
+              p.match_index,
+            );
+          }
+          return;
+        }
         setMatchStates((prev) => {
           const prior = prev[p.match_index] ?? {
             status: 'pending' as MatchStatus,
@@ -261,9 +305,16 @@ export function ExportScreen() {
           if (p.stage === 'encoding') status = 'running';
           else if (p.stage === 'done') status = 'done';
           else if (p.stage === 'error') status = 'error';
-          // #591 -- "fallback" keeps the running status (the libx264
-          // attempt restarts encoding) but stamps the per-match notice
-          // so the UI can surface why this match is slower.
+          // #591 -- "fallback" stamps the per-match notice so the UI can
+          // surface why this match is slower (the libx264 attempt restarts
+          // encoding, so percent legitimately rewinds to 0).
+          //
+          // It also forces the row to `running`: a NVENC init failure dies
+          // before a single frame is encoded, so the fallback event is
+          // typically the *first* event for that match. Keeping `prior`
+          // would leave the row at `○` (pending) while showing a "retrying
+          // with libx264" notice -- a contradictory state.
+          else if (p.stage === 'fallback') status = 'running';
           const fallbackNotice =
             p.stage === 'fallback'
               ? p.message ?? `${p.fallback_from ?? 'GPU encoder'} 失敗、libx264 で再試行`
@@ -288,26 +339,22 @@ export function ExportScreen() {
           };
         });
       });
+      if (disposed) {
+        // cleanup が先行した: 取得した listener を即 teardown して return
+        u();
+        return;
+      }
+      unlisten = u;
     })();
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, []);
 
   function formatName(index: number, type: string, startSec: number): string {
-    // #545 review #8 (2026-04-25): {start} は MM-SS / H-MM-SS 形式
-    // (design mock の `m.start_display.replace(/:/g, '-')` 準拠)。
-    // 旧実装は秒数 0 埋め (例: '0915') だったが、ユーザー視点で start_display
-    // (mm:ss) との対応が取れず混乱の元。Windows filename で `:` は使えない
-    // ので `-` 置換版を採用。
-    const startDisplay = formatStartForFilename(startSec);
-    const today = new Date().toISOString().slice(0, 10);
-    return namePattern
-      .replace(/\{idx:03\}/g, String(index).padStart(3, '0'))
-      .replace(/\{idx\}/g, String(index))
-      .replace(/\{type\}/g, type)
-      .replace(/\{start\}/g, startDisplay)
-      .replace(/\{date\}/g, today);
+    // #932: 展開処理の実体は utils/filename.ts に移設 (MinimapScreen と共有)。
+    return formatMatchFilename(namePattern, index, type, startSec);
   }
 
   async function handlePickDir() {
@@ -323,23 +370,29 @@ export function ExportScreen() {
 
   async function handleStartExport() {
     // 2026-04-25 修正: filePath は metadata.json の path であり、
-    // export_match invoke 自体は videoSource (実 video path) だけで動く。
+    // export invoke 自体は videoSource (実 video path) だけで動く。
     // dummy detect で loadSample() のみ走った場合 filePath は null のため、
     // 旧 `!filePath` early return + button disabled 条件は誤検知になる。
     if (!metadata) return;
     if (!videoSource) return;
-    cancelRequestedRef.current = false;
 
     // Initialize per-match state. Skip = `type_override === 'skip'` (永続)
     // または excludedIndexes に含まれる (ad-hoc UI 選択、#466 review #1)。
     const nextStates: Record<number, MatchState> = {};
-    const queue: typeof metadata.matches = [];
     for (const m of metadata.matches) {
-      if (m.type_override === 'skip' || excludedIndexes.has(m.index)) {
+      // #805 Phase 2: post_match は export.py 側で常に skip されるため
+      // UI 側も最初から skipped 表示にする。この branch は mark の '—' pin
+      // (render 側) + listener の迷子 event guard により render 出力では
+      // 観測不能な意図的 defense-in-depth — dead branch ではない (review R2 #3、
+      // 除外点 6 箇所の一貫性維持のため残す)。
+      if (
+        m.type_override === 'skip' ||
+        m.post_match ||
+        excludedIndexes.has(m.index)
+      ) {
         nextStates[m.index] = { status: 'skipped', percent: 0 };
       } else {
         nextStates[m.index] = { status: 'pending', percent: 0 };
-        queue.push(m);
       }
     }
     setMatchStates(nextStates);
@@ -347,70 +400,41 @@ export function ExportScreen() {
     const startMs = Date.now();
     setExportStartMs(startMs);
     setNowMs(startMs);
+    // #893 R2: record the export output dir so MinimapScreen can default to it.
+    setLastExportOutputDir(outDir);
     dispatch({ type: 'START_CLICKED' });
 
-    let successCount = 0;
-    let failureCount = 0;
-    for (const m of queue) {
-      if (cancelRequestedRef.current) break;
-      const name = formatName(m.index, m.type, m.edited?.start_time ?? m.start_time);
-      const outputPath = joinPath(outDir, name);
-      try {
-        const result = await invoke<ExportResult>('export_match', {
-          videoPath: videoSource,
-          startSeconds: m.edited?.start_time ?? m.start_time,
-          endSeconds: m.edited?.end_time ?? m.end_time,
-          outputPath,
+    // #761 -- single invoke: hand entire metadata + settings to Python
+    // subprocess via stdin. The existing export-progress event listener
+    // continues to update per-match state as events arrive (match_index
+    // keyed payload works unchanged with the new parallel export arch).
+    try {
+      const summary = await invoke<ExportSummary>('start_export', {
+        req: {
+          metadataJson: metadata,
+          outputDir: outDir,
           codec,
-          // #591 -- when codec === 'h264', Rust spawns ffmpeg with the
-          // resolved encoder. Copy codec ignores this value.
-          h264Encoder: codec === 'h264' ? encoderInfo.encoder_kind : null,
-          matchIndex: m.index,
-        });
-        successCount += 1;
-        setMatchStates((prev) => ({
-          ...prev,
-          [m.index]: {
-            status: 'done',
-            percent: 100,
-            outputPath: result.output_path,
-          },
-        }));
-      } catch (e) {
-        failureCount += 1;
-        // #663 — AppError-shaped throws (Tauri command rejection) carry
-        // a corrective hint that we render as the per-match list's 2nd
-        // error line. `errorState.hint` is null for legacy `new Error`,
-        // which we collapse to undefined so MatchState stays clean.
-        const errorState = toErrorState(e);
-        const msg = errorState.message;
-        const hint = errorState.hint;
-        setMatchStates((prev) => ({
-          ...prev,
-          [m.index]: {
-            status: 'error',
-            percent: 0,
-            error: msg,
-            errorHint: hint ?? undefined,
-          },
-        }));
+          namePattern,
+          excludedIndexes: Array.from(excludedIndexes),
+        },
+      });
+      if (summary.cancelled) {
+        dispatch({ type: 'CANCEL_CONFIRMED' });
+      } else if (summary.success === 0 && summary.failure > 0) {
+        // Zero matches finished -- surface the error phase. If at least one
+        // match succeeded we declare the run "completed" and keep per-match
+        // errors inline for the user to review.
+        dispatch({ type: 'EXPORT_ERROR' });
+      } else {
+        dispatch({ type: 'PROGRESS_COMPLETE' });
       }
-    }
-
-    if (cancelRequestedRef.current) {
-      dispatch({ type: 'CANCEL_CONFIRMED' });
-    } else if (successCount === 0 && failureCount > 0) {
-      // Zero matches finished -- surface the error phase. If at least one
-      // match succeeded we declare the run "completed" and keep per-match
-      // errors inline for the user to review.
+    } catch {
+      // Unexpected (Python subprocess spawn failure / metadata parse failure / etc.)
       dispatch({ type: 'EXPORT_ERROR' });
-    } else {
-      dispatch({ type: 'PROGRESS_COMPLETE' });
     }
   }
 
   function handleCancelClicked() {
-    cancelRequestedRef.current = true;
     dispatch({ type: 'CANCEL_CLICKED' });
     // #523: kill any tracked ffmpeg child so the current export can't run
     // to completion after the user asked to stop.
@@ -462,8 +486,13 @@ export function ExportScreen() {
   const cancelling = phase === 'cancelling';
 
   // #466 review #1: counted = 永続 skip 除外 + ad-hoc exclude 除外
+  // #805 Phase 2: post_match trailing も常に対象外 (機能除外は export.py 側
+  // で Phase 1 済。UI では non-selectable として数にも入れない)。
   const countedMatches = metadata.matches.filter(
-    (m) => m.type_override !== 'skip' && !excludedIndexes.has(m.index),
+    (m) =>
+      m.type_override !== 'skip' &&
+      !m.post_match &&
+      !excludedIndexes.has(m.index),
   );
   const doneCount = countedMatches.filter(
     (m) => matchStates[m.index]?.status === 'done',
@@ -796,6 +825,17 @@ export function ExportScreen() {
                 設定変更して再書き出し
               </button>
             )}
+            {completed && (
+              <button
+                type="button"
+                className={styles.cancelButton}
+                onClick={() => navigate('minimap')}
+                disabled={metadata.matches.length === 0}
+                aria-label="ミニマップ切抜きへ"
+              >
+                ⬦ ミニマップ切抜きへ
+              </button>
+            )}
 
             {error && (
               <button
@@ -831,17 +871,18 @@ export function ExportScreen() {
                * #587 §2.5.14: surface why bulk toggles are disabled.
                *
                * - running / cancelling: "書き出し中は変更できません"
-               * - eligible (= matches not persist-skipped) length === 0:
-               *   the bulk toggle has nothing to act on.
+               * - eligible (= matches neither persist-skipped nor
+               *   post_match, #805 Phase 2) length === 0: the bulk toggle
+               *   has nothing to act on.
                *
                * `countedMatches` reflects ad-hoc exclusion too (used for
                * "N 試合を書き出す" copy), so we instead derive eligibility
-               * from the persist-skip filter, which doesn't change as the
-               * user toggles checkboxes.
+               * from the persist-skip + post_match filter, which doesn't
+               * change as the user toggles checkboxes.
                */}
               {(() => {
                 const eligibleCount = metadata.matches.filter(
-                  (mm) => mm.type_override !== 'skip',
+                  (mm) => mm.type_override !== 'skip' && !mm.post_match,
                 ).length;
                 const bulkDisabled =
                   isSample || running || cancelling || eligibleCount === 0;
@@ -914,8 +955,14 @@ export function ExportScreen() {
                 ? fmtMatchDuration(effectiveEnd - effectiveStart)
                 : m.duration_display;
               const name = formatName(m.index, m.type, effectiveStart);
-              const mark =
-                s.status === 'done'
+              // #805 Phase 2: post_match trailing は選択不可 (export.py 側の
+              // 機能除外は Phase 1 済。行は skipped 扱いで表示のみ)。
+              const isPostMatch = m.post_match === true;
+              // post_match は常に '—' (export.py が event を emit しない前提に
+              // 依存せず、迷子 event が来ても表示を上書きさせない、review P3-1)。
+              const mark = isPostMatch
+                ? '—'
+                : s.status === 'done'
                   ? '✓'
                   : s.status === 'running'
                     ? '●'
@@ -934,19 +981,27 @@ export function ExportScreen() {
               // checkbox で個別 toggle 可能。export 中は disabled。
               const isPersistSkip = m.type_override === 'skip';
               const isAdHocExcluded = excludedIndexes.has(m.index);
-              const isIncluded = !isPersistSkip && !isAdHocExcluded;
+              const isIncluded =
+                !isPersistSkip && !isPostMatch && !isAdHocExcluded;
               return (
-                <li key={m.index} className={styles.listItem}>
+                <li
+                  key={m.index}
+                  className={`${styles.listItem}${isPostMatch ? ` ${styles.listItemPostMatch}` : ''}`}
+                  data-testid={`export-row-${m.index}`}
+                  {...(isPostMatch ? { 'data-post-match': 'true' } : {})}
+                >
                   {/* #587: skip-checkbox disabled reason (§1.2 + #587
                       scope-extension #11). When the match isn't a persist
                       skip the existing help title is preserved.
                       #633 / Task 1.7: sample mode also disables checkbox. */}
                   <DisabledTooltip
-                    disabled={isSample || isPersistSkip}
+                    disabled={isSample || isPersistSkip || isPostMatch}
                     reason={
                       isSample
                         ? sampleReason
-                        : 'preview で skip に設定されています'
+                        : isPostMatch
+                          ? '試合後の映像のため書き出し対象外です'
+                          : 'preview で skip に設定されています'
                     }
                   >
                     {(p) => (
@@ -954,7 +1009,13 @@ export function ExportScreen() {
                         type="checkbox"
                         className={styles.listCheckbox}
                         checked={isIncluded}
-                        disabled={isSample || isPersistSkip || running || cancelling}
+                        disabled={
+                          isSample ||
+                          isPersistSkip ||
+                          isPostMatch ||
+                          running ||
+                          cancelling
+                        }
                         onChange={() => toggleMatchExclusion(m.index)}
                         aria-label={`include match ${m.index}`}
                         title={p.title ?? '書き出し対象から除外/復帰'}
@@ -965,6 +1026,9 @@ export function ExportScreen() {
                     {mark}
                   </span>
                   <span className={styles.listName}>{name}</span>
+                  {isPostMatch && (
+                    <span className={styles.postMatchBadge}>試合後</span>
+                  )}
                   <span className={styles.listDur}>{durationDisplay}</span>
                   {(running ||
                     completed ||
@@ -989,12 +1053,20 @@ export function ExportScreen() {
                       )}
                     </span>
                   )}
+                  {/* #932: 旧実装は `--ae-accent` を参照していたが tokens.css に
+                      該当 token がない。未定義 custom property を fallback なしで
+                      参照すると宣言全体が IACVT で `unset` になり、inline style が
+                      cascade で class に勝つため `.listError` の赤も失われ地の文と
+                      同じ色で描画されていた (v0.2.0 から出荷。MinimapScreen が
+                      mirror 時に複製)。token 名を `var(...)` 形で書かないのは
+                      styles/tokens.test.ts の guard がコメントも走査対象に
+                      含める (fail closed) ため。 */}
                   {s.fallbackNotice && (
                     <span
                       className={styles.listError}
                       role="status"
                       data-testid={`fallback-notice-${m.index}`}
-                      style={{ color: 'var(--ae-accent)' }}
+                      style={{ color: 'var(--ae-gold-bright)' }}
                     >
                       {s.fallbackNotice}
                     </span>
@@ -1007,30 +1079,6 @@ export function ExportScreen() {
       </div>
     </div>
   );
-}
-
-/**
- * #545 review #8 (2026-04-25): filename 用の `{start}` 変数を `MM-SS` /
- * `H-MM-SS` 形式に format する。`fmtTime` の `:` を `-` に置換した形と等価
- * (Windows filename で `:` が使えないため)。
- *
- * 例:
- * - 0       → `00-00`
- * - 915.5   → `15-15`
- * - 5021.5  → `1-23-41`
- */
-export function formatStartForFilename(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) {
-    seconds = 0;
-  }
-  const total = Math.floor(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) {
-    return `${h}-${String(m).padStart(2, '0')}-${String(s).padStart(2, '0')}`;
-  }
-  return `${String(m).padStart(2, '0')}-${String(s).padStart(2, '0')}`;
 }
 
 /**

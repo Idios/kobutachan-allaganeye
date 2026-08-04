@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { axe } from 'jest-axe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useErrorStore } from '../state/errorStore';
@@ -230,6 +231,55 @@ describe('ErrorModal', () => {
     expect(dialog).toBeTruthy();
     expect(dialog?.getAttribute('aria-modal')).toBe('true');
     expect(dialog?.getAttribute('aria-labelledby')).toBe('ae-error-title');
+  });
+
+  it('has no axe violations (recoverable js-error)', async () => {
+    useErrorStore.getState().showError({
+      errorMessage: 'something failed',
+      errorStack: 'at line 1',
+      errorCategory: 'js-error',
+      isPanic: false,
+      isRecoverable: true,
+    });
+    const { container } = render(<ErrorModal />);
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  it('has no axe violations (panic, non-recoverable)', async () => {
+    useErrorStore.getState().showError({
+      errorMessage: 'panic msg',
+      errorCategory: 'panic',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    const { container } = render(<ErrorModal />);
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  it('has no axe violations (tauri-command, with hint)', async () => {
+    useErrorStore.getState().showError({
+      errorTitle: '処理中に予期しないエラーが発生しました',
+      errorMessage: 'Permission denied',
+      errorHint: 'ファイル権限を確認してください',
+      errorCategory: 'tauri-command',
+      isPanic: false,
+      isRecoverable: true,
+    });
+    const { container } = render(<ErrorModal />);
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  it('has no axe violations (integrity, panic with log row)', async () => {
+    useErrorStore.getState().setLogDir('C:\\install\\logs');
+    useErrorStore.getState().showError({
+      errorMessage: '1 missing, 0 size mismatch',
+      errorHint: 'Portable ZIP を再展開してください。',
+      errorCategory: 'integrity',
+      isPanic: true,
+      isRecoverable: false,
+    });
+    const { container } = render(<ErrorModal />);
+    expect(await axe(container)).toHaveNoViolations();
   });
 
   // #696: tauri-command category

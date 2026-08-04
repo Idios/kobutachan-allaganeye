@@ -824,6 +824,209 @@ class TestScanGpu:
         )
 
 
+class TestDecodeChunkV2Cmd:
+    """GPU _decode_chunk 新 path の cmd 構築検証 (#576 S2.1 / S7.1.10)."""
+
+    import io as _io
+
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    @patch("allaganeye.video.gpu_detector.find_ffmpeg", return_value="ffmpeg")
+    def test_nvidia_new_path(self, _mock_ff, mock_popen, monkeypatch):
+        import io
+
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+        mock_proc = MagicMock()
+        # chunk_timestamps has 2 entries -> select filter emits exactly 2 frames.
+        # expected_frames = len(chunk_timestamps) = 2; stream must match.
+        from allaganeye.video.detector import _FRAME_SIZE as _FS
+
+        mock_proc.stdout = io.BytesIO(bytes([0] * _FS * 2))
+        mock_proc.stderr = io.BytesIO(b"")
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = mock_proc
+
+        _decode_chunk(
+            Path("test.mp4"),
+            chunk_start=0.0,
+            chunk_end=10.0,
+            sample_interval=1.0,
+            codec="av1",
+            chunk_timestamps=[0.0, 5.0],
+            vendor="nvidia",
+            source_fps_num=60,
+            source_fps_den=1,
+            is_tail_chunk=False,
+        )
+
+        cmd = mock_popen.call_args[0][0]
+        # dual seek: one -ss before -i (input seek), one after -i (output seek)
+        ss_positions = [i for i, arg in enumerate(cmd) if arg == "-ss"]
+        i_idx = cmd.index("-i")
+        assert len(ss_positions) == 2, (
+            f"expected 2 -ss flags for dual seek, got {ss_positions}"
+        )
+        assert ss_positions[0] < i_idx, "first -ss should be input seek (before -i)"
+        assert ss_positions[1] > i_idx, "second -ss should be output seek (after -i)"
+        # -vf must contain select filter (frame-index based, not PTS-based fps=)
+        vf_value = cmd[cmd.index("-vf") + 1]
+        assert "fps=" not in vf_value
+        assert "select='not(mod(n\\," in vf_value, (
+            f"select filter missing in GPU -vf, got {vf_value!r}"
+        )
+        # -fps_mode passthrough explicit
+        assert cmd[cmd.index("-fps_mode") + 1] == "passthrough"
+        # nvidia decoder preserved
+        assert "-c:v" in cmd
+        cv_idx = cmd.index("-c:v")
+        assert cmd[cv_idx + 1] == "av1_cuvid"
+
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    @patch("allaganeye.video.gpu_detector.find_ffmpeg", return_value="ffmpeg")
+    def test_amd_new_path_keeps_hwdownload(self, _mock_ff, mock_popen, monkeypatch):
+        import io
+
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+        mock_proc = MagicMock()
+        # chunk_timestamps has 2 entries -> select filter emits exactly 2 frames.
+        from allaganeye.video.detector import _FRAME_SIZE as _FS
+
+        mock_proc.stdout = io.BytesIO(bytes([0] * _FS * 2))
+        mock_proc.stderr = io.BytesIO(b"")
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = mock_proc
+
+        _decode_chunk(
+            Path("test.mp4"),
+            chunk_start=0.0,
+            chunk_end=10.0,
+            sample_interval=1.0,
+            codec="h264",
+            chunk_timestamps=[0.0, 5.0],
+            vendor="amd",
+            source_fps_num=60,
+            source_fps_den=1,
+            is_tail_chunk=False,
+        )
+
+        cmd = mock_popen.call_args[0][0]
+        # AMD: hwdownload prefix in -vf, select filter, dual seek + passthrough
+        vf_value = cmd[cmd.index("-vf") + 1]
+        assert "hwdownload,format=nv12" in vf_value
+        assert "fps=" not in vf_value
+        assert "select='not(mod(n\\," in vf_value, (
+            f"select filter missing in AMD GPU -vf, got {vf_value!r}"
+        )
+        # dual seek: one -ss before -i (input seek), one after -i (output seek)
+        ss_positions = [i for i, arg in enumerate(cmd) if arg == "-ss"]
+        i_idx = cmd.index("-i")
+        assert len(ss_positions) == 2, (
+            f"expected 2 -ss flags for dual seek, got {ss_positions}"
+        )
+        assert ss_positions[0] < i_idx, "first -ss should be input seek (before -i)"
+        assert ss_positions[1] > i_idx, "second -ss should be output seek (after -i)"
+        assert cmd[cmd.index("-fps_mode") + 1] == "passthrough"
+
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    @patch("allaganeye.video.gpu_detector.find_ffmpeg", return_value="ffmpeg")
+    def test_intel_qsv_new_path(self, _mock_ff, mock_popen, monkeypatch):
+        import io
+
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+        mock_proc = MagicMock()
+        # chunk_timestamps has 2 entries -> select filter emits exactly 2 frames.
+        from allaganeye.video.detector import _FRAME_SIZE as _FS
+
+        mock_proc.stdout = io.BytesIO(bytes([0] * _FS * 2))
+        mock_proc.stderr = io.BytesIO(b"")
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = mock_proc
+
+        _decode_chunk(
+            Path("test.mp4"),
+            chunk_start=0.0,
+            chunk_end=10.0,
+            sample_interval=1.0,
+            codec="h264",
+            chunk_timestamps=[0.0, 5.0],
+            vendor="intel",
+            source_fps_num=60,
+            source_fps_den=1,
+            is_tail_chunk=False,
+        )
+
+        cmd = mock_popen.call_args[0][0]
+        # Intel QSV: hwdownload prefix preserved, select filter, decoder = h264_qsv
+        vf_value = cmd[cmd.index("-vf") + 1]
+        assert "hwdownload,format=nv12" in vf_value
+        assert "fps=" not in vf_value
+        assert "select='not(mod(n\\," in vf_value, (
+            f"select filter missing in Intel QSV -vf, got {vf_value!r}"
+        )
+        cv_idx = cmd.index("-c:v")
+        assert cmd[cv_idx + 1] == "h264_qsv"
+        # dual seek: one -ss before -i (input seek), one after -i (output seek)
+        ss_positions = [i for i, arg in enumerate(cmd) if arg == "-ss"]
+        i_idx = cmd.index("-i")
+        assert len(ss_positions) == 2, (
+            f"expected 2 -ss flags for dual seek, got {ss_positions}"
+        )
+        assert ss_positions[0] < i_idx, "first -ss should be input seek (before -i)"
+        assert ss_positions[1] > i_idx, "second -ss should be output seek (after -i)"
+
+    def test_decode_chunk_v2_watchdog_fire_raises_for_cpu_fallback(self, monkeypatch):
+        """GPU watchdog-fire (stall) raises VideoProcessingError so scan_gpu falls
+        back to CPU, not silently swallow the stalled chunk (#842 codex, GPU side).
+
+        Symmetric to the CPU test
+        ``test_decode_chunk_cpu_v2_watchdog_fire_returns_fallback``: the CPU path
+        degrades to 255.0, the GPU path re-raises (its decode-failed contract ->
+        upstream CPU fallback). Both must surface the stall, never hang/swallow.
+        """
+        import contextlib
+        from types import SimpleNamespace
+
+        from allaganeye.exceptions import VideoProcessingError
+        from allaganeye.video import gpu_detector as gd
+
+        @contextlib.contextmanager
+        def _fired_watchdog(_proc, _deadline_s):
+            yield SimpleNamespace(fired=True)
+
+        def _raise_vfr(**_kwargs):
+            raise VideoProcessingError("Dynamic VFR detection: chunk emitted 0 frames")
+
+        fake_proc = MagicMock()
+        fake_proc.returncode = -9
+        fake_cm = MagicMock()
+        fake_cm.__enter__.return_value = fake_proc
+        fake_cm.__exit__.return_value = False
+
+        monkeypatch.setattr(gd, "_proc_deadline_watchdog", _fired_watchdog)
+        monkeypatch.setattr(gd, "_sample_chunk_frames", _raise_vfr)
+        monkeypatch.setattr(gd, "find_ffmpeg", lambda: "ffmpeg")
+        monkeypatch.setattr(gd.subprocess, "Popen", MagicMock(return_value=fake_cm))
+
+        with pytest.raises(VideoProcessingError):
+            gd._decode_chunk_v2(
+                Path("x.mkv"),
+                chunk_start=0.0,
+                chunk_end=9.0,
+                sample_interval=3.0,
+                codec="h264",
+                chunk_timestamps=[0.0, 3.0, 6.0],
+                vendor=None,
+                fps_num=60,
+                fps_den=1,
+                is_tail_chunk=False,
+            )
+
+
 class TestGpuFallbackIntegration:
     @patch("allaganeye.video.detector._scan_cpu")
     @patch("allaganeye.video.gpu_detector.scan_gpu")
@@ -844,3 +1047,67 @@ class TestGpuFallbackIntegration:
         mock_gpu.assert_called_once()
         mock_cpu.assert_called_once()
         assert len(result) >= 1
+
+
+class TestGpuBrightnessParity:
+    """GPU Pass1 brightness must route through detector._frame_brightness so
+    CPU and GPU compute brightness identically (Phase 1 B3, Codex #8)."""
+
+    def test_gpu_brightness_shares_frame_brightness_helper(self):
+        # GPU path must use the same _frame_brightness so CPU/GPU parity holds.
+        import numpy as np
+
+        from allaganeye.video import detector as det
+        from allaganeye.video.capture_region import FULL_FRAME
+
+        frame = np.arange(det._FRAME_SIZE, dtype=np.uint8)
+        assert det._frame_brightness(frame, FULL_FRAME) == float(frame.mean())
+
+    def test_scan_gpu_accepts_region_kwarg_default_full_frame(self):
+        import inspect
+
+        from allaganeye.video import gpu_detector as gpu
+        from allaganeye.video.capture_region import FULL_FRAME
+
+        sig = inspect.signature(gpu.scan_gpu)
+        assert "region" in sig.parameters
+        assert sig.parameters["region"].default is FULL_FRAME
+
+
+class TestCheckGpuUsage:
+    """_check_gpu_usage は honesty 原則: cuvid 実 decoder 名一致のみ "active" と
+    断言し、hwaccel コマンドエコーによる substring 一致は "requested (unconfirmed)"
+    と正直に記す (#842 P3)。"""
+
+    def test_check_gpu_usage_d3d11va_does_not_overclaim(self, caplog):
+        import logging
+
+        from allaganeye.video.gpu_detector import _check_gpu_usage
+
+        stderr = "ffmpeg ... -hwaccel d3d11va -c:v ... \nframe= 100 ..."
+        with caplog.at_level(logging.INFO):
+            _check_gpu_usage(stderr, "h264", None)
+        text = " ".join(r.message for r in caplog.records).lower()
+        assert "active (d3d11va)" not in text  # no over-claim
+        assert "requested" in text or "unconfirmed" in text  # honest wording
+
+    def test_check_gpu_usage_cuvid_confirms_active(self, caplog):
+        import logging
+
+        from allaganeye.video.gpu_detector import _check_gpu_usage
+
+        with caplog.at_level(logging.INFO):
+            _check_gpu_usage("Using h264_cuvid decoder ...", "h264", "h264_cuvid")
+        assert any("active" in r.message.lower() for r in caplog.records)
+
+    def test_check_gpu_usage_no_marker_warns_cpu(self, caplog):
+        import logging
+
+        from allaganeye.video.gpu_detector import _check_gpu_usage
+
+        with caplog.at_level(logging.WARNING):
+            _check_gpu_usage("plain software decode log", "h264", None)
+        assert any(
+            "cpu" in r.message.lower() or "not active" in r.message.lower()
+            for r in caplog.records
+        )

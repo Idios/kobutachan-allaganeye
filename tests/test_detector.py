@@ -1,14 +1,21 @@
 """Tests for match boundary detection."""
 
+import os
+import re
 import subprocess
 from pathlib import Path
+from typing import Literal, overload
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
+from allaganeye.video import detector as det
+from allaganeye.video.capture_region import FULL_FRAME, CaptureRegion
 from allaganeye.video.detector import (
+    DetectionStats,
     MatchBoundary,
     _BLACKOUT_PADDING,
     _BLACKOUT_THRESHOLD_UPPER_MARGIN,
@@ -22,6 +29,7 @@ from allaganeye.video.detector import (
     _borderline_pseudo_regions,
     _decode_chunk_cpu,
     _expand_regions_with_transitions,
+    _flag_post_match_trailing,
     _filter_and_extract_segments,
     _generate_timestamps,
     _group_blackout_regions,
@@ -29,6 +37,7 @@ from allaganeye.video.detector import (
     _merge_regions,
     _probe_single_frame,
     _refine_blackout_regions,
+    _use_legacy_fps_filter,
     detect_match_boundaries,
 )
 
@@ -197,7 +206,7 @@ class TestRefineBlackoutRegions:
     def test_2s_blackout_detected(self, mock_probe):
         """A 2.0s blackout is precisely measured and retained."""
 
-        def side_effect(path, t):
+        def side_effect(path, t, region=FULL_FRAME):
             # Blackout from 100.0 to 102.0
             return 5.0 if 100.0 <= t < 102.0 else 128.0
 
@@ -217,7 +226,7 @@ class TestRefineBlackoutRegions:
     def test_1s_respawn_stays_short(self, mock_probe):
         """A 1.0s respawn blackout remains short after refinement."""
 
-        def side_effect(path, t):
+        def side_effect(path, t, region=FULL_FRAME):
             return 5.0 if 100.0 <= t < 101.0 else 128.0
 
         mock_probe.side_effect = side_effect
@@ -308,7 +317,7 @@ class TestRefineBlackoutRegions:
 
         call_count = 0
 
-        def side_effect(video_path, t):
+        def side_effect(video_path, t, region=FULL_FRAME):
             nonlocal call_count
             call_count += 1
             # Every 3rd probe fails
@@ -402,7 +411,7 @@ class TestRefineBlackoutRegions:
 
         call_count = 0
 
-        def side_effect(video_path, t):
+        def side_effect(video_path, t, region=FULL_FRAME):
             nonlocal call_count
             call_count += 1
             if call_count % 3 == 0:
@@ -1001,8 +1010,13 @@ class TestProbeSingleFrame:
 
 
 class TestDetectMatchBoundaries:
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._probe_single_frame")
-    def test_all_bright(self, mock_probe):
+    def test_all_bright(self, mock_probe, _mock_region):
+        # _mock_region: zero-blackout Pass 1 now routes through the masked
+        # fallback gate (#753 A5); stub the region resolver to FULL_FRAME so the
+        # masked path returns None and falls through to the standard result
+        # without spawning real ffmpeg probes (kept fast/deterministic).
         mock_probe.return_value = 128.0
         result = detect_match_boundaries(
             Path("test.mp4"), duration_hint=300.0, min_match_duration=100.0
@@ -1014,7 +1028,9 @@ class TestDetectMatchBoundaries:
     @patch("allaganeye.video.detector._probe_single_frame")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_all_black(self, mock_chunk, mock_probe):
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 5.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 5.0 for t in ts
+        }
         mock_probe.return_value = 5.0  # Pass 2 refinement
         result = detect_match_boundaries(
             Path("test.mp4"), duration_hint=300.0, min_match_duration=100.0
@@ -1024,11 +1040,13 @@ class TestDetectMatchBoundaries:
     @patch("allaganeye.video.detector._probe_single_frame")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_blackout_in_middle(self, mock_chunk, mock_probe):
-        def chunk_side_effect(vp, ts, cs, ce, si):
+        def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             return {t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts}
 
         mock_chunk.side_effect = chunk_side_effect
-        mock_probe.side_effect = lambda path, t: 5.0 if 593.0 <= t <= 607.0 else 128.0
+        mock_probe.side_effect = lambda path, t, region=FULL_FRAME: (
+            5.0 if 593.0 <= t <= 607.0 else 128.0
+        )
         result = detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=1800.0,
@@ -1039,9 +1057,14 @@ class TestDetectMatchBoundaries:
         assert result[0]["start"] == 0.0
         assert result[1]["end"] == pytest.approx(1800.0)
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_custom_threshold(self, mock_chunk):
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 20.0 for t in ts}
+    def test_custom_threshold(self, mock_chunk, _mock_region):
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub
+        # falls through to standard result (no real ffmpeg probes).
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 20.0 for t in ts
+        }
         result = detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=300.0,
@@ -1053,7 +1076,9 @@ class TestDetectMatchBoundaries:
     @patch("allaganeye.video.detector._probe_single_frame")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_custom_threshold_blackout(self, mock_chunk, mock_probe):
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 20.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 20.0 for t in ts
+        }
         mock_probe.return_value = 20.0  # Pass 2 refinement
         result = detect_match_boundaries(
             Path("test.mp4"),
@@ -1069,10 +1094,14 @@ class TestDetectMatchBoundaries:
         ):
             detect_match_boundaries(Path("test.mp4"), min_match_duration=100.0)
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_brightness_callback_receives_pass1_results(self, mock_chunk):
+    def test_brightness_callback_receives_pass1_results(self, mock_chunk, _mock_region):
         """#569 -- brightness_callback fires once with full Pass 1 map."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 50.0 + t for t in ts}
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 50.0 + t for t in ts
+        }
         captured: list[dict[float, float]] = []
         detect_match_boundaries(
             Path("test.mp4"),
@@ -1089,10 +1118,14 @@ class TestDetectMatchBoundaries:
         assert results[0.0] == pytest.approx(50.0)
         assert results[5.0] == pytest.approx(55.0)
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_brightness_callback_optional_default(self, mock_chunk):
+    def test_brightness_callback_optional_default(self, mock_chunk, _mock_region):
         """Omitting the callback is a no-op (preserves pre-#569 callers)."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 100.0 for t in ts}
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 100.0 for t in ts
+        }
         # Should not raise even without the new kwarg.
         result = detect_match_boundaries(
             Path("test.mp4"),
@@ -1102,12 +1135,63 @@ class TestDetectMatchBoundaries:
         )
         assert isinstance(result, list)
 
+    @patch("allaganeye.video.detector._detect_masked_fallback")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_stats_populated_cpu(self, mock_chunk):
+    def test_masked_fallback_callback_fires_when_result_used(
+        self, mock_chunk, mock_fallback
+    ):
+        """fallback の結果が採用されたときのみ callback が発火 (resolved provenance).
+
+        request flag (masked) と resolved path を分離するための通知 seam。
+        brightness_callback (#569/#644) と同型の配線。
+        """
+        # zero-blackout -> gate (not vtuber and not blackout_times) が fallback へ
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 100.0 for t in ts
+        }
+        fallback_result = [{"start": 0.0, "end": 9.0, "type": "fl_match"}]
+        mock_fallback.return_value = (fallback_result, FULL_FRAME)
+        fired: list[bool] = []
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=10.0,
+            sample_interval=1.0,
+            min_match_duration=1.0,
+            masked_fallback_callback=lambda: fired.append(True),
+        )
+        assert result == fallback_result
+        assert fired == [True]
+
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_masked_fallback_callback_not_fired_when_fallback_gives_up(
+        self, mock_chunk, _mock_region
+    ):
+        """fallback が None (縮退) で標準 path に落ちた場合は callback 不発."""
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 100.0 for t in ts
+        }
+        fired: list[bool] = []
+        result = detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=10.0,
+            sample_interval=1.0,
+            min_match_duration=1.0,
+            masked_fallback_callback=lambda: fired.append(True),
+        )
+        assert isinstance(result, list)
+        assert fired == []
+
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_stats_populated_cpu(self, mock_chunk, _mock_region):
         """Verbose callers receive pipeline statistics (issue #336 Phase 1)."""
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
         from allaganeye.video.detector import DetectionStats
 
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         stats: DetectionStats = {}
         detect_match_boundaries(
             Path("test.mp4"),
@@ -1129,10 +1213,12 @@ class TestDetectMatchBoundaries:
         """Scorebar classification counts flow through to stats."""
         from allaganeye.video.detector import DetectionStats
 
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
             t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts
         }
-        mock_probe.side_effect = lambda path, t: 5.0 if 593.0 <= t <= 607.0 else 128.0
+        mock_probe.side_effect = lambda path, t, region=FULL_FRAME: (
+            5.0 if 593.0 <= t <= 607.0 else 128.0
+        )
         with patch(
             "allaganeye.video.scorebar.filter_blackouts_with_scorebar"
         ) as mock_filter:
@@ -1144,6 +1230,8 @@ class TestDetectMatchBoundaries:
                 height,
                 workers,
                 *,
+                band_region=FULL_FRAME,
+                localize=False,
                 audio_hits,
                 stats,
                 progress_callback=None,
@@ -1171,9 +1259,13 @@ class TestDetectMatchBoundaries:
         assert stats.get("scorebar_non_fl") == 3
         assert stats.get("audio_promotions") == 1
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_progress_callback(self, mock_chunk):
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+    def test_progress_callback(self, mock_chunk, _mock_region):
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         calls = []
         detect_match_boundaries(
             Path("test.mp4"),
@@ -1197,7 +1289,7 @@ class TestDetectMatchBoundaries:
         """
 
         # Single blackout region at t=5 (below threshold)
-        def side_effect(vp, ts, cs, ce, si):
+        def side_effect(vp, ts, cs, ce, si, **kwargs):
             return {t: 0.0 if 4.0 <= t <= 6.0 else 128.0 for t in ts}
 
         mock_chunk.side_effect = side_effect
@@ -1237,7 +1329,7 @@ class TestDetectMatchBoundaries:
         """
 
         # One blackout region around t=5.
-        def chunk_side_effect(vp, ts, cs, ce, si):
+        def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             return {t: 0.0 if 4.0 <= t <= 6.0 else 128.0 for t in ts}
 
         mock_chunk.side_effect = chunk_side_effect
@@ -1270,20 +1362,26 @@ class TestDetectMatchBoundaries:
             "no intermediate progress was published; callbacks appear batched"
         )
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_progress_callback_none(self, mock_chunk):
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+    def test_progress_callback_none(self, mock_chunk, _mock_region):
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         result = detect_match_boundaries(
             Path("test.mp4"), duration_hint=300.0, min_match_duration=100.0
         )
         assert len(result) == 1
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_sample_count(self, mock_chunk):
+    def test_sample_count(self, mock_chunk, _mock_region):
         """All timestamps are processed across chunks."""
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
         call_timestamps = []
 
-        def side_effect(vp, ts, cs, ce, si):
+        def side_effect(vp, ts, cs, ce, si, **kwargs):
             call_timestamps.extend(ts)
             return {t: 128.0 for t in ts}
 
@@ -1296,10 +1394,14 @@ class TestDetectMatchBoundaries:
         )
         assert len(set(call_timestamps)) == 150
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_chunked_execution(self, mock_chunk):
+    def test_chunked_execution(self, mock_chunk, _mock_region):
         """Multiple chunks are created for parallel execution."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         result = detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=100.0,
@@ -1309,11 +1411,19 @@ class TestDetectMatchBoundaries:
         assert len(result) == 1
         assert mock_chunk.call_count >= 1
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_scorebar_filtering_called_with_resolution(self, mock_chunk, mock_filter):
+    def test_scorebar_filtering_called_with_resolution(
+        self, mock_chunk, mock_filter, _mock_region
+    ):
         """Scorebar filtering is invoked when src_resolution is provided."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub
+        # so the masked path returns None and the standard scorebar call still
+        # fires exactly once (assertion below unchanged).
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         mock_filter.side_effect = lambda vp, regions, dur, h, w, **kw: (
             regions,
             ["match_boundary"] * len(regions),
@@ -1326,13 +1436,19 @@ class TestDetectMatchBoundaries:
         )
         mock_filter.assert_called_once()
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_scorebar_filtering_skipped_without_resolution(
-        self, mock_chunk, mock_filter
+        self, mock_chunk, mock_filter, _mock_region
     ):
         """Scorebar filtering is NOT invoked when src_resolution is None."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub
+        # -> masked path returns None before its own scorebar call, so
+        # assert_not_called() still holds.
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=300.0,
@@ -1340,11 +1456,17 @@ class TestDetectMatchBoundaries:
         )
         mock_filter.assert_not_called()
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_audio_hits_forwarded_to_scorebar_filter(self, mock_chunk, mock_filter):
+    def test_audio_hits_forwarded_to_scorebar_filter(
+        self, mock_chunk, mock_filter, _mock_region
+    ):
         """audio_hits parameter is passed through to scorebar filtering (#288)."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         mock_filter.side_effect = lambda vp, regions, dur, h, w, **kw: (
             regions,
             ["match_boundary"] * len(regions),
@@ -1360,11 +1482,17 @@ class TestDetectMatchBoundaries:
         mock_filter.assert_called_once()
         assert mock_filter.call_args.kwargs["audio_hits"] == hits
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.scorebar.filter_blackouts_with_scorebar")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_audio_hits_default_none_forwarded_as_none(self, mock_chunk, mock_filter):
+    def test_audio_hits_default_none_forwarded_as_none(
+        self, mock_chunk, mock_filter, _mock_region
+    ):
         """Omitted audio_hits reaches the scorebar filter as None."""
-        mock_chunk.side_effect = lambda vp, ts, cs, ce, si: {t: 128.0 for t in ts}
+        # _mock_region: zero-blackout -> masked gate (#753 A5); FULL_FRAME stub.
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         mock_filter.side_effect = lambda vp, regions, dur, h, w, **kw: (
             regions,
             ["match_boundary"] * len(regions),
@@ -1463,7 +1591,11 @@ class TestBorderlinePseudoRegions:
         assert _borderline_pseudo_regions({}, 15.0, 1000.0) == []
 
     def test_no_borderline_frames(self):
-        """All frames outside [threshold, threshold*2) -> no pseudo regions."""
+        """All frames outside [threshold, _TRANSITION_THRESHOLD) -> no pseudo regions.
+
+        #576 A5: upper bound extended from blackout_threshold * 2 (= 30) to
+        _TRANSITION_THRESHOLD (= 55).
+        """
         results = {0.0: 128.0, 10.0: 5.0, 20.0: 200.0}
         assert _borderline_pseudo_regions(results, 15.0, 1000.0) == []
 
@@ -1487,9 +1619,24 @@ class TestBorderlinePseudoRegions:
         assert regions[0][0] == 996.0
         assert regions[0][1] == 1000.0
 
-    def test_upper_bound_exclusive(self):
-        """Frames at exactly 2 * threshold are not borderline."""
-        results = {100.0: 30.0}  # == threshold * 2
+    def test_upper_bound_is_transition_threshold(self):
+        """#576 A5: upper bound is _TRANSITION_THRESHOLD (55), not threshold * 2.
+
+        Sample at brightness 42.6 (case from obs-20260116 t=2178) MUST
+        trigger A3 refinement so Pass 2 can find sub-sample-interval
+        blackouts.  Pre-A5 fix, brightness 42.6 was outside the
+        [15, 30) borderline range and Pass 2 never probed the region.
+        """
+        results = {100.0: 42.6}
+        regions = _borderline_pseudo_regions(results, 15.0, 1000.0)
+        assert len(regions) == 1, (
+            "brightness 42.6 should trigger A3 with #576 A5 extension "
+            "(was non-borderline pre-fix)"
+        )
+
+    def test_upper_bound_exclusive_at_transition(self):
+        """Frames at exactly _TRANSITION_THRESHOLD = 55 are NOT borderline."""
+        results = {100.0: 55.0}
         assert _borderline_pseudo_regions(results, 15.0, 1000.0) == []
 
     def test_lower_bound_inclusive(self):
@@ -1497,6 +1644,39 @@ class TestBorderlinePseudoRegions:
         results = {100.0: 15.0}
         regions = _borderline_pseudo_regions(results, 15.0, 1000.0)
         assert len(regions) == 1
+
+    def test_borderline_pseudo_regions_capped_with_warning(self, caplog):
+        import logging
+
+        from allaganeye.video.detector import (
+            _BORDERLINE_SPAN_CAP_FRACTION,
+            _borderline_pseudo_regions,
+        )
+
+        # Dense borderline frames (b=40 in [15,55)) across the whole video, so
+        # raw_span exceeds fraction*duration (interval~3, radius=3 -> raw_span
+        # ~2*duration ~200% > 150% cap).
+        total_dur = 1000.0
+        results = {float(t): 40.0 for t in range(0, int(total_dur), 3)}
+        with caplog.at_level(logging.WARNING):
+            regions = _borderline_pseudo_regions(results, 15.0, total_dur)
+        total = sum(e - s for s, e in regions)
+        cap = _BORDERLINE_SPAN_CAP_FRACTION * total_dur
+        assert total <= cap + 6.0  # allow one region's worth
+        assert any(
+            "borderline" in r.message.lower() for r in caplog.records
+        )  # fire-side red proof
+
+    def test_borderline_pseudo_regions_not_capped_under_threshold(self, caplog):
+        import logging
+
+        from allaganeye.video.detector import _borderline_pseudo_regions
+
+        results = {0.0: 40.0, 100.0: 42.0}  # sparse, raw_span << cap
+        with caplog.at_level(logging.WARNING):
+            regions = _borderline_pseudo_regions(results, 15.0, 1000.0)
+        assert len(regions) == 2  # all kept (no fire = bit-exact)
+        assert not any("borderline" in r.message.lower() for r in caplog.records)
 
 
 class TestMergeRegions:
@@ -1543,12 +1723,14 @@ class TestPass1HysteresisIntegration:
         # Put borderline frames in the middle, bright frames elsewhere.
         # Pass 1 runs at 3s interval (default), so frames at 600-609 become
         # a 10s borderline span.
-        def chunk_side_effect(vp, ts, cs, ce, si):
+        def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             return {t: 15.5 if 600.0 <= t <= 609.0 else 128.0 for t in ts}
 
         mock_chunk.side_effect = chunk_side_effect
         # Pass 2 confirms blackout (<15.0 strict) in the same span
-        mock_probe.side_effect = lambda p, t: 5.0 if 599.0 <= t <= 610.0 else 128.0
+        mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+            5.0 if 599.0 <= t <= 610.0 else 128.0
+        )
 
         result = detect_match_boundaries(
             Path("test.mp4"),
@@ -1561,10 +1743,11 @@ class TestPass1HysteresisIntegration:
         # the blackout and splits the video into two matches.
         assert len(result) == 2
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._probe_single_frame")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_borderline_triggers_refinement_around_missed_blackout(
-        self, mock_chunk, mock_probe
+        self, mock_chunk, mock_probe, _mock_region
     ):
         """A3: Pass 1 borderline frames trigger Pass 2 +-3s refinement.
 
@@ -1575,7 +1758,7 @@ class TestPass1HysteresisIntegration:
         at 0.25s intervals -- finding the real short blackout at 8137-8140.
         """
 
-        def chunk_side_effect(vp, ts, cs, ce, si):
+        def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             # t=8139 is borderline; surrounding Pass 1 samples are bright
             out = {}
             for t in ts:
@@ -1587,8 +1770,13 @@ class TestPass1HysteresisIntegration:
 
         mock_chunk.side_effect = chunk_side_effect
         # Pass 2 at 0.25s finds real blackout 8137.25-8139.75
-        mock_probe.side_effect = lambda p, t: 2.0 if 8137.25 <= t <= 8139.75 else 128.0
+        mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+            2.0 if 8137.25 <= t <= 8139.75 else 128.0
+        )
 
+        # _mock_region: borderline-only Pass 1 has 0 strict blackouts -> masked
+        # gate (#753 A5); FULL_FRAME stub returns None so the standard A3
+        # pseudo-region path still runs and probes around t=8139.
         detect_match_boundaries(
             Path("test.mp4"),
             duration_hint=10000.0,
@@ -1604,14 +1792,18 @@ class TestPass1HysteresisIntegration:
             f"but probed: {sorted(set(probed))[:10]}..."
         )
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._probe_single_frame")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
     def test_borderline_refinement_disabled_skips_pseudo_regions(
-        self, mock_chunk, mock_probe
+        self, mock_chunk, mock_probe, _mock_region
     ):
         """With _ENABLE_BORDERLINE_REFINEMENT=False, no pseudo regions added."""
+        # _mock_region: borderline-only Pass 1 has 0 strict blackouts -> masked
+        # gate (#753 A5); FULL_FRAME stub returns None so the standard path runs
+        # and (with A3 disabled) probes no region near 8139.
 
-        def chunk_side_effect(vp, ts, cs, ce, si):
+        def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             return {t: 20.0 if t == 8139.0 else 128.0 for t in ts}
 
         mock_chunk.side_effect = chunk_side_effect
@@ -1630,12 +1822,18 @@ class TestPass1HysteresisIntegration:
         near_borderline = [t for t in probed if 8136.0 <= t <= 8142.0]
         assert not near_borderline
 
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._probe_single_frame")
     @patch("allaganeye.video.detector._decode_chunk_cpu")
-    def test_upper_margin_zero_restores_strict_threshold(self, mock_chunk, mock_probe):
+    def test_upper_margin_zero_restores_strict_threshold(
+        self, mock_chunk, mock_probe, _mock_region
+    ):
         """With _BLACKOUT_THRESHOLD_UPPER_MARGIN=0.0, only b<threshold is blackout."""
+        # _mock_region: with margin 0, the 15.5 frame is not blackout -> 0
+        # blackouts -> masked gate (#753 A5); FULL_FRAME stub falls through to
+        # the standard single-match result.
 
-        def chunk_side_effect(vp, ts, cs, ce, si):
+        def chunk_side_effect(vp, ts, cs, ce, si, **kwargs):
             # Make one frame borderline (15.5) but otherwise bright.
             # Also disable A3 so only A4 behavior is under test.
             return {t: 15.5 if 600.0 <= t <= 609.0 else 128.0 for t in ts}
@@ -1656,3 +1854,3139 @@ class TestPass1HysteresisIntegration:
 
         # Borderline not captured -> single match spans whole video
         assert len(result) == 1
+
+
+class TestUseLegacyFpsFilter:
+    """env var rollback helper (#576 S6)."""
+
+    def test_default_false(self, monkeypatch):
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+        assert _use_legacy_fps_filter() is False
+
+    def test_explicit_1_returns_true(self, monkeypatch):
+        monkeypatch.setenv("ALLAGANEYE_DETECT_FPS_FILTER", "1")
+        assert _use_legacy_fps_filter() is True
+
+    def test_other_values_return_false(self, monkeypatch):
+        for value in ("0", "true", "yes", "", "2"):
+            monkeypatch.setenv("ALLAGANEYE_DETECT_FPS_FILTER", value)
+            assert _use_legacy_fps_filter() is False, f"value={value!r}"
+
+
+class TestConftestEnvVarAutouse:
+    """conftest.py autouse fixture clears ALLAGANEYE_DETECT_FPS_FILTER (#576 S6)."""
+
+    def test_env_var_unset_by_default(self):
+        # autouse fixture should have unset it before this test runs.
+        assert "ALLAGANEYE_DETECT_FPS_FILTER" not in os.environ, (
+            "conftest autouse should unset ALLAGANEYE_DETECT_FPS_FILTER. "
+            "CI pollution risk (#576 R6)."
+        )
+
+
+# ---------------------------------------------------------------------------
+# _sample_chunk_frames / _resolve_fps_rational (#576 S2.2 / S2.3)
+# ---------------------------------------------------------------------------
+
+import io  # noqa: E402 -- placed here to keep new test section self-contained
+
+from allaganeye.video.detector import (  # noqa: E402
+    _FRAME_SIZE as _FS,
+    _resolve_fps_rational,
+    _sample_chunk_frames,
+)
+
+
+def _frames_bytes(brightnesses: list[int]) -> bytes:
+    """Build a raw grayscale frame stream from per-frame mean brightness."""
+    return b"".join(bytes([b]) * _FS for b in brightnesses)
+
+
+class TestSampleChunkFramesRationalMapping:
+    """ffmpeg select filter positional mapping: emitted frame K -> chunk_timestamps[K]."""
+
+    def test_integer_60fps(self):
+        # ffmpeg select filter emits 3 frames (one per chunk_timestamps entry).
+        # Emitted frame 0 -> 10.0, frame 1 -> 12.0, frame 2 -> 14.0.
+        # expected_frames=241 simulates VFR check with stream matching expected.
+        stream = io.BytesIO(_frames_bytes([100] * 241))
+        result = _sample_chunk_frames(
+            stream=stream,
+            chunk_start=10.0,
+            chunk_timestamps=[10.0, 12.0, 14.0],
+            fps_num=60,
+            fps_den=1,
+            expected_frames=241,  # stream emits 241 total, slack covers diff
+            is_tail_chunk=False,
+        )
+        assert result == {10.0: 100.0, 12.0: 100.0, 14.0: 100.0}
+
+    def test_ntsc_59_94(self):
+        # ffmpeg select filter emits 2 frames for 2 chunk_timestamps entries.
+        # Emitted frame 0 -> 0.0, frame 1 -> 10.0 (positional mapping).
+        # Stream has 600 total frames matching expected_frames (VFR check passes).
+        stream = io.BytesIO(_frames_bytes([50] * 600))
+        result = _sample_chunk_frames(
+            stream=stream,
+            chunk_start=0.0,
+            chunk_timestamps=[0.0, 10.0],
+            fps_num=60000,
+            fps_den=1001,
+            expected_frames=600,
+            is_tail_chunk=False,
+        )
+        assert 0.0 in result and 10.0 in result
+        assert result[0.0] == 50.0
+        assert result[10.0] == 50.0
+
+
+class TestSampleChunkFramesFrameMissing:
+    """stream が chunk_timestamps より少ないフレームを emitted したとき 255.0 fallback (#576)."""
+
+    def test_target_beyond_available_frames(self):
+        # Stream emits 1 frame, but chunk_timestamps has 2 entries.
+        # With positional mapping: emitted frame 0 -> chunk_timestamps[0]=0.0,
+        # chunk_timestamps[1]=10.0 gets no emitted frame -> 255.0 fallback.
+        stream = io.BytesIO(_frames_bytes([0] * 1))
+        result = _sample_chunk_frames(
+            stream=stream,
+            chunk_start=0.0,
+            chunk_timestamps=[0.0, 10.0],
+            fps_num=60,
+            fps_den=1,
+            expected_frames=2,  # expected = len(chunk_timestamps) = 2
+            is_tail_chunk=True,  # tail -- VFR diff=1 within slack, no raise
+        )
+        assert result[0.0] == 0.0
+        assert result[10.0] == 255.0
+
+
+class TestSampleChunkFramesDynamicVfr:
+    """動的 VFR 検出: slack 超過時 raise / tail chunk は WARN のみ (#576 S2.2 / S7.1.5)."""
+
+    def test_within_slack_no_error(self):
+        # 60fps x 60s = 3600 expected, slack = max(36, 6) = 36
+        # emit 3580 = -20 (within slack), should not raise
+        stream = io.BytesIO(_frames_bytes([100] * 3580))
+        _sample_chunk_frames(
+            stream=stream,
+            chunk_start=0.0,
+            chunk_timestamps=[0.0, 30.0],
+            fps_num=60,
+            fps_den=1,
+            expected_frames=3600,
+            is_tail_chunk=False,
+        )
+        # no raise expected
+
+    def test_exceeds_slack_non_tail_raises(self):
+        # 60fps x 60s = 3600 expected, slack = max(36, 6) = 36
+        # emit 3500 = -100 (exceeds slack), non-tail chunk -> raise
+        stream = io.BytesIO(_frames_bytes([100] * 3500))
+        with pytest.raises(VideoProcessingError) as excinfo:
+            _sample_chunk_frames(
+                stream=stream,
+                chunk_start=0.0,
+                chunk_timestamps=[0.0, 30.0],
+                fps_num=60,
+                fps_den=1,
+                expected_frames=3600,
+                is_tail_chunk=False,
+            )
+        assert "Dynamic VFR" in str(excinfo.value)
+
+    def test_exceeds_slack_tail_only_warns(self, caplog):
+        # Same overshoot but tail chunk -> WARN only, no raise.
+        import logging as _logging
+
+        stream = io.BytesIO(_frames_bytes([100] * 3500))
+        with caplog.at_level(_logging.WARNING):
+            _sample_chunk_frames(
+                stream=stream,
+                chunk_start=0.0,
+                chunk_timestamps=[0.0, 30.0],
+                fps_num=60,
+                fps_den=1,
+                expected_frames=3600,
+                is_tail_chunk=True,
+            )
+        msgs = [
+            r.getMessage()
+            for r in caplog.records
+            if "VFR" in r.getMessage() or "tail" in r.getMessage()
+        ]
+        assert any("tail" in m or "VFR" in m for m in msgs), (
+            f"expected WARN for tail chunk, got: {[r.getMessage() for r in caplog.records]}"
+        )
+
+
+class TestSampleChunkFramesFloatFallback:
+    """float source_fps を Fraction.limit_denominator(10000) で rational に
+    変換した場合、NTSC rational と同じ frame_idx を選ぶこと (#576 S2.3 / S7.1.3)."""
+
+    def test_float_59_94_yields_ntsc_index(self):
+        num, den = _resolve_fps_rational(None, None, 60000 / 1001)
+        # Fraction(60000/1001).limit_denominator(10000) -> 60000/1001 exactly
+        assert (num, den) == (60000, 1001)
+
+    def test_float_60_yields_60_over_1(self):
+        num, den = _resolve_fps_rational(None, None, 60.0)
+        # Fraction(60.0).limit_denominator(10000) -> 60/1
+        assert (num, den) == (60, 1)
+
+
+class TestResolveFpsRationalPositivityCheck:
+    """(0, 1) のような half-zero rational は float fallback を使うこと (#576 fix)."""
+
+    def test_zero_num_falls_back_to_float(self):
+        # fps_num=0 is invalid; must fall back to source_fps float
+        num, den = _resolve_fps_rational(0, 1, 60.0)
+        assert (num, den) == (60, 1)
+
+    def test_zero_den_falls_back_to_float(self):
+        # fps_den=0 would cause ZeroDivisionError if used; must fall back
+        num, den = _resolve_fps_rational(60, 0, 60.0)
+        assert (num, den) == (60, 1)
+
+    def test_zero_zero_sentinel_falls_back_to_float(self):
+        # probe.py parse failure sentinel (0, 0) -> fall through to float
+        num, den = _resolve_fps_rational(0, 0, 60000 / 1001)
+        assert (num, den) == (60000, 1001)
+
+    def test_valid_rational_used_directly(self):
+        # positive (num, den) must still be returned as-is
+        num, den = _resolve_fps_rational(60, 1, 30.0)
+        assert (num, den) == (60, 1)
+
+
+class TestSampleChunkFramesStreamingMemory:
+    """フレームを逐次処理し全フレームをバッファに蓄積しないこと (spec S2.2 memory budget fix)."""
+
+    def test_does_not_buffer_all_frames(self):
+        """Only the first len(chunk_timestamps) frames are recorded; rest discarded.
+
+        With ffmpeg select filter, the stream emits exactly one frame per
+        chunk_timestamps entry in order.  Emitted frame 0 -> 0.0, frame 1 -> 1.0.
+        Frames beyond len(chunk_timestamps) are consumed but not stored.
+        """
+        n_frames = 3600
+        # frame 0 brightness=10, frame 1 brightness=200, all others=128.
+        # With positional mapping: 0.0 -> frame 0 (10), 1.0 -> frame 1 (200).
+        raw = (
+            bytes([10]) * _FS + bytes([200]) * _FS + bytes([128]) * _FS * (n_frames - 2)
+        )
+        stream = io.BytesIO(raw)
+        result = _sample_chunk_frames(
+            stream=stream,
+            chunk_start=0.0,
+            chunk_timestamps=[0.0, 1.0],
+            fps_num=60,
+            fps_den=1,
+            expected_frames=n_frames,
+            is_tail_chunk=False,
+        )
+        assert result[0.0] == pytest.approx(10.0)
+        assert result[1.0] == pytest.approx(200.0)
+
+    def test_stream_none_raises(self):
+        """None stream raises VideoProcessingError immediately."""
+        with pytest.raises(VideoProcessingError, match="ffmpeg stdout not available"):
+            _sample_chunk_frames(
+                stream=None,
+                chunk_start=0.0,
+                chunk_timestamps=[0.0],
+                fps_num=60,
+                fps_den=1,
+                expected_frames=1,
+                is_tail_chunk=False,
+            )
+
+
+# ---------------------------------------------------------------------------
+# _decode_chunk_cpu v2 path + env var dispatch (#576 S2.1 / S6 / S7.1.1 / S7.1.7)
+# ---------------------------------------------------------------------------
+
+import io as _io  # noqa: E402 -- placed here to keep new test section self-contained
+
+
+class TestDecodeChunkCpuNewPath:
+    """_decode_chunk_cpu 新 path の cmd 構築検証 (#576 S2.1 / S7.1.1)."""
+
+    @patch("allaganeye.video.detector.subprocess.Popen")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_cmd_uses_input_seek_no_fps_passthrough(
+        self, _mock_ff, mock_popen, monkeypatch
+    ):
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+        mock_proc = MagicMock()
+        # chunk_timestamps has 3 entries -> select filter emits exactly 3 frames.
+        # expected_frames = len(chunk_timestamps) = 3; stream must match to pass
+        # the VFR check.
+        mock_proc.stdout = _io.BytesIO(bytes([0] * _FRAME_SIZE * 3))
+        mock_proc.stderr = _io.BytesIO(b"")
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = mock_proc
+
+        _decode_chunk_cpu(
+            Path("test.mp4"),
+            chunk_timestamps=[0.0, 1.0, 2.0],
+            chunk_start=0.0,
+            chunk_end=60.0,
+            sample_interval=1.0,
+            source_fps_num=60,
+            source_fps_den=1,
+            is_tail_chunk=False,
+        )
+
+        called_cmd = mock_popen.call_args[0][0]
+        # dual seek: one -ss before -i (input seek), one after -i (output seek)
+        ss_positions = [i for i, arg in enumerate(called_cmd) if arg == "-ss"]
+        i_idx = called_cmd.index("-i")
+        assert len(ss_positions) == 2, (
+            f"expected 2 -ss flags for dual seek, got {ss_positions} in {called_cmd}"
+        )
+        assert ss_positions[0] < i_idx, "first -ss should be input seek (before -i)"
+        assert ss_positions[1] > i_idx, "second -ss should be output seek (after -i)"
+        # -vf must contain select filter (frame-index based, not PTS-based fps=)
+        vf_idx = called_cmd.index("-vf")
+        vf_value = called_cmd[vf_idx + 1]
+        assert "fps=" not in vf_value, (
+            f"fps filter must be removed, got -vf {vf_value!r}"
+        )
+        assert "select='not(mod(n\\," in vf_value, (
+            f"select filter missing in -vf, got {vf_value!r}"
+        )
+        # -fps_mode passthrough explicit
+        assert "-fps_mode" in called_cmd, "missing -fps_mode passthrough"
+        fps_mode_idx = called_cmd.index("-fps_mode")
+        assert called_cmd[fps_mode_idx + 1] == "passthrough"
+
+
+class TestDecodeChunkCpuV2NonzeroReturncode:
+    """returncode != 0 で 255.0 fallback + WARNING ログ (#576 bug fix)."""
+
+    @patch("allaganeye.video.detector.tempfile.TemporaryFile")
+    @patch("allaganeye.video.detector.subprocess.Popen")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_nonzero_returncode_returns_255_fallback(
+        self, _mock_ff, mock_popen, mock_tmpfile, monkeypatch, caplog
+    ):
+        """proc.returncode != 0 -> 255.0 fallback, stderr read from tempfile."""
+        import logging
+
+        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+        # Simulate tempfile that ffmpeg would have written to.
+        # seek(0) + read() must return the error bytes.
+        fake_stderr_buf = _io.BytesIO(b"error: some ffmpeg failure")
+        mock_tmpfile.return_value = fake_stderr_buf
+
+        mock_proc = MagicMock()
+        # With select filter, expected_frames = len(chunk_timestamps) = 3.
+        # Emit exactly 3 frames so _sample_chunk_frames VFR check passes;
+        # returncode=1 then triggers the 255.0 fallback path we are testing.
+        mock_proc.stdout = _io.BytesIO(bytes([128]) * _FRAME_SIZE * 3)
+        mock_proc.wait.return_value = None
+        mock_proc.returncode = 1
+        mock_popen.return_value.__enter__.return_value = mock_proc
+
+        timestamps = [0.0, 1.0, 2.0]
+        with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+            result = _decode_chunk_cpu(
+                Path("test.mp4"),
+                chunk_timestamps=timestamps,
+                chunk_start=0.0,
+                chunk_end=3.0,
+                sample_interval=1.0,
+                source_fps_num=60,
+                source_fps_den=1,
+                is_tail_chunk=False,
+            )
+
+        # All timestamps must map to 255.0 (safe non-blackout fallback)
+        assert result == {0.0: 255.0, 1.0: 255.0, 2.0: 255.0}, (
+            f"Expected all 255.0 fallback, got {result}"
+        )
+        # A WARNING must be logged containing the stderr snippet
+        warning_messages = [
+            r.message for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert any("error: some ffmpeg failure" in m for m in warning_messages), (
+            f"Expected stderr snippet in WARNING log, got: {warning_messages}"
+        )
+
+
+class TestDecodeChunkCpuLegacyRollback:
+    """env var=1 で旧 fps filter cmd が生成されること (#576 S6 / S7.1.7)."""
+
+    @patch("allaganeye.video.detector.subprocess.run")
+    @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
+    def test_legacy_cmd_used_when_env_set(self, _mock_ff, mock_run, monkeypatch):
+        monkeypatch.setenv("ALLAGANEYE_DETECT_FPS_FILTER", "1")
+        mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
+
+        _decode_chunk_cpu(
+            Path("test.mp4"),
+            chunk_timestamps=[0.0, 1.0, 2.0],
+            chunk_start=0.0,
+            chunk_end=3.0,
+            sample_interval=1.0,
+            source_fps_num=60,
+            source_fps_den=1,
+            is_tail_chunk=False,
+        )
+
+        called_cmd = mock_run.call_args[0][0]
+        # legacy: -ss before -i
+        i_idx = called_cmd.index("-i")
+        ss_idx = called_cmd.index("-ss")
+        assert ss_idx < i_idx, f"legacy -ss must precede -i, got {called_cmd}"
+        # legacy: fps= present in -vf
+        vf_idx = called_cmd.index("-vf")
+        vf_value = called_cmd[vf_idx + 1]
+        assert "fps=" in vf_value, f"legacy must keep fps filter, got -vf {vf_value!r}"
+
+
+class TestDetectMatchBoundariesRationalFps:
+    """detect_match_boundaries が source_fps_num/den を _scan_cpu / scan_gpu
+    まで伝搬すること (#576 S2.3)."""
+
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
+    @patch("allaganeye.video.detector._scan_cpu")
+    def test_cpu_path_receives_rational_fps(self, mock_scan, _mock_region):
+        # _mock_region: bright Pass 1 -> 0 blackouts -> masked gate (#753 A5);
+        # FULL_FRAME stub returns None before the masked path can call _scan_cpu
+        # again, so mock_scan.call_args remains the single standard Pass 1 call.
+        mock_scan.return_value = {0.0: 100.0, 1.0: 100.0}
+
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1.0,
+            sample_interval=1.0,
+            min_match_duration=0.5,
+            use_gpu=False,
+            source_fps_num=60000,
+            source_fps_den=1001,
+        )
+
+        kwargs = mock_scan.call_args.kwargs
+        assert kwargs.get("source_fps_num") == 60000
+        assert kwargs.get("source_fps_den") == 1001
+
+    @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
+    @patch("allaganeye.video.gpu_detector.scan_gpu")
+    @patch("allaganeye.video.detector._scan_cpu")
+    def test_gpu_path_receives_rational_fps(self, _mock_cpu, mock_gpu, _mock_region):
+        # _mock_region: bright Pass 1 -> 0 blackouts -> masked gate (#753 A5);
+        # FULL_FRAME stub returns None before the masked path can call scan_gpu
+        # again, so mock_gpu.call_args remains the single standard Pass 1 call.
+        mock_gpu.return_value = {0.0: 100.0, 1.0: 100.0}
+
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1.0,
+            sample_interval=1.0,
+            min_match_duration=0.5,
+            use_gpu=True,
+            source_fps_num=60,
+            source_fps_den=1,
+        )
+
+        kwargs = mock_gpu.call_args.kwargs
+        assert kwargs.get("source_fps_num") == 60
+        assert kwargs.get("source_fps_den") == 1
+
+
+# ============================================================
+# _flag_post_match_trailing (#797 対策 C' / #805 段階2 flag 化)
+# ============================================================
+
+
+class TestFlagPostMatchTrailing:
+    """Tests for the scorebar-probe trailing-flag helper (#797 / #805).
+
+    #805 段階2: post-match trailing is no longer dropped (``segments[:-1]``);
+    instead the final segment is retained with ``post_match=True`` so the
+    decision is non-destructive (a scorebar false-negative can no longer
+    silently delete a real match).
+    """
+
+    def test_post_match_flagged_not_dropped(self, monkeypatch):
+        # 全 probe miss (False) -> post-match -> 旧: 削除 / 新: flag + 保持
+        monkeypatch.setattr(
+            "allaganeye.video.detector._has_scorebar_v2", lambda rgb: False
+        )
+        monkeypatch.setattr(
+            "allaganeye.video.detector._probe_frame_rgb_hires",
+            lambda path, t: object(),  # non-None なので probe は実行される
+        )
+        segments = [
+            {"start": 0.0, "end": 600.0, "type": "unknown"},
+            {"start": 600.0, "end": 900.0, "type": "unknown"},
+        ]
+        result = _flag_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("dummy.mp4"),
+            900.0,
+            None,
+            min_match_duration=300.0,
+        )
+        assert len(result) == 2  # 削除されない
+        assert result[-1].get("post_match") is True  # flag が立つ
+        assert result[0].get("post_match") in (None, False)  # 先頭は無印
+
+    @patch("allaganeye.video.detector._has_scorebar_v2", return_value=False)
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
+    def test_trailing_no_scorebar_flagged(self, _probe, _v2):
+        """Trailing unknown at EOV + scorebar absent -> flagged post_match, counter incremented."""
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 1800.0, "type": "unknown"},
+        ]
+        stats: dict = {"filter_unknown": 1}
+        result = _flag_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            1800.0,
+            stats,  # type: ignore[arg-type]
+        )
+        # #805 段階2: segment is retained (not dropped) with post_match=True.
+        assert len(result) == 2
+        assert result[-1].get("post_match") is True
+        assert result[0].get("post_match") in (None, False)
+        assert result[0]["type"] == "fl_match"
+        assert stats["filter_drops"]["post_match_trailing"] == 1
+        # #805 段階2: the segment stays in matches, so it is still legitimately
+        # counted as unknown -> filter_unknown is NOT decremented anymore.
+        assert stats["filter_unknown"] == 1
+
+    @patch("allaganeye.video.detector._has_scorebar_v2", return_value=True)
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
+    def test_trailing_scorebar_present_kept(self, _probe, _v2):
+        """Trailing unknown + scorebar present -> recording cut mid-match -> kept."""
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 1800.0, "type": "unknown"},
+        ]
+        stats: dict = {}
+        result = _flag_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            1800.0,
+            stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 2
+        # Kept as a normal match -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
+        assert "post_match_trailing" not in stats.get("filter_drops", {})
+
+    @patch("allaganeye.video.detector._has_scorebar_v2", return_value=None)
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=None)
+    def test_trailing_probe_failure_kept(self, _probe, _v2):
+        """Trailing unknown after a confirmed match + probe failure (None) -> kept.
+
+        Preceded by an fl_match so the post-match gate passes and the probe
+        path is exercised; a None probe must keep the segment (safe side).
+        """
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 1800.0, "type": "unknown"},
+        ]
+        stats: dict = {}
+        result = _flag_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            1800.0,
+            stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 2
+        # Probe failure -> kept on safe side -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
+        assert "post_match_trailing" not in stats.get("filter_drops", {})
+
+    @patch("allaganeye.video.detector._has_scorebar_v2")
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires")
+    def test_trailing_scorebar_early_kept(self, _probe, _v2):
+        """Mixed trailing (scorebar present early, absent at midpoint) -> kept.
+
+        A removed/missed match-end blackout (e.g. a warp misclassified as
+        ``non_fl`` and dropped in scorebar.py) merges a real match and the
+        post-match tail into one trailing ``unknown`` segment.  A single
+        midpoint probe lands in the longer post-match portion and would
+        drop the whole segment, silently losing the match.  Probing earlier
+        positions and keeping on any scorebar hit prevents that
+        (#797 multi-probe, Codex adversarial-review 2026-05-22).
+        """
+
+        # Trailing segment [1000, 2800]; midpoint 1900.  Scorebar present
+        # only before the midpoint (the match), absent after (post-match).
+        def fake_probe(_video_path, timestamp):
+            return b"present" if timestamp < 1900.0 else b"absent"
+
+        def fake_v2(raw):
+            if raw is None:
+                return None
+            return raw == b"present"
+
+        _probe.side_effect = fake_probe
+        _v2.side_effect = fake_v2
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 2800.0, "type": "unknown"},
+        ]
+        stats: dict = {"filter_unknown": 1}
+        result = _flag_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            2800.0,
+            stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 2
+        assert result[-1]["type"] == "unknown"
+        # Scorebar hit early -> kept as a real match -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
+        assert "post_match_trailing" not in stats.get("filter_drops", {})
+        # No drop -> the unknown count must stay put.
+        assert stats["filter_unknown"] == 1
+
+    @patch("allaganeye.video.detector._has_scorebar_v2")
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires")
+    def test_trailing_partial_probe_failure_kept(self, _probe, _v2):
+        """A probe failure (None) anywhere in the multi-probe set -> kept.
+
+        Without positive ``False`` proof at every probed position, keep the
+        segment: the failed probe might have covered match footage.  Drop
+        requires unanimous, definite scorebar absence.
+        """
+
+        # Early position fails to decode (None); later positions are absent.
+        def fake_probe(_video_path, timestamp):
+            return None if timestamp < 1900.0 else b"absent"
+
+        def fake_v2(raw):
+            if raw is None:
+                return None
+            return raw == b"present"
+
+        _probe.side_effect = fake_probe
+        _v2.side_effect = fake_v2
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 2800.0, "type": "unknown"},
+        ]
+        result = _flag_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            2800.0,
+            None,
+        )
+        assert len(result) == 2
+        assert result[-1]["type"] == "unknown"
+        # Probe failure in the set -> kept on safe side -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
+
+    def test_last_segment_not_unknown_kept(self):
+        """Last segment with type != 'unknown' is not touched."""
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 1800.0, "type": "fl_match"},
+        ]
+        result = _flag_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            1800.0,
+            None,
+        )
+        assert len(result) == 2
+        # Guard returns before the decision -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
+
+    def test_trailing_not_at_end_of_video_kept(self):
+        """Last segment 'unknown' but end is far from total_duration -> kept."""
+        # end = 1600.0, total_duration = 3600.0 -> abs diff = 2000 >= 1.0
+        segments = [
+            {"start": 100.0, "end": 1600.0, "type": "unknown"},
+        ]
+        result = _flag_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            3600.0,
+            None,
+        )
+        assert len(result) == 1
+        # Guard returns before the decision -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
+
+    @patch("allaganeye.video.detector._has_scorebar_v2")
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires")
+    def test_trailing_long_loading_kept(self, _probe, _v2):
+        """Mixed trailing where the HUD appears only after long loading -> kept.
+
+        The match-end blackout was dropped, merging a real match and a longer
+        post-match tail into one trailing segment.  Loading runs ~60s, so a
+        single ``start + 12s`` early probe lands in the loading screen (no
+        HUD), while the midpoint and late probes fall in the longer post-match
+        tail.  A fixed-offset probe set would see all misses and silently drop
+        the real match; an early-window scan must catch the later HUD and keep
+        it (#797, Codex adversarial-review 2026-05-23).
+        """
+
+        # Trailing [1000, 3000]: loading [1000, 1060), match HUD [1060, 1600),
+        # post-match [1600, 3000].  start+12 (=1012) is loading; midpoint
+        # (=2000) and 85% (=2700) are post-match.
+        def fake_probe(_video_path, timestamp):
+            return b"M" if 1060.0 <= timestamp < 1600.0 else b"x"
+
+        def fake_v2(raw):
+            if raw is None:
+                return None
+            return raw == b"M"
+
+        _probe.side_effect = fake_probe
+        _v2.side_effect = fake_v2
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 3000.0, "type": "unknown"},
+        ]
+        stats: dict = {"filter_unknown": 1}
+        result = _flag_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            3000.0,
+            stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 2
+        assert result[-1]["type"] == "unknown"
+        # Late HUD caught -> kept as a real match -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
+        assert "post_match_trailing" not in stats.get("filter_drops", {})
+        assert stats["filter_unknown"] == 1
+
+    @patch("allaganeye.video.detector._has_scorebar_v2")
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires")
+    def test_trailing_hud_in_window_end_gap_kept(self, _probe, _v2):
+        """HUD first appearing in the final stride gap of the window -> kept.
+
+        With default min_match_duration=300 and stride=60 the strided probes
+        land at start+60/120/180/240; a ``timestamp < window_end`` loop never
+        probes the window end, leaving [start+240, start+300] unsampled.  A
+        mixed trailing whose loading runs to start+270 (HUD only from there)
+        produces misses at every strided point and would be silently dropped.
+        The window-end probe must catch it (#797, Codex adversarial-review
+        2026-05-24).
+        """
+
+        # Trailing [1000, 3000], window_end=1300.  Loading [1000, 1270),
+        # match HUD [1270, 1800), post-match [1800, 3000].  start+60..+240 are
+        # all < 1270 (loading); only a probe at/near window_end (1300) hits.
+        def fake_probe(_video_path, timestamp):
+            return b"M" if 1270.0 <= timestamp < 1800.0 else b"x"
+
+        def fake_v2(raw):
+            if raw is None:
+                return None
+            return raw == b"M"
+
+        _probe.side_effect = fake_probe
+        _v2.side_effect = fake_v2
+        segments = [
+            {"start": 100.0, "end": 1000.0, "type": "fl_match"},
+            {"start": 1000.0, "end": 3000.0, "type": "unknown"},
+        ]
+        stats: dict = {"filter_unknown": 1}
+        result = _flag_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            3000.0,
+            stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 2
+        assert result[-1]["type"] == "unknown"
+        # Window-end probe catches the HUD -> kept -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
+        assert "post_match_trailing" not in stats.get("filter_drops", {})
+        assert stats["filter_unknown"] == 1
+
+    @patch("allaganeye.video.detector._has_scorebar_v2", return_value=False)
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
+    def test_whole_video_unknown_kept(self, _probe, _v2):
+        """A lone whole-video unknown is never dropped (fail-open preserved).
+
+        _filter_and_extract_segments returns a single whole-video unknown as a
+        conservative fallback when no blackout survives.  With no preceding
+        confirmed match there is nothing for it to be "post-match" of, so the
+        trailing-drop must keep it even when the early window has no scorebar --
+        otherwise "no boundaries found" silently becomes zero matches
+        (#797, Codex adversarial-review 2026-05-24).
+        """
+        segments = [
+            {"start": 0.0, "end": 1800.0, "type": "unknown"},
+        ]
+        stats: dict = {"filter_unknown": 1}
+        result = _flag_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            1800.0,
+            stats,  # type: ignore[arg-type]
+        )
+        assert len(result) == 1
+        # Lone fallback -> guard returns before the decision -> no post_match flag.
+        assert result[-1].get("post_match") in (None, False)
+        assert "post_match_trailing" not in stats.get("filter_drops", {})
+        assert stats["filter_unknown"] == 1
+
+    @patch("allaganeye.video.detector._has_scorebar_v2", return_value=False)
+    @patch("allaganeye.video.detector._probe_frame_rgb_hires", return_value=b"x")
+    def test_single_match_post_match_tail_flagged(self, _probe, _v2):
+        """A single-match recording's no-scorebar post-match tail is flagged (not dropped).
+
+        ``_filter_and_extract_segments`` hardcodes the before-first and
+        after-last segments as ``unknown``, so [match -> warp -> post-match]
+        is ``[unknown, unknown]``.  Only the lone whole-video fallback
+        (``len(segments) < 2``) is protected; a real match followed by a
+        no-scorebar post-match tail still reaches the post-match decision and
+        is now flagged ``post_match=True`` (was dropped pre-#805 段階2; Codex
+        round-6 adversarial-review 2026-05-24).
+        """
+        segments = [
+            {"start": 0.0, "end": 900.0, "type": "unknown"},
+            {"start": 900.0, "end": 1800.0, "type": "unknown"},
+        ]
+        stats: dict = {"filter_unknown": 2}
+        result = _flag_post_match_trailing(
+            segments,  # type: ignore[arg-type]
+            Path("v.mp4"),
+            1800.0,
+            stats,  # type: ignore[arg-type]
+        )
+        # #805 段階2: retained with post_match=True instead of dropped.
+        assert len(result) == 2
+        assert result[-1].get("post_match") is True
+        assert result[0].get("post_match") in (None, False)
+        assert stats["filter_drops"]["post_match_trailing"] == 1
+        # filter_unknown is no longer decremented (segment stays in matches).
+        assert stats["filter_unknown"] == 2
+
+    def test_empty_segments_no_crash(self):
+        """Empty input returns empty, no exception."""
+        result = _flag_post_match_trailing([], Path("v.mp4"), 1800.0, None)
+        assert result == []
+
+
+def test_frame_brightness_full_frame_is_1d_mean_bitexact():
+    # CPU scan passes a 1-D grayscale buffer (320*180,). FULL_FRAME must
+    # equal float(buf.mean()) EXACTLY (no reshape) for OBS bit-exact.
+    buf = np.arange(det._FRAME_SIZE, dtype=np.uint8)  # 1-D, length 320*180
+    assert det._frame_brightness(buf, FULL_FRAME) == float(buf.mean())
+
+
+def test_frame_brightness_band_reshapes_and_crops():
+    # band branch must reshape the 1-D buffer to (180,320) then crop.
+    buf = np.zeros(det._FRAME_SIZE, dtype=np.uint8)
+    frame2d = buf.reshape(det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH)
+    frame2d[0:9, :] = 100  # top 5% rows bright
+    band = CaptureRegion(0.0, 0.0, 1.0, 0.05)
+    assert det._frame_brightness(buf.reshape(-1), band) == 100.0
+
+
+def test_refine_accepts_region_kwarg_default_full_frame():
+    # Pass2 (_refine_blackout_regions) must accept a region kwarg defaulting to
+    # FULL_FRAME so existing callers (detect_match_boundaries) stay bit-exact.
+    # Signature-level pin: Pass2 needs a real video to run end-to-end (B2).
+    import inspect
+
+    sig = inspect.signature(det._refine_blackout_regions)
+    assert "region" in sig.parameters
+    assert sig.parameters["region"].default is FULL_FRAME
+
+
+# ============================================================
+# Task B4: Stage 0 band anchor resolution (_resolve_detect_region)
+# ============================================================
+
+
+def test_resolve_detect_region_exists():
+    from allaganeye.video import detector as det
+
+    assert hasattr(det, "_resolve_detect_region")
+
+
+def test_resolve_detect_region_falls_back_full_frame_on_probe_failure(monkeypatch):
+    from allaganeye.video import detector as det
+    from allaganeye.video.capture_region import FULL_FRAME  # noqa: F401
+    from pathlib import Path
+
+    # all hi-res probes fail -> localize_fn always None -> band consensus FULL_FRAME
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", lambda vp, t: None)
+    region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+    assert reason == "consensus_miss"
+
+
+def test_resolve_detect_region_swallows_exceptions_to_full_frame(monkeypatch, caplog):
+    # Anchor failure must NEVER break detect: any exception inside the probe
+    # path is swallowed to FULL_FRAME (OBS-safe degrade, bit-exact preserved).
+    # R4: 縮退は silent にせず warning を 1 行残す (診断性のみ、挙動不変)。
+    import logging
+
+    from allaganeye.video import detector as det
+    from pathlib import Path
+
+    def _boom(vp, t):
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", _boom)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+    assert reason == "anchor_error"
+    assert any("band anchor" in r.message for r in caplog.records)
+
+
+def test_resolve_detect_region_warns_on_consensus_miss_full_frame(monkeypatch, caplog):
+    # consensus-miss (非例外縮退) も silent にしない (R5): --vtuber 明示 run が
+    # FULL_FRAME (汚染 path) で続行することを warning で痕跡に残す。
+    # Fix 3: message now includes valid_votes/total_probes and min_hits (#824 sec.5.3).
+    # NOTE: detect_scorebar_band_region is patched to return FULL_FRAME directly,
+    # so the _localize_at closure is never called -> valid_votes=0, total_probes=0.
+    import logging
+
+    from pathlib import Path
+
+    from allaganeye.video import capture_region as cr
+    from allaganeye.video import detector as det
+
+    monkeypatch.setattr(cr, "detect_scorebar_band_region", lambda **kw: cr.FULL_FRAME)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+    assert reason == "consensus_miss"
+    # Message must include both "consensus" and "FULL_FRAME" (existing grep targets)
+    # plus valid_votes/total_probes/min_hits format (#824 sec.5.3).
+    assert any(
+        "consensus" in r.message and "FULL_FRAME" in r.message for r in caplog.records
+    )
+    assert any(
+        re.search(r"valid votes \d+/\d+, min_hits \d+", r.message)
+        for r in caplog.records
+    )
+
+
+def test_resolve_detect_region_warns_unknown_probes(monkeypatch, caplog):
+    # site 9: UNKNOWN>0 の部分故障 warning (UNKNOWN 数 / 総数、#824 sec.5.3)。
+    import logging
+
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+
+    # _probe_frame_rgb_hires always returns None -> all probes UNKNOWN
+    call_count = {"n": 0}
+
+    def _sometimes_none(vp, t):
+        call_count["n"] += 1
+        # all calls return None (decode failure); consensus misses,
+        # but UNKNOWN warning should fire before that
+        return None
+
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", _sometimes_none)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        region, _reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+    assert any(
+        re.search(r"anchor probes: \d+/\d+ UNKNOWN", r.message) for r in caplog.records
+    )
+
+
+def test_resolve_detect_region_warns_unknown_probes_on_exception_path(
+    monkeypatch, caplog
+):
+    # site 9: exception path -- UNKNOWN probes accumulated before the raise must
+    # not be lost. The partial-failure warning fires even when detect_scorebar_band_region
+    # raises after some None probes (counter is accumulated before raise).
+    import logging
+
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+
+    call_count = {"n": 0}
+
+    def _mixed(vp, t):
+        call_count["n"] += 1
+        if call_count["n"] <= 3:
+            return None  # -> UNKNOWN
+        raise RuntimeError("probe exploded after some Nones")
+
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", _mixed)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        _region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert reason == "anchor_error"
+    assert any(
+        re.search(r"anchor probes: \d+/\d+ UNKNOWN", r.message) for r in caplog.records
+    )
+    assert any("band anchor" in r.message for r in caplog.records)
+
+
+def test_detect_match_boundaries_passes_region_to_all_three_call_sites(monkeypatch):
+    # Keystone wiring guard: the region resolved by Stage 0 must reach Pass1
+    # (_scan_cpu), GPU (scan_gpu), and Pass2 (_refine_blackout_regions).  On a
+    # probe failure the resolved region is FULL_FRAME, but the kwarg must still
+    # be threaded through every call so VTuber band ROIs propagate.
+    from allaganeye.video import detector as det
+    from allaganeye.video import gpu_detector
+    from allaganeye.video.capture_region import FULL_FRAME
+    from pathlib import Path
+
+    sentinel = CaptureRegion(0.0, 0.10, 1.0, 0.18, confidence=0.9, source="band")
+    monkeypatch.setattr(det, "_resolve_detect_region", lambda vp, dh: (sentinel, None))
+
+    cpu_calls: list[CaptureRegion] = []
+    gpu_calls: list[CaptureRegion] = []
+    refine_calls: list[CaptureRegion] = []
+
+    def fake_scan_cpu(*args, **kwargs):
+        cpu_calls.append(kwargs.get("region", FULL_FRAME))
+        return {0.0: 100.0, 1.0: 100.0}
+
+    def fake_scan_gpu(*args, **kwargs):
+        gpu_calls.append(kwargs.get("region", FULL_FRAME))
+        return {0.0: 100.0, 1.0: 100.0}
+
+    def fake_refine(*args, **kwargs):
+        refine_calls.append(kwargs.get("region", FULL_FRAME))
+        return []
+
+    monkeypatch.setattr(det, "_scan_cpu", fake_scan_cpu)
+    monkeypatch.setattr(gpu_detector, "scan_gpu", fake_scan_gpu)
+    monkeypatch.setattr(det, "_refine_blackout_regions", fake_refine)
+
+    # vtuber=True is required so Stage 0 resolves the band anchor; without it
+    # the gate (B4-rev) keeps detect_region=FULL_FRAME and the sentinel from
+    # the monkeypatched _resolve_detect_region would not reach the call sites.
+    # CPU path
+    det.detect_match_boundaries(
+        Path("test.mp4"),
+        duration_hint=2.0,
+        sample_interval=1.0,
+        min_match_duration=0.5,
+        use_gpu=False,
+        vtuber=True,
+    )
+    # GPU path
+    det.detect_match_boundaries(
+        Path("test.mp4"),
+        duration_hint=2.0,
+        sample_interval=1.0,
+        min_match_duration=0.5,
+        use_gpu=True,
+        vtuber=True,
+    )
+
+    assert cpu_calls == [sentinel]
+    assert gpu_calls == [sentinel]
+    # Pass2 runs in both invocations.
+    assert refine_calls == [sentinel, sentinel]
+
+
+# ============================================================
+# #810: region_callback seam (capture_regions 永続化の配線)
+# ============================================================
+
+
+_TIMELINE_RESULT_UNSET = object()  # sentinel: timeline_result が明示指定されていない
+
+
+@overload
+def _detect_with_region_callback(
+    monkeypatch,
+    *,
+    vtuber: bool,
+    resolve_result: object = ...,
+    timeline_result: object = ...,
+    return_result: Literal[True],
+    **kwargs: object,
+) -> tuple[list, list[MatchBoundary]]: ...
+
+
+@overload
+def _detect_with_region_callback(
+    monkeypatch,
+    *,
+    vtuber: bool,
+    resolve_result: object = ...,
+    timeline_result: object = ...,
+    return_result: Literal[False] = ...,
+    **kwargs: object,
+) -> list: ...
+
+
+def _detect_with_region_callback(
+    monkeypatch,
+    *,
+    vtuber,
+    resolve_result=None,
+    timeline_result=_TIMELINE_RESULT_UNSET,
+    return_result=False,
+    **kwargs,
+):
+    """共通ハーネス: scan/refine を stub し region_callback の発火を捕捉する。
+
+    timeline_result: 省略時は vtuber_timeline を monkeypatch しない (従来挙動)。
+        明示指定 (None / tuple) 時のみ vtuber_timeline.detect_matches_timeline を
+        monkeypatch して指定値を返す。
+    return_result: True 時は (fired, result) tuple を返す (返り値 assert 用)。
+    """
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+    from allaganeye.video.capture_region import RegionTimeline
+
+    if resolve_result is not None:
+        monkeypatch.setattr(
+            det, "_resolve_detect_region", lambda vp, dh: resolve_result
+        )
+    if timeline_result is not _TIMELINE_RESULT_UNSET:
+        from allaganeye.video import vtuber_timeline
+
+        monkeypatch.setattr(
+            vtuber_timeline,
+            "detect_matches_timeline",
+            lambda *a, **k: timeline_result,
+        )
+    monkeypatch.setattr(
+        det, "_scan_cpu", lambda *a, **kw: {0.0: 100.0, 1.0: 5.0, 2.0: 100.0}
+    )
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **kw: [])
+
+    fired: list[RegionTimeline] = []
+    result = det.detect_match_boundaries(
+        Path("test.mp4"),
+        duration_hint=3.0,
+        sample_interval=1.0,
+        min_match_duration=0.5,
+        use_gpu=False,
+        vtuber=vtuber,
+        region_callback=fired.append,
+        **kwargs,
+    )
+    if return_result:
+        return fired, result
+    return fired
+
+
+def test_region_callback_standard_path_full_frame(monkeypatch):
+    fired = _detect_with_region_callback(monkeypatch, vtuber=False)
+    assert len(fired) == 1
+    assert fired[0].coarse.is_full_frame()
+    assert fired[0].fallback_reason is None
+    assert fired[0].segments == []
+
+
+def test_region_callback_vtuber_band(monkeypatch):
+    from allaganeye.video.capture_region import CaptureRegion
+
+    band = CaptureRegion(0.1, 0.0, 0.76, 0.042, confidence=0.9, source="band")
+    fired = _detect_with_region_callback(
+        monkeypatch, vtuber=True, resolve_result=(band, None)
+    )
+    assert len(fired) == 1
+    assert fired[0].coarse == band
+    assert fired[0].fallback_reason is None
+
+
+def test_region_callback_vtuber_degraded_carries_reason(monkeypatch):
+    from allaganeye.video.capture_region import FULL_FRAME
+
+    fired = _detect_with_region_callback(
+        monkeypatch, vtuber=True, resolve_result=(FULL_FRAME, "anchor_error")
+    )
+    assert len(fired) == 1
+    assert fired[0].coarse.is_full_frame()
+    assert fired[0].fallback_reason == "anchor_error"
+
+
+def test_region_callback_masked_fallback_reports_mask_rect(monkeypatch):
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+    from allaganeye.video.capture_region import CaptureRegion, RegionTimeline
+
+    rect = CaptureRegion(0.05, 0.1, 0.8, 0.75, confidence=0.8, source="tierA")
+    segments = [{"start": 10.0, "end": 500.0, "type": "fl_match"}]
+    monkeypatch.setattr(
+        det, "_detect_masked_fallback", lambda *a, **kw: (segments, rect)
+    )
+    # 標準 Pass 1 が 0 blackout -> masked auto-trigger (#821 と同じ経路)
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **kw: {0.0: 100.0, 1.0: 100.0})
+
+    fired: list[RegionTimeline] = []
+    result = det.detect_match_boundaries(
+        Path("test.mp4"),
+        duration_hint=2.0,
+        sample_interval=1.0,
+        min_match_duration=0.5,
+        use_gpu=False,
+        region_callback=fired.append,
+    )
+    assert result == segments
+    assert len(fired) == 1
+    assert fired[0].coarse == rect
+    assert fired[0].fallback_reason is None
+
+
+def test_region_callback_masked_declined_fires_once_full_frame(monkeypatch):
+    """round-3 R3-2: masked auto-trigger で fallback が None (mask 不発見) を返し
+    標準 path に fall-through した run でも、region_callback は FULL_FRAME で
+    ちょうど 1 回だけ発火する (double-fire / zero-fire regression pin)。"""
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+    from allaganeye.video.capture_region import RegionTimeline
+
+    monkeypatch.setattr(det, "_detect_masked_fallback", lambda *a, **kw: None)
+    # all-bright -> blackout_times 空 -> masked auto-trigger -> None -> 標準続行
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **kw: {0.0: 100.0, 1.0: 100.0})
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **kw: [])
+
+    fired: list[RegionTimeline] = []
+    det.detect_match_boundaries(
+        Path("test.mp4"),
+        duration_hint=2.0,
+        sample_interval=1.0,
+        min_match_duration=0.5,
+        use_gpu=False,
+        region_callback=fired.append,
+    )
+    assert len(fired) == 1
+    assert fired[0].coarse.is_full_frame()
+    assert fired[0].fallback_reason is None
+
+
+def test_resolve_detect_region_returns_reason_tuple(monkeypatch):
+    # #810: 縮退 provenance を呼び出し側へ返す (metadata へ記録するため)
+    from pathlib import Path
+
+    from allaganeye.video import capture_region as cr
+    from allaganeye.video import detector as det
+
+    # (a) 例外 -> anchor_error
+    def _boom(**kw):
+        raise RuntimeError("anchor exploded")
+
+    monkeypatch.setattr(cr, "detect_scorebar_band_region", _boom)
+    region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+    assert reason == "anchor_error"
+
+    # (b) consensus 不成立 (非例外 FULL_FRAME) -> consensus_miss
+    monkeypatch.setattr(cr, "detect_scorebar_band_region", lambda **kw: cr.FULL_FRAME)
+    region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region.is_full_frame()
+    assert reason == "consensus_miss"
+
+    # (c) 解決成功 -> reason なし
+    band = cr.CaptureRegion(0.1, 0.0, 0.76, 0.042, confidence=0.9, source="band")
+    monkeypatch.setattr(cr, "detect_scorebar_band_region", lambda **kw: band)
+    region, reason = det._resolve_detect_region(Path("dummy.mp4"), 400.0)
+    assert region == band
+    assert reason is None
+
+
+# ============================================================
+# Task B4-rev: --vtuber gate on Stage 0 anchor (OBS bit-exact fix)
+# ============================================================
+
+
+def test_detect_has_vtuber_param_defaulting_false():
+    from allaganeye.video import detector as det
+    import inspect
+
+    sig = inspect.signature(det.detect_match_boundaries)
+    assert "vtuber" in sig.parameters
+    assert sig.parameters["vtuber"].default is False
+
+
+# ============================================================
+# Task D1: band_region/vtuber threading + trailing-drop VTuber gate (Phase 2)
+# ============================================================
+
+
+def _vtuber_filter_capture(seen: dict):
+    """Build a filter_blackouts_with_scorebar stand-in that records kwargs.
+
+    Mirrors the real signature (allaganeye/video/scorebar.py) so the
+    keyword-only block (band_region / localize / audio_hits / stats /
+    progress_callback) binds exactly as the production call site passes it.
+    Returns every region classified as ``match_boundary`` so segments survive
+    into the trailing-drop stage.
+    """
+
+    def filter_side_effect(
+        video_path,
+        regions,
+        duration,
+        height,
+        workers=None,
+        *,
+        band_region=FULL_FRAME,
+        localize=False,
+        audio_hits=None,
+        stats=None,
+        progress_callback=None,
+    ):
+        seen["band_region"] = band_region
+        seen["localize"] = localize
+        return regions, ["match_boundary"] * len(regions)
+
+    return filter_side_effect
+
+
+@patch("allaganeye.video.detector._resolve_detect_region")
+@patch("allaganeye.video.detector._flag_post_match_trailing")
+@patch("allaganeye.video.detector._probe_single_frame")
+@patch("allaganeye.video.detector._decode_chunk_cpu")
+def test_vtuber_threads_filter_kwargs_and_gates_trailing_drop(
+    mock_chunk, mock_probe, mock_trailing, mock_resolve
+):
+    """Behavioral: vtuber=True threads band_region/vtuber into the scorebar
+    filter at runtime and skips the trailing post-match flagging (#797 gate).
+
+    Replaces the prior inspect.getsource static checks: this exercises the
+    real call path so an early return or refactor that breaks the gate fails
+    here (the static substring tests would still pass).
+    """
+    # One blackout region around t=600 (single match boundary).
+    mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kw: {
+        t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts
+    }
+    mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+        5.0 if 593.0 <= t <= 607.0 else 128.0
+    )
+    # Passthrough so the assertion is "was it called", independent of segments.
+    mock_trailing.side_effect = lambda segs, *a, **k: segs
+    # Isolate from real ffmpeg/localize I/O; return a distinct (non-FULL_FRAME)
+    # region so band_region threading is observable, not a degraded default.
+    band = CaptureRegion(0.1, 0.1, 0.8, 0.2, confidence=0.9, source="tierB")
+    mock_resolve.return_value = (band, None)
+
+    seen: dict = {}
+    with patch(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
+        side_effect=_vtuber_filter_capture(seen),
+    ):
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1800.0,
+            sample_interval=1.0,
+            min_match_duration=300.0,
+            src_resolution=(1920, 1080),
+            vtuber=True,
+        )
+
+    # filter received the resolved band region and the localize flag at runtime.
+    assert seen["localize"] is True
+    assert seen["band_region"] is not None
+    assert seen["band_region"] is band
+    # VTuber path must NOT run the trailing post-match flagging (#797 / #805).
+    mock_trailing.assert_not_called()
+
+
+@patch("allaganeye.video.detector._flag_post_match_trailing")
+@patch("allaganeye.video.detector._probe_single_frame")
+@patch("allaganeye.video.detector._decode_chunk_cpu")
+def test_obs_runs_trailing_drop_and_filter_sees_vtuber_false(
+    mock_chunk, mock_probe, mock_trailing
+):
+    """Behavioral OBS regression guard: vtuber=False (default OBS path) keeps
+    running the trailing post-match flagging and reports vtuber=False to the
+    scorebar filter.
+
+    Pairs with the vtuber=True test to pin the gate from both sides so a
+    regression that drops the ``not vtuber`` guard is caught.
+    """
+    mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kw: {
+        t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts
+    }
+    mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+        5.0 if 593.0 <= t <= 607.0 else 128.0
+    )
+    mock_trailing.side_effect = lambda segs, *a, **k: segs
+
+    seen: dict = {}
+    with patch(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
+        side_effect=_vtuber_filter_capture(seen),
+    ):
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1800.0,
+            sample_interval=1.0,
+            min_match_duration=300.0,
+            src_resolution=(1920, 1080),
+        )
+
+    assert seen["localize"] is False
+    # OBS path runs the trailing post-match flagging exactly once.
+    mock_trailing.assert_called_once()
+
+
+@patch("allaganeye.video.detector._flag_post_match_trailing")
+@patch("allaganeye.video.detector._probe_single_frame")
+@patch("allaganeye.video.detector._decode_chunk_cpu")
+def test_keep_trailing_gates_trailing_drop(mock_chunk, mock_probe, mock_trailing):
+    """keep_trailing=True opts out of the trailing post-match flagging (#805).
+
+    Pairs with test_obs_runs_trailing_drop_* (which proves the default
+    keep_trailing=False path DOES flag) to pin the gate from both sides:
+    flipping --keep-trailing must be the only thing that suppresses the call.
+    """
+    mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kw: {
+        t: 5.0 if 598.0 <= t <= 602.0 else 128.0 for t in ts
+    }
+    mock_probe.side_effect = lambda p, t, region=FULL_FRAME: (
+        5.0 if 593.0 <= t <= 607.0 else 128.0
+    )
+    mock_trailing.side_effect = lambda segs, *a, **k: segs
+
+    with patch(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar",
+        side_effect=_vtuber_filter_capture({}),
+    ):
+        detect_match_boundaries(
+            Path("test.mp4"),
+            duration_hint=1800.0,
+            sample_interval=1.0,
+            min_match_duration=300.0,
+            src_resolution=(1920, 1080),
+            keep_trailing=True,
+        )
+
+    # --keep-trailing -> the drop helper is never invoked, so the final
+    # segment survives untouched.
+    mock_trailing.assert_not_called()
+
+
+# ============================================================
+# TestDecodeGrayRaw / TestProbeFrameGray2d (masked-OBS A2)
+# ============================================================
+
+
+def test_probe_frame_gray2d_returns_2d(monkeypatch):
+    buf = bytes(range(256)) * (det._FRAME_SIZE // 256 + 1)
+    monkeypatch.setattr(det, "_decode_gray_raw", lambda v, t: buf[: det._FRAME_SIZE])
+    frame = det._probe_frame_gray2d(det.Path("x.mp4"), 1.0)
+    assert frame is not None
+    assert frame.shape == (det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH)
+    assert frame.dtype == np.uint8
+
+
+def test_probe_frame_gray2d_none_on_decode_failure(monkeypatch):
+    monkeypatch.setattr(det, "_decode_gray_raw", lambda v, t: None)
+    assert det._probe_frame_gray2d(det.Path("x.mp4"), 1.0) is None
+
+
+def test_probe_single_frame_regression_via_shared_decoder(monkeypatch):
+    # Extraction must preserve _probe_single_frame brightness exactly.
+    buf = bytes([10]) * det._FRAME_SIZE
+    monkeypatch.setattr(det, "_decode_gray_raw", lambda v, t: buf)
+    assert det._probe_single_frame(det.Path("x.mp4"), 1.0) == 10.0
+    monkeypatch.setattr(det, "_decode_gray_raw", lambda v, t: None)
+    assert det._probe_single_frame(det.Path("x.mp4"), 1.0) == 255.0
+
+
+# ============================================================
+# TestResolveMaskedRegion (masked-OBS A3)
+# ============================================================
+
+
+def _masked_frames():
+    out = []
+    for v in (5, 200, 5, 200):
+        f = np.full((det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH), v, dtype=np.uint8)
+        f[120:180, 0:120] = 200  # static bright mask, bottom-left
+        out.append(f)
+    return out
+
+
+def test_resolve_masked_region_finds_mask_free_rect(monkeypatch):
+    seq = iter(_masked_frames() * 20)
+    monkeypatch.setattr(
+        det, "_probe_frame_gray2d", lambda v, t: next(seq, _masked_frames()[0])
+    )
+    region = det._resolve_masked_region(det.Path("x.mp4"), 600.0, None)
+    assert not region.is_full_frame()
+
+
+def test_resolve_masked_region_full_frame_when_no_frames(monkeypatch):
+    monkeypatch.setattr(det, "_probe_frame_gray2d", lambda v, t: None)
+    assert det._resolve_masked_region(det.Path("x.mp4"), 600.0, None).is_full_frame()
+
+
+def test_resolve_masked_region_swallows_exceptions(monkeypatch):
+    def boom(v, t):
+        raise RuntimeError("decode blew up")
+
+    monkeypatch.setattr(det, "_probe_frame_gray2d", boom)
+    assert det._resolve_masked_region(det.Path("x.mp4"), 600.0, None).is_full_frame()
+
+
+def test_resolve_masked_region_warns_on_decode_failures(monkeypatch, caplog):
+    # site 14: silent drop 廃止 pin -- decode None が 1 つでもあれば warning に
+    # "N/M" が含まれる。戻り値 (region) は従来どおり有効 frame から解決。
+    import logging
+
+    # Return None for some frames (decode failure), valid frames for others
+    seq = iter(_masked_frames() * 20)
+    call_count = {"n": 0}
+
+    def _sometimes_none(v, t):
+        call_count["n"] += 1
+        # every 3rd frame returns None (decode failure)
+        if call_count["n"] % 3 == 0:
+            return None
+        return next(seq, _masked_frames()[0])
+
+    monkeypatch.setattr(det, "_probe_frame_gray2d", _sometimes_none)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        det._resolve_masked_region(det.Path("x.mp4"), 600.0, None)
+    # at least one warning must mention "N/M failed" decode pattern
+    assert any(re.search(r"\d+/\d+ failed", r.message) for r in caplog.records), (
+        f"Expected decode failure warning with N/M, got: {[r.message for r in caplog.records]}"
+    )
+
+
+def test_resolve_masked_region_warns_on_exception_fallback(monkeypatch, caplog):
+    # site 14: except Exception -> FULL_FRAME 縮退時に warning 必須 (現状 log ゼロの廃止)。
+    import logging
+
+    def boom(v, t):
+        raise RuntimeError("decode blew up")
+
+    monkeypatch.setattr(det, "_probe_frame_gray2d", boom)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        region = det._resolve_masked_region(det.Path("x.mp4"), 600.0, None)
+    assert region.is_full_frame()
+    assert any("masked region" in r.message for r in caplog.records), (
+        f"Expected masked region degradation warning, got: {[r.message for r in caplog.records]}"
+    )
+    assert any("degrading to FULL_FRAME" in r.message for r in caplog.records), (
+        f"Expected 'degrading to FULL_FRAME' in warning, got: {[r.message for r in caplog.records]}"
+    )
+
+
+# ============================================================
+# Masked fallback (#753 masked-OBS, A-Task 5)
+# ============================================================
+
+
+def _zero_blackout_results():
+    return {float(t): 200.0 for t in range(0, 600, 3)}
+
+
+def test_masked_fallback_triggers_on_zero_blackout(monkeypatch):
+    from allaganeye.video.capture_region import FULL_FRAME as _FF
+
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: _zero_blackout_results())
+    called = {}
+
+    def fake_masked(video_path, **kw):
+        called["hit"] = True
+        return [{"start": 0.0, "end": 300.0}], _FF
+
+    monkeypatch.setattr(det, "_detect_masked_fallback", fake_masked)
+    out = det.detect_match_boundaries(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        use_gpu=False,
+        src_resolution=(1920, 1080),
+    )
+    assert called.get("hit") is True
+    assert out == [{"start": 0.0, "end": 300.0}]
+
+
+def test_masked_fallback_not_triggered_when_blackouts_present(monkeypatch):
+    # OBS bit-exact gate: blackouts present + masked=False -> fallback NOT called.
+    results = _zero_blackout_results()
+    results[300.0] = 2.0  # one blackout frame
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: results)
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **k: [])
+    called = {}
+
+    def _record_and_none(*a, **k):
+        called["hit"] = True
+        return None
+
+    monkeypatch.setattr(det, "_detect_masked_fallback", _record_and_none)
+    det.detect_match_boundaries(
+        det.Path("x.mp4"), duration_hint=600.0, use_gpu=False, src_resolution=None
+    )
+    assert "hit" not in called
+
+
+def test_masked_fallback_forced_even_with_blackouts(monkeypatch):
+    from allaganeye.video.capture_region import FULL_FRAME as _FF
+
+    results = _zero_blackout_results()
+    results[300.0] = 2.0
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: results)
+    monkeypatch.setattr(
+        det,
+        "_detect_masked_fallback",
+        lambda *a, **k: ([{"start": 1.0, "end": 2.0}], _FF),
+    )
+    out = det.detect_match_boundaries(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        use_gpu=False,
+        masked=True,
+        src_resolution=(1920, 1080),
+    )
+    assert out == [{"start": 1.0, "end": 2.0}]
+
+
+def test_detect_masked_fallback_returns_none_when_no_region(monkeypatch):
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: det.FULL_FRAME)
+    scan_called = {}
+    monkeypatch.setattr(
+        det, "_scan_cpu", lambda *a, **k: scan_called.setdefault("hit", True) or {}
+    )
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=(1920, 1080),
+        codec="h264",
+        gpu_vendor=None,
+        source_fps_num=60,
+        source_fps_den=1,
+        source_fps=None,
+        audio_hits=None,
+        stats=None,
+    )
+    assert out is None
+    assert "hit" not in scan_called  # short-circuits before scanning
+
+
+def test_detect_masked_fallback_wires_region_band_localize(monkeypatch):
+    from allaganeye.video.capture_region import CaptureRegion
+
+    fake_region = CaptureRegion(0.0, 0.0, 1.0, 0.3, source="tierA")
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: fake_region)
+    seen = {}
+
+    def fake_scan(video_path, dur, si, thr, workers, cb, **kw):
+        seen["scan_region"] = kw.get("region")
+        return {0.0: 2.0, 3.0: 2.0, 100.0: 200.0}
+
+    monkeypatch.setattr(det, "_scan_cpu", fake_scan)
+
+    def fake_refine(video_path, regions, thr, dur, workers, **kw):
+        seen["refine_region"] = kw.get("region")
+        return [(0.0, 3.0)]
+
+    monkeypatch.setattr(det, "_refine_blackout_regions", fake_refine)
+
+    def fake_filter(video_path, regions, dur, height, workers, **kw):
+        seen["band_region"] = kw.get("band_region")
+        seen["localize"] = kw.get("localize")
+        return regions, ["match_boundary"]
+
+    monkeypatch.setattr(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar", fake_filter
+    )
+    monkeypatch.setattr(
+        det,
+        "_filter_and_extract_segments",
+        lambda *a, **k: [{"start": 0.0, "end": 9.0}],
+    )
+
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=(1920, 1080),
+        codec="h264",
+        gpu_vendor=None,
+        source_fps_num=60,
+        source_fps_den=1,
+        source_fps=None,
+        audio_hits=None,
+        stats=None,
+    )
+    assert out is not None
+    segments, region_out = out
+    assert segments == [{"start": 0.0, "end": 9.0}]
+    assert region_out is fake_region
+    assert seen["scan_region"] is fake_region
+    assert seen["refine_region"] is fake_region
+    assert seen["band_region"] is det.FULL_FRAME
+    assert seen["localize"] is True
+
+
+# ============================================================
+# A-Task 8: brightness-hint dark+even sampling
+# ============================================================
+
+
+def test_resolve_masked_region_hint_samples_darkest(monkeypatch):
+    # brightness_hint marks 3 very-dark timestamps (the masked blackouts).
+    DUR = 1000.0
+    hint = {
+        float(t): (5.0 if t in (100, 300, 700) else 200.0) for t in range(0, 1000, 10)
+    }
+    sampled = []
+
+    def fake(v, t):
+        sampled.append(round(t, 3))
+        return np.zeros((det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH), dtype=np.uint8)
+
+    monkeypatch.setattr(det, "_probe_frame_gray2d", fake)
+    det._resolve_masked_region(det.Path("x.mp4"), DUR, None, brightness_hint=hint)
+    # The 3 darkest timestamps must be among those decoded (dark-moment sampling).
+    assert {100.0, 300.0, 700.0}.issubset(set(sampled))
+
+
+def test_resolve_masked_region_hint_finds_region(monkeypatch):
+    DUR = 1000.0
+    dark = {100.0, 300.0, 700.0}
+    hint = {float(t): (5.0 if t in dark else 200.0) for t in range(0, 1000, 10)}
+
+    def fake(v, t):
+        # dark timestamps -> game region dark (5); others -> game bright (200).
+        base = 5 if t in dark else 200
+        f = np.full((det._SAMPLE_HEIGHT, det._SAMPLE_WIDTH), base, dtype=np.uint8)
+        f[120:180, 0:120] = 200  # static bright mask, bottom-left
+        return f
+
+    monkeypatch.setattr(det, "_probe_frame_gray2d", fake)
+    r = det._resolve_masked_region(det.Path("x.mp4"), DUR, None, brightness_hint=hint)
+    assert not r.is_full_frame()  # dark+even sampling recovers the region
+
+
+def test_resolve_masked_region_no_hint_unchanged(monkeypatch):
+    # Without a hint, behavior is the prior even-only sampling (backward compat).
+    seq = iter(_masked_frames() * 40)
+    monkeypatch.setattr(
+        det, "_probe_frame_gray2d", lambda v, t: next(seq, _masked_frames()[0])
+    )
+    r = det._resolve_masked_region(det.Path("x.mp4"), 600.0, None)
+    assert not r.is_full_frame()
+
+
+def test_detect_masked_fallback_threads_brightness_hint(monkeypatch):
+    seen = {}
+
+    def fake_resolve(video_path, duration_hint, workers, *, brightness_hint=None):
+        seen["hint"] = brightness_hint
+        return det.FULL_FRAME  # short-circuit (returns None) -- we only check wiring
+
+    monkeypatch.setattr(det, "_resolve_masked_region", fake_resolve)
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=(1920, 1080),
+        codec="h264",
+        gpu_vendor=None,
+        source_fps_num=60,
+        source_fps_den=1,
+        source_fps=None,
+        audio_hits=None,
+        stats=None,
+        brightness_results={1.0: 5.0, 2.0: 200.0},
+    )
+    assert out is None
+    assert seen["hint"] == {1.0: 5.0, 2.0: 200.0}
+
+
+def test_saturated_column_runs_gap_merge_and_empty():
+    import numpy as np
+    import cv2
+    from allaganeye.video.detector import (
+        _saturated_column_runs,
+        _SCOREBAR_SCAN_MAX_GAP_PX,
+    )
+
+    # Build a synthetic band with two saturated (high S, high V) regions.
+    # Using pure blue (BGR 255,0,0 = RGB 0,0,255) -> HSV S=255, V=255 (fully
+    # saturated, well above SAT_THRESHOLD=80 and VAL_THRESHOLD=60).
+    h, w = 20, 200
+    band = np.zeros((h, w, 3), dtype=np.uint8)
+    # Region A: columns 10..39 (inclusive) = 30 px
+    band[:, 10:40, 2] = 255  # RGB blue
+    # Region B: starts at 40 + _SCOREBAR_SCAN_MAX_GAP_PX (gap exactly MAX_GAP px
+    # apart from region A end at 39, so gap = (40 + MAX_GAP) - 39 - 1 = MAX_GAP)
+    # -> should merge into a single run.
+    b_start = 40 + _SCOREBAR_SCAN_MAX_GAP_PX
+    band[:, b_start : b_start + 40, 2] = 255  # RGB blue
+    runs = _saturated_column_runs(band, cv2)
+    assert len(runs) == 1
+    assert runs[0][0] <= 10 and runs[0][1] >= b_start + 39
+
+    # Gap of MAX_GAP+1 px -> NOT merged (exclusive boundary): two separate
+    # runs.  Teeth on the gap-merge condition: a regression widening the bound
+    # would wrongly merge these and fail this assertion.
+    w2 = 60 + 2 * _SCOREBAR_SCAN_MAX_GAP_PX
+    band2 = np.zeros((h, w2, 3), dtype=np.uint8)
+    band2[:, 10:40, 2] = 255  # region A: cols 10..39
+    c_start = 40 + _SCOREBAR_SCAN_MAX_GAP_PX + 1  # gap = MAX_GAP+1 (> MAX_GAP)
+    band2[:, c_start : c_start + 15, 2] = 255  # region C
+    runs2 = _saturated_column_runs(band2, cv2)
+    assert len(runs2) == 2
+
+    # All-black band -> no saturated runs
+    assert _saturated_column_runs(np.zeros((h, w, 3), dtype=np.uint8), cv2) == []
+
+
+def test_emblem_metrics_bright_vs_dark():
+    import numpy as np
+    import cv2
+    from allaganeye.video.detector import _emblem_metrics
+
+    # Bright saturated region: high R channel -> high sat in HSV
+    region = np.random.default_rng(0).integers(0, 256, (40, 40, 3), dtype=np.uint8)
+    region[:, :, 0] = 220  # raise R channel -> ensure some saturation and brightness
+    sat, edge = _emblem_metrics(region, cv2)
+    assert sat > 0.0 and edge > 0.0
+
+    # All-black -> no bright pixels -> mean_sat == 0.0
+    dark = np.zeros((40, 40, 3), dtype=np.uint8)
+    d_sat, _d_edge = _emblem_metrics(dark, cv2)
+    assert d_sat == 0.0
+
+
+def test_proc_deadline_watchdog_kills_when_block_exceeds_deadline():
+    import time
+    from unittest.mock import Mock
+    from allaganeye.video.detector import _proc_deadline_watchdog
+
+    proc = Mock()
+    with _proc_deadline_watchdog(proc, 0.05):
+        time.sleep(0.25)  # outlive deadline (simulates stall)
+    proc.kill.assert_called_once()  # fire-side red proof
+
+
+def test_proc_deadline_watchdog_no_kill_when_fast():
+    from unittest.mock import Mock
+    from allaganeye.video.detector import _proc_deadline_watchdog
+
+    proc = Mock()
+    with _proc_deadline_watchdog(proc, 5.0):
+        pass  # completes immediately (healthy decode)
+    proc.kill.assert_not_called()  # no fire (bit-exact guarantee)
+
+
+def test_decode_chunk_cpu_v2_watchdog_fire_returns_fallback(monkeypatch):
+    """A watchdog-killed stall degrades to the 255.0 decode-failed fallback,
+    not a propagated VideoProcessingError that fails the whole detect (#842 codex).
+
+    When the watchdog kills a stalled ffmpeg, the blocked read in
+    ``_sample_chunk_frames`` resumes at EOF with too few frames and (for a
+    non-tail chunk) trips the dynamic frame-count guard, raising
+    ``VideoProcessingError``.  That must be treated as a decode failure (graceful
+    255.0 fallback), NOT re-raised to fail the whole detection.
+    """
+    import contextlib
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from allaganeye.exceptions import VideoProcessingError
+    from allaganeye.video import detector as det
+
+    @contextlib.contextmanager
+    def _fired_watchdog(_proc, _deadline_s):
+        yield SimpleNamespace(fired=True)
+
+    def _raise_vfr(**_kwargs):
+        raise VideoProcessingError("Dynamic VFR detection: chunk emitted 0 frames")
+
+    fake_proc = MagicMock()
+    fake_proc.returncode = -9
+    fake_cm = MagicMock()
+    fake_cm.__enter__.return_value = fake_proc
+    fake_cm.__exit__.return_value = False
+
+    monkeypatch.setattr(det, "_proc_deadline_watchdog", _fired_watchdog)
+    monkeypatch.setattr(det, "_sample_chunk_frames", _raise_vfr)
+    monkeypatch.setattr(det, "find_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(det.subprocess, "Popen", MagicMock(return_value=fake_cm))
+
+    chunk_ts = [0.0, 3.0, 6.0]
+    result = det._decode_chunk_cpu_v2(
+        video_path=Path("x.mkv"),
+        chunk_timestamps=chunk_ts,
+        chunk_start=0.0,
+        chunk_end=9.0,
+        sample_interval=3.0,
+        fps_num=60,
+        fps_den=1,
+        is_tail_chunk=False,
+    )
+    assert result == {t: 255.0 for t in chunk_ts}
+
+
+# ============================================================
+# _resolve_scorebar_anchor (#822)
+# ============================================================
+
+
+def _make_loc(y_top: int = 12, conf: float = 1.0):
+    """Synthetic ScorebarLocalization for anchor tests."""
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    return ScorebarLocalization(
+        x_left=100, x_right=1820, y_top=y_top, y_bottom=y_top + 36, confidence=conf
+    )
+
+
+def test_resolve_scorebar_anchor_filters_low_conf_hits(monkeypatch):
+    # conf < _ANCHOR_MIN_CONF (0.7) hits are pre-filtered (miss扱い) before
+    # being passed to consensus; with all FP-band hits, min_hits is never reached
+    # -> consensus returns None -> function returns None.
+    from pathlib import Path
+
+    from allaganeye.video import capture_region as cr
+    from allaganeye.video import detector as det
+
+    # probe always returns dummy bytes
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", lambda vp, t: b"x")
+    # localize always returns a low-conf hit (FP band, conf=0.5 < 0.7)
+    monkeypatch.setattr(
+        cr, "localize_from_rgb_bytes", lambda raw, **kw: _make_loc(conf=0.5)
+    )
+
+    result = det._resolve_scorebar_anchor(Path("dummy.mp4"), 400.0)
+    assert result is None
+
+
+def test_resolve_scorebar_anchor_success_returns_median(monkeypatch):
+    # >=5 hits with conf >= 0.7 at similar y_top -> consensus returns median loc
+    from pathlib import Path
+
+    from allaganeye.video import capture_region as cr
+    from allaganeye.video import detector as det
+
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", lambda vp, t: b"x")
+    # return high-conf loc; small y_top variation (within cluster tolerance)
+    call_count = {"n": 0}
+
+    def _high_conf_loc(raw, **kw):
+        call_count["n"] += 1
+        y = 12 + (call_count["n"] % 3)  # y_top in {12, 13, 14}
+        return _make_loc(y_top=y, conf=1.0)
+
+    monkeypatch.setattr(cr, "localize_from_rgb_bytes", _high_conf_loc)
+
+    result = det._resolve_scorebar_anchor(Path("dummy.mp4"), 400.0)
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    assert isinstance(result, ScorebarLocalization)
+    assert (
+        result.confidence == 1.0
+    )  # consensus returns cluster median (all mocked hits conf=1.0)
+
+
+def test_resolve_scorebar_anchor_exception_degrades_none_with_warning(
+    monkeypatch, caplog
+):
+    # When _probe_frame_rgb_hires raises, the function catches it, logs a warning
+    # containing "falls back to position-independent", and returns None.
+    import logging
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+
+    def _boom(vp, t):
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", _boom)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        result = det._resolve_scorebar_anchor(Path("dummy.mp4"), 400.0)
+
+    assert result is None
+    assert any(
+        "falls back to position-independent" in r.message for r in caplog.records
+    ), f"Expected fallback warning, got: {[r.message for r in caplog.records]}"
+
+
+def test_resolve_scorebar_anchor_warns_unknown_probes(monkeypatch, caplog):
+    # When _probe_frame_rgb_hires returns None (decode failure), the function
+    # emits a warning matching r"anchor probes: \d+/\d+ UNKNOWN".
+    import logging
+    from pathlib import Path
+
+    from allaganeye.video import detector as det
+
+    # all probes return None (decode failure -> UNKNOWN)
+    monkeypatch.setattr(det, "_probe_frame_rgb_hires", lambda vp, t: None)
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        result = det._resolve_scorebar_anchor(Path("dummy.mp4"), 400.0)
+
+    assert result is None
+    assert any(
+        re.search(r"anchor probes: \d+/\d+ UNKNOWN", r.message) for r in caplog.records
+    ), f"Expected UNKNOWN warning, got: {[r.message for r in caplog.records]}"
+
+
+# ===========================================================================
+# B4: _detect_masked_fallback anchor threading (#822)
+# ===========================================================================
+
+
+def test_masked_fallback_warns_when_anchor_unresolved(monkeypatch, caplog):
+    """When _resolve_scorebar_anchor returns None, a warning is emitted."""
+    import logging
+
+    from allaganeye.video.capture_region import CaptureRegion
+
+    fake_region = CaptureRegion(0.0, 0.0, 1.0, 0.3, source="tierA")
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: fake_region)
+    monkeypatch.setattr(det, "_resolve_scorebar_anchor", lambda *a, **k: None)
+    monkeypatch.setattr(
+        det, "_scan_cpu", lambda *a, **k: {0.0: 2.0, 3.0: 2.0, 100.0: 200.0}
+    )
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **k: [(0.0, 3.0)])
+
+    filter_calls = {}
+
+    def fake_filter(video_path, regions, dur, height, workers, **kw):
+        filter_calls["anchor"] = kw.get("anchor")
+        return regions, ["match_boundary"]
+
+    monkeypatch.setattr(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar", fake_filter
+    )
+    monkeypatch.setattr(
+        det,
+        "_filter_and_extract_segments",
+        lambda *a, **k: [{"start": 0.0, "end": 9.0}],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        out = det._detect_masked_fallback(
+            det.Path("x.mp4"),
+            duration_hint=600.0,
+            sample_interval=3.0,
+            blackout_threshold=15.0,
+            min_match_duration=300.0,
+            min_blackout_duration=3.0,
+            use_gpu=False,
+            workers=None,
+            src_resolution=(1920, 1080),
+            codec="h264",
+            gpu_vendor=None,
+            source_fps_num=60,
+            source_fps_den=1,
+            source_fps=None,
+            audio_hits=None,
+            stats=None,
+        )
+
+    assert out is not None
+    assert any("scorebar anchor unresolved" in r.message for r in caplog.records), (
+        f"Expected anchor warning, got: {[r.message for r in caplog.records]}"
+    )
+    # anchor=None is threaded to filter when unresolved
+    assert filter_calls.get("anchor") is None
+
+
+def test_masked_fallback_threads_anchor_to_filter(monkeypatch):
+    """When _resolve_scorebar_anchor returns a valid anchor, it is passed to filter."""
+    from allaganeye.video.capture_region import CaptureRegion, ScorebarLocalization
+
+    fake_region = CaptureRegion(0.0, 0.0, 1.0, 0.3, source="tierA")
+    fake_anchor = ScorebarLocalization(
+        x_left=100, x_right=1820, y_top=12, y_bottom=48, confidence=1.0
+    )
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: fake_region)
+    monkeypatch.setattr(det, "_resolve_scorebar_anchor", lambda *a, **k: fake_anchor)
+    monkeypatch.setattr(
+        det, "_scan_cpu", lambda *a, **k: {0.0: 2.0, 3.0: 2.0, 100.0: 200.0}
+    )
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **k: [(0.0, 3.0)])
+
+    filter_calls = {}
+
+    def fake_filter(video_path, regions, dur, height, workers, **kw):
+        filter_calls["anchor"] = kw.get("anchor")
+        return regions, ["match_boundary"]
+
+    monkeypatch.setattr(
+        "allaganeye.video.scorebar.filter_blackouts_with_scorebar", fake_filter
+    )
+    monkeypatch.setattr(
+        det,
+        "_filter_and_extract_segments",
+        lambda *a, **k: [{"start": 0.0, "end": 9.0}],
+    )
+
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=(1920, 1080),
+        codec="h264",
+        gpu_vendor=None,
+        source_fps_num=60,
+        source_fps_den=1,
+        source_fps=None,
+        audio_hits=None,
+        stats=None,
+    )
+
+    assert out is not None
+    assert filter_calls.get("anchor") is fake_anchor, (
+        "anchor must be threaded to filter_blackouts_with_scorebar"
+    )
+
+
+# ===========================================================================
+# B5: _validate_match_segments (#822)
+# ===========================================================================
+
+
+def _make_anchor():
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    return ScorebarLocalization(
+        x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+    )
+
+
+def _fake_rgb_bytes():
+    """Minimal non-None raw bytes placeholder (1x1 RGB24)."""
+    return bytes(3)
+
+
+def test_validate_segments_retypes_match_and_keeps_unknown_conservatively(monkeypatch):
+    """PRESENT-quorum segment is re-typed fl_match; all-UNKNOWN segment is kept conservatively (no retype)."""
+    import allaganeye.video.detector as detector
+
+    anchor = _make_anchor()
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},  # real match
+        {"start": 750.0, "end": 1050.0, "type": "unknown"},  # lobby
+    ]
+
+    call_counter = {"n": 0}
+
+    def fake_probe(vp, t):
+        call_counter["n"] += 1
+        # First segment probes (t in 100..700): return raw bytes -> present
+        # Second segment probes (t in 750..1050): return None -> UNKNOWN
+        # Use timestamp range: match segment 100-700, lobby 750-1050
+        if 100.0 < t < 700.0:
+            return _fake_rgb_bytes()
+        return None  # lobby probes: raw None -> UNKNOWN sample
+
+    def fake_localize_at_anchor(raw, anchor_arg, *, height, width):
+        # Called only when raw is not None (match segment)
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(
+        detector, "localize_from_rgb_bytes_at_anchor", fake_localize_at_anchor
+    )
+
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=2, stats=None
+    )
+
+    # First segment: 15/15 PRESENT -> kept, re-typed fl_match
+    # Second segment: 15/15 UNKNOWN -> kept conservatively (all-UNKNOWN path)
+    # Both kept, but first is fl_match, second remains unknown
+    assert len(result) == 2
+    assert result[0]["type"] == "fl_match"
+    # Second segment: all-UNKNOWN -> kept conservatively, type unchanged
+    assert result[1]["type"] == "unknown"
+
+
+def test_validate_segments_lobby_is_dropped_when_absent(monkeypatch):
+    """Segment with 0 PRESENT (15 ABSENT) is dropped; match segment (PRESENT) is kept."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Two segments: match (kept) + lobby (dropped).
+    # A second segment is needed to avoid the fail-safe (triggered when ALL dropped).
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},  # match
+        {"start": 750.0, "end": 1050.0, "type": "unknown"},  # lobby
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    # workers=1 前提: probe は segment ごとに直列実行されるため call-count で segment を割れる。
+    # 並列化するとこの前提は崩れる (その場合は timestamp 範囲で判別する)。
+    _localize_counter = {"n": 0}
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        # Use call-count approach: first 15 calls (match segment) -> PRESENT,
+        # next 15 (lobby segment) -> None (ABSENT).
+        _localize_counter["n"] += 1
+        if _localize_counter["n"] <= 15:
+            return ScorebarLocalization(
+                x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+            )
+        return None  # ABSENT
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Match kept as fl_match, lobby dropped
+    assert len(result) == 1
+    assert result[0]["type"] == "fl_match"
+    assert stats.get("masked_segments_dropped", 0) == 1
+
+
+def test_validate_segments_stats_counts_drops(monkeypatch):
+    """masked_segments_dropped is incremented for each dropped segment."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Three segments: one match (kept), two lobbies (dropped).
+    segments: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "unknown"},  # match
+        {"start": 650.0, "end": 950.0, "type": "unknown"},  # lobby 1
+        {"start": 1000.0, "end": 1300.0, "type": "unknown"},  # lobby 2
+    ]
+
+    call_tracker: dict[str, int] = {"localize_call": 0}
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        call_tracker["localize_call"] += 1
+        count = call_tracker["localize_call"]
+        # First 15 calls -> match segment PRESENT
+        if count <= 15:
+            return ScorebarLocalization(
+                x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+            )
+        # Remaining calls -> lobby ABSENT
+        return None
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    assert stats.get("masked_segments_dropped", 0) == 2
+    assert len(result) == 1
+
+
+def test_validate_segments_all_unknown_keeps_with_warning(monkeypatch, caplog):
+    """Segment with all-UNKNOWN probes is kept conservatively with a warning."""
+    import logging
+
+    import allaganeye.video.detector as detector
+
+    anchor = _make_anchor()
+    segments: list[MatchBoundary] = [{"start": 100.0, "end": 700.0, "type": "unknown"}]
+
+    def fake_probe(vp, t):
+        return None  # raw None -> UNKNOWN sample
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        result = detector._validate_match_segments(
+            Path("x.mp4"), segments, anchor, workers=2, stats=None
+        )
+
+    # Segment kept (all-UNKNOWN -> conservative keep)
+    assert len(result) == 1
+    assert result[0]["type"] == "unknown"  # not re-typed (no positive evidence)
+    # Warning must mention the conservative keep
+    assert any(
+        "UNKNOWN" in r.message and "conservatively" in r.message for r in caplog.records
+    )
+
+
+def test_validate_segments_failsafe_keeps_all_when_everything_dropped(
+    monkeypatch, caplog
+):
+    """When all segments would be dropped, fail-safe returns originals with warning.
+
+    stats["masked_segments_dropped"] must NOT be incremented -- the drops were
+    rolled back and reporting them would be misleading (codex R2 fix).
+    """
+    import logging
+
+    import allaganeye.video.detector as detector
+
+    anchor = _make_anchor()
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},
+        {"start": 750.0, "end": 1050.0, "type": "unknown"},
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return None  # all ABSENT -> both segments would be dropped
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    with caplog.at_level(logging.WARNING, logger="allaganeye.video.detector"):
+        result = detector._validate_match_segments(
+            Path("x.mp4"), segments, anchor, workers=2, stats=stats
+        )
+
+    # Fail-safe: original segments returned unchanged
+    assert len(result) == 2
+    assert result[0]["start"] == 100.0
+    assert result[1]["start"] == 750.0
+    # Drop count must NOT be committed to stats (rolled-back drops not reported)
+    assert stats.get("masked_segments_dropped", 0) == 0
+    # Fail-safe warning must be present and include tentative drop count
+    assert any(
+        ("fail-safe" in r.message or "anchor mistrust" in r.message)
+        and "tentative" in r.message
+        for r in caplog.records
+    )
+
+
+def test_masked_fallback_skips_validation_without_anchor(monkeypatch):
+    """Layer 2 validation is skipped when anchor is None (no src_resolution)."""
+    from allaganeye.video.capture_region import CaptureRegion
+
+    fake_region = CaptureRegion(0.1, 0.1, 0.9, 0.9, source="tierA")
+
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: fake_region)
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: {})
+    monkeypatch.setattr(
+        det,
+        "_refine_blackout_regions",
+        lambda *a, **k: [],
+    )
+    monkeypatch.setattr(
+        det,
+        "_filter_and_extract_segments",
+        lambda *a, **k: [{"start": 10.0, "end": 700.0, "type": "unknown"}],
+    )
+
+    validate_called = {"called": False}
+
+    def fake_validate(vp, segs, anchor, workers, stats, duration_hint=0.0):
+        validate_called["called"] = True
+        return segs
+
+    monkeypatch.setattr(det, "_validate_match_segments", fake_validate)
+
+    # src_resolution=None -> anchor stays None -> Layer 2 must be skipped
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=600.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=None,  # <-- no resolution -> anchor=None -> skip validation
+        codec=None,
+        gpu_vendor=None,
+        source_fps_num=None,
+        source_fps_den=None,
+        source_fps=None,
+        audio_hits=None,
+        stats=None,
+    )
+
+    assert out is not None
+    assert not validate_called["called"], (
+        "_validate_match_segments must NOT be called when anchor is None"
+    )
+
+
+def test_validate_segments_edge_segments_not_retyped(monkeypatch):
+    """Edge segments (touching timeline start/end) are KEPT but NOT re-typed fl_match.
+
+    At-anchor PRESENT majority proves FL content but not completeness (#433
+    semantics: recording started/ended mid-match).  The original type must
+    be preserved.  Non-edge segments with PRESENT majority are still re-typed.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Two segments: one at the timeline start (edge), one in the middle (non-edge).
+    duration = 1800.0
+    segments: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "unknown"},  # edge (start=0)
+        {"start": 900.0, "end": 1500.0, "type": "unknown"},  # non-edge (middle)
+    ]
+
+    def fake_probe(vp, t):
+        return bytes(3)  # non-None -> triggers localize
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        # All probes PRESENT for both segments
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=None, duration_hint=duration
+    )
+
+    # Both kept (majority present), but edge segment keeps original type
+    assert len(result) == 2
+    # Edge segment: type unchanged (not retyped to fl_match)
+    assert result[0]["start"] == 0.0
+    assert result[0]["type"] == "unknown", (
+        "edge segment (start=0) must NOT be retyped to fl_match"
+    )
+    # Non-edge segment: retyped to fl_match
+    assert result[1]["start"] == 900.0
+    assert result[1]["type"] == "fl_match", (
+        "non-edge segment must be retyped to fl_match on PRESENT majority"
+    )
+
+
+def test_detect_masked_fallback_filter_unknown_recomputed_after_layer2(monkeypatch):
+    """filter_unknown is recomputed after Layer 2 drops segments (#433 verbose reconcile).
+
+    When Layer 2 drops a segment, the stats["filter_unknown"] count must
+    reflect the POST-Layer-2 state (not the Layer-1 state) so that verbose
+    output correctly reports the number of unknown-type segments in the
+    final result.
+    """
+    from allaganeye.video.capture_region import CaptureRegion
+
+    fake_region = CaptureRegion(0.1, 0.1, 0.9, 0.9, source="tierA")
+    anchor = _make_anchor()
+
+    # Layer 1 produces 2 segments: one real match (fl_match), one lobby (unknown).
+    layer1_segments: list[MatchBoundary] = [
+        {"start": 10.0, "end": 700.0, "type": "fl_match"},
+        {"start": 750.0, "end": 900.0, "type": "unknown"},  # lobby -> dropped by L2
+    ]
+
+    # Layer 2 drops the unknown/lobby segment -> only 1 kept
+    layer2_result: list[MatchBoundary] = [
+        {"start": 10.0, "end": 700.0, "type": "fl_match"},
+    ]
+
+    monkeypatch.setattr(det, "_resolve_masked_region", lambda *a, **k: fake_region)
+    monkeypatch.setattr(det, "_scan_cpu", lambda *a, **k: {})
+    monkeypatch.setattr(det, "_refine_blackout_regions", lambda *a, **k: [])
+    monkeypatch.setattr(
+        det, "_filter_and_extract_segments", lambda *a, **k: list(layer1_segments)
+    )
+    monkeypatch.setattr(det, "_resolve_scorebar_anchor", lambda *a, **k: anchor)
+    # filter_blackouts_with_scorebar is imported locally inside _detect_masked_fallback;
+    # patch via the scorebar module so the local import picks up the stub.
+    import allaganeye.video.scorebar as sb_mod
+
+    monkeypatch.setattr(
+        sb_mod, "filter_blackouts_with_scorebar", lambda *a, **k: ([], [])
+    )
+    monkeypatch.setattr(
+        det,
+        "_validate_match_segments",
+        lambda vp, segs, anch, workers, stats, duration_hint=0.0: layer2_result,
+    )
+
+    stats: DetectionStats = {"filter_unknown": 1}  # pre-Layer-2 value
+
+    out = det._detect_masked_fallback(
+        det.Path("x.mp4"),
+        duration_hint=1000.0,
+        sample_interval=3.0,
+        blackout_threshold=15.0,
+        min_match_duration=300.0,
+        min_blackout_duration=3.0,
+        use_gpu=False,
+        workers=None,
+        src_resolution=(1920, 1080),
+        codec=None,
+        gpu_vendor=None,
+        source_fps_num=None,
+        source_fps_den=None,
+        source_fps=None,
+        audio_hits=None,
+        stats=stats,
+    )
+
+    assert out is not None
+    segs, _ = out
+    assert len(segs) == 1
+    # After Layer 2, the one remaining segment has type "fl_match" (not unknown).
+    # filter_unknown must have been recomputed to 0 (no unknown-type segments remain).
+    assert stats.get("filter_unknown") == 0, (
+        "filter_unknown must be recomputed after Layer 2 to reflect post-L2 state"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix 4: Onsal recalibration -- quorum boundary cases + zero-gap merge (#822)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_segments_quorum_boundary_present_2_kept(monkeypatch):
+    """present=2 out of 15 valid probes -> meets quorum -> segment KEPT.
+
+    Onsal recalibration: quorum is _L2_PRESENT_QUORUM=2, not strict majority.
+    Even 2 PRESENT out of 15 is enough to keep (p=0.4 Onsal, P(false-drop)~0.5%).
+    A second distinct segment (all-PRESENT) is included so fail-safe does not fire.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    segments: list[MatchBoundary] = [
+        {
+            "start": 0.0,
+            "end": 600.0,
+            "type": "unknown",
+        },  # quorum-boundary (2 PRESENT / 13 ABSENT)
+        {
+            "start": 900.0,
+            "end": 1500.0,
+            "type": "unknown",
+        },  # anchor: all PRESENT (keeps fail-safe at bay)
+    ]
+
+    # Use timestamp range to differentiate segments:
+    # Segment 1: 0-600. 15 probes at k/16 * 600 = 37.5, 75, ..., 562.5
+    #   -> return PRESENT only for first 2 timestamps (<= 75.0), ABSENT for rest.
+    # Segment 2: 900-1500. All -> PRESENT.
+    _call_order: list[float] = []
+
+    def fake_probe(vp, t):
+        _call_order.append(t)
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        t = _call_order[-1]
+        if t < 900.0:
+            # Segment 1: PRESENT only for first 2 probes (t <= 75.0)
+            if t <= 75.0:
+                return ScorebarLocalization(
+                    x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+                )
+            return None  # ABSENT
+        # Segment 2: all PRESENT
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Segment 1: 2/15 PRESENT >= quorum 2 -> kept, re-typed fl_match
+    # Segment 2: 15/15 PRESENT -> kept, re-typed fl_match
+    assert len(result) == 2, f"expected 2 kept segments, got {len(result)}"
+    assert result[0]["start"] == 0.0
+    assert result[0]["type"] == "fl_match", "quorum=2 segment must be kept and retyped"
+    assert result[1]["type"] == "fl_match"
+    assert stats.get("masked_segments_dropped", 0) == 0
+
+
+def test_validate_segments_quorum_boundary_present_1_dropped(monkeypatch):
+    """present=1 out of 15 valid probes -> below quorum -> segment DROPPED.
+
+    Only 1 PRESENT out of 15 does not meet _L2_PRESENT_QUORUM=2.
+    A second all-PRESENT segment is included to keep fail-safe from firing.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    segments: list[MatchBoundary] = [
+        {
+            "start": 0.0,
+            "end": 600.0,
+            "type": "unknown",
+        },  # 1 PRESENT / 14 ABSENT -> dropped
+        {"start": 900.0, "end": 1500.0, "type": "unknown"},  # all PRESENT -> kept
+    ]
+
+    _call_order: list[float] = []
+
+    def fake_probe(vp, t):
+        _call_order.append(t)
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        t = _call_order[-1]
+        if t < 900.0:
+            # Segment 1: PRESENT only for the very first probe (t <= 40.0)
+            if t <= 40.0:
+                return ScorebarLocalization(
+                    x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+                )
+            return None  # ABSENT
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Segment 1: 1/15 PRESENT < quorum 2 -> dropped
+    # Segment 2: 15/15 PRESENT -> kept
+    assert len(result) == 1, f"expected 1 kept segment, got {len(result)}"
+    assert result[0]["start"] == 900.0
+    assert stats.get("masked_segments_dropped", 0) == 1
+
+
+def test_validate_segments_quorum_boundary_present_0_dropped(monkeypatch):
+    """present=0 out of 15 valid probes -> below quorum -> segment DROPPED (lobby case)."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},  # 0 PRESENT -> dropped
+        {"start": 900.0, "end": 1500.0, "type": "unknown"},  # all PRESENT -> kept
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    _call_order: list[float] = []
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        _call_order.append(0)  # just track calls
+        # Determine segment by call number: first 15 -> seg1 (ABSENT), next 15 -> seg2 (PRESENT)
+        n = len(_call_order)
+        if n <= 15:
+            return None  # ABSENT
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    assert len(result) == 1
+    assert result[0]["start"] == 900.0
+    assert stats.get("masked_segments_dropped", 0) == 1
+
+
+def test_validate_segments_zero_gap_merge_two_validated(monkeypatch):
+    """Two adjacent quorum-validated segments with zero gap are merged into one fl_match.
+
+    Zero-gap arises only from a <=6s blackout split at a padded midpoint;
+    real inter-match transitions always have loading+lobby gaps > 0.
+    Both segments must be quorum-validated (not all-UNKNOWN-kept) to merge.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Two adjacent quorum-validated segments with zero gap (end == next.start exactly).
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},  # PRESENT -> fl_match
+        {
+            "start": 700.0,
+            "end": 1200.0,
+            "type": "unknown",
+        },  # zero-gap, PRESENT -> fl_match
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        # All probes PRESENT for both segments
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Zero-gap -> merged into one fl_match spanning 100-1200
+    assert len(result) == 1, f"expected 1 merged segment, got {len(result)}"
+    assert result[0]["start"] == 100.0
+    assert result[0]["end"] == 1200.0
+    assert result[0]["type"] == "fl_match"
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 1
+
+
+def test_validate_segments_zero_gap_merge_chain_three(monkeypatch):
+    """Chain of three adjacent zero-gap quorum-validated segments merge into one."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Three zero-gap adjacent segments: a-b-c all quorum-validated.
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 500.0, "type": "unknown"},
+        {"start": 500.0, "end": 900.0, "type": "unknown"},
+        {"start": 900.0, "end": 1300.0, "type": "unknown"},
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Chain merge: a-b-c -> one segment spanning 100-1300
+    assert len(result) == 1, f"expected 1 merged segment, got {len(result)}"
+    assert result[0]["start"] == 100.0
+    assert result[0]["end"] == 1300.0
+    assert result[0]["type"] == "fl_match"
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 2  # 2 merges for 3 segs
+
+
+def test_validate_segments_zero_gap_no_merge_when_gap_present(monkeypatch):
+    """Segments with a real gap (> 0.01s) are NOT merged even if both are PRESENT."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Two segments with a 50s gap between them (real inter-match transition).
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},
+        {"start": 750.0, "end": 1350.0, "type": "unknown"},  # 50s gap, no merge
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Real gap -> two separate fl_match segments, no merge
+    assert len(result) == 2
+    assert result[0]["start"] == 100.0
+    assert result[1]["start"] == 750.0
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 0
+
+
+def test_validate_segments_zero_gap_no_merge_when_one_side_all_unknown(monkeypatch):
+    """Zero-gap pair is NOT merged when one side was all-UNKNOWN kept (not quorum-validated)."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Two zero-gap segments: first all-UNKNOWN (kept conservatively), second all-PRESENT.
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},
+        {"start": 700.0, "end": 1200.0, "type": "unknown"},
+    ]
+
+    def fake_probe(vp, t):
+        # Return None for first segment (all-UNKNOWN), real bytes for second.
+        if t < 700.0:
+            return None  # UNKNOWN
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # First segment: all-UNKNOWN -> kept conservatively (not quorum-validated).
+    # Second segment: all-PRESENT -> quorum-validated.
+    # Zero-gap but NOT both quorum-validated -> NO merge.
+    assert len(result) == 2, (
+        f"expected 2 separate segments (no merge), got {len(result)}"
+    )
+    assert result[0]["start"] == 100.0
+    assert result[1]["start"] == 700.0
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 0
+
+
+def test_validate_segments_failsafe_skips_zero_gap_merge(monkeypatch):
+    """Fail-safe path returns originals without zero-gap merge."""
+    import allaganeye.video.detector as detector
+
+    anchor = _make_anchor()
+    # Two zero-gap segments that would both fail quorum -> fail-safe fires.
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 700.0, "type": "unknown"},
+        {"start": 700.0, "end": 1200.0, "type": "unknown"},
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return None  # all ABSENT -> both segments drop -> fail-safe
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # Fail-safe: both dropped -> returned unchanged (2 segments, no merge).
+    assert len(result) == 2
+    assert result[0]["start"] == 100.0
+    assert result[1]["start"] == 700.0
+    # Fail-safe -> stats unchanged
+    assert stats.get("masked_segments_dropped", 0) == 0
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 0
+
+
+def test_validate_segments_stats_counts_zero_gap_merges(monkeypatch):
+    """masked_l2_zero_gap_merges is incremented correctly in stats."""
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    # Three quorum-validated segments: first two zero-gap, third has a real gap.
+    segments: list[MatchBoundary] = [
+        {"start": 100.0, "end": 500.0, "type": "unknown"},
+        {"start": 500.0, "end": 900.0, "type": "unknown"},  # zero-gap with prev
+        {"start": 1000.0, "end": 1600.0, "type": "unknown"},  # 100s gap, no merge
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"), segments, anchor, workers=1, stats=stats
+    )
+
+    # First two merged into one, third remains separate.
+    assert len(result) == 2
+    assert result[0]["start"] == 100.0
+    assert result[0]["end"] == 900.0
+    assert result[1]["start"] == 1000.0
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 1
+
+
+# ---------------------------------------------------------------------------
+# Fix 5 (codex R4): zero-gap merge must preserve edge-segment unknown marker
+# ---------------------------------------------------------------------------
+
+
+def test_validate_segments_zero_gap_merge_edge_start_keeps_unknown(monkeypatch):
+    """Zero-gap merge where FIRST segment starts at t=0 must keep type='unknown'.
+
+    The retype rule deliberately leaves edge-touching segments as 'unknown'
+    (#433 semantics: recording started mid-match, completeness unknown).
+    The zero-gap merge must re-evaluate the merged span's edge status and
+    propagate 'unknown' instead of unconditionally setting 'fl_match'.
+
+    Since a merged span touches the edge iff a constituent did, checking the
+    merged [prev.start, seg.end] endpoints is equivalent to per-constituent checks.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    duration = 1800.0
+    # First segment starts at t=0 (edge), adjacent non-edge segment at zero gap.
+    segments: list[MatchBoundary] = [
+        {"start": 0.0, "end": 600.0, "type": "unknown"},  # edge-start, quorum PRESENT
+        {
+            "start": 600.0,
+            "end": 1200.0,
+            "type": "unknown",
+        },  # zero-gap, non-edge, quorum PRESENT
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"),
+        segments,
+        anchor,
+        workers=1,
+        stats=stats,
+        duration_hint=duration,
+    )
+
+    # Zero-gap merge fires (both quorum-validated), but merged span starts at 0
+    # -> edge-touching -> must keep type='unknown', not 'fl_match'.
+    assert len(result) == 1, f"expected 1 merged segment, got {len(result)}"
+    assert result[0]["start"] == 0.0
+    assert result[0]["end"] == 1200.0
+    assert result[0]["type"] == "unknown", (
+        "zero-gap merge of edge-start segment must preserve 'unknown' (#433)"
+    )
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 1
+
+
+def test_validate_segments_zero_gap_merge_interior_keeps_fl_match(monkeypatch):
+    """Interior zero-gap pair (not edge-touching) is still merged to 'fl_match'.
+
+    Verifies that the edge-preservation fix does not regress the normal case:
+    two quorum-validated, non-edge-touching segments with zero gap must still
+    produce a single 'fl_match' segment.
+    """
+    import allaganeye.video.detector as detector
+    from allaganeye.video.capture_region import ScorebarLocalization
+
+    anchor = _make_anchor()
+    duration = 3600.0
+    # Both segments well away from timeline edges.
+    segments: list[MatchBoundary] = [
+        {"start": 500.0, "end": 1200.0, "type": "unknown"},
+        {"start": 1200.0, "end": 1900.0, "type": "unknown"},  # zero-gap
+    ]
+
+    def fake_probe(vp, t):
+        return _fake_rgb_bytes()
+
+    def fake_localize(raw, anchor_arg, *, height, width):
+        return ScorebarLocalization(
+            x_left=600, x_right=1300, y_top=20, y_bottom=65, confidence=0.9
+        )
+
+    monkeypatch.setattr(detector, "_probe_frame_rgb_hires", fake_probe)
+    monkeypatch.setattr(detector, "localize_from_rgb_bytes_at_anchor", fake_localize)
+
+    stats: DetectionStats = {}
+    result = detector._validate_match_segments(
+        Path("x.mp4"),
+        segments,
+        anchor,
+        workers=1,
+        stats=stats,
+        duration_hint=duration,
+    )
+
+    assert len(result) == 1, f"expected 1 merged segment, got {len(result)}"
+    assert result[0]["start"] == 500.0
+    assert result[0]["end"] == 1900.0
+    assert result[0]["type"] == "fl_match", (
+        "interior zero-gap merge must produce 'fl_match'"
+    )
+    assert stats.get("masked_l2_zero_gap_merges", 0) == 1
+
+
+# ============================================================
+# Task 4 (Refs #895): detector.py vtuber timeline path 配線
+# ============================================================
+
+
+def test_vtuber_timeline_path_used_when_available(monkeypatch):
+    """vtuber=True で timeline が成功したらその boundaries を返す。"""
+    from allaganeye.video.capture_region import (
+        RegionTimeline,
+        ScorebarLocalization,
+        band_region_from_localization,
+    )
+
+    anchor = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+    expected = [{"start": 100.0, "end": 500.0, "type": "fl_match"}]
+    region = RegionTimeline(
+        coarse=band_region_from_localization(anchor, probe_w=1920, probe_h=1080)
+    )
+    fired, result = _detect_with_region_callback(
+        monkeypatch,
+        vtuber=True,
+        timeline_result=(expected, region),
+        return_result=True,
+    )
+    # timeline path fires region_callback with band region
+    assert fired and fired[0].coarse.source == "band"
+    # detect_match_boundaries returns timeline boundaries
+    assert result == expected
+
+
+def test_vtuber_timeline_receives_stats_passthrough(monkeypatch):
+    """detector が stats を timeline へ渡す wiring の positive gate (Round 4 #1)。
+
+    `stats=stats` の引き渡しを外すと kwargs から "stats" が消えて fail する。
+    """
+    from allaganeye.video import vtuber_timeline
+    from allaganeye.video.capture_region import (
+        RegionTimeline,
+        ScorebarLocalization,
+        band_region_from_localization,
+    )
+
+    anchor = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+    region = RegionTimeline(
+        coarse=band_region_from_localization(anchor, probe_w=1920, probe_h=1080)
+    )
+    seen: dict = {}
+
+    def _recorder(*args, **kwargs):
+        seen.update(kwargs)
+        return ([{"start": 100.0, "end": 500.0, "type": "fl_match"}], region)
+
+    monkeypatch.setattr(vtuber_timeline, "detect_matches_timeline", _recorder)
+    main_stats: dict = {}
+    _detect_with_region_callback(monkeypatch, vtuber=True, stats=main_stats)
+    assert seen.get("stats") is main_stats
+
+
+def test_vtuber_timeline_none_falls_back_to_band_crop(monkeypatch):
+    """timeline None -> 既存 band-crop path が実行される (縮退 floor)。"""
+    from allaganeye.video.capture_region import FULL_FRAME
+
+    called: list = []
+    monkeypatch.setattr(
+        "allaganeye.video.detector._resolve_detect_region",
+        lambda *a, **k: called.append(1) or (FULL_FRAME, "consensus_miss"),
+    )
+    # timeline_result=None -> monkeypatch が None を返す -> 縮退して band-crop path へ
+    _detect_with_region_callback(
+        monkeypatch,
+        vtuber=True,
+        timeline_result=None,
+    )
+    assert called  # _resolve_detect_region に到達した = band-crop path に縮退した
+
+
+def test_vtuber_timeline_empty_boundaries_fall_back_to_band_crop(monkeypatch):
+    """timeline ([], region) -> 空を authoritative にせず band-crop path へ縮退。
+
+    Codex R1 (high) の defense-in-depth pin: vtuber_timeline 側は空なら None を
+    返す契約だが、detector 側 gate も空 boundaries を独立に拒否することを固定する
+    (縮退 floor が二重に守られる)。
+    """
+    from allaganeye.video.capture_region import (
+        FULL_FRAME,
+        RegionTimeline,
+        ScorebarLocalization,
+        band_region_from_localization,
+    )
+
+    anchor = ScorebarLocalization(532, 1147, 0, 45, 0.8)
+    empty_region = RegionTimeline(
+        coarse=band_region_from_localization(anchor, probe_w=1920, probe_h=1080)
+    )
+    called: list = []
+    monkeypatch.setattr(
+        "allaganeye.video.detector._resolve_detect_region",
+        lambda *a, **k: called.append(1) or (FULL_FRAME, "consensus_miss"),
+    )
+    fired = _detect_with_region_callback(
+        monkeypatch,
+        vtuber=True,
+        timeline_result=([], empty_region),
+    )
+    assert called, "empty timeline boundaries must fall back to the band-crop path"
+    # 空 timeline の region は authoritative でないため region_callback は
+    # 縮退先 (band-crop path) の region で発火する (source は band ではない)
+    assert all(r.coarse.source != "band" for r in fired)
+
+
+def test_obs_path_does_not_call_timeline(monkeypatch):
+    """vtuber=False では vtuber_timeline を一切呼ばない (構造保証の pin)。"""
+    import allaganeye.video.vtuber_timeline as vt
+
+    def _boom(*a, **k):  # pragma: no cover - 呼ばれたら失敗
+        raise AssertionError("vtuber_timeline must not be called on OBS path")
+
+    monkeypatch.setattr(vt, "detect_matches_timeline", _boom)
+    # 既存の OBS wiring test と同一の mock 構成 (timeline_result 未指定 = 従来挙動)
+    fired = _detect_with_region_callback(monkeypatch, vtuber=False)
+    assert fired is not None

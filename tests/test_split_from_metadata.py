@@ -26,6 +26,8 @@ PROBE_RESULT: ProbeResult = {
     "width": 1920,
     "height": 1080,
     "fps": 30.0,
+    "fps_num": 30,
+    "fps_den": 1,
     "codec": "h264",
     "audio_codec": "aac",
 }
@@ -461,3 +463,560 @@ def test_run_split_from_metadata_omits_brightness_samples_when_source_lacks(tmp_
     assert "brightness_samples" not in fresh, (
         "元 metadata に brightness_samples が無いなら新 metadata にも書かない"
     )
+
+
+# -- #805 段階1: post_match_trailing_dropped warning preserve through --from-metadata --
+
+
+def test_run_split_from_metadata_preserves_trailing_drop_warning(tmp_path):
+    """#805 段階1 -- --from-metadata 経路で元 metadata.json の
+    post_match_trailing_dropped warning が新 metadata.json に preserve される。
+
+    detect -> split --from-metadata -o <same dir> で記録済み warning を
+    silent に上書きしないこと (brightness_samples #644 / timing #586 同パターン)。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    original_warning = {
+        "code": "post_match_trailing_dropped",
+        "message_en": "A trailing post-match segment was dropped.",
+        "severity": "warn",
+        "context": {"start": 1000.0, "end": 1800.0},
+    }
+    payload = {
+        **_sample_metadata(str(source)),
+        "warnings": [original_warning],
+    }
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out" / "match_001.mp4",
+                tmp_path / "out" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    assert fresh["warnings"] == [original_warning], (
+        "--from-metadata は元 metadata の post_match_trailing_dropped warning を "
+        "新 metadata に preserve するはず (#805 段階1)"
+    )
+
+
+def test_run_split_from_metadata_empty_warnings_when_source_lacks(tmp_path):
+    """#805 段階1 -- 元 metadata が warnings キー自体を持たない場合、
+    新 metadata の warnings は [] になる (preserve は code を持つ dict のみ拾う)。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    # _sample_metadata はデフォルトで warnings を含めない (= 欠落)。
+    payload = _sample_metadata(str(source))
+    assert "warnings" not in payload
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out" / "match_001.mp4",
+                tmp_path / "out" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    assert fresh["warnings"] == []
+
+
+def test_run_split_from_metadata_drops_malformed_warning_entries(tmp_path):
+    """#805 段階1 -- preserve_warnings が壊れた entry / fields を sanitize する。
+
+    warnings に malformed entry (非 dict / code なし / 非 str code / 空 code) と
+    schema 違反 optional field (不正 severity / 非 dict context) を持つ valid
+    entry を混ぜた source metadata を --from-metadata で処理すると、malformed
+    entry は捨てられ、valid entry は schema 違反 field を strip した形で新
+    metadata に残る。また warnings が非リスト (文字列 "oops") の場合は出力
+    warnings が [] になる。sanitize_warnings の helper unit は test_warnings.py。
+    """
+    # --- case A: valid post_match_trailing_dropped entry mixed with malformed ---
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    # valid entry だが optional field が schema 違反 (severity 不正 / context 非
+    # dict) -> sanitize で当該 field は strip され code (+ valid field) のみ残る。
+    valid_but_dirty_warning = {
+        "code": "post_match_trailing_dropped",
+        "message_en": "A trailing post-match segment was dropped.",
+        "severity": "totally-bogus",  # invalid -> stripped
+        "context": "not-a-dict",  # invalid -> stripped
+    }
+    sanitized_valid = {
+        "code": "post_match_trailing_dropped",
+        "message_en": "A trailing post-match segment was dropped.",
+    }
+    payload_a = {
+        **_sample_metadata(str(source)),
+        "warnings": [
+            42,  # non-dict -> dropped
+            {"no_code": True},  # missing code -> dropped
+            {"code": 7},  # non-str code -> dropped
+            {"code": ""},  # empty code -> dropped
+            valid_but_dirty_warning,
+        ],
+    }
+    meta_path_a = tmp_path / "meta_a.json"
+    meta_path_a.write_text(json.dumps(payload_a), encoding="utf-8")
+    config_a = SplitConfig(output_dir=tmp_path / "out_a", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out_a" / "match_001.mp4",
+                tmp_path / "out_a" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path_a, config_a, quiet=True)
+
+    fresh_a = json.loads((tmp_path / "out_a" / "metadata.json").read_text("utf-8"))
+    assert fresh_a["warnings"] == [sanitized_valid], (
+        "malformed entry は除外され、valid entry は不正な severity / context を "
+        "strip した形 (code + message_en) で残る"
+    )
+
+    # --- case B: warnings is a non-list scalar ---
+    payload_b = {
+        **_sample_metadata(str(source)),
+        "warnings": "oops",
+    }
+    meta_path_b = tmp_path / "meta_b.json"
+    meta_path_b.write_text(json.dumps(payload_b), encoding="utf-8")
+    config_b = SplitConfig(output_dir=tmp_path / "out_b", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[
+                tmp_path / "out_b" / "match_001.mp4",
+                tmp_path / "out_b" / "match_002.mp4",
+            ],
+        ),
+    ):
+        run_split_from_metadata(meta_path_b, config_b, quiet=True)
+
+    fresh_b = json.loads((tmp_path / "out_b" / "metadata.json").read_text("utf-8"))
+    assert fresh_b["warnings"] == [], (
+        "warnings が非リスト ('oops') なら出力 warnings は [] になる"
+    )
+
+
+# -- #805 段階2: post_match flag round-trip through --from-metadata --
+
+
+def test_run_split_from_metadata_excludes_post_match_and_preserves_flag(tmp_path):
+    """#805 段階2 -- detect 由来の post_match match が --from-metadata で
+    MP4 化されず、新 metadata.json でも flag が保持される (spec section 4 一貫除外).
+
+    detect が書いた metadata (active match 1 本 + post_match match 1 本) を
+    `split --from-metadata` に渡すと、run_split_from_metadata は matches[] 読込時に
+    post_match flag を boundary へ復元し、_split_and_write_metadata の partition が:
+      - split_video には active boundary のみ渡す (post_match は MP4 化しない)。
+      - 新 metadata で active は output_file 有り、post_match は flag 保持 +
+        output_file 無し。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    payload = _sample_metadata(str(source))
+    # 2 番目の match を post_match (output_file 無し、flag True) に差し替える。
+    # detect が _build_metadata_payload 経由で書く post_match Match の形を模す。
+    payload["matches"] = [
+        {
+            "index": 1,
+            "start_time": 0.0,
+            "end_time": 600.0,
+            "start_display": "00:00",
+            "end_display": "10:00",
+            "duration": 600.0,
+            "duration_display": "10m00s",
+            "type": "fl_match",
+            "output_file": "match_001.mp4",
+        },
+        {
+            "index": 2,
+            "start_time": 600.0,
+            "end_time": 700.0,
+            "start_display": "10:00",
+            "end_display": "11:40",
+            "duration": 100.0,
+            "duration_display": "01m40s",
+            "type": "unknown",
+            "post_match": True,
+        },
+    ]
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[tmp_path / "out" / "match_001.mp4"],
+        ) as mock_split,
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    # split_video には active boundary のみ渡る (post_match は MP4 化しない)。
+    mock_split.assert_called_once()
+    boundaries_arg = mock_split.call_args[0][1]
+    assert [b["start"] for b in boundaries_arg] == [0.0]
+    assert [b["end"] for b in boundaries_arg] == [600.0]
+    assert all(not b.get("post_match") for b in boundaries_arg)
+
+    # 新 metadata: active は output_file 有り、post_match は flag 保持 +
+    # output_file 無し。
+    out_meta = tmp_path / "out" / "metadata.json"
+    fresh = json.loads(out_meta.read_text("utf-8"))
+    matches = fresh["matches"]
+    assert len(matches) == 2
+
+    active = matches[0]
+    # output_file は split_video が返す path (mock = 絶対 path) を as_posix で
+    # 直列化する。flag-free かつ MP4 basename を持つことを確認 (絶対 path 既存
+    # テストと同様、厳密な prefix までは固定しない)。
+    assert active["output_file"].endswith("match_001.mp4")
+    assert "post_match" not in active
+
+    trailing = matches[1]
+    assert trailing["post_match"] is True
+    assert "output_file" not in trailing
+
+
+# -- #805 段階2: disk-space budget excludes post_match through --from-metadata --
+
+
+def test_run_split_from_metadata_does_not_false_fail_on_post_match_tail(tmp_path):
+    """run_split_from_metadata must not raise when only the post_match tail overflows.
+
+    Regression for the third disk-check site (#805 段階2): the
+    ``run_split_from_metadata`` path calls ``_check_disk_space`` with
+    ``active_boundaries`` only, so a long ``post_match=True`` trailing
+    segment must not inflate the estimate and cause a false
+    "Not enough disk space" error.
+
+    Setup mirrors ``TestDiskSpacePostMatchBudget`` in ``test_split_matches.py``:
+      source: 1.8 MB / 1800 s
+      active  = 0-600s   -> ratio 1/3   -> est ~= 660_000 bytes
+      post_match = 600-1700s (not written to MP4)
+      all     = 0-1700s  -> ratio 17/18 -> est ~= 1_870_000 bytes
+      free    = 1_000_000: est(active) <= free < est(active+post_match)
+
+    Real ``_check_disk_space`` / ``_estimate_output_size`` are exercised;
+    only ``shutil.disk_usage`` is mocked.  If ``run_split_from_metadata``
+    passed the full boundary list the estimate would exceed free and the
+    function would raise ``AllaganEyeError``.
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"\x00" * 1_800_000)  # 1.8 MB
+
+    payload = _sample_metadata(str(source))
+    # Replace the two standard matches with: one active + one post_match tail.
+    payload["matches"] = [
+        {
+            "index": 1,
+            "start_time": 0.0,
+            "end_time": 600.0,
+            "start_display": "00:00",
+            "end_display": "10:00",
+            "duration": 600.0,
+            "duration_display": "10m00s",
+            "type": "fl_match",
+            "output_file": "match_001.mp4",
+        },
+        {
+            "index": 2,
+            "start_time": 600.0,
+            "end_time": 1700.0,
+            "start_display": "10:00",
+            "end_display": "28:20",
+            "duration": 1100.0,
+            "duration_display": "18m20s",
+            "type": "unknown",
+            "post_match": True,
+        },
+    ]
+    meta_path = _write_metadata(tmp_path, payload)
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+
+    _POST_MATCH_FREE_BYTES = 1_000_000
+    fake_usage = type(
+        "Usage",
+        (),
+        {
+            "total": 10_000_000,
+            "used": 10_000_000 - _POST_MATCH_FREE_BYTES,
+            "free": _POST_MATCH_FREE_BYTES,
+        },
+    )
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[tmp_path / "out" / "match_001.mp4"],
+        ) as mock_split,
+        patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=fake_usage,
+        ),
+    ):
+        # Must NOT raise: active estimate (~660_000) fits in free (1_000_000).
+        # Would raise if post_match tail were included in the estimate.
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    mock_split.assert_called_once()
+
+
+# -- #810 capture_regions preserve through --from-metadata --
+
+
+def test_run_split_from_metadata_preserves_capture_regions(tmp_path):
+    """#810 -- --from-metadata 経路で元 metadata.json の capture_regions
+    がそのまま新 metadata に引き継がれる (brightness_samples #644 同パターン)。"""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    regions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+    payload = _sample_metadata(str(source))
+    payload["capture_regions"] = regions
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    fresh = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert fresh["capture_regions"] == regions
+
+
+def test_run_split_from_metadata_omits_capture_regions_when_source_lacks(tmp_path):
+    """#810 -- pre-#810 metadata (field なし) からは新 metadata でも欠落
+    (合成しない。領域不明を偽装しない)。"""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    payload = _sample_metadata(str(source))
+    assert "capture_regions" not in payload
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)
+
+    fresh = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert "capture_regions" not in fresh
+
+
+# -- codex adversarial-review F1: sanitize malformed capture_regions in preserve path --
+
+
+def _make_valid_regions() -> dict:
+    """Minimal valid CaptureRegions dict for sanitizer tests."""
+    return {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+
+
+def test_run_split_from_metadata_drops_capture_regions_missing_fallback_reason(
+    tmp_path,
+):
+    """codex F1 -- preserve path sanitize: fallback_reason 欠落 -> key 省略 + warning (#810).
+
+    source metadata に capture_regions はあるが fallback_reason キーが無い (shape 違反)。
+    sanitize で None に落とされ、新 metadata には capture_regions キー自体を書かない。
+    run は正常完了する。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    regions = _make_valid_regions()
+    del regions["fallback_reason"]  # required key missing -> invalid
+    payload = _sample_metadata(str(source))
+    payload["capture_regions"] = regions
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)  # must not raise
+
+    fresh = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert "capture_regions" not in fresh, (
+        "fallback_reason が欠落した malformed capture_regions は sanitize で落とし、"
+        "新 metadata には key 自体を書かない"
+    )
+
+
+def test_run_split_from_metadata_drops_capture_regions_out_of_range(tmp_path):
+    """codex F1 -- preserve path sanitize: coarse.x = 1.5 (out of [0,1]) -> key 省略."""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    regions = _make_valid_regions()
+    regions["coarse"]["x"] = 1.5  # out of [0, 1] range -> invalid
+    payload = _sample_metadata(str(source))
+    payload["capture_regions"] = regions
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)  # must not raise
+
+    fresh = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert "capture_regions" not in fresh, (
+        "coarse.x = 1.5 (out of [0,1]) -> sanitize で落とし key 省略"
+    )
+
+
+def test_run_split_from_metadata_drops_capture_regions_with_extra_key(tmp_path):
+    """codex F1 -- preserve path sanitize: extra top-level key -> key 省略.
+
+    valid な shape に未知のキー {"future": 1} を追加した場合、
+    strict key-set 検証 (additionalProperties:false 相当) で invalid -> key 省略。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    regions = _make_valid_regions()
+    regions["future"] = 1  # extra key not in {"coarse", "segments", "fallback_reason"}
+    payload = _sample_metadata(str(source))
+    payload["capture_regions"] = regions
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)  # must not raise
+
+    fresh = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert "capture_regions" not in fresh, (
+        "extra top-level key 'future' -> sanitize で invalid 判定、key 省略"
+    )
+
+
+def test_run_split_from_metadata_drops_capture_regions_nan_time_range(tmp_path):
+    """round-3 R3-1: NaN 混入 time_range は sanitize で drop され、json.dumps
+    (allow_nan=True) が非標準 token (NaN) を新 metadata.json に再 emit しない
+    (strict reader = GUI serde_json / JSON.parse の file 全体 reject を防ぐ)。"""
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+
+    regions = {
+        "coarse": {
+            "x": 0.1,
+            "y": 0.0,
+            "w": 0.76,
+            "h": 0.042,
+            "confidence": 0.9,
+            "source": "band",
+        },
+        "segments": [
+            {
+                "time_range": [0.0, float("nan")],
+                "region": {
+                    "x": 0.1,
+                    "y": 0.0,
+                    "w": 0.76,
+                    "h": 0.042,
+                    "confidence": 0.9,
+                    "source": "band",
+                },
+            }
+        ],
+        "fallback_reason": None,
+    }
+    payload = _sample_metadata(str(source))
+    payload["capture_regions"] = regions
+    meta_path = _write_metadata(tmp_path, payload)
+    out_dir = tmp_path / "out"
+    config = SplitConfig(output_dir=out_dir, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE}.split_video",
+            return_value=[out_dir / "match_001.mp4", out_dir / "match_002.mp4"],
+        ),
+    ):
+        run_split_from_metadata(meta_path, config, quiet=True)  # must not raise
+
+    raw = (out_dir / "metadata.json").read_text(encoding="utf-8")
+    assert "NaN" not in raw, "非標準 JSON token が再 emit されてはならない"
+    fresh = json.loads(raw)
+    assert "capture_regions" not in fresh

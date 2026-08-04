@@ -37,7 +37,7 @@ pytest -v
 | `slow_gpu` | GPU アクセラレーション必須テスト | 除外 |
 | `baseline_regen` | ベースライン再生成時のみ必要なテスト | 除外 |
 
-`slow` および `baseline_regen` マーカーは `addopts = "-m 'not slow and not baseline_regen'"` で除外される。
+`slow` および `baseline_regen` マーカーは `addopts = "-m 'not slow and not baseline_regen'"` で除外される。「slow はサブマーカーのスーパーセット」契約は `tests/conftest.py` の collection hook が機械的に強制しており、`slow_*` サブマーカーを単独付与すると、違反 item を collect する pytest 実行 (bare / `-m` 指定 / CI を含む) が `UsageError` (exit 4) で fail する (#812)。未登録マーカーの typo (例: `slow_detec`) は ini option `strict_markers = true` (pyproject.toml) が collection エラーで弾く (#812。addopts 内の `--strict-markers` は pytest 9.x で no-op のため不可)。
 
 ### マーカーの使い分け
 
@@ -54,17 +54,18 @@ pytest -m slow_pipeline
 # GPU テストのみ
 pytest -m slow_gpu
 
-# slow テスト全体（サブマーカー全含む、baseline_regen 除外）
+# slow テスト全体（サブマーカー全含む。baseline_regen 付きテストも slow を
+# 併せ持つため、現状は下の "slow or baseline_regen" と同一集合になる、#812）
 pytest -m slow
 
-# baseline_regen 含む全テスト（ベースライン再生成時）
+# baseline_regen 含む全テスト（ベースライン再生成時の明示形）
 pytest -m "slow or baseline_regen"
 ```
 
 ### 開発時の推奨テスト実行パターン
 
 1. **コード変更後**: `pytest`（ユニットテストのみ、数秒）
-2. **PR 作成前**: `pytest -m slow`（全 slow テスト）
+2. **PR 作成前**: `pytest -m slow`（全 slow テスト。baseline_regen 付き class も含む、#812）
 3. **検出アルゴリズム変更時**: `pytest -m "slow or baseline_regen"`（ベースライン検証含む）
 4. **probe 周りの変更確認**: `pytest -m slow_probe`（高速確認）
 
@@ -84,7 +85,107 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - MKV: OBS の長時間録画（30-80GB、複数試合を含む）
 - サブディレクトリ（`20260116/` 等）: 手動で試合分割済みの MP4（`YYYYMMDD_N.mp4`）
 
-## GPU / ffmpeg テスト間インターバル
+### VTuber 検証用 VOD (`ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER`)
+
+L3 の VTuber/masked 系 slow テスト（`tests/test_l3_phase2_parity.py` / `tests/test_vtuber_region_e2e.py` / `tests/test_vtuber_ground_truth.py` / `tests/test_vtuber_gt_regression.py` / `tests/test_areamap_slow.py` の masked ケース）は、`ALLAGANEYE_SAMPLE_VIDEO_DIR` とは別の VOD 置き場を `ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER` で参照する（未設定時の既定: `E:/allaganeye-samples`）。
+
+- 配置: 配信者別の FF14 FL VOD（mp4）。未配置・未設定の場合、該当テストは skip される
+- 空文字で設定した場合も未設定と同様に既定 path へフォールバックする（`os.environ.get(...) or` 規約で統一）
+- `tests/test_vtuber_gt_regression.py` は release gate **G3** ([`docs/release-process.md`](release-process.md) §レイヤーリリース受け入れゲート) の実体 (#895 P3 / PR #915)。6 source GT のうち gyawa のみ別 root を使い、`ALLAGANEYE_SAMPLE_VIDEO_DIR_GYAWA`（既定 `E:/videos/gyawa_vatos`）で解決する (#915 F18 で絶対 path 直書きを廃止)
+- `ALLAGANEYE_VTUBER_GT_REQUIRE_ALL=1` を設定すると、VOD 不在による skip を fail に格上げできる。「6 source gate が silent に 5 source へ縮退」する事故の検出用 (#915 F18)
+
+### 音声統合テスト primary 録画 (`ALLAGANEYE_AUDIO_TEST_VIDEO`)
+
+`tests/test_audio_integration.py::test_primary_recording_fanfare_coverage` は、`audio/refs/fanfare.npz` を生成する際に使用した**そのままの**録画を必要とする。`ALLAGANEYE_SAMPLE_VIDEO_DIR` とは別管理。
+
+- **指定変数**: `ALLAGANEYE_AUDIO_TEST_VIDEO`
+- **対象ファイル**: `E:\videos\2026-04-08 21-14-05.mkv` (39 GB、full OBS 録画、8 fanfare starts を含む)
+- **理由**: `fanfare.npz::metadata.source_filename` が指す特定ファイル。`ALLAGANEYE_SAMPLE_VIDEO_DIR` (`E:/royalstraightflesh/videos`) 配下ではないため、別 env で設定する
+
+実行例:
+
+```bash
+ALLAGANEYE_AUDIO_TEST_VIDEO="E:/videos/2026-04-08 21-14-05.mkv" \
+ALLAGANEYE_SAMPLE_VIDEO_DIR="E:/royalstraightflesh/videos" \
+python -m pytest -m slow tests/test_audio_integration.py -v
+```
+
+primary 8/8 で ~30s。cumulative sample-dir tests (~90s) と合わせて音声統合の baseline をカバーする。
+
+## サンプル動画/GT データの保全 ([#869](https://github.com/Idios/kobutachan-allaganeye/issues/869))
+
+前 § までの実動画データは再入手不能な録画を含み、E: 単一コピーの喪失 = 実動画 baseline gate / GT 突合の恒久不能化となる (bus factor 1)。2026-07-07 に以下の保全方針を決定した。
+
+### 方針 (対象・先・周期)
+
+| 項目 | 決定 |
+| --- | --- |
+| 対象 | **検証依存セット (48 ファイル、~632 GiB)** = GT/baseline 台帳が参照する全動画 (下表)。台帳外の自録画・再生成可能な検知/分割出力・重複 zip は対象外 |
+| 先 (第 2 系統) | `F:\allaganeye-backup\` (E: とは別物理ディスクの内蔵 HDD) へ robocopy cold copy。恒久策 (外付け HDD or クラウド cold storage) は後日追加予定 |
+| 周期 | 定期実行ではなく**新規 baseline/GT 動画の追加時に都度コピー + 台帳更新**。release gate 時に checksum 照合で健全性を確認 |
+| 台帳 | [`tests/baselines/source-videos.sha256.json`](../tests/baselines/source-videos.sha256.json) に全対象の SHA-256 + size を記録 (repo = GitHub 側にも残る)。ドライブ故障後の復元・再入手時の同一性検証に使う |
+
+### 検証依存セット (対象一覧)
+
+| category | 場所 | 内容 | 参照する検証 |
+| --- | --- | --- | --- |
+| `obs-baseline-source` / `obs-baseline-manual-split` | `$ALLAGANEYE_SAMPLE_VIDEO_DIR` (`2026-02-09 23-12-24.mkv` + subdir `20260116` / `20260118` / `20260119` / `20260127` 丸ごと) | v0.3.0 baseline 5 本の source MKV + 手動分割 MP4 | bit-exact baseline gate (§v0.3.0 L3 work 用 regression baseline、#778/#779) |
+| `masked-obs-source` | `$ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER/20250527-29/20250527-29/` | masked 検証用 OBS MKV 3 本 | masked GT 検証 (L3 Phase 2) |
+| `vtuber-vod` / `vtuber-mask` | `$ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER` 直下 | 配信者 VOD 5 本 (mp4) + mask PNG 3 枚。**Twitch archive 消滅後は再入手不能** | L3 位置独立検証 (multi-source) |
+| `vtuber-primary` | `$ALLAGANEYE_SAMPLE_VIDEO_DIR_GYAWA`（既定 `E:\videos\gyawa_vatos\`） | primary GT の source VOD (gyawa 提供 2026-05-18、7.5 GB) | `vtuber-primary-ground-truth.json` (±10s 突合) / VTuber timeline GT gate G3 の gyawa source (#915) |
+| `game-dvr-4k` | `E:\videos\M1wa_zeromus\` 直下 | 4K Game DVR source 5 本 (mp4)。`split_*/` 配下は allaganeye 出力 = 再生成可能なため対象外 | scorebar V2 Rescue path (#522) の HUD スケール差異検証 |
+| `audio-primary` | `E:\videos\2026-04-08 21-14-05.mkv` | `fanfare.npz` source (§音声統合テスト primary 録画) | 音声統合 baseline (`ALLAGANEYE_AUDIO_TEST_VIDEO`) |
+
+対象外 (バックアップ不要):
+
+- `$ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER/20250527-29.zip` (270 GB): 展開済み MKV と重複
+- `_masked_a_out/` / `_p2_vtuber_out/` / `M1wa_zeromus/split_*/` 等の検知・分割出力: source から再生成可能
+- 台帳外の OBS 録画 (`E:\royalstraightflesh\videos` の残り MKV / `E:\videos` の 2026-04 以降録画、~1.3 TB): 検証台帳が参照しないため本方針の対象外。保全価値は録画者判断
+
+### コピー手順 (Idios 手動実行)
+
+バックアップ先は `F:\allaganeye-backup\<root-key>\<相対 path>` のミラー構造とする。root-key は台帳 `roots` のキー (`royalstraightflesh-videos` / `allaganeye-samples` / `videos`) と一致させる。
+
+```powershell
+$B = 'F:\allaganeye-backup'
+# OBS baseline (root MKV 1 本 + subdir 4 個)
+robocopy 'E:\royalstraightflesh\videos' "$B\royalstraightflesh-videos" '2026-02-09 23-12-24.mkv' /DCOPY:DAT /R:2 /W:5
+foreach ($d in '20260116','20260118','20260119','20260127') {
+    robocopy "E:\royalstraightflesh\videos\$d" "$B\royalstraightflesh-videos\$d" /E /DCOPY:DAT /R:2 /W:5
+}
+# masked OBS MKV 3 本
+robocopy 'E:\allaganeye-samples\20250527-29\20250527-29' "$B\allaganeye-samples\20250527-29\20250527-29" /E /DCOPY:DAT /R:2 /W:5
+# VTuber VOD + mask PNG (直下のみ、zip と出力 dir は含めない)
+robocopy 'E:\allaganeye-samples' "$B\allaganeye-samples" *.mp4 *.png /DCOPY:DAT /R:2 /W:5
+# E:\videos 配下 (gyawa primary / 4K Game DVR source / audio primary)
+robocopy 'E:\videos\gyawa_vatos' "$B\videos\gyawa_vatos" /E /DCOPY:DAT /R:2 /W:5
+# M1wa は直下の source mp4 のみ (split_* 出力 dir は対象外のため /E を付けない)
+robocopy 'E:\videos\M1wa_zeromus' "$B\videos\M1wa_zeromus" *.mp4 /DCOPY:DAT /R:2 /W:5
+robocopy 'E:\videos' "$B\videos" '2026-04-08 21-14-05.mkv' /DCOPY:DAT /R:2 /W:5
+```
+
+### checksum 照合手順 (コピー後・復元時・release gate)
+
+台帳と突合する。バックアップ側は `$backupBase` 配下の root-key ミラー構造で、E: 側原本は台帳 `roots` の原本 path で解決する (`$backupBase = $null` に切り替える)。
+
+```powershell
+# -Encoding UTF8 必須: PS 5.1 は BOM なし UTF-8 を cp932 として読むため、
+# 省略すると日本語/絵文字ファイル名の entry (vtuber-vod 等) が化けて MISSING 誤報になる
+$m = Get-Content 'tests\baselines\source-videos.sha256.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+$backupBase = 'F:\allaganeye-backup'   # E: 側原本を照合する場合は $null にする
+$fail = 0
+foreach ($e in $m.entries) {
+    if ($backupBase) { $rootPath = Join-Path $backupBase $e.root }
+    else { $rootPath = $m.roots.($e.root).path }
+    $p = Join-Path $rootPath $e.path
+    if (-not (Test-Path -LiteralPath $p)) { $fail++; Write-Output "MISSING  $p"; continue }
+    $h = (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLower()
+    if ($h -ne $e.sha256) { $fail++; Write-Output "MISMATCH $p" }
+}
+Write-Output "verify done: fail=$fail / total=$($m.entries.Count)"
+```
+
+`fail=0` で健全。全 48 ファイル (~632 GiB) の照合は HDD 読み出しで 1-2 時間かかるため、release gate では対象 category を絞った spot check (例: `obs-baseline-source` のみ) でもよい。
 
 ### 問題
 
@@ -138,11 +239,65 @@ def _ffmpeg_interval(request: pytest.FixtureRequest) -> None:
 
 ### 事例
 
-PR #575 / issue #560: ffmpeg 8.1 で `20260118` baseline の Match 8 end が 281s 乖離。per-frame probe で 6184.0-6184.8 の 0.8s 幅 blackout を捕捉できたが、`fps=0.5` filter は output PTS 6184 のラベルで実際は ~6185.1s 時点のフレーム (Y-mean=45) をサンプリングしていた (`showinfo` で確認)。(B) 案で baseline を `6184.0 → 6465.25` に更新して対応。fps filter 廃止による根本対策は #576 で検討中。
+PR #575 / issue #560: ffmpeg 8.1 で `20260118` baseline の Match 8 end が 281s 乖離。per-frame probe で 6184.0-6184.8 の 0.8s 幅 blackout を捕捉できたが、`fps=0.5` filter は output PTS 6184 のラベルで実際は ~6185.1s 時点のフレーム (Y-mean=45) をサンプリングしていた (`showinfo` で確認)。(B) 案で baseline を `6184.0 -> 6465.25` に更新して対応。fps filter 廃止による根本対策は #576 で実施済み。
+
+### detect fps filter 廃止後の運用 (#576)
+
+PR #576 (detect fps filter 廃止) 完了後、default path では fps filter を
+使わないため、ffmpeg version upgrade による Pass 1 brightness drift は
+構造的に発生しない。本 S の判定 flow が必要になるのは、env var
+`ALLAGANEYE_DETECT_FPS_FILTER=1` で legacy path を強制した場合のみ。
+
+- 新 path で baseline mismatch が観測された場合は、(B) ffmpeg version
+  依存 ではなく **(A) 検知ロジック退行** を疑う (legacy path で再現
+  しないことを確認)
+- legacy path は v0.3.x patch release で削除予定。それ以降は本 S の
+  運用は廃止される
 
 ### 検証データの保存場所
 
 PR #575 で取得した brightness 比較表 (per-frame probe vs chunked fps の対比) は [`docs/video-processing.md`](video-processing.md) §「ffmpeg fps filter の version 依存制約」に記録されている。
+
+## v0.3.0 L3 work 用 regression baseline
+
+v0.3.0 (= 新 L3) の Pillar 3 (perf 改善) と Phase 2b (scorebar ROI 適応) は既存 detect / export パイプラインを touch するため、改修前後で検知結果 + 書出し結果に regression がないことを **bit-exact baseline 比較** で保証する。
+
+§baseline drift の判定 (ffmpeg version 依存差異) とは別軸で、**同一 ffmpeg version での実装変更 regression** を見る。
+
+### baseline 動画セット (2 系統)
+
+| 系統 | 動画 | 役割 |
+| --- | --- | --- |
+| OBS baseline | ALLAGANEYE_SAMPLE_VIDEO_DIR 配下の代表 OBS 録画 (Phase 1 child issue で N 本選定) | 正常検知可能な録画で改修後 regression なし保証 |
+| VTuber primary benchmark | `E:\videos\gyawa_vatos\2772549129-...mp4` (7.5 GB, gyawa 提供 2026-05-18) | Phase 2 input adapt の primary test target + Pillar 3 robustness 検証 |
+
+### baseline 定義
+
+| 項目 | 内容 | 比較方法 |
+| --- | --- | --- |
+| 検知結果 | `metadata.json` の `matches` (`index` / `start_time` / `end_time` / `duration` / `type` / `output_file`) + `gaps` | bit-exact (JSON canonical 比較)。`detected_at` は除外 |
+| 書出し結果 (split) | 試合 MP4 のファイルサイズ + SHA-256 hash | byte-exact (`-c copy` 無劣化のため決定論的) |
+| 書出し結果 (export GUI) | encoder/version 依存で byte-exact 不可 | ffprobe メタデータ (長さ・解像度・fps・codec) + 任意 1 フレーム抽出 spot check |
+
+### 配置規約
+
+```text
+tests/baselines/v0.3.0/
+├── vtuber-primary-ground-truth.json     # VTuber 5 試合 ground truth (spec §8.6)
+├── <obs-baseline-N>.metadata.json       # 改修前 detect 結果 snapshot
+└── <obs-baseline-N>.split.json          # 改修前 split MP4 sizes + SHA-256
+```
+
+動画本体は repo に commit しない。metadata snapshot のみ commit。
+
+### 比較スクリプト
+
+```powershell
+python scripts/compare-baseline.py tests/baselines/v0.3.0/<video>.metadata.json output/<video>/metadata.json
+# exit 0 = match, exit 1 = diff detected
+```
+
+詳細仕様は [`docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md`](superpowers/specs/2026-05-18-v030-l3-redefinition-design.md) §8 を参照。
 
 ## プラットフォーム固有の注意点
 

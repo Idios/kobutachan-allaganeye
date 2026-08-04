@@ -182,6 +182,29 @@ describe('ConfirmExitModal', () => {
     );
   });
 
+  // #837 (P3-b) -- kill は partial .mp4 を残す (Job hard-kill で Python の
+  // cleanup も走らない)。「破棄」は誤りで、未完成ファイルが残る旨に訂正する。
+  it('warns that partial files may remain, not that they are discarded (#837)', async () => {
+    let handler: () => void = () => undefined;
+    listenMock.mockImplementation(async (_: string, h: () => void) => {
+      handler = h;
+      return unlistenSpy;
+    });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'is_process_running') return Promise.resolve(true);
+      return Promise.reject(new Error(`unmocked: ${cmd}`));
+    });
+    render(<ConfirmExitModal />);
+    await waitFor(() => expect(listenMock).toHaveBeenCalled());
+    handler();
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).toBeInTheDocument(),
+    );
+    const hint = await screen.findByText(/未完成のまま残る/);
+    expect(hint).toBeInTheDocument();
+    expect(screen.queryByText(/中間ファイルは破棄/)).not.toBeInTheDocument();
+  });
+
   it('has no axe violations when shown (#587)', async () => {
     let handler: () => void = () => undefined;
     listenMock.mockImplementation(async (_: string, h: () => void) => {

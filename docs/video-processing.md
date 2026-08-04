@@ -5,8 +5,10 @@
 L1 の動画処理は以下の3段階で構成される:
 
 1. **probe**: ffprobe で入力動画のメタデータを取得
-2. **detect**: ffmpeg 並列プローブで暗転を検知し、試合境界を特定
+2. **detect**: ffmpeg のチャンク並列デコードで暗転を検知し、試合境界を特定
 3. **split**: FFmpeg で試合ごとに動画を分割
+
+> 検出 subsystem の layer 別 load-bearing/cruft/harmful 判定・git 考古学・再アーキ coupling は [detection-map.md](detection-map.md) (L3 Phase 0) を参照。
 
 ## probe（メタデータ取得）
 
@@ -35,22 +37,33 @@ ffprobe を使用して以下の情報を取得:
 
 全フレームの解析はコストが高いため、一定間隔（デフォルト1秒）でフレームをサンプリングする。
 
-**方式**: ffmpeg の `-ss`（入力シーク）で各タイムスタンプに直接ジャンプし、1フレームのみデコード。
+**方式（Pass 1、#214 以降）**: 動画を CPU コア数に応じた数のチャンクに分割し、チャンクごとに 1 つの ffmpeg プロセスで dual seek + `select` filter デコードする（正: `allaganeye/video/detector.py` の `_scan_cpu` → `_decode_chunk_cpu`）。
+
+```bash
+ffmpeg -threads 1 -ss {input_seek} -i input.mkv -ss {output_seek} -t {chunk_duration} \
+  -fps_mode passthrough \
+  -vf "select='not(mod(n\,{N}))',scale=320:180,format=gray" \
+  -f rawvideo -pix_fmt gray pipe:1
+```
+
+- 入力 `-ss`（`-i` の前）: `chunk_start - SEEK_LEAD_SECONDS` 付近のキーフレームへ高速ジャンプ（デコードなし）
+- 出力 `-ss`（`-i` の後）: GOP プリロールをフレーム単位で正確にトリムし、フィルタグラフの先頭を `chunk_start` に合わせる
+- `select='not(mod(n\,N))'`: **フレームインデックス** `n` ベースで N 枚おきに抽出（PTS ベースの `fps` filter と違い version 非依存）。`N = round(sample_interval * fps_num / fps_den)`
+- `scale=320:180`: 輝度計算に十分な低解像度（デコード負荷 1/36）
+- `format=gray` + `-pix_fmt gray`: grayscale でパイプ出力（Python 側の変換不要）
+- パイプから `numpy.frombuffer` + `numpy.mean` で平均輝度を計算。emit されたフレーム K をチャンクのタイムスタンプ K 番目に位置対応で割り当てる
+
+**方式（Pass 2 / 各種 helper）**: タイムスタンプ単位の再プローブは今も入力シーク 1 フレームデコードを使う。
 
 ```bash
 ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawvideo pipe:1
 ```
 
-- `-ss` を `-i` の前に配置（入力シーク = キーフレームベースの高速シーク）
-- `-s 320x180`: 輝度計算に十分な低解像度（デコード負荷 1/36）
-- `-pix_fmt gray`: grayscale でパイプ出力（Python 側の変換不要）
-- パイプから `numpy.frombuffer` + `numpy.mean` で平均輝度を計算
-
 ### 並列実行
 
-`ThreadPoolExecutor(max_workers=min(cpu_count, 24))` で複数タイムスタンプを同時にプローブ。各 ffmpeg プロセスは独立したキーフレームシークを行うため、不要フレームのデコードが発生しない。`--workers` オプションで明示指定も可能。
+`ThreadPoolExecutor` で複数チャンクを同時にデコードする。ワーカー数は `_resolve_workers` が CPU コア数と実装側の cap から解決する (正: `allaganeye/video/detector.py` の `_resolve_workers` docstring)。`--workers` オプションで明示指定も可能。チャンク数がワーカー数を上回る場合は wave 実行になる。
 
-**設計経緯**: OpenCV `VideoCapture` → シーケンシャル `grab()`/`read()` → ffmpeg `select` フィルタ → **並列 `-ss` プローブ** と段階的に改善。select フィルタは全フレームをデコード後にフィルタリングするため、大容量ファイルで効果がなかった。
+**設計経緯**: OpenCV `VideoCapture` → シーケンシャル `grab()`/`read()` → ffmpeg `select` フィルタ → **並列 `-ss` プローブ** と段階的に改善。select フィルタは全フレームをデコード後にフィルタリングするため、大容量ファイルで効果がなかった。その後 **チャンク分割デコード** (#214、プロセス起動コストとシークオーバーヘッドの削減) → **dual seek + フレームインデックスベース `select` filter** (#576、下記 §ffmpeg fps filter の version 依存制約) へ移行している。かつて非採用とした `select` フィルタが復活しているのは、当時の「全フレームをデコード後にフィルタリング」という問題が、チャンク境界を入力シークで絞ることで解消されたため。
 
 ### 暗転判定とフィルタリング
 
@@ -111,63 +124,79 @@ ffmpeg -ss {timestamp} -i input.mkv -frames:v 1 -s 320x180 -pix_fmt gray -f rawv
 - 最初の chunk が完了する前に `chunk_dispatch_callback` で `Detecting [dispatching N chunks, ...]` を表示し、長時間動画での 0% 停滞誤解を回避
 
 ```bash
-ffmpeg -hwaccel auto -ss <chunk_start> -t <chunk_duration> -i input.mkv \
-  -vf "fps=1/{interval},scale=320:180,format=gray" -f rawvideo pipe:1
+# default (v0.3.0 新 path): dual seek + select filter (frame-index ベース)
+ffmpeg [-hwaccel <name> [-hwaccel_output_format <fmt>] -c:v <decoder>] \
+  -ss <chunk_start - SEEK_LEAD_SECONDS> -i input.mkv \
+  -ss <output_seek> -t <chunk_duration> \
+  -fps_mode passthrough \
+  -vf "[hwdownload,format=nv12,]select='not(mod(n,N))',scale=320:180,format=gray" \
+  -f rawvideo -pix_fmt gray pipe:1
 ```
 
-- `-hwaccel auto`: GPU デコードを自動選択（NVIDIA CUDA, Intel QSV 等）
-- `fps=1/{interval}`: sample_interval に基づくフレームフィルタ
-- 1プロセスあたり多数フレームをデコードするため、GPU 初期化コストが分散される
+- hwaccel args: vendor が解決できれば `-hwaccel <name>` (+ 必要なら `-hwaccel_output_format <fmt>`) + `-c:v <decoder>`、解決できなければ `-hwaccel auto`
+- dual seek: `-ss <chunk_start - SEEK_LEAD_SECONDS>` を `-i` 前に (keyframe への高速ジャンプ)、`-ss <output_seek>` を `-i` 後に (GOP pre-roll の正確な trim)
+- `select='not(mod(n,N))'`: frame index `n` ベースで N 枚おきに抽出（PTS ベースの `fps` filter とは異なり ffmpeg version 非依存）
+- 1 プロセスあたり多数フレームをデコードするため、GPU 初期化コストが分散される
+- legacy path (`fps=1/{interval}` filter) に落ちるのは env var `ALLAGANEYE_DETECT_FPS_FILTER=1` 指定時、および fps metadata (`source_fps_num` / `source_fps_den` / `source_fps`) が 1 つも解決できない場合 (正: `_scan_cpu` / `scan_gpu` の docstring。詳細: §ffmpeg fps filter の version 依存制約)
 
-**CPU モードとの差異**: CPU モードはタイムスタンプごとに独立した ffmpeg プロセスを起動する（`-ss` プローブ方式）。GPU モードは少数の長寿命プロセスでチャンク全体をデコードする。Pass 1 以降（transition expansion, Pass 2, フィルタリング）は共通。
+**CPU モードとの差異**: CPU / GPU いずれもチャンク分割デコードだが、GPU モードは `-hwaccel` によるハードウェアデコードを使い、チャンク数を動画長に応じて動的調整する (#437) 点が異なる。CPU モードのチャンク数は CPU コア数のみで決まる (正: `_scan_cpu`)。Pass 1 以降（transition expansion, Pass 2, フィルタリング）は共通。
 
 **フォールバック**: GPU デコードに失敗した場合は `VideoProcessingError` を送出し、呼び出し元（`detector.py`）が自動で CPU モードにフォールバックする。
 
-### ffmpeg fps filter の version 依存制約（#577）
+### ffmpeg fps filter の version 依存制約 (#577, #576 で解決済み)
 
-`_scan_cpu` および GPU chunked decode で使用する `fps=N` filter は、ffmpeg version によりフレーム選択タイミングが変動する。極短時間 (< 1s) blackout の取りこぼしが起こりうる (PR #575 の root cause 分析で確定)。
+`_scan_cpu` および GPU chunked decode で旧 path (env var
+`ALLAGANEYE_DETECT_FPS_FILTER=1` 指定時) が使用する `fps=N` filter は、
+ffmpeg version によりフレーム選択タイミングが変動する。極短時間
+(< 1s) blackout の取りこぼしが起こりうる (PR #575 の root cause 分析で
+確定)。
 
-**検証データ (PR #575 / issue #560)**
+**新 path (#576 完了後、default)** は fps filter を廃止し、**dual seek**
+(input seek で `SEEK_LEAD_SECONDS` 手前まで飛び、output seek で chunk 先頭に
+合わせる) + ffmpeg の `select` filter (`select='not(mod(n\,N))'`、frame index
+`n` ベースの N 枚おき抽出) + `-fps_mode passthrough` で frame を選択する。
+時刻ではなく **frame index** で選ぶため、ffmpeg 内部の frame-rate
+normalization の version 依存を構造的に escape する。
 
-ffmpeg 8.1 / `sample_interval=2.0` で `20260118` video の同一 timestamp label を異なる経路で probe した結果:
+**検証データ (PR #575 / issue #560 / #576 完了後)**
 
-| timestamp label | per-frame `-ss` probe | `_scan_cpu` (chunked fps) | 差 |
-| --- | --- | --- | --- |
-| 6184.0 | **1.73 (BLACKOUT)** | 47.72 (transition) | -46 |
-| 6186.0 | 100.48 (normal) | 37.20 (transition) | +63 |
+ffmpeg 8.1 / `sample_interval=2.0` で `20260118` video の同一 timestamp
+label を異なる経路で probe した結果:
 
-per-frame `-ss` probe では 0.1s 解像度で 6184.0-6184.8 の **0.8s 幅 blackout** を捕捉できる:
+| timestamp label | per-frame `-ss` probe | 旧 path (chunked fps) | 新 path (#576) | 差 |
+| --- | --- | --- | --- | --- |
+| 6184.0 | **1.73 (BLACKOUT)** | 47.72 (transition) | **1.73 (BLACKOUT)** | 新 path で復活 |
+| 6186.0 | 100.48 (normal) | 37.20 (transition) | 100.48 (normal) | 同上 |
+
+新 path では frame_idx 直接指定で 0.8s 幅 blackout (6184.0-6184.8) を
+正しく捕捉できる。これが obs-20260118 baseline で Match 8 end が
+`6465.25` から 6184 周辺に移動した root cause fix。
+
+旧 path での挙動: `_scan_cpu` の chunked decode は `fps=0.5` filter で
+この 0.8s 短時間 blackout のサンプリングタイミングを外し、label "6184"
+に brightness 47.72 のフレーム (実際には video 時間 ~6185.1s) を割り当て
+ていた。`showinfo` filter の出力で確認可能:
 
 ```text
-6184.00   1.73  <-- BLACKOUT
-6184.10   1.73
-6184.20   1.74
-...
-6184.70   1.88
-6184.80  13.54
-6184.90  23.79  <-- transition
-6185.10  43.82
-6185.30  59.06  <-- normal
+n: 4 pts:3092 pts_time:6184  mean:[45 127 128]  <-- output PTS 6184 の Y-mean=45
 ```
 
-しかし `_scan_cpu` の chunked decode は `fps=0.5` filter でこの 0.8s 短時間 blackout のサンプリングタイミングを外し、label "6184" に brightness 47.72 のフレーム (実際には video 時間 ~6185.1s) を割り当てる。`showinfo` filter の出力で挙動を確認可能:
+output PTS 6184 と称しながら ~1.1s 遅れた input frame をサンプリングして
+いた (Y-mean=45 は実時間 6185.1s の brightness=43.82 と整合)。
 
-```text
-n: 4 pts:3092 pts_time:6184  mean:[45 127 128]  <-- output PTS 6184 のフレーム Y-mean=45
-```
+**rollback path (transitional, v0.3.x で削除)**
 
-output PTS 6184 と称しながら ~1.1s 遅れた input frame をサンプリングしている (Y-mean=45 は実時間 6185.1s の brightness=43.82 と整合)。
-
-**影響**
-
-- `min(min_blackout_duration, _REFINED_MIN_BLACKOUT)=1.5s` 未満の極短 blackout は fps filter 経路で取りこぼされる
-- ffmpeg version upgrade で baseline drift が再発する可能性あり (#576 で `fps` filter 廃止 + chunk 内全フレームデコード→N-th sampling 方式が検討中)
-- Pass 2 精密計測 (#361 borderline refinement / 上方向ヒステリシス) は Pass 1 で取りこぼした blackout を救済できない (refine 対象に入らないため)
-- 一方、現環境の検知パスは安定しており、PR #575 では他 2 件の baseline (`20260116` / `20260119`) は引き続き完全一致を維持
+env var `ALLAGANEYE_DETECT_FPS_FILTER=1` を設定すると旧 fps filter path
+に切替わる。緊急 escape 用途のみ、CI / production で使わないこと。
+詳細は
+`docs/superpowers/specs/2026-05-18-v030-l3-detect-fps-filter-retirement-design.md`
+S6 を参照。
 
 **判定 / 対応**
 
-baseline mismatch 発生時の判定 flow ((A) 検知ロジック退行 vs (B) ffmpeg version 依存差異) は [`docs/testing-guide.md`](testing-guide.md) §「baseline drift の判定」を参照。
+baseline mismatch 発生時の判定 flow ((A) 検知ロジック退行 vs (B) ffmpeg
+version 依存差異) は [`docs/testing-guide.md`](testing-guide.md)
+S「baseline drift の判定」を参照。
 
 ### コーデック + vendor 自動選択（#334, #414, #546, #550）
 
@@ -204,7 +233,7 @@ baseline mismatch 発生時の判定 flow ((A) 検知ロジック退行 vs (B) f
 
 **vendor 自動選択ロジック (`_resolve_gpu_mode` + `_select_gpu_vendor`)**
 
-1. `allaganeye.system_info.probe_gpu_vendors()` が platform 別 probe (nvidia-smi / wmic / lspci / system_profiler) で検出した vendor list を取得
+1. `allaganeye.system_info.probe_gpu_vendors()` が platform 別 probe で検出した vendor list を取得。probe 手段は nvidia-smi (全 platform 共通、最優先) / Windows: `wmic path win32_VideoController get Name` を第一候補とし、wmic 非搭載環境 (Windows 11 24H2 以降で既定削除) では PowerShell `Get-CimInstance Win32_VideoController` にフォールバック (#860) / Linux: `lspci` / macOS: `system_profiler`。Windows で wmic・PowerShell の双方が失敗し vendor が 0 件になった場合は `gpu_vendor_probe_warning()` が verbose header に警告を出し、GPU エンコーダ (NVENC/QSV/AMF) 不提示 = export が libx264 に縮退することをユーザーに可視化する (#860)
 2. `--gpu-vendor <vendor>` explicit の場合: `available` に含まれない、または `_VENDOR_HWACCEL_MAP` に未登録なら `ConfigValidationError` (exit 5)。現時点で nvidia / amd / intel すべて実装済みなので未登録分岐は将来の vendor 追加忘れガード
 3. `--gpu-vendor auto` (default) の場合: `_VENDOR_PREFERENCE = ("nvidia", "amd", "intel")` x `available` x 実装済み (`_VENDOR_HWACCEL_MAP` に含まれる) の最上位を選択。NVIDIA dGPU + Intel iGPU 環境では NVDEC が優先、AMD APU + Intel iGPU では AMD d3d11va が優先される
 4. codec が `_GPU_PREFERRED_CODECS` に含まれない場合は CPU mode。vendor が None (GPU 検出失敗 / 未実装 vendor のみ検出) でも codec match なら `use_gpu=True` を返し、`scan_gpu` の legacy path (`-hwaccel auto`) に入る。ffmpeg 側で GPU decode 失敗時は上記フォールバック経路で CPU 自動切替 (#334 既存挙動を維持)
@@ -262,10 +291,10 @@ FL 試合間の遷移は 2 つの暗転を伴うことがある:
 FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転₂ (match_boundary) → FL 試合 B
 ```
 
-各暗転は正しく `match_boundary` と分類されるが、間のロビー区間が偽の短い「試合」として検出される。連続する `match_boundary` ペアのギャップ（≤ `_MERGE_GAP_MAX=600s`）を 9 点プローブし、全点でスコアバーが検出されなければ 1 つのリージョンにマージする。
+各暗転は正しく `match_boundary` と分類されるが、間のロビー区間が偽の短い「試合」として検出される。連続する `match_boundary` ペアのギャップを 9 点プローブし、全点でスコアバーが検出されなければ 1 つのリージョンにマージする。ギャップ長の上限は設けない（`_MERGE_GAP_MAX = None`。旧 600s 上限は #307 / PR #313 で撤廃）。
 
 - **9 点プローブの根拠**: FL 試合中はリスポーン等で一時的にスコアバーが消えるが、9 点中少なくとも 1 点は True になる（実測: 2/9）。ロビー/結果画面は 0/9。
-- **`_MERGE_GAP_MAX=600s` の根拠**: 実測のロビー/結果画面ギャップは 83-468s（1.4-7.8 分）。600s で十分なマージンを確保。
+- **ギャップ上限を設けない根拠 (#307 / PR #313)**: V2 スコアバー検出（1080p での GC 紋章 3 点 AND）は試合中フレームを確実に検出でき、FL 試合は 15-20 分あるため 9 点等間隔プローブのうち 2-3 点は必ずスコアバーを検出する。よって長いギャップでも誤マージは起きない。一方でオフピーク帯のロビー/キュー待ちは 1 時間を超えうるため、固定上限は正当なマージ機会を取りこぼす。実測のロビー/結果画面ギャップは 83-468s（1.4-7.8 分）だが、この分布に合わせた旧 600s 上限は撤廃した。
 
 #### 閾値の根拠データ
 
@@ -273,7 +302,7 @@ FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転
 | --- | --- | --- |
 | `_SCOREBAR_CHANNEL_STD_THRESHOLD` | 15.0 | lobby=4-5, queue=8-9, **FL=26-48** |
 | `_IN_MATCH_MAX_DURATION` | 3.5s | キャラダウン=1.0-2.0s, **境界=4.5s+** |
-| `_MERGE_GAP_MAX` | 600s | 結果画面=83-266s, lobby=232-468s |
+| `_MERGE_GAP_MAX` | `None`（上限なし） | 結果画面=83-266s, lobby=232-468s（旧 600s 上限は PR #313 で撤廃） |
 
 #### 既知の制約
 
@@ -371,6 +400,8 @@ FL 試合 A → 暗転₁ (match_boundary) → ロビー/結果画面 → 暗転
 | `-threads 1` | ffmpeg プロセスに追加 | スレッド競合防止 | workers=24 × デフォルトスレッド数 = 768 スレッドで逆に遅くなる |
 | `sample_interval` 自動調整 | 1h+→2.0s, 2h+→3.0s | プローブ数半減-1/3 | 暗転区間 5s+ なので interval=3.0 でも検知可能 |
 | 2パス精密計測 | 暗転候補のみ 0.25s | +5-15% プローブ | 精密計測は ~400 プローブ追加のみ |
+
+> 上表の `min(cpu_count, 24)` / `workers=24` は**計測当時 (PR #57 / #69) の cap** による値。現行の cap は `_resolve_workers` docstring を参照 (#862)。計測条件を保つため数値は当時のまま残している。
 
 ## split（動画分割）
 

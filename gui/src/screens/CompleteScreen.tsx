@@ -3,6 +3,7 @@ import { useEffect, useMemo, type KeyboardEvent } from 'react';
 import { AllaganFrame } from '../components/AllaganFrame';
 import { BrightnessTimeline } from '../components/BrightnessTimeline';
 import { DisabledTooltip } from '../components/DisabledTooltip';
+import { InlineErrorHint } from '../components/InlineErrorHint';
 import { MatchThumb } from '../components/MatchThumb';
 import { RestoreButton } from '../components/RestoreButton';
 import { SampleModeBanner } from '../components/SampleModeBanner';
@@ -43,6 +44,7 @@ export function formatElapsed(
 export function CompleteScreen() {
   const metadata = useMetadataStore((s) => s.metadata);
   const clear = useMetadataStore((s) => s.clear);
+  const loadErrorState = useMetadataStore((s) => s.loadErrorState);
 
   const selectedMatchIndex = useAppStateStore((s) => s.selectedMatchIndex);
   const selectMatch = useAppStateStore((s) => s.selectMatch);
@@ -78,7 +80,19 @@ export function CompleteScreen() {
   if (!metadata) {
     return (
       <div className={styles.screen} data-testid="complete-screen">
-        <div className={styles.emptyNote}>No metadata. Run detect first.</div>
+        {loadErrorState ? (
+          <div
+            className={styles.emptyNote}
+            role="alert"
+            data-testid="complete-load-error"
+          >
+            <div>metadata.json の読み込みに失敗しました</div>
+            <div>{loadErrorState.message}</div>
+            <InlineErrorHint hint={loadErrorState.hint} />
+          </div>
+        ) : (
+          <div className={styles.emptyNote}>No metadata. Run detect first.</div>
+        )}
       </div>
     );
   }
@@ -172,6 +186,15 @@ export function CompleteScreen() {
           </button>
           <button
             type="button"
+            className={styles.exportAllButton}
+            onClick={() => navigate('minimap')}
+            disabled={metadata.matches.length === 0}
+            aria-label="ミニマップ切抜き"
+          >
+            ⬦ ミニマップ切抜き
+          </button>
+          <button
+            type="button"
             className={styles.closeButton}
             aria-label="閉じる"
             onClick={handleClose}
@@ -235,14 +258,18 @@ export function CompleteScreen() {
           >
             {metadata.matches.map((m) => {
               const isSel = m.index === selectedMatch?.index;
+              // #805 Phase 2: post_match trailing は default split/export の
+              // 対象外 (機能除外は Phase 1 済)。一覧では dimmed + badge で区別。
+              const isPostMatch = m.post_match === true;
               return (
                 <li
                   key={m.index}
                   onClick={() => selectMatch(m.index)}
                   onDoubleClick={() => openPreviewFor(m.index)}
-                  className={`${styles.listItem}${isSel ? ` ${styles.listItemActive}` : ''}`}
+                  className={`${styles.listItem}${isSel ? ` ${styles.listItemActive}` : ''}${isPostMatch ? ` ${styles.listItemPostMatch}` : ''}`}
                   data-testid={`match-row-${m.index}`}
                   data-selected={isSel ? 'true' : 'false'}
+                  {...(isPostMatch ? { 'data-post-match': 'true' } : {})}
                 >
                   <MatchThumb
                     index={m.index}
@@ -259,6 +286,11 @@ export function CompleteScreen() {
                       {m.start_display} → {m.end_display} · {m.duration_display}
                     </div>
                   </div>
+                  {isPostMatch && (
+                    <div className={`${styles.typeBadge} ${styles.postMatchBadge}`}>
+                      試合後
+                    </div>
+                  )}
                   <div
                     className={`${styles.typeBadge}${m.type === 'fl_match' ? ` ${styles.typeBadgeFl}` : ` ${styles.typeBadgeUnknown}`}`}
                   >

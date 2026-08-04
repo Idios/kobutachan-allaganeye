@@ -1,19 +1,32 @@
 """Match boundary detection using parallel ffmpeg frame probing."""
 
+import contextlib
 import logging
+import math
 import os
 import subprocess
+import tempfile
+import threading
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from fractions import Fraction
 from pathlib import Path
-from typing import TypedDict
+from typing import IO, NotRequired, TypedDict
 
 import numpy as np
 
 from allaganeye.audio.matcher import BgmHit
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
+from allaganeye.video.capture_region import (
+    CaptureRegion,
+    FULL_FRAME,
+    RegionTimeline,
+    ScorebarLocalization,
+    localize_from_rgb_bytes_at_anchor,
+    region_mean,
+)
 
 
 class MatchBoundary(TypedDict):
@@ -22,6 +35,10 @@ class MatchBoundary(TypedDict):
     start: float
     end: float
     type: str
+    # #805 段階2: set True on a post-match trailing segment (lobby/city after
+    # the final match). The segment is retained non-destructively and excluded
+    # from default split (MP4) output downstream; absent/False = normal match.
+    post_match: NotRequired[bool]
 
 
 class DetectionStats(TypedDict, total=False):
@@ -48,12 +65,32 @@ class DetectionStats(TypedDict, total=False):
     # Paired with filter_drops so verbose can report
     # ``<candidates> -> <final matches>`` with breakdown.
     filter_candidates: int
-    filter_drops: dict[str, int]  # keys: below_min_match_duration, other
+    filter_drops: dict[
+        str, int
+    ]  # keys: below_min_match_duration, other, post_match_trailing (optional, #797)
     # Count of segments returned with type=="unknown" (#433). Used by the
     # verbose ``+ N unknown match`` line so the user can reconcile
     # Filter "kept" with the larger Detected count when a recording
     # starts / ends mid-match.
     filter_unknown: int
+    # Count of segments dropped by Layer 2 at-anchor presence validation (#822).
+    # Incremented once per segment dropped (lobby / non-FL inter-match footage
+    # scoring majority-absent in at-anchor probes).
+    masked_segments_dropped: int
+    # Count of adjacent KEPT segment pairs merged by the post-L2 zero-gap merge
+    # pass (#822 Onsal recalibration 2026-07-14).  Each pair merged increments by 1.
+    masked_l2_zero_gap_merges: int
+    # VTuber timeline stats (#895 P2 Task 4): populated only when detect_matches_timeline
+    # is used (--vtuber path).  Keys absent on OBS/masked path = no-op display.
+    vtuber_timeline_probes: int  # total probes from scan_timeline
+    vtuber_anchor_confidence: float  # resolved anchor confidence (0.0-1.0)
+    vtuber_gaps_tested: int  # V3 gaps evaluated by adjudicate_gap
+    vtuber_gaps_merged: int  # V3 gaps merged (false splits)
+    vtuber_merge_overridden: (
+        int  # V3 gaps where blackout-peek overrode merge -> boundary
+    )
+    vtuber_v4_dropped: int  # V4 segments dropped by _validate_match_segments
+    vtuber_low_confidence_segments: int  # segments exceeding LOW_CONFIDENCE_SEGMENT_S
 
 
 logger = logging.getLogger(__name__)
@@ -62,12 +99,483 @@ _SAMPLE_WIDTH = 320
 _SAMPLE_HEIGHT = 180
 _FRAME_SIZE = _SAMPLE_WIDTH * _SAMPLE_HEIGHT  # grayscale, 1 byte per pixel
 
+# Dual seek (#576 Option 1): input seek lead-in margin (seconds).
+# Input -ss jumps to the keyframe BEFORE (chunk_start - SEEK_LEAD_SECONDS)
+# so ffmpeg only decodes the small GOP pre-roll, not from t=0.
+# OBS AV1 keyframe interval is typically 2s; 5s gives 2.5x slack.
+SEEK_LEAD_SECONDS = 5.0
+
+
+def _resolve_fps_rational(
+    fps_num: int | None,
+    fps_den: int | None,
+    source_fps: float | None,
+) -> tuple[int, int]:
+    """Resolve (num, den) from rational-first / float-fallback inputs (#576 S2.3).
+
+    Priority:
+    1. ``fps_num`` + ``fps_den`` both given -> use as-is
+    2. ``source_fps`` (float) only -> ``Fraction(...).limit_denominator(10000)``
+    3. all None -> raise VideoProcessingError (caller should not call here
+       without source_fps; legacy path is selected via env var separately)
+    """
+    # probe.py returns (0, 0) on parse failure; we deliberately fall through
+    # to source_fps (float) for that case via the > 0 checks below.
+    if fps_num is not None and fps_den is not None and fps_num > 0 and fps_den > 0:
+        return fps_num, fps_den
+    if source_fps and source_fps > 0:
+        frac = Fraction(source_fps).limit_denominator(10000)
+        return frac.numerator, frac.denominator
+    raise VideoProcessingError(
+        "source_fps not provided to detector (need fps_num/fps_den or source_fps)."
+    )
+
+
+def _frame_brightness(frame: np.ndarray, region: CaptureRegion = FULL_FRAME) -> float:
+    """CPU scan の 1-D grayscale buffer (320*180,) の平均輝度。
+
+    FULL_FRAME のときは 1-D のまま ``float(frame.mean())`` (現行と bit-exact、
+    reshape による丸め経路変化なし)。band region のときのみ
+    ``(_SAMPLE_HEIGHT, _SAMPLE_WIDTH)`` に reshape して ``region_mean`` で crop する。
+    """
+    if region.is_full_frame():
+        return float(frame.mean())
+    frame2d = frame.reshape(_SAMPLE_HEIGHT, _SAMPLE_WIDTH)
+    return region_mean(frame2d, region)
+
+
+def _sample_chunk_frames(
+    stream: IO[bytes] | None,
+    chunk_start: float,
+    chunk_timestamps: list[float],
+    fps_num: int,
+    fps_den: int,
+    expected_frames: int,
+    is_tail_chunk: bool,
+    region: CaptureRegion = FULL_FRAME,
+) -> dict[float, float]:
+    """Sample frames from a pre-filtered stream (#576 select-filter path).
+
+    With ffmpeg-level ``select='not(mod(n,N))'`` filter, the stream emits
+    exactly one frame per ``chunk_timestamps`` entry (in order).  Emitted
+    frame K is mapped directly to ``chunk_timestamps[K]``.  The rational-fps
+    ``round((t-chunk_start) * fps_num / fps_den)`` math is handled at the
+    ffmpeg layer; Python just assigns frames by position.
+
+    Args:
+        stream: A binary file-like object (``IO[bytes]``) yielding raw
+            grayscale frames (320x180 = ``_FRAME_SIZE`` bytes per frame)
+            from a ``subprocess.Popen`` with ``select`` filter +
+            ``-fps_mode passthrough``.  Must not be ``None``.
+        chunk_start: Wall-clock start time of the chunk (seconds).
+            Kept in signature for API stability; not used for index math.
+        chunk_timestamps: Pre-computed global grid timestamps for this chunk
+            (sorted ascending).  Each becomes a key in the returned dict.
+            Emitted frame K -> chunk_timestamps[K].
+        fps_num / fps_den: Source video frame rate as rational.  Used only
+            for the slack computation in the dynamic VFR check.
+        expected_frames: ``len(chunk_timestamps)`` -- the number of frames
+            the ffmpeg ``select`` filter is expected to emit.
+        is_tail_chunk: True when this chunk ends at (or within 1.0s of)
+            the video duration.  Tail chunks may emit fewer frames than
+            expected; the VFR check downgrades to WARN-only for them.
+
+    Returns:
+        ``{timestamp: brightness}`` mapping for every entry in
+        ``chunk_timestamps``.  Targets whose emitted frame was not received
+        get 255.0 (safe non-blackout fallback, #214 contract preserved).
+
+    Raises:
+        VideoProcessingError: when the chunk is non-tail and the emitted
+        frame count deviates from ``expected_frames`` by more than
+        ``max(expected_frames * 0.01, ceil(source_fps * 0.1))`` frames
+        (dynamic VFR / decoder anomaly detection).
+    """
+    if stream is None:
+        raise VideoProcessingError("ffmpeg stdout not available")
+
+    source_fps = fps_num / fps_den
+
+    results: dict[float, float] = {}
+    emit_count = 0
+
+    # Memory budget: one _FRAME_SIZE bytes chunk at a time.
+    # Emitted frame K -> chunk_timestamps[K] (positional mapping).
+    while True:
+        raw = stream.read(_FRAME_SIZE)
+        if len(raw) < _FRAME_SIZE:
+            break
+        if emit_count < len(chunk_timestamps):
+            frame = np.frombuffer(raw, dtype=np.uint8)
+            brightness = _frame_brightness(frame, region)
+            results[chunk_timestamps[emit_count]] = brightness
+        emit_count += 1
+
+    # Targets whose frames were not emitted: 255.0 fallback (#214)
+    for t in chunk_timestamps:
+        if t not in results:
+            results[t] = 255.0  # safe non-blackout fallback (#214)
+
+    slack = max(int(expected_frames * 0.01), math.ceil(source_fps * 0.1))
+    diff = abs(emit_count - expected_frames)
+    if diff > slack:
+        msg = (
+            f"Dynamic VFR detection: chunk emitted {emit_count} frames, "
+            f"expected {expected_frames} (slack=+-{slack}). "
+            f"Input may be VFR or decoder anomaly."
+        )
+        if is_tail_chunk:
+            logger.warning(
+                "%s tail chunk -- decoder truncation allowed, continuing.",
+                msg,
+            )
+        else:
+            raise VideoProcessingError(msg)
+
+    return results
+
+
+class _WatchdogState:
+    """Shared flag telling the caller whether the deadline watchdog fired (#842).
+
+    ``fired`` is set in the timer thread just before the kill, then read by the
+    decode caller so a stalled-then-killed chunk is handled as a decode failure
+    (graceful fallback) rather than a hard error.
+    """
+
+    __slots__ = ("fired",)
+
+    def __init__(self) -> None:
+        self.fired = False
+
+
+@contextlib.contextmanager
+def _proc_deadline_watchdog(proc: subprocess.Popen[bytes], deadline_s: float):
+    """Force-kill ``proc`` if it outlives ``deadline_s`` (#842 P2-3).
+
+    The v2 streaming decode reads ``proc.stdout`` via ``_sample_chunk_frames``
+    with a blocking ``stream.read`` that never returns while ffmpeg stalls
+    (no output, no EOF), so the post-read ``proc.wait(timeout=)`` is never
+    reached.  This watchdog kills the process at the deadline; the blocked read
+    then sees EOF.  Yields a ``_WatchdogState`` whose ``fired`` flag lets the
+    caller route a watchdog-killed (and therefore truncated) decode into its
+    decode-failed fallback (CPU: 255.0 / GPU: raise -> CPU fallback) instead of
+    propagating the resulting frame-count ``VideoProcessingError`` as a hard
+    detection failure (#842 codex).  On a healthy decode the timer is cancelled
+    before firing -> no behaviour change (bit-exact).
+    """
+    state = _WatchdogState()
+
+    def _on_deadline() -> None:
+        state.fired = True
+        proc.kill()
+
+    timer = threading.Timer(deadline_s, _on_deadline)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield state
+    finally:
+        timer.cancel()
+
 
 def _resolve_workers(workers: int | None) -> int:
-    """Resolve worker count: explicit value or auto-detect."""
+    """Resolve worker count: explicit value or auto-detect.
+
+    **This docstring is the single source of truth for the worker cap.**
+    Per ``docs/coding-conventions.md`` (doc SSoT convention, #818), spec
+    docs must not duplicate the number -- they write "auto" and link here.
+
+    When ``workers is None`` (CLI ``--workers`` omitted) the count is
+    ``min(cpu_count, 32)``.  The cap exists because each worker spawns one
+    ``ffmpeg -threads 1`` probe process; beyond ~32 concurrent seeks the
+    bottleneck moves from CPU to storage I/O and throughput stops scaling.
+    ``os.cpu_count()`` returning ``None`` falls back to 4.
+    """
     if workers is not None:
         return workers
     return min(os.cpu_count() or 4, 32)
+
+
+def _resolve_detect_region(
+    video_path: Path, duration_hint: float
+) -> tuple[CaptureRegion, str | None]:
+    """Stage 0: scorebar 帯 anchor を解決する。失敗時は FULL_FRAME (OBS 安全縮退)。
+
+    OBS (全画面 game) では localize がインセット帯を見つけられず consensus が
+    成立しないため FULL_FRAME に縮退し、検出は現行と bit-exact になる。VTuber は
+    帯 ROI が解決される。anchor の例外は決して検出を壊さない (FULL_FRAME に握り潰す)。
+
+    Returns:
+        (region, fallback_reason)。fallback_reason は #810 の縮退 provenance:
+        "anchor_error" (例外縮退) / "consensus_miss" (consensus 不成立) /
+        None (解決成功)。metadata.json capture_regions.fallback_reason へ記録される。
+    """
+    from allaganeye.video.capture_region import (
+        ScorebarLocalization,
+        _BAND_CONSENSUS_MIN_HITS,
+        detect_scorebar_band_region,
+        localize_from_rgb_bytes,
+    )
+    from allaganeye.video.probe_state import PresenceState
+
+    unknown_count = 0
+    valid_votes = 0  # closure returns that are ScorebarLocalization instances
+    total_probes = 0
+    unknown_times: list[float] = []
+
+    def _localize_at(t: float):
+        nonlocal unknown_count, valid_votes, total_probes
+        total_probes += 1
+        raw = _probe_frame_rgb_hires(video_path, t)
+        if raw is None:
+            unknown_count += 1
+            unknown_times.append(t)
+            logger.debug("anchor probe decode failed at t=%.3fs -> UNKNOWN", t)
+            return PresenceState.UNKNOWN
+        result = localize_from_rgb_bytes(
+            raw,
+            height=_SCOREBAR_V2_PROBE_HEIGHT,
+            width=_SCOREBAR_V2_PROBE_WIDTH,
+        )
+        if isinstance(result, ScorebarLocalization):
+            valid_votes += 1
+        return result
+
+    # Local helper to emit the UNKNOWN-probe warning (dedupes exception + success paths).
+    def _warn_unknowns() -> None:
+        if unknown_count > 0:
+            logger.warning(
+                "anchor probes: %d/%d UNKNOWN (probe failure; time range %.1f-%.1fs)",
+                unknown_count,
+                total_probes,
+                min(unknown_times),
+                max(unknown_times),
+            )
+
+    try:
+        region = detect_scorebar_band_region(
+            duration=duration_hint,
+            probe_w=_SCOREBAR_V2_PROBE_WIDTH,
+            probe_h=_SCOREBAR_V2_PROBE_HEIGHT,
+            localize_fn=_localize_at,
+        )
+    except Exception:
+        # Anchor failure must never break detect: degrade to FULL_FRAME so the
+        # OBS / error path stays bit-exact with the pre-region behavior.
+        # R4: 縮退自体は意図的設計だが、silent にせず痕跡を残す (診断性のみ)。
+        logger.warning(
+            "scorebar band anchor failed; degrading to FULL_FRAME", exc_info=True
+        )
+        _warn_unknowns()
+        return FULL_FRAME, "anchor_error"
+    _warn_unknowns()
+    if region.is_full_frame():
+        # consensus-miss (非例外縮退) も silent にしない (R5): --vtuber 明示 run
+        # が FULL_FRAME (汚染 path) で続行することを痕跡に残す。
+        logger.warning(
+            "band anchor found no scorebar-band consensus "
+            "(valid votes %d/%d, min_hits %d); "
+            "continuing with FULL_FRAME (--vtuber)",
+            valid_votes,
+            total_probes,
+            _BAND_CONSENSUS_MIN_HITS,
+        )
+        return region, "consensus_miss"
+    logger.debug("band anchor resolved: %s", region)
+    return region, None
+
+
+_MASKED_REGION_SAMPLES = 48
+"""Sparse frames sampled across the video for mask-free region detection.
+
+Must span multiple blackouts so game pixels register a dark ``min``; 48 over a
+multi-hour FL recording covers many match boundaries (spec section 5).
+"""
+
+_MASKED_REGION_DARK = 32
+"""Darkest-brightness frames sampled for masked region detection when a Pass-1
+brightness hint is available.  These land on the masked blackouts (game region
+dark) so ``detect_mask_free_region`` can see game pixels reach a dark min."""
+
+_MASKED_REGION_EVEN = 32
+"""Evenly-spaced frames sampled alongside ``_MASKED_REGION_DARK`` (gameplay:
+game region bright) so each game pixel is bright in some frame AND dark in
+another (#753: even-only sampling missed brief blackouts on shorter recordings)."""
+
+
+def _resolve_masked_region(
+    video_path: Path,
+    duration_hint: float,
+    workers: int | None,
+    *,
+    brightness_hint: dict[float, float] | None = None,
+) -> CaptureRegion:
+    """Detect the mask-free game rectangle for masked recordings (#753).
+
+    Samples grayscale frames and runs ``detect_mask_free_region``.  When a
+    ``brightness_hint`` (the standard full-frame Pass-1 ``{timestamp: brightness}``
+    map) is provided, samples the ``_MASKED_REGION_DARK`` darkest timestamps (the
+    masked blackouts, where the game region goes dark) plus ``_MASKED_REGION_EVEN``
+    evenly-spaced timestamps (gameplay, where it is bright) -- both are required
+    so each game pixel is bright in some frame AND dark in another.  Without a
+    hint, falls back to ``_MASKED_REGION_SAMPLES`` even samples.  Any failure
+    (decode, opencv, empty) degrades to FULL_FRAME so the caller can treat
+    FULL_FRAME as "no mask region found".  Never raises.
+    """
+    from allaganeye.video.capture_region import detect_mask_free_region
+
+    try:
+        if brightness_hint:
+            dark_ts = sorted(brightness_hint, key=lambda t: brightness_hint[t])[
+                :_MASKED_REGION_DARK
+            ]
+            even_ts = [
+                duration_hint * (i + 1) / (_MASKED_REGION_EVEN + 1)
+                for i in range(_MASKED_REGION_EVEN)
+            ]
+            times = sorted(set(dark_ts) | set(even_ts))
+        else:
+            n = _MASKED_REGION_SAMPLES
+            times = [duration_hint * (i + 1) / (n + 1) for i in range(n)]
+        max_workers = max(1, min(len(times), workers or os.cpu_count() or 4))
+        frames: list[np.ndarray] = []
+        failed_times: list[float] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            results = list(
+                pool.map(lambda t: _probe_frame_gray2d(video_path, t), times)
+            )
+        for t, frame in zip(times, results, strict=True):
+            if frame is not None:
+                frames.append(frame)
+            else:
+                failed_times.append(t)
+        dropped = len(failed_times)
+        if dropped > 0:
+            logger.warning(
+                "masked region probes: %d/%d failed (decode); "
+                "time range %.1f-%.1fs; continuing with valid frames",
+                dropped,
+                len(times),
+                min(failed_times),
+                max(failed_times),
+            )
+        if len(frames) < 2:
+            return FULL_FRAME
+        return detect_mask_free_region(frames)
+    except Exception:
+        logger.warning(
+            "masked region detection failed; degrading to FULL_FRAME", exc_info=True
+        )
+        return FULL_FRAME
+
+
+_ANCHOR_NUM_SAMPLES = 24
+"""Number of frames sampled for scorebar anchor consensus (#822).
+
+Spec section 1.1: 24 sparse probes across a multi-hour FL recording cover many
+in-match segments so the true scorebar band (conf ~1.00) accumulates enough hits
+(>= _ANCHOR_MIN_HITS) while FP samples (conf <= 0.67) are pre-filtered out.
+"""
+
+_ANCHOR_MIN_HITS = 5
+"""Minimum cluster hits required for scorebar anchor consensus (#822).
+
+Stricter than the vtuber band-region min_hits (2) because anchor consensus feeds
+masked classification (per-frame localize_from_rgb_bytes_at_anchor) and a wrong
+anchor would corrupt all per-frame decisions for the entire video.
+"""
+
+_ANCHOR_MIN_CONF = 0.7
+"""Confidence threshold for anchor pre-filter (#822).
+
+Empirical basis (spec section 1.1): true scorebar hits have conf ~1.00;
+FP hits (lobby HUD fragments, lower-HUD segments) reach at most conf ~0.67.
+A cut at 0.70 admits all true hits and rejects all observed FPs.
+Hits below this threshold are treated as miss (not counted toward min_hits);
+they do not enter the cluster voting.
+"""
+
+
+def _resolve_scorebar_anchor(
+    video_path: Path, duration_hint: float
+) -> ScorebarLocalization | None:
+    """Resolve a per-video scorebar anchor via multi-frame consensus (#822).
+
+    Probes _ANCHOR_NUM_SAMPLES evenly-spaced frames with _probe_frame_rgb_hires
+    and localize_from_rgb_bytes (position-independent).  Hits with
+    confidence < _ANCHOR_MIN_CONF are pre-filtered (treated as miss; they do not
+    enter cluster voting) to suppress FP bands.  Raw None probes are mapped to
+    PresenceState.UNKNOWN (excluded from consensus, not counted as miss).
+
+    Returns None for two distinct reasons:
+    - Consensus miss (fewer than _ANCHOR_MIN_HITS confident hits in the dominant
+      cluster): the caller (_detect_masked_fallback / Task B4) emits the
+      consensus-miss warning and degrades to position-independent localize.
+    - Exception: caught here, logged as warning with "falls back to
+      position-independent", returns None silently for the caller.
+
+    UNKNOWN-probe partial-failure warning is emitted by this function when
+    unknown_count > 0 (same contract as _resolve_detect_region, #824 section 5.3).
+    The consensus-miss warning is the caller's responsibility (not emitted here).
+    """
+    from allaganeye.video.capture_region import (
+        consensus_scorebar_localization,
+        localize_from_rgb_bytes,
+    )
+    from allaganeye.video.probe_state import PresenceState
+
+    unknown_count = 0
+    total_probes = 0
+    unknown_times: list[float] = []
+
+    def _localize_at(t: float):
+        nonlocal unknown_count, total_probes
+        total_probes += 1
+        raw = _probe_frame_rgb_hires(video_path, t)
+        if raw is None:
+            unknown_count += 1
+            unknown_times.append(t)
+            logger.debug("anchor probe decode failed at t=%.3fs -> UNKNOWN", t)
+            return PresenceState.UNKNOWN
+        loc = localize_from_rgb_bytes(
+            raw,
+            height=_SCOREBAR_V2_PROBE_HEIGHT,
+            width=_SCOREBAR_V2_PROBE_WIDTH,
+        )
+        if loc is not None and loc.confidence < _ANCHOR_MIN_CONF:
+            return None  # conf pre-filter: treat as miss, not counted in consensus
+        return loc
+
+    # Local helper to emit the UNKNOWN-probe warning (dedupes exception + success paths).
+    def _warn_unknowns() -> None:
+        if unknown_count > 0:
+            logger.warning(
+                "anchor probes: %d/%d UNKNOWN (probe failure; time range %.1f-%.1fs)",
+                unknown_count,
+                total_probes,
+                min(unknown_times),
+                max(unknown_times),
+            )
+
+    try:
+        result = consensus_scorebar_localization(
+            duration=duration_hint,
+            localize_fn=_localize_at,
+            num_samples=_ANCHOR_NUM_SAMPLES,
+            min_hits=_ANCHOR_MIN_HITS,
+        )
+    except Exception:
+        logger.warning(
+            "scorebar anchor resolution failed; masked classification falls back to"
+            " position-independent localize",
+            exc_info=True,
+        )
+        _warn_unknowns()
+        return None
+
+    _warn_unknowns()
+    return result
 
 
 def detect_match_boundaries(
@@ -79,6 +587,8 @@ def detect_match_boundaries(
     min_match_duration: float = 300.0,
     min_blackout_duration: float = 3.0,
     use_gpu: bool = False,
+    vtuber: bool = False,
+    masked: bool = False,
     workers: int | None = None,
     src_resolution: tuple[int, int] | None = None,
     codec: str | None = None,
@@ -91,6 +601,27 @@ def detect_match_boundaries(
     chunk_dispatch_callback: Callable[[int], None] | None = None,
     gpu_vendor: str | None = None,
     brightness_callback: Callable[[dict[float, float]], None] | None = None,
+    # #821: masked fallback の結果が採用されたとき (明示 --masked / 0-blackout
+    # auto-trigger とも) に一度だけ呼ばれる。request flag と resolved path を
+    # 分離して記録するための通知 seam (brightness_callback と同型)。
+    masked_fallback_callback: Callable[[], None] | None = None,
+    # #810: 最終的に有効だった capture region (RegionTimeline) で、Pass 1 の
+    # path 確定直後 (masked fallback 採用判定の確定点) に最大 1 回呼ばれる。
+    # masked fallback 採用時は mask-free rect、それ以外は Stage 0 の解決結果
+    # (band or FULL_FRAME + fallback_reason)。発火後に後段 (Pass 2 / scorebar
+    # filtering) が例外を出す run もあるため、callback は値の捕捉のみに使い、
+    # 永続化は本関数の成功 return 後に caller (commands 層) が行う
+    # (brightness_callback と同型の contract、round-3 R3-3)。
+    region_callback: Callable[[RegionTimeline], None] | None = None,
+    # #576: rational fps propagation (preferred over float source_fps).
+    # Either pair (num+den) takes precedence; float source_fps is the
+    # backward-compatible fallback (Fraction.limit_denominator path).
+    source_fps_num: int | None = None,
+    source_fps_den: int | None = None,
+    source_fps: float | None = None,
+    # #805: opt out of the post-match trailing flag (#797). When True the
+    # trailing no-scorebar segment is left unflagged (#805 opt-out).
+    keep_trailing: bool = False,
 ) -> list[MatchBoundary]:
     """Detect match boundaries by finding blackout frames.
 
@@ -99,6 +630,9 @@ def detect_match_boundaries(
             to generate the list of sample timestamps.
         use_gpu: If True, use chunked parallel GPU decode instead of
             per-frame -ss probes.  Falls back to CPU on failure.
+        masked: If True (or when standard full-frame Pass 1 finds no
+            blackout), re-detect on a mask-free region with position-
+            independent classification (#753 masked-OBS).  OBS bit-exact.
         src_resolution: (width, height) from probe.  When provided,
             scorebar-based filtering is applied to remove in-match
             blackouts and non-FL blackouts.
@@ -124,6 +658,8 @@ def detect_match_boundaries(
             mapping covers every timestamp between 0 and ``duration_hint``
             at ``sample_interval`` spacing; non-blackout fallbacks (255.0)
             are included so consumers can plot continuous data.
+        keep_trailing: If True, skip the #797 post-match trailing flagging so a
+            trailing no-scorebar segment is left unflagged (#805 opt-out).
 
     Returns list of dicts with 'start' and 'end' keys (seconds).
     """
@@ -131,6 +667,45 @@ def detect_match_boundaries(
         raise VideoProcessingError(
             "Cannot determine video duration. Provide duration_hint via probe."
         )
+
+    # V0-V4 (#895 / spec 2026-07-17): vtuber は timeline segmentation を先に試行。
+    # anchor 不成立 / probe 過半 UNKNOWN のときのみ従来の band-crop blackout path
+    # へ縮退する (現状より悪化しない floor)。OBS (vtuber=False) はこの分岐に
+    # 一切入らない = import もしない (bit-exact 構造保証)。
+    if vtuber:
+        from allaganeye.video import vtuber_timeline
+
+        timeline_result = vtuber_timeline.detect_matches_timeline(
+            video_path,
+            duration_hint,
+            min_match_duration=min_match_duration,
+            workers=workers,
+            progress_callback=progress_callback,
+            stats=stats,
+        )
+        # defense-in-depth (Codex R1 high): 空 boundaries を authoritative に
+        # しない。vtuber_timeline 側も空なら None を返す契約だが、将来の
+        # regression でも floor (legacy fallback) が破れないよう二重に gate する。
+        if timeline_result is not None and timeline_result[0]:
+            timeline_boundaries, timeline_region = timeline_result
+            if region_callback is not None:
+                region_callback(timeline_region)
+            # P1 契約: timeline path は Pass 1/2 を通らないため DetectionStats
+            # (pass1/pass2 秒数等) と brightness_callback は未設定のまま返す。
+            # `--vtuber -v` の pipeline 統計は空表示になるが `_print_detection_stats`
+            # は全 key guarded で crash しない (実証済)。stats への timeline 固有
+            # 統計 (probe 数 / anchor conf / gaps 等) は P2 で V3/V4 と合わせて実装済み。
+            return timeline_boundaries
+
+    # Stage 0 (#753 / B4-rev): resolve a scorebar-band anchor before any scan.
+    # Stage 0 band anchor runs only when VTuber is explicit (spec section 3.6).
+    # OBS (vtuber=False) stays FULL_FRAME -> current bit-exact. localize also
+    # succeeds on OBS, so auto-detection is not possible -> the flag gates it.
+    detect_region, region_fallback_reason = (
+        _resolve_detect_region(video_path, duration_hint)
+        if vtuber
+        else (FULL_FRAME, None)
+    )
 
     # Pass 1: scan for blackout frames
     pass1_start = time.monotonic()
@@ -149,6 +724,10 @@ def detect_match_boundaries(
                 chunk_progress_callback=chunk_progress_callback,
                 chunk_dispatch_callback=chunk_dispatch_callback,
                 vendor=gpu_vendor,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
+                region=detect_region,
             )
             resolved_mode = "GPU"
         except VideoProcessingError:
@@ -160,6 +739,10 @@ def detect_match_boundaries(
                 blackout_threshold,
                 workers,
                 progress_callback,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
+                region=detect_region,
             )
             resolved_mode = "CPU (GPU fallback)"
     else:
@@ -170,6 +753,10 @@ def detect_match_boundaries(
             blackout_threshold,
             workers,
             progress_callback,
+            source_fps_num=source_fps_num,
+            source_fps_den=source_fps_den,
+            source_fps=source_fps,
+            region=detect_region,
         )
     pass1_elapsed = time.monotonic() - pass1_start
 
@@ -195,6 +782,50 @@ def detect_match_boundaries(
     blackout_times = sorted(
         t for t, b in results.items() if b < pass1_blackout_threshold
     )
+
+    # Masked fallback (#753 masked-OBS): when standard full-frame Pass 1 finds no
+    # blackout (bright chat-mask overlays hold the average above threshold), OR
+    # --masked forces it, re-detect on a mask-free region with position-
+    # independent classification.  Gated by `not vtuber and (masked or not
+    # blackout_times)`: OBS baselines always have >=1 blackout so `not
+    # blackout_times` is False -> the standard path below runs unchanged
+    # (bit-exact; spec section 3 / R1).  VTuber uses its own path.
+    if not vtuber and (masked or not blackout_times):
+        masked_result = _detect_masked_fallback(
+            video_path,
+            duration_hint=duration_hint,
+            sample_interval=sample_interval,
+            blackout_threshold=blackout_threshold,
+            min_match_duration=min_match_duration,
+            min_blackout_duration=min_blackout_duration,
+            use_gpu=use_gpu,
+            workers=workers,
+            src_resolution=src_resolution,
+            codec=codec,
+            gpu_vendor=gpu_vendor,
+            source_fps_num=source_fps_num,
+            source_fps_den=source_fps_den,
+            source_fps=source_fps,
+            audio_hits=audio_hits,
+            stats=stats,
+            brightness_results=results,
+        )
+        if masked_result is not None:
+            masked_segments, masked_region = masked_result
+            if masked_fallback_callback is not None:
+                masked_fallback_callback()
+            if region_callback is not None:
+                # masked path の縮退 (mask 不発見) はここに到達しない (None 返却で
+                # 標準 path 続行) ため fallback_reason は常に None。
+                region_callback(RegionTimeline(coarse=masked_region))
+            return masked_segments
+
+    # #810: この時点で標準 / vtuber path 確定 (masked fallback 不採用)。
+    # Pass 1 で実際に使った detect_region + Stage 0 縮退 provenance を通知する。
+    if region_callback is not None:
+        region_callback(
+            RegionTimeline(coarse=detect_region, fallback_reason=region_fallback_reason)
+        )
 
     # Group into regions and expand with transition frames (#71)
     blackout_regions = _group_blackout_regions(blackout_times, sample_interval)
@@ -229,6 +860,7 @@ def detect_match_boundaries(
         duration_hint,
         workers,
         progress_callback=refine_progress_callback,
+        region=detect_region,
     )
     pass2_elapsed = time.monotonic() - pass2_start
     if stats is not None:
@@ -248,6 +880,8 @@ def detect_match_boundaries(
             duration_hint,
             height,
             workers,
+            band_region=detect_region,
+            localize=vtuber,
             audio_hits=audio_hits,
             stats=stats,
             progress_callback=scorebar_progress_callback,
@@ -257,7 +891,7 @@ def detect_match_boundaries(
             stats["scorebar_elapsed_s"] = scorebar_elapsed
 
     effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
-    return _filter_and_extract_segments(
+    segments = _filter_and_extract_segments(
         refined_regions,
         duration_hint,
         min_match_duration,
@@ -265,6 +899,494 @@ def detect_match_boundaries(
         classifications=region_classifications,
         stats=stats,
     )
+    # #797 / #805: flag a trailing post-match run when its early candidate-match
+    # window shows no scorebar at any strided probe point. Skipped for VTuber
+    # (vtuber=True): _flag_post_match_trailing probes v2 (absolute coords) which
+    # FNs on an inset scorebar and would mis-flag a real VTuber final match
+    # (spec section 8.1 P2-d / Codex #1). VTuber trailing is handled in Phase 3.
+    if src_resolution is not None and not vtuber and not keep_trailing:
+        segments = _flag_post_match_trailing(
+            segments,
+            video_path,
+            duration_hint,
+            stats,
+            min_match_duration=min_match_duration,
+        )
+    return segments
+
+
+_EDGE_EPS = 0.5
+"""Epsilon (seconds) for timeline-edge detection in _validate_match_segments.
+
+Segments whose start <= 0.0 + EPS or end >= duration_hint - EPS touch the
+recording boundary and are not re-typed to "fl_match".  At-anchor PRESENT
+majority proves FL content was present, but the recording started/ended
+mid-match (#433 semantics): completeness cannot be inferred from presence,
+so the adjacency-inference type is preserved.  UNKNOWN-probe probes are
+excluded from the majority denominator (as usual).
+"""
+
+_L2_PROBE_COUNT = 15
+"""Number of evenly-spaced timestamps probed per segment in Layer 2 validation.
+
+Onsal Hakair recalibration (2026-07-14): at-anchor presence on real Onsal
+matches measured at 40-60% (vs Seal Rock 85-100%); lobby = 0% everywhere.
+Binomial(n=9, p=0.4) -> P(present < 2) ~= 7% (too risky, 2 real matches
+false-dropped in practice).  Increasing to n=15 reduces
+Binomial(n=15, p=0.4) -> P(present < 2) ~= 0.5%, acceptable.
+Lobby at-anchor FP measured at 0% -> no false-keep risk from higher n.
+"""
+
+_L2_PRESENT_QUORUM = 2
+"""Minimum number of PRESENT probes required to keep a segment in Layer 2.
+
+Onsal recalibration: quorum of 2 out of 15 valid probes (not strict majority)
+provides P(false-drop) ~= 0.5% at the worst measured in-match rate (p=0.4
+on Onsal), while lobby at-anchor FP rate = 0% ensures no false-keep.
+The quorum replaces the previous strict majority (present * 2 > len(valid)).
+"""
+
+
+def _validate_match_segments(
+    video_path: Path,
+    segments: list[MatchBoundary],
+    anchor: ScorebarLocalization,
+    workers: int | None,
+    stats: DetectionStats | None,
+    duration_hint: float = 0.0,
+    *,
+    on_all_drop: str = "keep",
+) -> list[MatchBoundary]:
+    """Layer 2 segment validation: at-anchor presence quorum (#822).
+
+    For each candidate segment extracted by Layer 1, probe _L2_PROBE_COUNT
+    evenly-spaced timestamps (k/(_L2_PROBE_COUNT+1) fractions, k=1.._L2_PROBE_COUNT)
+    and classify via at-anchor localization.  A segment is kept iff PRESENT
+    probes meet or exceed _L2_PRESENT_QUORUM among non-UNKNOWN probes.
+
+    Rationale for quorum (2026-07-14 Onsal recalibration):
+    - Onsal Hakair's scorebar is two-row with score-fill-dependent saturated-run
+      geometry; at-anchor presence on real Onsal matches measured at 40-60%
+      (vs Seal Rock 85-100%).  Lobby = 0% everywhere.
+    - Strict majority (n=9, p=0.4): P(false-drop) ~= 7% -- too risky; caused 2
+      confirmed false-drops in practice (m27 old M10, m28 old M4).
+    - Quorum 2/15 (n=15, p=0.4): P(false-drop) ~= 0.5% -- acceptable.
+    - Lobby FP rate = 0% measured; quorum does not increase false-keep risk.
+
+    Kept segments are re-typed to "fl_match" (direct presence evidence
+    supersedes the adjacency-inference type produced by
+    ``_infer_segment_type`` for non_fl-kept boundary pairs), EXCEPT for
+    timeline-edge segments (start <= 0.0 + EPS or end >= duration_hint - EPS).
+    Edge segments keep their original type because at-anchor presence proves
+    FL content but not completeness -- recording started/ended mid-match
+    (#433 semantics; ``duration_hint=0.0`` skips the edge check).
+
+    After the per-segment keep/drop pass, adjacent KEPT (quorum-validated)
+    segments whose boundary is zero-gap (abs(next.start - prev.end) < 0.01)
+    are merged into a single fl_match segment.  Zero-gap arises only from a
+    <=6s blackout split at a padded midpoint; real inter-match transitions
+    always have loading+lobby gaps > 0.  Only quorum-validated pairs are
+    merged (not all-UNKNOWN-kept segments).  Chain-merge (a-b-c all zero-gap
+    -> one segment) is applied.  Merged count is logged and added to
+    stats["masked_l2_zero_gap_merges"].
+
+    Dropped segments (lobby/inter-match footage) are info-logged and counted
+    in ``stats["masked_segments_dropped"]``.
+
+    Segments where ALL _L2_PROBE_COUNT probes are UNKNOWN are kept
+    conservatively (anchor mistrust) with a warning.
+
+    Fail-safe (``on_all_drop`` controls behaviour when all segments fail):
+    - ``"keep"`` (default): the original segment list is returned unchanged
+      with a warning (anchor mistrust; conservative keep).  Use this for the
+      masked path where there is no other fallback -- keeping is the safe side.
+    - ``"empty"``: a warning is emitted and ``[]`` is returned so the caller
+      can fall back to a legacy detection path.  Use this for VTuber mode
+      where ``detect_matches_timeline`` returns ``None`` to trigger band-crop
+      fallback -- returning empty is the safe side there.
+    Zero-gap merge is skipped on the fail-safe path regardless of mode.
+
+    ``scan_presence`` raises ``VideoProcessingError`` when all probes for a
+    scan call are UNKNOWN (sec.5.3 fail-loud).  For per-segment validation
+    we want conservative keep instead, so each scan call is wrapped in a
+    try/except ``VideoProcessingError``; on catch, the segment is treated as
+    all-UNKNOWN (keep + warning).
+    """
+    # Lazy import: presence.py imports from detector.py at module level, so a
+    # top-level import here would create a circular dependency.
+    from allaganeye.video.presence import PresenceState, scan_presence
+    from allaganeye.video.probe_state import PresenceSample
+
+    def _make_sample_fn(
+        vp: Path, anch: ScorebarLocalization
+    ) -> Callable[[float], PresenceSample]:
+        def _sample(t: float) -> PresenceSample:
+            raw = _probe_frame_rgb_hires(vp, t)
+            if raw is None:
+                return PresenceSample(
+                    time=t, state=PresenceState.UNKNOWN, confidence=0.0
+                )
+            loc = localize_from_rgb_bytes_at_anchor(
+                raw,
+                anch,
+                height=_SCOREBAR_V2_PROBE_HEIGHT,
+                width=_SCOREBAR_V2_PROBE_WIDTH,
+            )
+            if loc is None:
+                return PresenceSample(
+                    time=t, state=PresenceState.ABSENT, confidence=0.0
+                )
+            return PresenceSample(
+                time=t, state=PresenceState.PRESENT, confidence=loc.confidence
+            )
+
+        return _sample
+
+    # Loop-invariant: factory and sample_fn are the same for all segments
+    # (same video_path + anchor); hoisted outside the loop for clarity.
+    sample_fn = _make_sample_fn(video_path, anchor)
+    # kept_validated: segments that passed quorum (True) or were all-UNKNOWN kept
+    # (False).  The boolean is used later in zero-gap merge to restrict merging
+    # to quorum-validated pairs only.
+    kept: list[MatchBoundary] = []
+    kept_quorum_validated: list[bool] = []
+    # Track drops locally; commit to stats only on the non-fail-safe path.
+    dropped_count = 0
+    for seg in segments:
+        seg_start = seg["start"]
+        seg_end = seg["end"]
+        seg_len = seg_end - seg_start
+        # _L2_PROBE_COUNT evenly spaced probes: k/(_L2_PROBE_COUNT+1) fractions.
+        probe_ts = [
+            seg_start + seg_len * k / (_L2_PROBE_COUNT + 1)
+            for k in range(1, _L2_PROBE_COUNT + 1)
+        ]
+
+        # Edge-segment detection: recording started/ended mid-match (#433).
+        is_edge_segment = duration_hint > 0.0 and (
+            seg_start <= _EDGE_EPS or seg_end >= duration_hint - _EDGE_EPS
+        )
+
+        all_unknown = False
+        try:
+            # duration and stride are unused when times= is provided; pass
+            # seg_end/1.0 as placeholders for API completeness.
+            samples = scan_presence(
+                video_path,
+                seg_end,
+                stride=1.0,
+                # 15 probes/segment; modest parallelism is sufficient.
+                workers=workers if workers is not None else 1,
+                sample_fn=sample_fn,
+                times=probe_ts,
+            )
+        except VideoProcessingError:
+            # scan_presence raises when ALL probes are UNKNOWN (sec.5.3
+            # fail-loud).  For per-segment validation we want conservative
+            # keep with a warning instead of propagating the error.
+            all_unknown = True
+            samples = []
+
+        if all_unknown or all(s.state is PresenceState.UNKNOWN for s in samples):
+            logger.warning(
+                "Layer 2 validation: all probes UNKNOWN for segment"
+                " [%.1f, %.1f]; keeping conservatively (anchor mistrust)",
+                seg_start,
+                seg_end,
+            )
+            kept.append(seg)
+            kept_quorum_validated.append(
+                False
+            )  # all-UNKNOWN keep, not quorum-validated
+            continue
+
+        valid = [s for s in samples if s.state is not PresenceState.UNKNOWN]
+        present_count = sum(1 for s in valid if s.state is PresenceState.PRESENT)
+        if valid and present_count >= _L2_PRESENT_QUORUM:
+            # Quorum PRESENT: re-type to fl_match (direct evidence),
+            # UNLESS this is a timeline-edge segment (recording boundary).
+            if is_edge_segment:
+                # Edge segment: presence proven but completeness unknown (#433).
+                # Keep original type; do not retype to fl_match.
+                kept.append(seg)
+                kept_quorum_validated.append(True)
+                logger.debug(
+                    "Layer 2 validation: keeping edge segment [%.1f, %.1f]"
+                    " (present=%d/%d; edge -- no retype)",
+                    seg_start,
+                    seg_end,
+                    present_count,
+                    len(valid),
+                )
+            else:
+                kept_seg = dict(seg)
+                kept_seg["type"] = "fl_match"
+                kept.append(kept_seg)  # type: ignore[arg-type]
+                kept_quorum_validated.append(True)
+        else:
+            logger.info(
+                "Layer 2 validation: dropping segment [%.1f, %.1f]"
+                " (present=%d/%d valid probes; lobby/non-FL)",
+                seg_start,
+                seg_end,
+                present_count,
+                len(valid),
+            )
+            dropped_count += 1
+
+    if not kept and segments:
+        # Fail-safe: all segments failed presence check -- anchor may be
+        # unreliable.  Do NOT commit drop counts to stats; the drops were
+        # rolled back, so reporting them would be misleading.
+        if on_all_drop == "empty":
+            logger.warning(
+                "Layer 2 validation: all %d segment(s) failed presence check"
+                " (tentative drops: %d); returning empty for caller fallback",
+                len(segments),
+                dropped_count,
+            )
+            return []
+        # on_all_drop == "keep" (default): conservative keep for masked path
+        # where there is no other fallback -- keeping is the safe side.
+        logger.warning(
+            "Layer 2 validation: all %d segment(s) failed presence check"
+            " (tentative drops: %d); keeping all (anchor mistrust fail-safe)",
+            len(segments),
+            dropped_count,
+        )
+        return list(segments)
+    # Normal path: commit the local drop count to stats.
+    if stats is not None and dropped_count:
+        stats["masked_segments_dropped"] = (
+            stats.get("masked_segments_dropped", 0) + dropped_count
+        )
+
+    # Zero-gap merge: adjacent quorum-validated segments with no gap between
+    # them (abs(next.start - prev.end) < 0.01) are merged into a single
+    # fl_match.  Zero-gap arises only from a <=6s blackout split at a padded
+    # midpoint; real inter-match transitions always have loading+lobby gaps > 0.
+    # Only both-quorum-validated pairs are merged (not all-UNKNOWN-kept segs).
+    # Rationale: zero-gap adjacent = same match split by flank flicker (m28 M5/M6
+    # measured: two segments with identical boundary timestamps from a <=6s
+    # blackout midpoint split).
+    _ZERO_GAP_EPS = 0.01
+    merged: list[MatchBoundary] = []
+    # merged_tail_qv[i] tracks whether merged[i] was quorum-validated (True) or
+    # kept via the all-UNKNOWN conservative path (False).  Initialized empty;
+    # populated in sync with merged.
+    merged_tail_qv: list[bool] = []
+    merge_count = 0
+    for seg, is_qv in zip(kept, kept_quorum_validated, strict=True):
+        if not merged:
+            merged.append(dict(seg))  # type: ignore[arg-type]
+            merged_tail_qv.append(is_qv)
+            continue
+        prev = merged[-1]
+        prev_qv = merged_tail_qv[-1]
+        if is_qv and prev_qv and abs(seg["start"] - prev["end"]) < _ZERO_GAP_EPS:
+            # Merge: extend prev end; re-evaluate the merged span's edge status.
+            # A merged span is edge-touching iff a constituent was edge-touching
+            # (prev.start <= EPS OR seg.end >= duration-EPS), so checking the
+            # merged endpoints is equivalent to checking each constituent.
+            # Chain merges keep growing the merged span; each iteration re-checks
+            # the (already-grown) prev["start"] against the new seg["end"].
+            merged_start = prev["start"]
+            merged_end = seg["end"]
+            is_merged_edge = duration_hint > 0.0 and (
+                merged_start <= _EDGE_EPS or merged_end >= duration_hint - _EDGE_EPS
+            )
+            logger.info(
+                "Layer 2 zero-gap merge: [%.1f, %.1f] + [%.1f, %.1f] -> [%.1f, %.1f]"
+                " (flank flicker split%s)",
+                prev["start"],
+                prev["end"],
+                seg["start"],
+                seg["end"],
+                prev["start"],
+                seg["end"],
+                "; edge -- keeping unknown" if is_merged_edge else "",
+            )
+            prev["end"] = merged_end
+            prev["type"] = "unknown" if is_merged_edge else "fl_match"
+            merge_count += 1
+        else:
+            merged.append(dict(seg))  # type: ignore[arg-type]
+            merged_tail_qv.append(is_qv)
+
+    if merge_count > 0 and stats is not None:
+        stats["masked_l2_zero_gap_merges"] = (
+            stats.get("masked_l2_zero_gap_merges", 0) + merge_count
+        )
+
+    return merged
+
+
+def _detect_masked_fallback(
+    video_path: Path,
+    *,
+    duration_hint: float,
+    sample_interval: float,
+    blackout_threshold: float,
+    min_match_duration: float,
+    min_blackout_duration: float,
+    use_gpu: bool,
+    workers: int | None,
+    src_resolution: tuple[int, int] | None,
+    codec: str | None,
+    gpu_vendor: str | None,
+    source_fps_num: int | None,
+    source_fps_den: int | None,
+    source_fps: float | None,
+    audio_hits: Sequence[BgmHit] | None,
+    stats: DetectionStats | None,
+    brightness_results: dict[float, float] | None = None,
+) -> tuple[list[MatchBoundary], CaptureRegion] | None:
+    """Masked-OBS detection: region-aware Pass 1/2 + localize classification.
+
+    Returns ``(segments, region)``, or ``None`` when no mask-free region is found
+    (caller falls through to the standard single-segment result).
+    Deliberately duplicates the
+    standard Pass1/Pass2/classify sequence (calling the same factored helpers)
+    rather than sharing a core, so the standard OBS path is structurally
+    unchanged (bit-exact mandate; spec section 3 / R1).  Uses ``band_region=
+    FULL_FRAME`` + ``localize=True`` (full-frame position-independent scorebar;
+    v2 absolute coords FN on ultrawide, spec section 5).  No trailing flagging:
+    ``_flag_post_match_trailing`` probes v2 absolute coords which FN on
+    ultrawide (same rationale as the VTuber gate in detect_match_boundaries).
+    """
+    region = _resolve_masked_region(
+        video_path, duration_hint, workers, brightness_hint=brightness_results
+    )
+    if region.is_full_frame():
+        return None  # no mask region found -> defer to the standard result
+
+    if use_gpu:
+        from allaganeye.video.gpu_detector import scan_gpu
+
+        try:
+            results = scan_gpu(
+                video_path,
+                duration_hint,
+                sample_interval,
+                blackout_threshold,
+                None,
+                codec=codec,
+                vendor=gpu_vendor,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
+                region=region,
+            )
+        except VideoProcessingError:
+            results = _scan_cpu(
+                video_path,
+                duration_hint,
+                sample_interval,
+                blackout_threshold,
+                workers,
+                None,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
+                region=region,
+            )
+    else:
+        results = _scan_cpu(
+            video_path,
+            duration_hint,
+            sample_interval,
+            blackout_threshold,
+            workers,
+            None,
+            source_fps_num=source_fps_num,
+            source_fps_den=source_fps_den,
+            source_fps=source_fps,
+            region=region,
+        )
+
+    pass1_blackout_threshold = blackout_threshold + _BLACKOUT_THRESHOLD_UPPER_MARGIN
+    blackout_times = sorted(
+        t for t, b in results.items() if b < pass1_blackout_threshold
+    )
+    blackout_regions = _group_blackout_regions(blackout_times, sample_interval)
+    blackout_regions = _expand_regions_with_transitions(
+        blackout_regions, results, sample_interval, _TRANSITION_THRESHOLD
+    )
+    if _ENABLE_BORDERLINE_REFINEMENT:
+        borderline_regions = _borderline_pseudo_regions(
+            results, blackout_threshold, duration_hint
+        )
+        if borderline_regions:
+            blackout_regions = _merge_regions(
+                blackout_regions + borderline_regions, sample_interval
+            )
+
+    refined_regions = _refine_blackout_regions(
+        video_path,
+        blackout_regions,
+        blackout_threshold,
+        duration_hint,
+        workers,
+        region=region,
+    )
+
+    classifications: list[str] | None = None
+    # Initialize anchor to None so it is in scope for Layer 2 validation below.
+    # anchor is resolved inside the src_resolution guard (B4) and remains None
+    # when src_resolution is not provided (degraded path; Layer 2 is skipped).
+    anchor: ScorebarLocalization | None = None
+    if src_resolution is not None:
+        # B4 (#822): resolve per-video scorebar anchor for at-anchor classification.
+        # Placed inside this guard so anchor consensus probes only run when
+        # classification is active (src_resolution provided).
+        anchor = _resolve_scorebar_anchor(video_path, duration_hint)
+        if anchor is None:
+            logger.warning(
+                "scorebar anchor unresolved; masked classification falls back to"
+                " position-independent localize"
+            )
+
+        from allaganeye.video.scorebar import filter_blackouts_with_scorebar
+
+        height = _scaled_height(src_resolution[0], src_resolution[1])
+        refined_regions, classifications = filter_blackouts_with_scorebar(
+            video_path,
+            refined_regions,
+            duration_hint,
+            height,
+            workers,
+            band_region=FULL_FRAME,
+            localize=True,
+            anchor=anchor,
+            audio_hits=audio_hits,
+            stats=stats,
+        )
+
+    effective_min = min(min_blackout_duration, _REFINED_MIN_BLACKOUT)
+    segments = _filter_and_extract_segments(
+        refined_regions,
+        duration_hint,
+        min_match_duration,
+        effective_min,
+        classifications=classifications,
+        stats=stats,
+    )
+
+    # B5 (#822): Layer 2 at-anchor presence validation.
+    # Skip when anchor is None (src_resolution not provided or anchor consensus
+    # failed) -- degraded path keeps existing pipeline behaviour.
+    if anchor is not None and segments:
+        segments = _validate_match_segments(
+            video_path, segments, anchor, workers, stats, duration_hint=duration_hint
+        )
+        # Recompute filter_unknown after Layer 2 may have dropped segments
+        # (dropped segments can change the unknown-type count visible to verbose).
+        if stats is not None:
+            stats["filter_unknown"] = sum(
+                1 for s in segments if s.get("type") == "unknown"
+            )
+
+    return segments, region
 
 
 def _decode_chunk_cpu(
@@ -273,20 +1395,66 @@ def _decode_chunk_cpu(
     chunk_start: float,
     chunk_end: float,
     sample_interval: float,
+    *,
+    source_fps_num: int | None = None,
+    source_fps_den: int | None = None,
+    source_fps: float | None = None,
+    is_tail_chunk: bool = False,
+    region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
-    """Decode a chunk using CPU-only ffmpeg with continuous decode.
+    """Decode a chunk in CPU mode.
 
-    Mirrors the GPU ``_decode_chunk()`` approach but without hardware
-    acceleration: one long-lived ffmpeg process decodes the entire chunk
-    via the ``fps`` filter, eliminating per-frame ``-ss`` non-determinism.
-
-    Returns a dict mapping each timestamp in *chunk_timestamps* to its
-    mean brightness.  On failure, returns all timestamps mapped to 255.0
-    (safe non-blackout).
+    Dispatches to the legacy fps-filter path when env var
+    ``ALLAGANEYE_DETECT_FPS_FILTER=1`` is set or when rational fps cannot
+    be resolved.  Otherwise uses the new output-seek + Python N-th
+    sampling path (#576).
     """
     if not chunk_timestamps:
         return {}
 
+    use_legacy = _use_legacy_fps_filter() or (
+        source_fps_num is None and source_fps_den is None and source_fps is None
+    )
+    if use_legacy:
+        return _decode_chunk_cpu_legacy(
+            video_path,
+            chunk_timestamps,
+            chunk_start,
+            chunk_end,
+            sample_interval,
+            region,
+        )
+
+    fps_num, fps_den = _resolve_fps_rational(
+        source_fps_num,
+        source_fps_den,
+        source_fps,
+    )
+    return _decode_chunk_cpu_v2(
+        video_path,
+        chunk_timestamps,
+        chunk_start,
+        chunk_end,
+        sample_interval,
+        fps_num,
+        fps_den,
+        is_tail_chunk,
+        region,
+    )
+
+
+def _decode_chunk_cpu_legacy(
+    video_path: Path,
+    chunk_timestamps: list[float],
+    chunk_start: float,
+    chunk_end: float,
+    sample_interval: float,
+    region: CaptureRegion = FULL_FRAME,
+) -> dict[float, float]:
+    """Legacy fps-filter chunk decode (pre-#576). Kept for env var rollback.
+
+    Scheduled for removal in v0.3.x patch release.
+    """
     chunk_duration = chunk_end - chunk_start
     fps_value = 1.0 / sample_interval
 
@@ -340,7 +1508,7 @@ def _decode_chunk_cpu(
 
     while offset + _FRAME_SIZE <= len(data) and frame_idx < len(chunk_timestamps):
         frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
-        results[chunk_timestamps[frame_idx]] = float(frame.mean())
+        results[chunk_timestamps[frame_idx]] = _frame_brightness(frame, region)
         offset += _FRAME_SIZE
         frame_idx += 1
 
@@ -352,6 +1520,167 @@ def _decode_chunk_cpu(
     return results
 
 
+def _decode_chunk_cpu_v2(
+    video_path: Path,
+    chunk_timestamps: list[float],
+    chunk_start: float,
+    chunk_end: float,
+    sample_interval: float,
+    fps_num: int,
+    fps_den: int,
+    is_tail_chunk: bool,
+    region: CaptureRegion = FULL_FRAME,
+) -> dict[float, float]:
+    """New path: dual seek + select filter + -fps_mode passthrough (#576 Option 1).
+
+    Dual seek layout::
+
+        -ss <input_seek> -i <video> -ss <output_seek> -t <chunk_duration>
+
+    Input ``-ss`` BEFORE ``-i``: fast container index jump to keyframe near
+    ``chunk_start - SEEK_LEAD_SECONDS`` (~10ms, no decode).  Output ``-ss``
+    AFTER ``-i``: accurate frame-level trim of the small GOP pre-roll
+    (typically SEEK_LEAD_SECONDS worth of frames).  The filter graph then
+    receives frames starting at ``chunk_start``; the ``select`` filter's
+    ``n`` counter resets at filter graph input, so frame 0 corresponds to
+    ``chunk_start``.
+
+    This replaces the previous pure output-seek design where ffmpeg decoded
+    from t=0 for every chunk, causing O(N^2/2) total decode for N=32 chunks
+    (~16.5x full-video decodes -> 67 min on RTX 5090 for a 2h recording).
+    With dual seek, the per-chunk pre-roll is bounded by SEEK_LEAD_SECONDS
+    (5s x 32 = 160s of duplicate decode vs 16.5x full-video).
+
+    The ``select='not(mod(n,N))'`` filter drops frames at the ffmpeg layer
+    (frame-index based, NOT PTS-based -- deterministic across versions)
+    before they reach the pipe, reducing pipe IO from ~28 GB to ~178 MB
+    per 2h video at 60fps + sample_interval=3.0s.
+
+    N = round(sample_interval * fps_num / fps_den).  For 60fps +
+    sample_interval=3.0, N=180 -> ffmpeg emits frame 0, 180, 360, ...
+    Python maps emitted frame K to chunk_timestamps[K] (positional).
+    """
+    chunk_duration = chunk_end - chunk_start
+    # #576: frame-index step for ffmpeg select filter.
+    # N selects every Nth decoded frame (deterministic, unlike PTS-based
+    # fps filter).  For 60fps + sample_interval=3.0, N=180.
+    #
+    # Float arithmetic is acceptable here: sample_interval is a float
+    # CLI option, fps_num/fps_den are positive ints from probe.py.  The
+    # round() collapses to int and the worst-case relative error
+    # (~1/min(fps_num,fps_den) <= 1/24 over realistic sample_intervals)
+    # is dwarfed by the >=1.4s blackout duration the detector cares
+    # about.  Spec S2.2 NTSC drift note covers the same trade-off.
+    n_step = max(1, round(sample_interval * fps_num / fps_den))
+    # expected_frames = number of selected frames = len(chunk_timestamps)
+    expected_frames = len(chunk_timestamps)
+
+    # Dual seek: input seek jumps to keyframe near chunk_start (fast),
+    # output seek trims the GOP pre-roll so filter graph starts at chunk_start.
+    input_seek: float = max(0.0, chunk_start - SEEK_LEAD_SECONDS)
+    output_seek: float = (
+        chunk_start - input_seek
+    )  # = SEEK_LEAD_SECONDS unless chunk_start < SEEK_LEAD_SECONDS
+
+    cmd = [
+        find_ffmpeg(),
+        "-threads",
+        "1",
+        "-ss",
+        str(input_seek),  # input seek (BEFORE -i): fast container jump
+        "-i",
+        str(video_path),
+        "-ss",
+        str(output_seek),  # output seek (AFTER -i): accurate trim to chunk_start
+        "-t",
+        str(chunk_duration),
+        "-fps_mode",
+        "passthrough",
+        "-vf",
+        f"select='not(mod(n\\,{n_step}))',scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "gray",
+        "pipe:1",
+    ]
+
+    stderr_text = ""
+    stderr_buf = tempfile.TemporaryFile(mode="w+b")
+    try:
+        with subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=stderr_buf,
+        ) as proc:
+            deadline = max(300, int(chunk_duration * 2))
+            watchdog: _WatchdogState | None = None
+            try:
+                with _proc_deadline_watchdog(proc, deadline) as watchdog:
+                    results = _sample_chunk_frames(
+                        stream=proc.stdout,
+                        chunk_start=chunk_start,
+                        chunk_timestamps=chunk_timestamps,
+                        fps_num=fps_num,
+                        fps_den=fps_den,
+                        expected_frames=expected_frames,
+                        is_tail_chunk=is_tail_chunk,
+                        region=region,
+                    )
+                    # Defense-in-depth: watchdog covers stream.read stall;
+                    # this wait covers proc-exit lag after the stream closes.
+                    proc.wait(timeout=deadline)
+                # Read stderr from temp file (no pipe backpressure issue)
+                stderr_buf.seek(0)
+                stderr_text = stderr_buf.read().decode(errors="replace")
+            except VideoProcessingError:
+                proc.kill()
+                # still try to capture stderr for error context
+                try:
+                    stderr_buf.seek(0)
+                    stderr_text = stderr_buf.read().decode(errors="replace")
+                except Exception:
+                    logger.debug("Failed to read stderr from temp file", exc_info=True)
+                if watchdog is not None and watchdog.fired:
+                    # ffmpeg stalled and the watchdog killed it; the truncated
+                    # read tripped the dynamic frame-count guard. Treat as a
+                    # decode failure (graceful 255.0 fallback) rather than
+                    # failing the whole detect (#842 codex).
+                    logger.warning(
+                        "CPU chunk v2 decode watchdog fired [%.1f-%.1f]; "
+                        "treating as decode failure",
+                        chunk_start,
+                        chunk_end,
+                    )
+                    return {t: 255.0 for t in chunk_timestamps}
+                raise
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                logger.warning(
+                    "CPU chunk v2 decode timed out [%.1f-%.1f]",
+                    chunk_start,
+                    chunk_end,
+                )
+                return {t: 255.0 for t in chunk_timestamps}
+    except FileNotFoundError as e:
+        raise VideoProcessingError(
+            "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
+        ) from e
+    finally:
+        stderr_buf.close()
+
+    if proc.returncode != 0:
+        logger.warning(
+            "CPU chunk v2 decode failed [%.1f-%.1f]: %s",
+            chunk_start,
+            chunk_end,
+            stderr_text[-200:],
+        )
+        return {t: 255.0 for t in chunk_timestamps}
+
+    return results
+
+
 def _scan_cpu(
     video_path: Path,
     duration_hint: float,
@@ -359,13 +1688,18 @@ def _scan_cpu(
     blackout_threshold: float,
     workers: int | None = None,
     progress_callback: Callable[[int, int, int], None] | None = None,
+    *,
+    source_fps_num: int | None = None,
+    source_fps_den: int | None = None,
+    source_fps: float | None = None,
+    region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
-    """CPU mode: chunked continuous decode, one ffmpeg process per chunk.
+    """CPU mode: chunked decode (output seek + Python N-th sampling, #576).
 
-    Splits the video timeline into chunks and decodes each chunk with
-    a long-lived ffmpeg process using the ``fps`` filter.  This replaces
-    per-frame ``-ss`` probing, reducing ffmpeg seek non-determinism to
-    one seek per chunk instead of one per frame.  (#214)
+    When ``source_fps_num``/``source_fps_den`` (or float ``source_fps``) is
+    provided AND env var ``ALLAGANEYE_DETECT_FPS_FILTER`` is not set, uses
+    the new output-seek path.  Otherwise falls back to the legacy
+    fps-filter path.
     """
     timestamps = _generate_timestamps(duration_hint, sample_interval)
     if not timestamps:
@@ -376,13 +1710,14 @@ def _scan_cpu(
     chunk_duration = duration_hint / num_chunks
 
     # Distribute pre-computed timestamps to chunks (with overlap)
-    chunks: list[tuple[float, float, list[float]]] = []
+    chunks: list[tuple[float, float, list[float], bool]] = []
     for i in range(num_chunks):
         c_start = i * chunk_duration
         c_end = min((i + 1) * chunk_duration + sample_interval, duration_hint)
         c_timestamps = [t for t in timestamps if c_start <= t < c_end]
+        is_tail = c_end >= duration_hint - 1.0
         if c_timestamps:
-            chunks.append((c_start, c_end, c_timestamps))
+            chunks.append((c_start, c_end, c_timestamps, is_tail))
 
     results: dict[float, float] = {}
     blackout_count = 0
@@ -399,8 +1734,13 @@ def _scan_cpu(
                 c_start,
                 c_end,
                 sample_interval,
+                source_fps_num=source_fps_num,
+                source_fps_den=source_fps_den,
+                source_fps=source_fps,
+                is_tail_chunk=is_tail,
+                region=region,
             ): (c_start, c_ts)
-            for c_start, c_end, c_ts in chunks
+            for c_start, c_end, c_ts, is_tail in chunks
         }
         for future in as_completed(futures):
             chunk_results = future.result()
@@ -427,6 +1767,8 @@ def _scan_cpu(
 
 def _generate_timestamps(duration: float, interval: float) -> list[float]:
     """Generate sample timestamps from 0 to duration at given interval."""
+    if interval <= 0:
+        raise ValueError(f"interval must be positive, got {interval}")
     timestamps: list[float] = []
     t = 0.0
     while t < duration:
@@ -435,14 +1777,13 @@ def _generate_timestamps(duration: float, interval: float) -> list[float]:
     return timestamps
 
 
-def _probe_single_frame(video_path: Path, timestamp: float) -> float:
-    """Probe a single frame's mean brightness using ffmpeg -ss seek.
+def _decode_gray_raw(video_path: Path, timestamp: float) -> bytes | None:
+    """Decode exactly one 320x180 grayscale frame to raw bytes via ffmpeg -ss.
 
-    Uses input seeking (``-ss`` before ``-i``) for fast keyframe-based
-    access, then decodes exactly one frame at 320x180 grayscale.
-
-    Returns the mean brightness (0-255).  Returns 255.0 on probe failure
-    (treated as non-blackout to avoid false positives).
+    Shared by :func:`_probe_single_frame` (brightness) and
+    :func:`_probe_frame_gray2d` (2D array).  Returns the first ``_FRAME_SIZE``
+    bytes, or ``None`` on timeout / ffmpeg error / short read.  Raises
+    ``VideoProcessingError`` only when ffmpeg is missing.
     """
     cmd = [
         find_ffmpeg(),
@@ -462,7 +1803,6 @@ def _probe_single_frame(video_path: Path, timestamp: float) -> float:
         "gray",
         "pipe:1",
     ]
-
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=30)
     except FileNotFoundError as e:
@@ -470,15 +1810,44 @@ def _probe_single_frame(video_path: Path, timestamp: float) -> float:
             "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
         ) from e
     except subprocess.TimeoutExpired:
-        return 255.0  # treat timeout as non-blackout
-
+        return None
     if result.returncode != 0:
-        return 255.0  # ffmpeg error, treat as non-blackout
-
+        return None
     if len(result.stdout) < _FRAME_SIZE:
-        return 255.0  # incomplete frame, treat as non-blackout
+        return None
+    return result.stdout[:_FRAME_SIZE]
 
-    return float(np.frombuffer(result.stdout[:_FRAME_SIZE], dtype=np.uint8).mean())
+
+def _probe_single_frame(
+    video_path: Path,
+    timestamp: float,
+    region: CaptureRegion = FULL_FRAME,
+) -> float:
+    """Probe a single frame's mean brightness using ffmpeg -ss seek.
+
+    Returns the mean brightness (0-255).  Returns 255.0 on probe failure
+    (treated as non-blackout to avoid false positives).  Brightness is computed
+    via :func:`_frame_brightness`, so *region* defaults to ``FULL_FRAME`` (the
+    1-D ``float(frame.mean())`` path is byte-identical to the pre-region
+    behavior; a band region reshapes the raw buffer and crops).
+    """
+    raw = _decode_gray_raw(video_path, timestamp)
+    if raw is None:
+        return 255.0
+    frame = np.frombuffer(raw, dtype=np.uint8)
+    return _frame_brightness(frame, region)
+
+
+def _probe_frame_gray2d(video_path: Path, timestamp: float) -> np.ndarray | None:
+    """Probe one 320x180 grayscale frame as a 2D ``(H, W)`` uint8 array.
+
+    Returns ``None`` on probe failure.  Used by :func:`_resolve_masked_region`
+    for static-overlay mask-free region detection (#753 masked-OBS).
+    """
+    raw = _decode_gray_raw(video_path, timestamp)
+    if raw is None:
+        return None
+    return np.frombuffer(raw, dtype=np.uint8).reshape(_SAMPLE_HEIGHT, _SAMPLE_WIDTH)
 
 
 def _probe_frame_rgb(
@@ -685,6 +2054,17 @@ Game DVR lobby UI artifacts (observed: ~409 px width at screen-top
 minimap/content-name widget).  Confirmed during #522 validation.
 """
 
+_SCOREBAR_SCAN_MAX_WIDTH_PX = 1440
+"""Maximum detected span (pixels) to accept as scorebar.
+
+1080p OBS scorebar tops out at ~1090 px and 4K Game DVR at ~620 px
+(#522).  Post-match content (Limsa exterior, colorful interiors) can
+produce a near-full-width saturated band (observed ~1912 px on
+obs-20260116 at t=6800/6850), which is not a scorebar.  1440 px (75% of
+the 1920 px probe width) clears the real ~1090 px maximum with margin
+while rejecting the ~1912 px false positive (#803).
+"""
+
 _SCOREBAR_SCAN_MAX_GAP_PX = 80
 """Maximum gap (pixels) to bridge when merging saturated runs.
 
@@ -738,46 +2118,27 @@ def _probe_frame_rgb_hires(video_path: Path, timestamp: float) -> bytes | None:
     return result.stdout[:rgb_size]
 
 
-def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
-    """Detect horizontal extent [x_left, x_right] of the FL scorebar.
+def _saturated_column_runs(band: np.ndarray, cv2_module) -> list[tuple[int, int]]:
+    """Gap-merged saturated column runs of a (Hb, W, 3) RGB band.
 
-    Scans rows y=``_SCOREBAR_SCAN_Y_START``..``_SCOREBAR_SCAN_Y_END`` of a
-    1920x1080 RGB frame, counts columns where at least
-    ``_SCOREBAR_SCAN_COL_RATIO`` of rows have HSV saturation
-    > ``_SCOREBAR_SCAN_SAT_THRESHOLD`` AND value
-    > ``_SCOREBAR_SCAN_VAL_THRESHOLD``.  The longest contiguous run of
-    saturated columns (bridging gaps up to ``_SCOREBAR_SCAN_MAX_GAP_PX``)
-    becomes the scorebar span.
-
-    Returns ``(x_left, x_right)`` with both endpoints inclusive when the
-    detected span is at least ``_SCOREBAR_SCAN_MIN_WIDTH_PX`` wide.
-    Returns ``None`` when:
-
-    - cv2 is not installed (matches V2 "None -> V1 fallback" contract),
-    - no saturated run is found (lobby / loading / all-dark frame), or
-    - the longest run is narrower than the minimum width.
+    Shared V2 scorebar geometry core: per-pixel HSV sat/val mask -> per-column
+    saturated fraction >= ``_SCOREBAR_SCAN_COL_RATIO`` -> contiguous runs bridged
+    across gaps <= ``_SCOREBAR_SCAN_MAX_GAP_PX``.  Returns merged ``(x_left,
+    x_right)`` inclusive runs ascending, BEFORE any width-gate / center-straddle
+    selection, so ``_find_scorebar_horizontal_range`` and
+    ``capture_region._scorebar_saturated_runs`` apply their own post-selection
+    on identical input (single source of truth, #842 P2-6).
     """
-    try:
-        import cv2
-    except ImportError:
-        return None
-
-    width = _SCOREBAR_V2_PROBE_WIDTH
-    height = _SCOREBAR_V2_PROBE_HEIGHT
-    frame = np.frombuffer(raw_rgb, dtype=np.uint8).reshape(height, width, 3)
-
-    top = frame[_SCOREBAR_SCAN_Y_START:_SCOREBAR_SCAN_Y_END, :, :]
-    bgr = cv2.cvtColor(top, cv2.COLOR_RGB2BGR)
-    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    bgr = cv2_module.cvtColor(band, cv2_module.COLOR_RGB2BGR)
+    hsv = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2HSV)
     sat = hsv[:, :, 1].astype(np.float32)
     val = hsv[:, :, 2].astype(np.float32)
-
     pixel_mask = (sat > _SCOREBAR_SCAN_SAT_THRESHOLD) & (
         val > _SCOREBAR_SCAN_VAL_THRESHOLD
     )
-    col_fraction = pixel_mask.mean(axis=0)
-    col_saturated = col_fraction >= _SCOREBAR_SCAN_COL_RATIO
+    col_saturated = pixel_mask.mean(axis=0) >= _SCOREBAR_SCAN_COL_RATIO
 
+    width = band.shape[1]
     raw_runs: list[tuple[int, int]] = []
     i = 0
     while i < width:
@@ -789,9 +2150,8 @@ def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
             i = j
         else:
             i += 1
-
     if not raw_runs:
-        return None
+        return []
 
     merged: list[tuple[int, int]] = [raw_runs[0]]
     for start, end in raw_runs[1:]:
@@ -800,13 +2160,97 @@ def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
             merged[-1] = (prev_start, end)
         else:
             merged.append((start, end))
+    return merged
 
-    longest = max(merged, key=lambda r: r[1] - r[0])
-    span_width = longest[1] - longest[0] + 1
-    if span_width < _SCOREBAR_SCAN_MIN_WIDTH_PX:
+
+def _emblem_metrics(region: np.ndarray, cv2_module) -> tuple[float, float]:
+    """(mean_sat_of_bright_pixels, sobel_edge_density) for one emblem region.
+
+    Shared core of the 3-point emblem AND (#842 P2-6).  ``region`` must be a
+    non-empty (h, w, 3) RGB uint8 array.  Bright pixels = HSV value > 30; mean
+    saturation over them (0.0 if <= 5 bright pixels).  Edge density = mean Sobel
+    magnitude (CV_64F, ksize=3) of the grayscale region.
+    """
+    bgr = cv2_module.cvtColor(region, cv2_module.COLOR_RGB2BGR)
+    hsv = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2HSV)
+    gray = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2GRAY)
+    val = hsv[:, :, 2].astype(np.float32)
+    sat = hsv[:, :, 1].astype(np.float32)
+    bright_mask = val > 30
+    if bright_mask.sum() > 5:
+        mean_sat = float(sat[bright_mask].mean())
+    else:
+        mean_sat = 0.0
+    sobel_x = cv2_module.Sobel(gray, cv2_module.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2_module.Sobel(gray, cv2_module.CV_64F, 0, 1, ksize=3)
+    edge_density = float(np.sqrt(sobel_x**2 + sobel_y**2).mean())
+    return mean_sat, edge_density
+
+
+def _find_scorebar_horizontal_range(raw_rgb: bytes) -> tuple[int, int] | None:
+    """Detect horizontal extent [x_left, x_right] of the FL scorebar.
+
+    Scans rows y=``_SCOREBAR_SCAN_Y_START``..``_SCOREBAR_SCAN_Y_END`` of a
+    1920x1080 RGB frame, counts columns where at least
+    ``_SCOREBAR_SCAN_COL_RATIO`` of rows have HSV saturation
+    > ``_SCOREBAR_SCAN_SAT_THRESHOLD`` AND value
+    > ``_SCOREBAR_SCAN_VAL_THRESHOLD``.  Contiguous runs of saturated columns
+    (bridging gaps up to ``_SCOREBAR_SCAN_MAX_GAP_PX``) are built, and the run
+    **straddling screen center** (x = ``_SCOREBAR_V2_PROBE_WIDTH // 2``) becomes
+    the scorebar candidate -- the FL scorebar is horizontally centered, and
+    keying on the *longest* run instead would let a longer off-center / over-
+    wide band mask a valid centered scorebar (#803, Codex PR pre-flight Step 5).
+
+    Returns ``(x_left, x_right)`` with both endpoints inclusive when the
+    center-straddling run's width is within
+    ``_SCOREBAR_SCAN_MIN_WIDTH_PX``..``_SCOREBAR_SCAN_MAX_WIDTH_PX``.
+    Returns ``None`` when:
+
+    - cv2 is not installed (matches V2 "None -> V1 fallback" contract),
+    - no saturated run is found (lobby / loading / all-dark frame),
+    - no run straddles screen center (only edge-confined bands, e.g. a
+      right-side chat panel or left-side widget) (#803),
+    - the center run is narrower than the minimum width, or
+    - the center run is wider than ``_SCOREBAR_SCAN_MAX_WIDTH_PX`` (#803).
+    """
+    try:
+        import cv2
+    except ImportError:
         return None
 
-    return longest
+    width = _SCOREBAR_V2_PROBE_WIDTH
+    height = _SCOREBAR_V2_PROBE_HEIGHT
+    frame = np.frombuffer(raw_rgb, dtype=np.uint8).reshape(height, width, 3)
+
+    top = frame[_SCOREBAR_SCAN_Y_START:_SCOREBAR_SCAN_Y_END, :, :]
+    merged = _saturated_column_runs(top, cv2)
+    if not merged:
+        return None
+
+    # The FL scorebar is horizontally centered, so the candidate is the run
+    # straddling screen center -- NOT merely the longest run.  Selecting the
+    # longest first lets a longer off-center / over-wide band (UI widget,
+    # colorful post-match interior) mask a valid centered HUD-scaled scorebar
+    # and reject the whole frame, false-negativing the 4K / Game DVR layouts
+    # the rescue path exists to support (Codex PR pre-flight Step 5, #803).
+    # Runs are disjoint, so at most one contains center; pick it, then width-gate.
+    center_x = _SCOREBAR_V2_PROBE_WIDTH // 2
+    center_run = next((run for run in merged if run[0] <= center_x <= run[1]), None)
+    # No run straddles screen center -> only edge-confined bands (e.g. a
+    # right-side chat panel at 1410..1919 or a left-side widget at 8..544) ->
+    # not a scorebar (#803).
+    if center_run is None:
+        return None
+    span_width = center_run[1] - center_run[0] + 1
+    if span_width < _SCOREBAR_SCAN_MIN_WIDTH_PX:
+        return None
+    # Reject implausibly wide spans (#803): a real FL scorebar tops out at
+    # ~1090 px (1080p OBS).  A near-full-width band (e.g. ~1912 px from a
+    # colorful post-match interior) is not a scorebar.
+    if span_width > _SCOREBAR_SCAN_MAX_WIDTH_PX:
+        return None
+
+    return center_run
 
 
 def _emblem_and_check(
@@ -822,24 +2266,7 @@ def _emblem_and_check(
     """
     for name, x1, y1, x2, y2 in positions:
         region = frame[y1:y2, x1:x2, :]
-        bgr = cv2_module.cvtColor(region, cv2_module.COLOR_RGB2BGR)
-        hsv = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2HSV)
-        gray = cv2_module.cvtColor(bgr, cv2_module.COLOR_BGR2GRAY)
-
-        # Saturation of bright pixels (exclude very dark pixels)
-        val = hsv[:, :, 2].astype(np.float32)
-        sat = hsv[:, :, 1].astype(np.float32)
-        bright_mask = val > 30
-        if bright_mask.sum() > 5:
-            mean_sat = float(sat[bright_mask].mean())
-        else:
-            mean_sat = 0.0
-
-        # Edge density (Sobel magnitude)
-        sobel_x = cv2_module.Sobel(gray, cv2_module.CV_64F, 1, 0, ksize=3)
-        sobel_y = cv2_module.Sobel(gray, cv2_module.CV_64F, 0, 1, ksize=3)
-        edge_density = float(np.sqrt(sobel_x**2 + sobel_y**2).mean())
-
+        mean_sat, edge_density = _emblem_metrics(region, cv2_module)
         if mean_sat <= _EMBLEM_SAT_THRESHOLD or edge_density <= _EMBLEM_EDGE_THRESHOLD:
             logger.debug(
                 "scorebar_v2 (%s): %s x=%d..%d sat=%.1f edge=%.1f -> fail",
@@ -1092,6 +2519,17 @@ Pass 1 samples spaced 3s apart.  Pass 2's own +-_REFINE_WINDOW (5s)
 further extends the probe window, so effective coverage is +-8s.
 """
 
+_BORDERLINE_SPAN_CAP_FRACTION = 1.5
+"""borderline pseudo-region (#576 A5) 合計長の上限 (total_duration 比、#842 P2-4)。
+
+健全な OBS 録画でも brightness 15-55 の borderline frame は多く、実測 (2026-06-24)
+で raw_span は duration の 13-50% に達する (5 baseline 実測、最大 obs-20260118: 50.1%)。一方 brightness
+15-55 の待機画面が支配的な pathological 録画では raw_frac が ~200% に達し Pass 2
+probe が非有界に増える。cap = この値 x total_duration。1.5 は実測最大 50% の 3x
+margin で、未検証の長尺/暗め録画も clip せず pathological のみ捕捉する。超過分は
+drop + warning、本体 blackout 抽出 (``< blackout_threshold``) は不変。
+"""
+
 _REFINE_INTERVAL = 0.25
 """Fine interval for 2nd-pass re-probing of blackout candidates."""
 
@@ -1113,26 +2551,110 @@ By placing cut points inside blackout regions, keyframe drift never
 clips actual match footage.
 """
 
+_TRAILING_PROBE_STRIDE = 60.0
+"""Seconds between scorebar probes when scanning a trailing segment's early
+candidate-match window (#797).
+
+A real match in a mixed trailing sits at the start, right after the opening
+blackout, and its HUD stays visible for the whole match (>= several minutes).
+Sampling every ``_TRAILING_PROBE_STRIDE`` seconds across the early window
+(``start`` .. ``start + min_match_duration``) tolerates a delayed HUD after
+long loading -- which a single fixed early offset could miss
+(Codex adversarial-review, 2026-05-23) -- while keeping post-match
+false-positive exposure low.  Used by ``_flag_post_match_trailing``.
+"""
+
+# ---------------------------------------------------------------------------
+# Legacy fps-filter rollback switch (#576)
+# ---------------------------------------------------------------------------
+# Transitional escape hatch: when ALLAGANEYE_DETECT_FPS_FILTER=1 the
+# detector reverts to the pre-#576 chunked fps=N filter path.  Default
+# (= False) is the new output-seek + N-th sampling path.  Scheduled for
+# removal in v0.3.x patch release (see CHANGELOG / docstring).
+
+
+def _use_legacy_fps_filter() -> bool:
+    """Return True when the legacy fps-filter path is forced via env var (#576).
+
+    **Transitional / scheduled for removal in v0.3.x.**
+
+    Setting ``ALLAGANEYE_DETECT_FPS_FILTER=1`` reverts the detector to
+    the pre-#576 chunked ``fps=N`` filter path.  Originally provided as
+    both an emergency escape hatch for ffmpeg version regressions AND
+    a perf escape (output seek had ~10x regression).  Codex perf rescue
+    Option 1 (dual seek, commit a864834) restored perf to legacy levels
+    (~6m18s for obs-20260118 on RTX 5090 vs legacy ~7 min), so the perf
+    angle is no longer relevant.  CI / production should NEVER set this
+    var (CHANGELOG "Deprecated").
+
+    Removal plan:
+
+    - v0.3.0: env var supported (this function exists, returns env value)
+    - v0.3.x: env var removed (this function deleted, only new path
+      exists, _decode_chunk_cpu_legacy / _decode_chunk_legacy purged)
+
+    See ``docs/superpowers/specs/2026-05-18-v030-l3-detect-fps-filter-retirement-design.md``
+    S6 for rollback design and ``CHANGELOG.md`` for the deprecation
+    timeline.
+    """
+    return os.environ.get("ALLAGANEYE_DETECT_FPS_FILTER") == "1"
+
 
 def _borderline_pseudo_regions(
     results: dict[float, float],
     blackout_threshold: float,
     total_duration: float,
 ) -> list[tuple[float, float]]:
-    """Build pseudo-regions around Pass 1 borderline frames (A3, #361).
+    """Build pseudo-regions around Pass 1 borderline frames (A3, #361 + #576 A5).
 
-    A borderline frame sits in ``[blackout_threshold, blackout_threshold * 2)``
-    -- close to blackout but not dark enough to pass the strict Pass 1 cut.
+    A borderline frame sits in ``[blackout_threshold, _TRANSITION_THRESHOLD)``
+    -- the full "darker than typical game frames" range, not just super-dark.
     Each borderline timestamp produces a +-``_BORDERLINE_REFINE_RADIUS``
     window so Pass 2 precise sampling probes around it.
+
+    #576 A5 extension: the upper bound was originally
+    ``blackout_threshold * 2 = 30`` (catches frames just brighter than blackout
+    threshold).  After dual seek (commit a864834) eliminated fps filter PTS
+    drift, the legacy "accidental" sub-sample-interval blackout detection
+    via drift-induced borderline triggers no longer fires.  Extending the
+    upper bound to ``_TRANSITION_THRESHOLD = 55`` (the full transition zone)
+    restores coverage of sub-sample-interval blackouts that the new accurate
+    sampling otherwise misses (e.g., obs-20260116 t=2175.7-2177.3 boundary
+    where sample at t=2178 = brightness 42.6 was previously skipped).
+    Pass 2 still uses strict ``< blackout_threshold`` extraction, so the
+    only cost is extra Pass 2 probes (no false-positive risk).
     """
     radius = _BORDERLINE_REFINE_RADIUS
-    upper = blackout_threshold * 2
-    return [
+    upper = _TRANSITION_THRESHOLD
+    regions = [
         (max(0.0, t - radius), min(total_duration, t + radius))
         for t, b in results.items()
         if blackout_threshold <= b < upper
     ]
+    # #842 P2-4: total-length cap (fraction of duration). Prevents Pass 2 probe
+    # blow-up on recordings where borderline (15-55) wait screens dominate.
+    # Accumulate in start order, drop the overflow. Healthy recordings
+    # (raw_frac <= 50% measured) never hit the cap -> bit-exact.
+    cap_span = _BORDERLINE_SPAN_CAP_FRACTION * total_duration
+    regions.sort()
+    capped: list[tuple[float, float]] = []
+    running = 0.0
+    for start, end in regions:
+        span = end - start
+        if running + span > cap_span:
+            logger.warning(
+                "borderline pseudo-region 合計長が cap (%.0fs = %.1fx duration) を"
+                "超過: %d 領域中 %d を drop (待機画面が支配的な録画の Pass 2 probe "
+                "を有界化)。",
+                cap_span,
+                _BORDERLINE_SPAN_CAP_FRACTION,
+                len(regions),
+                len(regions) - len(capped),
+            )
+            break
+        capped.append((start, end))
+        running += span
+    return capped
 
 
 def _merge_regions(
@@ -1244,6 +2766,7 @@ def _refine_blackout_regions(
     total_duration: float,
     workers: int | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
+    region: CaptureRegion = FULL_FRAME,
 ) -> list[tuple[float, float]]:
     """Re-probe blackout regions at fine interval for precise duration.
 
@@ -1255,6 +2778,10 @@ def _refine_blackout_regions(
     to publish the total, then once per completed probe with the running
     ``(completed, total)``.  This lets callers drive a progress bar during
     the long ThreadPoolExecutor wait (#366).
+
+    *region* is forwarded to :func:`_probe_single_frame` for per-frame
+    brightness.  It defaults to ``FULL_FRAME`` so the OBS Pass 2 path stays
+    bit-exact with the pre-region behavior (#753 / Task B2).
     """
     if not blackout_regions:
         return blackout_regions
@@ -1281,7 +2808,8 @@ def _refine_blackout_regions(
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            pool.submit(_probe_single_frame, video_path, t): t for t in sorted_probes
+            pool.submit(_probe_single_frame, video_path, t, region): t
+            for t in sorted_probes
         }
         completed = 0
         for future in as_completed(futures):
@@ -1453,6 +2981,114 @@ def _filter_and_extract_segments(
         _record_drop("below_min_match_duration")
 
     return _finalize(segments)
+
+
+def _flag_post_match_trailing(
+    segments: list[MatchBoundary],
+    video_path: Path,
+    total_duration: float,
+    stats: DetectionStats | None,
+    *,
+    min_match_duration: float = 300.0,
+) -> list[MatchBoundary]:
+    """Flag a trailing post-match run via early-window scorebar probes (#797 / #805).
+
+    The final segment, when it runs to end-of-video (``end`` within 1.0s of
+    ``total_duration``) with ``type == "unknown"`` (no closing blackout), may
+    be post-match content (lobby / city) rather than a match.  It is only
+    considered for flagging when it is not the sole segment
+    (``len(segments) >= 2``); a lone whole-video unknown -- the fail-open
+    fallback when no blackout survives -- has no match to trail and is always
+    left untouched, so "no boundaries found" never collapses to zero matches.
+    Other shapes rely on the scorebar probes below (a tail showing in-match HUD
+    is left as a normal match), so a single real match followed by a post-match
+    tail is flagged correctly even though both segments are typed ``unknown``.
+
+    A real match in a *mixed* trailing -- formed when the match-end blackout is
+    missed or dropped (e.g. a warp misclassified as ``non_fl`` in scorebar.py)
+    so a real match and the post-match tail merge into one segment -- always
+    sits at the start, right after the opening blackout.  Scan that early
+    candidate-match window (``start`` .. ``start + min_match_duration``,
+    clamped to the segment) at ``_TRAILING_PROBE_STRIDE`` intervals **plus the
+    window end**, so no stride gap (including the final one) is left unprobed:
+
+    - any probe a scorebar hit (``True``) -> match footage present -> keep
+      untouched (normal match)
+    - any probe failure / opencv unavailable (``None``) -> keep untouched
+      (safe side)
+    - every probe a definite miss (``False``) -> post-match -> set
+      ``post_match=True`` on the final segment and **retain** it
+
+    #805 段階2: the all-miss disposition is now **non-destructive** -- the
+    segment is flagged (``post_match=True``) and kept in ``segments`` rather
+    than deleted (``segments[:-1]``).  Downstream the default split flow
+    excludes ``post_match`` boundaries from MP4 output while preserving them in
+    metadata.json, so a scorebar false-negative can no longer silently delete a
+    real match (one match lost, no error -- the failure class this replaces).
+
+    Scanning a strided window (rather than a single fixed early offset) means a
+    delayed HUD after long loading cannot hide a real match: a fixed
+    ``start + 12s`` probe could land in the loading screen while the midpoint
+    and late probes land in a longer post-match tail, mis-flagging a real match
+    (Codex adversarial-review, 2026-05-23).
+    """
+    if not segments:
+        return segments
+    last = segments[-1]
+    if last["type"] != "unknown" or abs(last["end"] - total_duration) >= 1.0:
+        return segments
+    # Only the lone whole-video unknown fallback -- a single segment spanning
+    # the recording, emitted when no blackout survives -- has no match to
+    # trail; keep it so "no boundaries found" never collapses to zero matches.
+    # Any multi-segment shape still goes through the scorebar probes below,
+    # which keep a segment that shows in-match HUD, so a real single match
+    # followed by a no-scorebar post-match tail is still flagged.  (Do not also
+    # gate on ``segments[-2]`` type: ``_filter_and_extract_segments`` hardcodes
+    # the before-first / after-last segments as ``unknown``, so that would
+    # wrongly keep single-match tails -- Codex round-5/6 adversarial-review.)
+    if len(segments) < 2:
+        return segments
+    start = last["start"]
+    end = last["end"]
+    window_end = min(start + min_match_duration, end)
+    # Probe the early candidate-match window at a fixed stride, and always
+    # include a probe at the window end so the final stride gap is never left
+    # unprobed (Codex round-4): a HUD that first appears late in the window
+    # (long loading) must still be caught.  The end probe is backed off to
+    # ``end - 1.0`` so a ``window_end == end`` case (trailing length ==
+    # min_match_duration) does not probe past the last frame -- an EOF read
+    # returns None and would (via keep-on-None) suppress a legitimate drop.
+    probe_points: list[float] = []
+    timestamp = start + _TRAILING_PROBE_STRIDE
+    while timestamp < window_end:
+        probe_points.append(timestamp)
+        timestamp += _TRAILING_PROBE_STRIDE
+    probe_points.append(min(window_end, end - 1.0))
+    probed = False
+    for probe_at in probe_points:
+        if probe_at <= start:
+            continue
+        probed = True
+        if _has_scorebar_v2(_probe_frame_rgb_hires(video_path, probe_at)) is not False:
+            # Scorebar hit (True) or probe failure (None) -> keep (safe side).
+            return segments
+    if not probed:
+        # No valid probe point inside the segment -> no evidence -> keep.
+        return segments
+    # Every probe across the candidate match window was a definite miss ->
+    # post-match trailing -> flag (non-destructive, #805 段階2).
+    if stats is not None:
+        drops = stats.setdefault("filter_drops", {})
+        drops["post_match_trailing"] = drops.get("post_match_trailing", 0) + 1
+        # #805 段階2: the segment now STAYS in ``segments`` (flagged, not
+        # dropped), so it is still legitimately counted as unknown -- there is
+        # nothing to decrement from ``filter_unknown``.
+    # #805 段階2: retain the trailing segment with the non-destructive
+    # post_match flag (default split output excludes it) instead of
+    # dropping it, so a scorebar false-negative can never silently delete
+    # a real match.
+    segments[-1]["post_match"] = True
+    return segments
 
 
 def _padded_end(region: tuple[float, float]) -> float:

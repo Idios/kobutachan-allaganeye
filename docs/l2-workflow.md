@@ -135,9 +135,11 @@ template 内の各節は既存実装と整合する位置取り。Iron Law 4 (Cl
 
 ## PR 作成 Pre-flight (Iron Law 6 サブ条)
 
-PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。2026-05-13 #722 で Step 0 ハードゲートを追加 (build/verify 前に `gh pr list --search "<元issue#>" --state open` を <1s で実行、PR #721 で発生した 49s redundant work 再発を防止)。Step 0 と Step 4 は検出 window が異なるため両方とも実施する。
+PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。2026-05-13 #722 で Step 0 ハードゲートを追加 (build/verify 前に `gh pr list --search "<元issue#>" --state open` を <1s で実行、PR #721 で発生した 49s redundant work 再発を防止)。2026-05-17 L-β β-4 で Step 5 (Codex adversarial-review、agent 実行は tier 1 = companion script) を追加 (C2)。Step 0 と Step 4 は検出 window が異なるため両方とも実施する。
 
-### 5 ステップ手順 (Step 0-4)
+> **checkbox 表記 convention**: Self-Test Report (machine-verified) は `- [x]` (CI ゲート対象)、実機検証 (machine-unverifiable) は plain bullet `-` (CI ゲート対象外) で書き分ける。詳細は本 doc §「Self-Test Report 規約」 を参照。
+
+### 6 ステップ手順 (Step 0-5)
 
 ```bash
 # 0. ★ ハードゲート (#722 で追加): <1s で実行、build/verify の前に置く
@@ -165,7 +167,36 @@ git diff --name-only HEAD origin/<base>
 # 4. 並行 worktree 同 issue PR 重複確認 (Step 0 と検出 window が異なるため再実行必須)
 gh pr list --search "<元issue#>" --state all \
   --json number,headRefName,state,createdAt
+
+# 5. Codex adversarial-review (Codex 統合、C2、L-β β-4 で追加)
+# Step 0-4 通過後、PR 作成直前に Codex GPT-5.4 で adversarial pass。
+# invocation path は 3-tier (#795、下記 §Step 5 の invocation path 参照)。
+# default (tier 1) は companion script 直接呼び出し:
+#   CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<version>" \
+#   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review \
+#     [--wait|--background] --base <base> "<focus 文字列 (ASCII)>"
+# focus 文字列に project 固有焦点を渡す:
+#   - Iron Law 3 (scope creep) を疑え。touched files が元 issue の宣言 scope と整合するか
+#   - ffmpeg / GPU fallback / encoding boundary を疑え (F1 / F4 再発を阻止)
+#   - 同 issue 過去 PR の root cause が今回も残っていないか (M5 と協調)
+# 出力の finding は Claude が triage し (A) PR 内修正 / (B)(C) handoff のいずれかへ振り分け。
+# Codex 自身に commit させない (M3 整合)。Codex CLI が fail した場合は
+# `docs/l2-workflow.md` §Codex fallback (L-β β-5 で追加) に従う (tier 2)。
 ```
+
+#### Step 5 の invocation path (3-tier、#795)
+
+openai-codex plugin の `commands/adversarial-review.md` frontmatter には **`disable-model-invocation: true`** が明示されており、agent (Claude) が slash command `/codex:adversarial-review` を autonomous に invoke することは plugin spec レベルで禁止されている (出典: `~/.claude/plugins/cache/openai-codex/codex/<version>/commands/adversarial-review.md`、公式仕様は <https://code.claude.com/docs/en/agent-sdk/slash-commands> / <https://code.claude.com/docs/en/agent-sdk/plugins>、PR #792 で発覚)。この制約は **slash command の model-invocation のみ**を縛るため、Step 5 は以下の 3-tier で運用する:
+
+| tier | path | trigger | 実行者 |
+| --- | --- | --- | --- |
+| 1 (default) | **companion script 直接呼び出し**: `node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review [--wait\|--background] --base <base> "<focus>"` を Bash 経由で実行。本物の Codex GPT-5.4 review が agent 一気通貫で回る (PR #823 / #850 / #851 / #852 実績。focus は ASCII 推奨、`--background` + `run_in_background` で長時間 review を非同期化可) | 常時 (Pre-flight Step 5 必須実行) | agent |
+| 2 (fallback) | superpowers `requesting-code-review` subagent。**Codex CLI が rate-limit / quota / network / auth 等で fail した場合のみ** (検出条件・重要 PR 判定・「Codex fallback notice」必須記載は §Codex fallback (C6) に従う) | tier 1 の Codex CLI fail | agent |
+| 3 (escalation) | Idios 自身が `/codex:adversarial-review` を直接 invoke し、結果を agent に share して PR 本文に追記 | Idios が tier 1/2 の review 内容・結果に不足ありと判断した場合 | Idios |
+
+tier 1 が成功している限り「Codex review 実施済」の記載は正当 (Iron Law 5 整合)。tier 2 で代替した場合は Codex fallback notice を必ず記載し、Codex review 済と誤認させない。
+
+> **歴史記録の扱い (#854 R2 確定)**: 実行済み dated plans/specs (`docs/superpowers/plans/` / `docs/superpowers/specs/`) 内の slash 表記 (`/codex:review` 等) は当時の実行記録 (historical record) であり、本 3-tier への遡及書き換えは行わない。sweep で検出しても対応不要 (living doc = CLAUDE.md / 本 doc / skill / hook / 現行 roadmap (現時点は `docs/superpowers/specs/2026-06-29-v030-l3-roadmap.md`。roadmap 交代時は本注記も更新する) のみが整合対象)。
 
 ### 判定
 
@@ -330,6 +361,30 @@ PR 本文を以下の構成で書き分ける (PR #615 / PR #625 修正で確立
 
 `- [ ]` を残すと PR 提出直後の CI で fail する。`gh pr edit <N> --body-file -` で書き直せば validate-checklist は再実行され直ちに pass する (commit 不要)。
 
+## PR body 規約 (期待値 / 現状 / 修正内容)
+
+すべての PR で本文冒頭に以下 3 section を inline 必須化する:
+
+- `## 期待値 (あるべき姿)`: 2-4 文。この PR がマージされた後にコードベース or 動作がどうあるべきか + なぜ目指すか
+- `## 現状 (修正前)`: 2-4 文。PR 作成時点でどうなっているか + 期待値とのギャップ
+- `## 修正内容 (現状 → 期待値)`: bullet list。何をしたか、必要なら file path:line で具体化
+
+### issue ref の運用
+
+issue ref がある PR も、期待値 / 現状 は PR 本文に **簡潔に inline 記載** (issue を辿らせない)。詳細は元 issue へ link 参照可、PR 本文と issue 本文の重複は受容。
+
+### release / meta PR の解釈
+
+複数 PR を統合する release / meta PR (例: PR #774) も同構造で書く:
+
+- 期待値: 当該リリースバージョンが出て該当問題が解消されている
+- 現状: develop ブランチで修正が積まれ統合準備完了、main は未統合
+- 修正内容: 統合した PR list + 各 Track の解消内容
+
+### Iron Law 6 サブ条との関係
+
+本規約は PR template (`.github/pull_request_template.md`) と一致する。template の `## 期待値` / `## 現状` / `## 修正内容` を埋めずに PR 作成すると `/review-pr` で blocker 扱い。
+
 ## (A) PR 内修正優先 規約
 
 > originally from `feedback_pr_internal_fix_policy.md`, absorbed 2026-05-01
@@ -403,7 +458,7 @@ doc の節構造を変える PR、**または `git merge` で他 skill / doc を
 doc の節構造を変える PR、または merge 取り込み PR では以下を実行:
 
 1. `git grep -oE '§「[^」]+」' .claude/ docs/ | sort -u` で全 section reference を抽出
-2. 各 reference が target doc の `##` または `###` 見出しと文字列一致するか確認 (`grep -nE "^### ?<セクション名>" docs/<target>.md` 等)
+2. 各 reference が target doc の `##` または `###` 見出しと文字列一致するか確認 (`grep -nE "^### ?<セクション名>" docs/<target>.md` 等)。**partial-string match 許容**: 見出し末尾の注釈 (例: `(#428 / #405 matrix v2)`、`(#440 / PR #632)`) は section name に含めず、本体名 (例: `click-level option-parse error`) のみで一致を判定する (PR #784 で明文化)
 3. 旧セクション名が確実に消えたら `git grep -n "<旧セクション名>"` で残骸ゼロを確認
 
 「相互参照は破綻していない」と PR Self-Test Report に書く前に、上記 3 ステップを実施する。ファイル名 mention の grep だけでは不十分 (l2-workflow.md という mention は残るが、参照している節が統合・廃止されていることを検出できない)。
@@ -642,14 +697,14 @@ Claude Code のセッション用 worktree はセッション終了時に `git w
 
 `scripts/cleanup-claude-branches.sh --apply` が `git branch -D` で削除する条件 (#708):
 
-- **AND 1 (merged)**: `origin/develop-0.2.0` または `origin/main` の祖先 (`git merge-base --is-ancestor`)
+- **AND 1 (merged)**: 最新 (`sort -V`) の `origin/develop-*` または `origin/main` の祖先 (`git merge-base --is-ancestor`。#816 で develop-0.2.0 固定から一般化。stale な旧 develop ref を merge 根拠にしないため最新のみを採用)、**または** local branch tip の OID が `gh pr list --state merged` の head commit OID (`headRefOid`) 集合に一致する (#827)。本 repo の PR は `--squash` マージのため branch tip が base の祖先にならず is-ancestor では永遠に not-merged 扱いになる。この構造的不整合を gh の merged head OID で OR 補完する。**OID 同一性で照合する**ため、PR merge 後に同名 branch を再作成し未 merge の新 commit を積んでも local tip OID が一致せず kept になり、不可逆 data-loss を構造的に防ぐ (codex HIGH)。gh または `timeout` が不在 / 非ゼロ exit / timeout 発火時は集合を空に倒し is-ancestor のみに fallback する (安全側)
 - **AND 2 (active 参照なし)**: `git worktree list --porcelain` の `branch refs/heads/...` 集合に含まれない
 - **AND 3 (24h cooldown)**: 最終 commit (`git log -1 --format=%ct`) が 24h 以上前
 - **prefix 限定**: `claude/` のみ (= `feature/xxx` 等の手動 branch は対象外)
 
-**評価順序**: AND 2 → AND 1 → AND 3 (cost-efficient: AND 2 は local hash lookup で安価、AND 1 / AND 3 は git subprocess を spawn するため後回し)。最初に fail した条件が `kept <branch> (reason: not-merged | active | cooldown)` の reason として記録される。
+**評価順序**: AND 2 → AND 1 → AND 3 (cost-efficient: AND 2 は local hash lookup で安価、AND 1 / AND 3 は git subprocess を spawn するため後回し)。最初に fail した条件が `kept <branch> (reason: not-merged | active | cooldown)` の reason として記録される。gh merged 判定 (#827) は `command -v gh` + `command -v timeout` の両方が揃うときのみループ前に 1 回だけ `timeout 10 gh pr list` を呼ぶ (network 依存だが必ず bound される)。判定経路は start event の `gh_merged_lookup` (`ok` / `unavailable` / `error`) と deleted / would_delete event の `merged_via` (`ancestor` / `gh`) で可視化される。
 
-`origin/develop-0.2.0` / `origin/main` が未 fetch だと `merge-base --is-ancestor` が false に倒れて keep される = 安全側。`git fetch` は hook 内で実行せず、user の通常運用 (`git pull`) を前提とする。
+最新の `origin/develop-*` / `origin/main` が未 fetch だと `merge-base --is-ancestor` が false に倒れて keep される = 安全側。`git fetch` は hook 内で実行せず、user の通常運用 (`git pull`) を前提とする。gh merged 判定も同様に、gh 未認証 / network 不通 / `timeout` 不在なら fallback して is-ancestor のみで判定するため、オフライン環境でも安全に (かつ実行時間を bound して) 動作する。OID 同一性照合により、gh が報告する merged head と local branch tip が同一 commit のときのみ削除するため、名前衝突による誤削除は発生しない (#827 codex HIGH 対応)。
 
 ### 手動実行
 
@@ -690,7 +745,276 @@ Stop hook は**自セッションのディレクトリを sweep しない**。�
 
 `rmdir` のみを使用するため、アクティブな worktree や何らかのファイルが残っているディレクトリは**削除されない**。想定外のファイルが残っているディレクトリは出力で明示されるため、必要に応じて手動で確認する。Stop hook が起動中のセッションのアクティブ worktree は `.git` 参照で保護されるため安全に skip される。Windows のディレクトリハンドル保持問題 (#477 コメント) は上記 2 段階設計により回避している。
 
-`cleanup-claude-branches.sh` も同様に明示的に安全な AND 3 条件 (merged + active 参照なし + 24h cooldown) + `claude/` prefix 限定下でのみ `git branch -D` を実行し、merged 保証により data loss しない。`origin/develop-0.2.0` / `origin/main` が未 fetch なら `is-ancestor` false に倒れて keep する設計のため、fetch されていない開発環境でも安全に動作する。
+`cleanup-claude-branches.sh` も同様に明示的に安全な AND 3 条件 (merged + active 参照なし + 24h cooldown) + `claude/` prefix 限定下でのみ `git branch -D` を実行し、merged 保証により data loss しない。最新の `origin/develop-*` / `origin/main` が未 fetch なら `is-ancestor` false に倒れて keep する設計のため、fetch されていない開発環境でも安全に動作する。
+
+## brainstorming sweep 規約 (#746 教訓)
+
+brainstorming で「stale 参照 X を post-Y に更新する」「dangling reference を sweep する」のようなスコープ確定を行うとき、`Read` で個別箇所を見るだけでは sweep に漏れが出る。**Q1 で sweep 範囲を提示する直前に repo-wide grep を実行**し、結果を全件 inventory する。
+
+### Why
+
+PR #746 (Lane V Phase 3 / Group I, issue #699) で「dangling `appErrorMessage` / `appErrorHint` 参照を sweep」と確定したが、brainstorming で 3 箇所と list した一方、実装中の Phase C scan で 2 file 追加発見 (`ui-interaction-spec.md:693`, `tauri-commands.md` lines 10/58/65/73) した。結果 user の AskUserQuestion を再度発火させ、scope expansion 承認を得て Phase D で PR 内 fix した。brainstorming で `git grep` していれば最初から正しい sweep 範囲を Q1 に提示でき、Phase D は不要だった。
+
+### How to apply
+
+- brainstorming Q1 で sweep 範囲を提示する直前に `git grep -nE "<symbol>" -- ':!docs/superpowers/' ':!docs/archive/'` を実行 (Bash tool 1 回で済む)
+- 結果を全件 inventory して spec §5 詳細設計 / §8 受け入れ条件 に列挙
+- spec §8 AC で「repo 全体で残っていない」と書くなら、その AC を sweep 確定時点で grep 検証する (AC 文言と実 sweep の食い違いを防ぐ)
+- 対象が `appError*` のように複数の関連 symbol で構成される場合は `git grep -nE "(appErrorMessage|appErrorHint|appErrorCodeIs)"` のように同類をまとめて grep する
+
+## subagent 起動規約 (#746 Phase C / #741 Task 5 教訓)
+
+実装 / scan / refactor task で限定スコープを subagent に dispatch するとき、prompt に**必ず**以下の HARD-GATE を含める。これがないと subagent が独断 fix を進めて Iron Law 3 (scope creep) や Iron Law 5 (independent judgment) を踏む。
+
+### Stop-on-scope-creep (subagent prompt に必須記述)
+
+subagent prompt の `## Stop conditions` セクションに以下を含める:
+
+- 「Predefined scope を超える発見 (新 file の dangling ref / 想定外の修正候補 等) → STOP, report BLOCKED with finding details」
+- 「想定外 finding に対して独断 fix することは禁止 (scope expansion は controller + user の判断)」
+- `## Self-review` または `## Report` セクションに「scope 外の独断行動なし」項目を追加し、subagent に self-confirm を要求
+
+#### Why
+
+PR #746 Phase C で「repo-wide dangling-ref scan」を dispatch した subagent が、scan で見つけた `ui-interaction-spec.md:693` の dangling ref を独断で fix commit (`a752fc0`) し、別 file の `tauri-commands.md` 4 件は「out-of-scope」と判定した。fix-vs-flag の境界判断を subagent が独断したことが Iron Law 5 違反。本来 STOP/escalate して controller (= main session) が判断すべき。事後の整合作業 (Phase D での PR body 修復含む) が発生した。
+
+### Orphan commit 防止 (controller 側 verification)
+
+subagent-driven-development の Task 実装で、subagent が `git checkout <SHA>` 等で detached HEAD に入ってから commit すると、新 commit は元の branch HEAD ではなく detached state の上に作られる。subagent が戻る (checkout branch) 際に reattach しないと、commit は orphan 化 (`git show <SHA>` では見えるが branch から到達不能) する。
+
+controller (main session) は subagent dispatch 後に以下を**必ず**実行:
+
+```bash
+# 1. branch HEAD への到達性確認 (reviewer subagent の verification には依存しない)
+git log <branch> --oneline -5 | grep <expected-SHA>
+
+# 2. PR 作成前 (push 前) に PR に乗る予定の commit 一覧を最終確認
+git log origin/<base>..HEAD --oneline
+```
+
+想定 commit 数 (例: 5 Task = 5 commit) と一致しなければ orphan commit が発生している。
+
+#### 検知時の修正
+
+```bash
+git cherry-pick <orphaned-SHA>
+```
+
+現 HEAD 上に同内容の新 commit を作り直す。Push 済 PR は force push 不要 (新 SHA で追加 commit として乗る)。
+
+PR #741 (2026-05-13 Lane II-b' Group D 残) で Task 5 docs commit (`cda0f8e`) が parent=9ce2565 (old base) 上の orphan になっていた事例。final reviewer の subagent が「Head: cda0f8e」claim と PR 実 head bf083f3 の食い違いを指摘して発覚、`git cherry-pick cda0f8e` で 252de72 として再生成し push して解決。
+
+### AskUserQuestion で scope 拡大選択肢を出さない (#732 教訓)
+
+controller (主セッション) が subagent reviewer の判定を受けて AskUserQuestion を組み立てる時、**subagent reviewer が scope 外 ((B) or (A) re-run 推奨) と判定した finding に対して「本 PR 内修正 (scope 拡大)」を選択肢に追加しない**。subagent recommendation を第一の選択肢 (Recommended) に置き、他は subagent が挙げた選択肢のみ提示する。user が `Other` で明示提案するまで scope 拡大は出さない。
+
+詳細は `.claude/skills/iterate-review/SKILL.md` §AskUserQuestion 設計規約を参照。
+
+## skill 改修ワークフロー (empirical-prompt-tuning)
+
+skill を**大幅改訂** (新節追加 / frontmatter description 書き換え相当) する際は、書き手が自覚できない曖昧さ・欠落を **bias-free な subagent による empirical 評価**で炙り出す。自己再読では構造的欠陥に到達できない。
+
+### 適用対象
+
+- skill 新規作成
+- frontmatter description 書き換え + 新節追加を伴う大幅改訂
+
+typo fix / リンク更新では過剰。`/iterate-review` のような中核 skill の改訂で特に有効。
+
+### 上流参照 (mizchi protocol を直接読む)
+
+上流 SKILL.md を **vendoring せず** (license 未設定のため)、改修者が都度参照する:
+
+- URL: <https://github.com/mizchi/skills/tree/main/meta/empirical-prompt-tuning>
+- raw 取得: `gh api repos/mizchi/skills/contents/meta/empirical-prompt-tuning/SKILL.md -H "Accept: application/vnd.github.raw"`
+- offline / GitHub 不到達時は WebFetch / `gh api` 不可 → skill 改修作業を保留。短期キャッシュは作業 dir に置いて **commit しない**
+
+### How to apply
+
+1. **前段階の事例調査**: 指摘ラウンドが多かった実在 PR を 3 本ピックアップし、Explore agent 並列で指摘パターンを抽出してからモック設計へ
+2. **モック設計**: 中央値 1 + edge 2 (束ね PR / 孤立 PR / doc-only 等) を `.claude/skills/<skill-name>/eval/scenario_*.md` に書き出す
+3. **要件チェックリスト**: `[critical]` タグ付きで事前固定。`eval/requirements.md` に集約
+4. **subagent dispatch**: `general-purpose` を `model: sonnet`、3 並列・`run_in_background: true` で起動
+5. **empirical 規範遵守**: Iteration 1 再評価では必ず**新規 subagent** (empirical Red Flag「同じ subagent を使い回そう」に該当するため同一 agent は不可)
+6. **打ち切り基準**: 2 consecutive clears (new unclear=0 + accuracy +3pt 以下 + step ±10% + duration ±15%) で打ち切り。または構造的欠陥 (新節欠落 / 判定基準不在レベル) が解消された時点で打ち切り可。残る細部不明瞭点は deferred issue として追跡
+
+### Iron Law 6 路線 / Self-Test Report integration
+
+本 workflow を skip した skill 改修 PR は「未検証 PR」と同じ扱い。
+
+- PR Self-Test Report に `### empirical prompt tuning` セクションを設け、Iteration table (per-scenario success / accuracy / steps (tool_uses) / duration / structured reflection / ledger updates) を記録する
+- 例外: trivial wording fix (typo / link 修正 / コメント追記のみ) は skip 可、判断は `AskUserQuestion` で確認
+- Self-Test Report の `### empirical prompt tuning` section を欠いた skill 改修 PR は `/review-pr` で blocker 扱い (Iron Law 6 違反)
+
+### 経緯
+
+2026-04-24 `/review-pr` skill 改修で実証済み (PR #537 / #562)。Iteration 0 baseline で構造的欠陥 6 件 (環境制約節欠落、Round N 記法不在、処置分類判定基準の弱さ、束ね PR 独立検証の明示不在、孤立 PR 手順不在、doc-only CI 波及観点なし) を検出し、Iteration 1 で全件解消。精度 0.98 → 1.00、[critical] 3/3 成功。書き手自身の自己レビューでは構造的欠陥に到達できなかった。参考: <https://github.com/mizchi/skills/tree/main/meta/empirical-prompt-tuning>
+
+## Codex fallback (C6、Codex token 枯渇 / failure 時)
+
+Codex CLI (`codex-companion.mjs` runtime) が以下のいずれかで fail した場合、Claude Code 側で同等処理を fallback 実行する。Iron Law 1 / 6 違反 (受け入れ条件検証 / Pre-flight ゲート不通過のまま進行) を防ぐ。
+
+### 検出条件
+
+| 検出条件 | 判定 |
+| --- | --- |
+| exit code 非ゼロ + stderr に `rate.?limit`, `quota`, `429`, `usage_limit` のいずれか | **token 枯渇 (明確)** → 自動 fallback |
+| exit code 非ゼロ + stderr に `auth`, `unauthorized`, `401`, `403`, `api.?key` | **認証失敗 (明確)** → 自動 fallback + user notify |
+| exit code 非ゼロ + stderr に `timeout`, `EHOSTUNREACH`, `ENETUNREACH`, `ECONNRESET` | **network failure (明確)** → 自動 fallback |
+| exit code 非ゼロ + 上記いずれにも該当しない stderr | **曖昧** → user に AskUserQuestion (再試行 / Claude fallback / abort) |
+| exit code 0 + stdout が空 / parse 不能 | **応答異常** → user に AskUserQuestion |
+
+### 検出 + fallback の擬似コード (skill 内実装イメージ)
+
+`/review-pr` Step 5a / `/iterate-review` Round 2.1 等で Codex を invoke した後の処理イメージ。agent からの通常実行は companion script 直接呼び出し (§Step 5 の invocation path (3-tier、#795) の tier 1。`review` / `adversarial-review` とも slash command は `disable-model-invocation: true` のため agent invoke 不可、slash 形式は tier 3 = Idios 専用)。**subcommand と focus の対応に注意**: `review` は focus positional を受けず非空 focus を reject する。project 固有 focus を渡す場合は `adversarial-review` を使う:
+
+```text
+result = run_bash('node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review --base develop-0.3.0 "<focus>"')
+
+if result.exit_code != 0:
+    stderr_lower = result.stderr.lower()
+    if matches_any(stderr_lower, ["rate", "quota", "429", "usage_limit"]):
+        fallback_reason = "token 枯渇"
+        invoke_fallback("superpowers:requesting-code-review")
+    elif matches_any(stderr_lower, ["auth", "unauthorized", "401", "403", "api"]):
+        fallback_reason = "認証失敗"
+        invoke_fallback("superpowers:requesting-code-review")
+        notify_user("Codex auth failed; check token / api key")
+    elif matches_any(stderr_lower, ["timeout", "ehostunreach", "enetunreach", "econnreset"]):
+        fallback_reason = "network failure"
+        invoke_fallback("superpowers:requesting-code-review")
+    else:
+        # 曖昧 → user 判断
+        ask_user_question(["再試行", "Claude fallback", "abort"])
+elif result.stdout.empty() or not parseable(result.stdout):
+    fallback_reason = "応答異常"
+    ask_user_question(["再試行", "Claude fallback", "abort"])
+else:
+    integrate_findings(result.stdout)
+
+if fallback_invoked:
+    report.append(format_fallback_notice(fallback_reason, result.stderr[:200]))
+```
+
+実装は skill prompt 側 (`/review-pr` SKILL.md Step 5a / `/iterate-review` SKILL.md Step 2.1) で行う。Codex CLI のラッパー (`codex-companion.mjs`) との連携詳細は openai-codex plugin doc を参照。
+
+### Fallback 戦略
+
+| Codex 実行 (agent の通常 path) | 通常用途 | Fallback 内容 |
+| --- | --- | --- |
+| `codex-companion.mjs review` (C3 で `/review-pr` Step 5a に Bash 実行。focus positional 不可 — project 固有 focus を渡す場合は `adversarial-review` subcommand を使う。slash `/codex:review` は tier 3 = Idios 専用) | code quality adversarial pass | superpowers `requesting-code-review` subagent を起動して同等の adversarial review。focus 文字列は Codex に渡した (渡す予定だった) ものと同じ |
+| `codex-companion.mjs adversarial-review` (C2 で Iron Law 6 Step 5 に Bash 実行 = tier 1。slash `/codex:adversarial-review` は tier 3 = Idios 専用) | Pre-flight 第 5 ゲート | superpowers `requesting-code-review` subagent + project 固有 focus を起動。`<grounding_rules>` 相当で「adversarial / approve させない姿勢」を明示 |
+| `/codex:rescue` (C4 で root-cause 調査時に invoke。`disable-model-invocation` なし = agent invoke 可、`codex:codex-rescue` subagent 経由) | bug 根本原因 + 類似バグ探索 | Claude main + superpowers `systematic-debugging` skill で自力調査。`/scope-guard` 規約は維持 (独断 fix 禁止) |
+
+### Fallback 実行時の必須記載 (Iron Law 5 整合)
+
+skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` Round summary comment) に以下を**必ず明示**:
+
+```text
+> **Codex fallback notice**: 本 review は Codex CLI が <検出条件> で fail したため、
+> Claude Code (superpowers:<skill-name>) で代替実行しました。
+> Codex 側の review は次セッションで再試行を推奨します。
+> stderr 要約: <stderr の先頭 200 字>
+```
+
+これがないと Idios が Codex review 済と誤認するリスクがある (Iron Law 5 衝突回避)。
+
+### Fallback の限界 (明示)
+
+- Codex は GPT-5.4 (独立 model) の second opinion。Claude Code fallback は同一 model の self-review に近く、bias 構造が同じになる
+- 重要 PR (release 直前 / 大規模 refactor) で Codex fallback が trigger した場合、user に AskUserQuestion で「Codex 復旧待ち / Claude fallback で push」の 3 択を提示
+- fallback report には「fallback で実行済」を明示することで、後日 Codex 復旧時に再 review が要否を判断可能にする
+
+## subagent + Codex 直列構成 (C5)
+
+大規模実装 / 重要 PR では superpowers `subagent-driven-development` (Claude 内 fresh subagent) と Codex review (GPT-5.4) を **直列**で組み合わせる。並列ではなく直列にする理由: Codex 自身に fix させない (Iron Law 3 / 5 整合)。agent からの Codex 実行は §Step 5 の invocation path (3-tier、#795) と同じく companion script 直接呼び出し (`codex-companion.mjs review`)。slash `/codex:review` は `disable-model-invocation: true` のため Idios 専用 (本 § の Flow 図・表では `codex:review` を出所 label / subcommand 名として用いる)。
+
+### Flow
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ Stage 1: Claude 内 fresh subagent が実装                     │
+│         (superpowers:subagent-driven-development)            │
+│         - per-task subagent dispatch                         │
+│         - 2-stage review (spec reviewer + code quality)      │
+│         - HARD-GATE: scope を超える発見 → BLOCKED 報告       │
+└─────────────────────────────────────────────────────────────┘
+                            ↓ commit on claude/<branch>
+┌─────────────────────────────────────────────────────────────┐
+│ Stage 2: controller (Claude main) が到達確認 (M6 整合)        │
+│         git log <branch> --oneline -5 | grep <SHA>           │
+│         orphan commit 検出 → cherry-pick で復旧               │
+└─────────────────────────────────────────────────────────────┘
+                            ↓ branch HEAD が想定 SHA を含む
+┌─────────────────────────────────────────────────────────────┐
+│ Stage 3: Codex review (tier 1, GPT-5.4) で adversarial pass   │
+│         独立 model の second opinion                          │
+│         focus 文字列で project 固有焦点                       │
+│         Codex 自身に commit させない (M3 整合)                │
+│         fail 時は §Codex fallback (C6) に従う                 │
+└─────────────────────────────────────────────────────────────┘
+                            ↓ Codex finding (read-only)
+┌─────────────────────────────────────────────────────────────┐
+│ Stage 4: controller + Idios で triage                         │
+│         /review-pr Step 5b の (A) / (B) / (C) 分類            │
+│         Codex finding は 出所 = codex:review として統合        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Iron Law 6 Pre-flight Step 5 との違い
+
+| 軸 | Iron Law 6 Pre-flight Step 5 (C2) | subagent + Codex 直列構成 (C5、本節) |
+| --- | --- | --- |
+| 起動タイミング | PR 作成**直前** (Step 0-4 通過後) | `/review-pr` 段階の **deep-dive** (Step 5a) |
+| Codex command | `adversarial-review` subcommand (approve させない姿勢、tier 1 = companion script) | `review` subcommand (code quality 一般、同) |
+| 必須 / オプション | **必須** (Pre-flight ゲート) | optional (起動条件: 大規模 PR / 過去 root cause 複数 / L1 core) |
+| 直前 stage | Step 4 並行 PR 重複再確認 | superpowers subagent 実装 + reachability 確認 |
+
+### 並列ではなく直列にする理由
+
+- Codex に fix させると Iron Law 3 (scope creep) / Iron Law 5 (independent judgment) の衝突リスク
+- superpowers subagent (Claude 思考体) と Codex (GPT-5.4) を並列起動しても finding が重複するだけで bias は減らない
+- 直列で「実装 → reachability → adversarial review → triage」と段階化すると、各 stage で人 (Idios) が介入できる checkpoint が確保される
+
+### Fallback (Codex fail 時)
+
+Stage 3 で Codex CLI が token 枯渇 / network failure 等で fail した場合は §Codex fallback (C6、本 doc 内) に従い、superpowers `requesting-code-review` subagent を Stage 3 の代替として起動する。Stage 4 triage は同様に実施し、fallback notice を report に必須記載する。
+
+## 外部依存規約 (#649/#651/#703/#721 教訓)
+
+外部依存 (Python / npm / cargo / OS binary tarball 等) の DL コードは **immutable URL** で pin する。`master` / `main` / `latest` / `raw HEAD` を含む URL は禁止。
+
+### Why
+
+PR #649 → #651 (get-pip.py SHA pin) → #703 (versioned tag URL 切替) → #721 (BtbN monthly snapshot) の 3 hotfix 連発 (F2)。最初から immutable URL ルールがあれば 1 PR で完結した。BtbN daily の retention 14 日 / get-pip.py master の breaking change 等、上流側の breaking が DL URL に影響する。
+
+### 受け入れ可能なソース
+
+| ソース | 形式 | 例 |
+| --- | --- | --- |
+| PyPA versioned tag | `https://github.com/pypa/<repo>/raw/<tag>/...` | get-pip.py |
+| BtbN monthly snapshot | `https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-YYYY-MM-{28,29,30,31}-*/...` | FFmpeg n8.1 |
+| npm registry version pin | `package.json` の `dependencies` で `"^X.Y.Z"` (transitive は package-lock.json で fix) | tauri / vite |
+| cargo registry version pin | `Cargo.toml` の `tauri = "2.11"` (transitive は Cargo.lock で fix) | tauri-utils |
+| SHA-pinned download | `https://.../...-<commit-hash>.tar.gz` + SHA256 checksum | FFmpeg checksum |
+
+### 禁止パターン
+
+| パターン | 理由 |
+| --- | --- |
+| `https://.../master/...` | upstream master の breaking が即影響 |
+| `https://.../main/...` | 同上 |
+| `https://.../latest/...` | retention / 互換性が保証されない |
+| `https://raw.githubusercontent.com/.../HEAD/...` | HEAD は git ref として可変 |
+| `npm install <pkg>` (version 未指定) | semver caret semantics で意図せぬ major up に脱する |
+
+### 検証手順
+
+`scripts/build-portable-zip.ps1` / `.github/workflows/*.yml` / 任意の install script を編集する場合:
+
+1. 該当行のコメントに「must be immutable (versioned tag / SHA pinned)」と記載
+2. Pester regression (`tests/installer/build-portable-zip.Tests.ps1`) で URL に `master`, `main`, `latest`, `HEAD` の literal が含まれていないことを assert
+3. `/review-pr` skill が installer / workflow PR を review するときに本 § を引いて URL 規約適合を Step 5b トリアージで逐条検証
 
 ## 参考
 

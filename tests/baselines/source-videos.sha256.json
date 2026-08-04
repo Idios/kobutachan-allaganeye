@@ -1,0 +1,359 @@
+{
+  "issue": 869,
+  "generated_at": "2026-07-07T00:41:52.0923753+09:00",
+  "description": "検証依存セット (GT/baseline 台帳が参照する実動画) の SHA-256 台帳。バックアップ・復元・再入手時の同一性検証に使う。運用は docs/testing-guide.md §サンプル動画/GT データの保全 を参照",
+  "roots": {
+    "royalstraightflesh-videos": {
+      "path": "E:/royalstraightflesh/videos",
+      "env": "ALLAGANEYE_SAMPLE_VIDEO_DIR"
+    },
+    "allaganeye-samples": {
+      "path": "E:/allaganeye-samples",
+      "env": "ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER"
+    },
+    "videos": {
+      "path": "E:/videos",
+      "env": null
+    }
+  },
+  "total_files": 48,
+  "total_size_bytes": 678726872998,
+  "entries": [
+    {
+      "root": "allaganeye-samples",
+      "path": "20250527-29/20250527-29/2026-05-27 21-27-57.mkv",
+      "category": "masked-obs-source",
+      "size_bytes": 88412562353,
+      "sha256": "4961ab413d95ea3a0d533fe707822439b8ea150640e5582fdbd17b2fdbfeac56"
+    },
+    {
+      "root": "allaganeye-samples",
+      "path": "20250527-29/20250527-29/2026-05-28 21-34-10.mkv",
+      "category": "masked-obs-source",
+      "size_bytes": 45921302241,
+      "sha256": "518d6cf34827e0b395c6970d01fb469da75d422925db71fceac692db9002645b"
+    },
+    {
+      "root": "allaganeye-samples",
+      "path": "20250527-29/20250527-29/2026-05-29 20-58-34.mkv",
+      "category": "masked-obs-source",
+      "size_bytes": 161130344441,
+      "sha256": "23d53e832190b508216361d3ae64890c0a502e594419f24f1b26aec16f046b6d"
+    },
+    {
+      "root": "allaganeye-samples",
+      "path": "FF14 FL NEWきゅま(邪竜眼) ニーズヘッグ化するオンサル！ フィジカル向上委員会【 オンサルハカイル フロントライン 】 [v2782813946].mp4",
+      "category": "vtuber-vod",
+      "size_bytes": 13922973083,
+      "sha256": "f8a1b59384f956c283bea6c173a5574d2972b1b538729b50d8015f05d773e563"
+    },
+    {
+      "root": "allaganeye-samples",
+      "path": "FL参加型🍹復権の竜騎士シルロリベンジ編 🍻ETあり🌙ManaDC [v2781251159].mp4",
+      "category": "vtuber-vod",
+      "size_bytes": 22191552697,
+      "sha256": "e3303dff686c537524a03773fc7c94da8d349b7bb1ca833ab4d80680c7894881"
+    },
+    {
+      "root": "allaganeye-samples",
+      "path": "_mask_f1800.png",
+      "category": "vtuber-mask",
+      "size_bytes": 5114389,
+      "sha256": "5b987fc0e734a86b3d192e4e9176d9a9e8e77bffe6bc30a2970dbabe215b4fa6"
+    },
+    {
+      "root": "allaganeye-samples",
+      "path": "_mask_f3600.png",
+      "category": "vtuber-mask",
+      "size_bytes": 6164917,
+      "sha256": "a66f828693192d1b9156581fc8770fcbe303de133f07a86eb7dd96de6f16005c"
+    },
+    {
+      "root": "allaganeye-samples",
+      "path": "_mask_f600.png",
+      "category": "vtuber-mask",
+      "size_bytes": 6364131,
+      "sha256": "ebe7967e58b2a597f94acd174f75355cb8d2ffe8b1bc8f2acc417239689d3d1d"
+    },
+    {
+      "root": "allaganeye-samples",
+      "path": "『オンサル～!!』『合わせ歓迎』『参加型!!』↣ #シャキシャキメテオ [v2779515711].mp4",
+      "category": "vtuber-vod",
+      "size_bytes": 15324741494,
+      "sha256": "1c9050ec418ca07e771bc2c243bf6852b65c0a30733f9047af9a56eccf65560c"
+    },
+    {
+      "root": "allaganeye-samples",
+      "path": "【FF14】制圧→オンサル 軍師実況 Shinryu [v2778917458].mp4",
+      "category": "vtuber-vod",
+      "size_bytes": 7973291777,
+      "sha256": "53b570698ab52fb003dca83ba8ca0fc3b0368ef25b75ba5ad980d7ed5af59694"
+    },
+    {
+      "root": "allaganeye-samples",
+      "path": "【フロントライン】湿気やばすぎてオンサル [v2782822260].mp4",
+      "category": "vtuber-vod",
+      "size_bytes": 11498370805,
+      "sha256": "072440b74b1c11608cf2440366d8dff3300c4e86e85083f70e8a7c17b175269a"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "2026-02-09 23-12-24.mkv",
+      "category": "obs-baseline-source",
+      "size_bytes": 20566546827,
+      "sha256": "224f06081df2443a4bbd6e8b9983c31802ab2be918bfc7ef985eec2dee52b193"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260116/2026-01-16 22-12-57.mkv",
+      "category": "obs-baseline-source",
+      "size_bytes": 39721920176,
+      "sha256": "c6e58b2a555bfe867c39ec81879b3ebda2e96b624e0f7182c416dca81f759935"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260116/2026-01-17 00-43-10.mkv",
+      "category": "obs-baseline-source",
+      "size_bytes": 8586696501,
+      "sha256": "48b5ec07463246e7985c73aa86e27b8a9f4f484a66f7d01a11db469bf2b847ba"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260116/20260116_1.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2365639319,
+      "sha256": "fb1577dc3cbd83f6b7ae0025a07ae14d55374cf5f5ec9ca0b0f03e1d3f7ebf84"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260116/20260116_2.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2155981126,
+      "sha256": "82306a667824a505df75cdedf99ff76db3480828d9ea07b9d59ff31ba3375b37"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260116/20260116_3.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2029977639,
+      "sha256": "9c7ce8887f94c5d6caa2d6bbe2e027e2553d34df94cb069e98914a92ea0307d4"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260116/20260116_4.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2291638351,
+      "sha256": "7bcd76dfe63b9ba606e03d9fe0d057dd0f8274430de1b1bd32b19563a2a848bb"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260116/20260116_5.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2212917203,
+      "sha256": "fcf181233100605a896f3332c1be9e5a9a344f95eba0268fe1f868a4768f316e"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260116/20260116_6.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2140883057,
+      "sha256": "48e8225aaf4eb4224756147af301ef1052f17347b9e6058c4f539bdaaaecc1e8"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260116/20260116_7.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2290122105,
+      "sha256": "e0ed56289f9936a7cd447ba44e55d86b0e22a9b85882df497846957bc9662f80"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260118/2026-01-18 22-15-18.mkv",
+      "category": "obs-baseline-source",
+      "size_bytes": 36736854561,
+      "sha256": "990069cde66746a551f645ce5aa22134fcfb67f36d8cb4df7bb5334fc22fbb30"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260118/20260118_1.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2467080051,
+      "sha256": "be1e6c4222db9fcea1ec05b5b8e482c4b04de43379c4b5fb89780a4b95ce0aaf"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260118/20260118_2.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2150116314,
+      "sha256": "24e943deb60e33bec664360b05f5fd9fc6c48a3b3c007c3c7d8f348fd215c5a6"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260118/20260118_3.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2203574892,
+      "sha256": "2e234f5df69a62809cc34e9b6769b3081fdea2416b3ee22b82540cb43dabadfc"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260118/20260118_4.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2536749437,
+      "sha256": "126815692f86b4c6c11fcc98c3ae3d73a638e416cbe5bd4d7b9da9a4a41ff4bc"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260118/20260118_5.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2283673215,
+      "sha256": "73ba8c376c9ccfd9c0344a20deb21e65bfb3e8c561e94caf4732fe7ef1b297ed"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260118/20260118_6.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2059447476,
+      "sha256": "917d5dcb6037eeceb41c33c05a0724a721b72c286794b5e039d7f5c3e8a7e4fe"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260119/2026-01-19 22-09-07.mkv",
+      "category": "obs-baseline-source",
+      "size_bytes": 63423933464,
+      "sha256": "793fe6ee14d94a41695c745d8b32428932844ad9079d2a7a97df350d3f6f8156"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260119/20260119_1.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 1709719489,
+      "sha256": "a2b77088075f3562f082184a421db470d9c703c21f304360b2a055a2d4fbb3af"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260119/20260119_2.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2222306292,
+      "sha256": "880759d4d62fc9c363731a01552fefebee26aff20c4cc421d23e92554bb33f5e"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260119/20260119_3.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2227135216,
+      "sha256": "9fa3751b58c265ca0a334d461c274dbecb92c252711f9bc73cac5edaf6d0b338"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260119/20260119_4.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 1758064357,
+      "sha256": "cb10dd2258a10f539bc9b27f0431b0ba4e81d5842c9b4915d70340f70b2f3393"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260119/20260119_5.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2255064313,
+      "sha256": "a081c80ebb275dd18321ac140abdfe40e3a2347f39139fa4daa57a5b08146128"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260119/20260119_6.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2179234242,
+      "sha256": "23745ce6b0e5d2789cfcee8311bc67da7c0bf73054827d4321affc350ff29bd2"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260119/20260119_7.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2147849207,
+      "sha256": "bf3aee89c46fcdd7daa32f03fbe95f2b437ed0965d1462410a99a02021b32fbd"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260119/20260119_8.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 1446454015,
+      "sha256": "af4deb3c55d8941de21098055ee8e2bbf6a58b6d419ac873a788342b9d647b1a"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260119/20260119_9.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 1597594037,
+      "sha256": "69669ae4a93870f7803d3d094a9640dab4649b25bfe697ff65dc22e8a17761ca"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260127/2026-01-27 21-59-15.mkv",
+      "category": "obs-baseline-source",
+      "size_bytes": 24581426044,
+      "sha256": "96aa5ece5e97b70662a43069a94fce2d6c281e05f3672b8a1eea4fea3ed4c843"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260127/2026-01-28 00-11-57.mkv",
+      "category": "obs-baseline-source",
+      "size_bytes": 6831471839,
+      "sha256": "b2938ff530094bc754bd799d29abe44c9f6f441acea021f280d00831d4830055"
+    },
+    {
+      "root": "royalstraightflesh-videos",
+      "path": "20260127/20260127_1.mp4",
+      "category": "obs-baseline-manual-split",
+      "size_bytes": 2078979625,
+      "sha256": "7d44fc2d849e6233ff8eb1e3c2a304c13cccbc682d1b249370c43a049b1ed5d0"
+    },
+    {
+      "root": "videos",
+      "path": "2026-04-08 21-14-05.mkv",
+      "category": "audio-primary",
+      "size_bytes": 39308600742,
+      "sha256": "a04f2d1009454428201ca23f5facb3021d5314a7bce5ca5aaf9de2a03121cc74"
+    },
+    {
+      "root": "videos",
+      "path": "M1wa_zeromus/FINAL FANTASY XIV Online 2026.02.22 - 00.09.08.12.DVR.mp4",
+      "category": "game-dvr-4k",
+      "size_bytes": 3559343588,
+      "sha256": "846ef7876368cbcf1389f50723eed47d237bb4becf0b5befcd9fb10cf30c6b4f"
+    },
+    {
+      "root": "videos",
+      "path": "M1wa_zeromus/FINAL FANTASY XIV Online 2026.03.24 - 21.02.52.16.DVR.mp4",
+      "category": "game-dvr-4k",
+      "size_bytes": 3553583969,
+      "sha256": "f78d43c86feeb1a5ac74272a4656cae36bb90d250df061b1902d42924fc444a4"
+    },
+    {
+      "root": "videos",
+      "path": "M1wa_zeromus/FINAL FANTASY XIV Online 2026.03.24 - 21.18.02.17.DVR.mp4",
+      "category": "game-dvr-4k",
+      "size_bytes": 2743048650,
+      "sha256": "202433f837037fec35e39ab646c678aa3d203804973edbc15ec6a3e6181af3af"
+    },
+    {
+      "root": "videos",
+      "path": "M1wa_zeromus/Final Fantasy XIV  A Realm Reborn 2024.02.14 - 00.42.50.04.DVR.mp4",
+      "category": "game-dvr-4k",
+      "size_bytes": 3284273934,
+      "sha256": "ddc2a5418bc8442251df43e3826beeba98bea23212d61afc5009cb032c9d341e"
+    },
+    {
+      "root": "videos",
+      "path": "M1wa_zeromus/Final Fantasy XIV  A Realm Reborn 2024.07.01 - 00.15.14.02.DVR.mp4",
+      "category": "game-dvr-4k",
+      "size_bytes": 3071413790,
+      "sha256": "47ef33665b5fd2f521d3d61d2a6a5e2605689138dd177f58db0a50e05dde5108"
+    },
+    {
+      "root": "videos",
+      "path": "gyawa_vatos/2772549129-151803977-da21c691-9ed6-4068-9a8b-4726a8a519a8.mp4",
+      "category": "vtuber-primary",
+      "size_bytes": 7554775607,
+      "sha256": "60843f90a6a0ac3e2c688132784bc673a98da54fdc1916af22199c1839012ba5"
+    }
+  ]
+}

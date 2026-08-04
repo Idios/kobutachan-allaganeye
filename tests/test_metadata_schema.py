@@ -39,6 +39,12 @@ def _valid_sample() -> dict[str, Any]:
             "no_audio": False,
             "use_gpu": None,
             "workers": None,
+            # optional provenance fields (#821): writer は常に出力、読み込みは
+            # 欠落許容 (pre-#821 metadata)。masked = request flag、
+            # masked_fallback_used = resolved path (auto-fallback 含む)。
+            "vtuber": False,
+            "masked": False,
+            "masked_fallback_used": False,
         },
         "matches": [
             {
@@ -159,3 +165,250 @@ def test_warning_context_accepts_arbitrary_keys():
         }
     ]
     Draft202012Validator(schema).validate(sample)
+
+
+def _validate_match(match: dict) -> None:
+    """Helper: validate a Match object against the $defs/Match sub-schema."""
+    schema = _load_schema()
+    match_schema = schema["$defs"]["Match"]
+    # Inline $defs so the sub-schema validator can resolve them
+    match_schema = dict(match_schema, **{"$defs": schema.get("$defs", {})})
+    Draft202012Validator(match_schema).validate(match)
+
+
+def test_match_post_match_flag_without_output_file_validates():
+    # post_match segment は MP4 無し = output_file 欠落でも valid
+    match = {
+        "index": 2,
+        "start_time": 100.0,
+        "end_time": 500.0,
+        "start_display": "1:40",
+        "end_display": "8:20",
+        "duration": 400.0,
+        "duration_display": "6m40s",
+        "type": "unknown",
+        "post_match": True,
+    }
+    _validate_match(match)
+
+
+def test_match_without_output_file_and_without_post_match_validates():
+    # output_file が NotRequired になったので欠落しても schema 上 valid
+    match = {
+        "index": 1,
+        "start_time": 0.0,
+        "end_time": 600.0,
+        "start_display": "0:00",
+        "end_display": "10:00",
+        "duration": 600.0,
+        "duration_display": "10m0s",
+        "type": "fl_match",
+    }
+    _validate_match(match)
+
+
+def test_post_match_trailing_dropped_warning_validates():
+    """A `post_match_trailing_dropped` warning must still validate (read compat).
+
+    #805 段階2 stopped emitting this warning (the non-destructive ``post_match``
+    flag replaces it), but the code stays registered and an older metadata.json
+    may still carry it. Pins the backward-compat contract: the schema accepts
+    the code (schema ``code`` is a free string) so a preserved entry of this
+    exact wire shape (code / message_en / severity / context with start+end)
+    validates.
+    """
+    from allaganeye.detection.warnings import WARNING_CODES
+
+    schema = _load_schema()
+    sample = _valid_sample()
+    # Hand-built (the build_warnings emitter was removed in 段階2); mirrors the
+    # canonical message in WARNING_CODES so the pinned shape stays in sync.
+    entry = {
+        "code": "post_match_trailing_dropped",
+        "message_en": WARNING_CODES["post_match_trailing_dropped"],
+        "severity": "warn",
+        "context": {"start": 1000.0, "end": 1800.0},
+    }
+    sample["warnings"] = [entry]
+    Draft202012Validator(schema).validate(sample)
+
+
+def _capture_regions_sample() -> dict:
+    return {
+        "coarse": {
+            "x": 0.0,
+            "y": 0.0,
+            "w": 1.0,
+            "h": 1.0,
+            "confidence": 1.0,
+            "source": "fallback",
+        },
+        "segments": [],
+        "fallback_reason": None,
+    }
+
+
+def test_capture_regions_valid_sample_passes():
+    # #810: OBS 標準 run の形 (coarse=FULL_FRAME / segments 空 / 縮退なし)
+    schema = _load_schema()
+    sample = _valid_sample()
+    sample["capture_regions"] = _capture_regions_sample()
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_capture_regions_omitted_accepted():
+    # pre-#810 metadata.json は field 欠落 = valid (後方互換)
+    schema = _load_schema()
+    sample = _valid_sample()
+    assert "capture_regions" not in sample
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_capture_regions_band_with_fallback_reason_passes():
+    # --vtuber run: band ROI + 縮退 provenance の両形
+    schema = _load_schema()
+    sample = _valid_sample()
+    regions = _capture_regions_sample()
+    regions["coarse"] = {
+        "x": 0.1,
+        "y": 0.0,
+        "w": 0.76,
+        "h": 0.042,
+        "confidence": 0.9,
+        "source": "band",
+    }
+    sample["capture_regions"] = regions
+    Draft202012Validator(schema).validate(sample)
+    # 縮退形: coarse=FULL_FRAME + fallback_reason 文字列
+    regions2 = _capture_regions_sample()
+    regions2["fallback_reason"] = "consensus_miss"
+    sample["capture_regions"] = regions2
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_capture_regions_segments_entry_passes():
+    schema = _load_schema()
+    sample = _valid_sample()
+    regions = _capture_regions_sample()
+    regions["segments"] = [
+        {
+            "time_range": [60.0, 1200.0],
+            "region": {
+                "x": 0.1,
+                "y": 0.05,
+                "w": 0.8,
+                "h": 0.7,
+                "confidence": 0.8,
+                "source": "tierB",
+            },
+        }
+    ]
+    sample["capture_regions"] = regions
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_capture_regions_coordinate_out_of_range_rejected():
+    schema = _load_schema()
+    sample = _valid_sample()
+    regions = _capture_regions_sample()
+    regions["coarse"]["x"] = 1.5
+    sample["capture_regions"] = regions
+    assert not Draft202012Validator(schema).is_valid(sample)
+
+
+def test_capture_regions_empty_source_rejected():
+    schema = _load_schema()
+    sample = _valid_sample()
+    regions = _capture_regions_sample()
+    regions["coarse"]["source"] = ""
+    sample["capture_regions"] = regions
+    assert not Draft202012Validator(schema).is_valid(sample)
+
+
+def test_capture_regions_missing_fallback_reason_rejected():
+    # writer 契約: fallback_reason は required nullable (常に明示 emit)
+    schema = _load_schema()
+    sample = _valid_sample()
+    regions = _capture_regions_sample()
+    del regions["fallback_reason"]
+    sample["capture_regions"] = regions
+    assert not Draft202012Validator(schema).is_valid(sample)
+
+
+def test_capture_regions_unknown_field_rejected():
+    schema = _load_schema()
+    sample = _valid_sample()
+    regions = _capture_regions_sample()
+    regions["future_field"] = 1
+    sample["capture_regions"] = regions
+    assert not Draft202012Validator(schema).is_valid(sample)
+
+
+# ---- #481: minimap_regions ----
+
+import jsonschema  # noqa: E402 (import at bottom to keep existing imports clean)
+
+_VALID_REGION: dict = {
+    "x": 0.01,
+    "y": 0.02,
+    "w": 0.28,
+    "h": 0.35,
+    "confidence": 1.0,
+    "source": "manual",
+}
+
+
+def test_minimap_regions_valid():
+    """minimap_regions field: valid two-entry array must pass."""
+    schema = _load_schema()
+    sample = _valid_sample()
+    sample["minimap_regions"] = [
+        {"match_index": 1, "region": _VALID_REGION},
+        {
+            "match_index": 3,
+            "region": {
+                "x": 0.0,
+                "y": 0.0,
+                "w": 0.3,
+                "h": 0.4,
+                "confidence": 1.0,
+                "source": "manual",
+            },
+        },
+    ]
+    Draft202012Validator(schema).validate(sample)  # must not raise
+
+
+def test_minimap_regions_omitted_accepted():
+    """minimap_regions is optional; omitting it must still validate."""
+    schema = _load_schema()
+    sample = _valid_sample()
+    assert "minimap_regions" not in sample
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_minimap_regions_empty_array_accepted():
+    """An empty minimap_regions array is valid."""
+    schema = _load_schema()
+    sample = _valid_sample()
+    sample["minimap_regions"] = []
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_minimap_regions_rejects_bad_entries():
+    """minimap_regions: various malformed entries must be rejected."""
+    schema = _load_schema()
+    validator = Draft202012Validator(schema)
+    bad_cases = [
+        [{"match_index": 0, "region": _VALID_REGION}],  # index < 1
+        [{"match_index": 1}],  # region 欠落
+        [{"region": _VALID_REGION}],  # match_index 欠落
+        [
+            {"match_index": 1, "region": _VALID_REGION, "extra": 1}
+        ],  # additionalProperties
+    ]
+    for bad in bad_cases:
+        sample = _valid_sample()
+        sample["minimap_regions"] = bad
+        with pytest.raises(jsonschema.ValidationError):
+            validator.validate(sample)

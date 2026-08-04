@@ -14,7 +14,8 @@ export type AppScreen =
   | 'detecting'
   | 'complete'
   | 'preview'
-  | 'export';
+  | 'export'
+  | 'minimap';
 
 /**
  * #613: User-tunable detect parameters surfaced from the DropScreen "詳細設定"
@@ -65,6 +66,16 @@ export interface AppState {
    * `start_detect`. In-memory only; `reset()` restores defaults.
    */
   detectionParams: DetectionParams;
+  /**
+   * #893 R2: The output directory last used by ExportScreen.
+   * MinimapScreen uses this as its default output dir when set.
+   * #928: when unset it falls back to ExportScreen's shared
+   * `deriveDefaultOutDir(videoSource)` (the video's parent directory),
+   * not the metadata.json parent -- the two screens stay on one basis
+   * by construction.
+   * In-memory only; reset() clears it.
+   */
+  lastExportOutputDir: string | null;
 
   /** Switch to a different screen. */
   navigate: (screen: AppScreen) => void;
@@ -78,6 +89,8 @@ export interface AppState {
   setDetectionParams: (patch: Partial<DetectionParams>) => void;
   /** Restore detect parameters to defaults. */
   resetDetectionParams: () => void;
+  /** Record the output dir used by the last export start (#893 R2). */
+  setLastExportOutputDir: (dir: string | null) => void;
   /** Reset everything back to a freshly launched state (screen = 'drop'). */
   reset: () => void;
 }
@@ -87,6 +100,7 @@ export const useAppStateStore = create<AppState>((set) => ({
   selectedMatchIndex: null,
   selectedVideoPath: null,
   detectionParams: { ...DEFAULT_DETECTION_PARAMS },
+  lastExportOutputDir: null,
 
   navigate: (screen) => set({ screen }),
   selectMatch: (selectedMatchIndex) => set({ selectedMatchIndex }),
@@ -108,11 +122,14 @@ export const useAppStateStore = create<AppState>((set) => ({
     set((s) => ({ detectionParams: { ...s.detectionParams, ...patch } })),
   resetDetectionParams: () =>
     set({ detectionParams: { ...DEFAULT_DETECTION_PARAMS } }),
+  // #893 R2: record the export output dir so MinimapScreen can default to it.
+  setLastExportOutputDir: (lastExportOutputDir) => set({ lastExportOutputDir }),
   reset: () =>
     set({
       screen: 'drop',
       selectedMatchIndex: null,
       selectedVideoPath: null,
       detectionParams: { ...DEFAULT_DETECTION_PARAMS },
+      lastExportOutputDir: null,
     }),
 }));

@@ -25,6 +25,25 @@ describe('CompleteScreen', () => {
     expect(screen.getByText(/No metadata/i)).toBeInTheDocument();
   });
 
+  // #814 (AC3) -- when load failed (metadata null + loadErrorState set), the
+  // empty state shows the error instead of the generic "No metadata" line.
+  it('shows the load error in the empty state instead of "No metadata" (#814)', () => {
+    useMetadataStore.getState().clear();
+    useMetadataStore.setState({
+      loadErrorState: {
+        message: 'metadata.json is corrupt',
+        hint: 'rerun allaganeye split',
+        code: 'parse.json_invalid',
+      },
+    });
+    render(<CompleteScreen />);
+    expect(screen.getByTestId('complete-load-error')).toBeInTheDocument();
+    expect(screen.getByText(/metadata.json is corrupt/)).toBeInTheDocument();
+    expect(
+      screen.queryByText('No metadata. Run detect first.'),
+    ).toBeNull();
+  });
+
   it('displays source and match count from the store', () => {
     render(<CompleteScreen />);
     expect(screen.getByText(/2026-04-08 21-14-05.mkv/)).toBeInTheDocument();
@@ -420,5 +439,141 @@ describe('#676 CompleteScreen topBar path display', () => {
     expect(container).toHaveAttribute('title', metadataSource);
     expect(within(container).getByText('demo.mkv')).toBeInTheDocument();
     expect(within(container).getByText('C:\\sample')).toBeInTheDocument();
+  });
+});
+
+// #893: minimap screen navigation from CompleteScreen.
+describe('#893 CompleteScreen minimap entry', () => {
+  beforeEach(() => {
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.getState().loadSample();
+    useAppStateStore.getState().navigate('complete');
+  });
+
+  it('navigates to minimap screen on ミニマップ切抜き click', async () => {
+    render(<CompleteScreen />);
+    const btn = screen.getByRole('button', { name: 'ミニマップ切抜き' });
+    const user = userEvent.setup();
+    await user.click(btn);
+    expect(useAppStateStore.getState().screen).toBe('minimap');
+  });
+
+  it('ミニマップ切抜き button is disabled when matches is empty', () => {
+    useMetadataStore.setState({
+      metadata: {
+        source: 'x',
+        source_duration: 1,
+        source_duration_display: '0:01',
+        detected_at: '2026-04-22T00:00:00Z',
+        detection_params: {
+          sample_interval: 2,
+          blackout_threshold: 15,
+          min_match_duration: 300,
+          min_blackout_duration: 3,
+          no_audio: false,
+          use_gpu: null,
+          workers: null,
+        },
+        matches: [],
+        gaps: [],
+      },
+      hasBackup: false,
+    });
+    render(<CompleteScreen />);
+    const btn = screen.getByRole('button', { name: 'ミニマップ切抜き' });
+    expect(btn).toBeDisabled();
+  });
+});
+
+// #805 Phase 1: post_match match no-crash guard.
+// A metadata whose matches[] includes a post_match entry (output_file
+// undefined, post_match: true) must load and render CompleteScreen without
+// throwing. This test LOCKS the no-crash property so a future regression
+// (e.g. a screen reading match.output_file with a non-null assertion) is
+// caught immediately.
+describe('#805 CompleteScreen post_match no-crash guard', () => {
+  const baseMatch = {
+    index: 1,
+    start_time: 100,
+    end_time: 1000,
+    start_display: '01:40',
+    end_display: '16:40',
+    duration: 900,
+    duration_display: '15m00s',
+    type: 'fl_match' as const,
+    output_file: 'match_001.mp4',
+  };
+  const postMatchEntry = {
+    index: 2,
+    start_time: 1000,
+    end_time: 1120,
+    start_display: '16:40',
+    end_display: '18:40',
+    duration: 120,
+    duration_display: '2m00s',
+    type: 'unknown' as const,
+    // output_file deliberately absent -- post_match segment
+    post_match: true as const,
+  };
+  const metaWithPostMatch = {
+    source: 'C:\\videos\\rec.mkv',
+    source_duration: 1200,
+    source_duration_display: '20:00',
+    detected_at: '2026-06-26T00:00:00Z',
+    detection_params: {
+      sample_interval: 2,
+      blackout_threshold: 15,
+      min_match_duration: 300,
+      min_blackout_duration: 3,
+      no_audio: false,
+      use_gpu: null,
+      workers: null,
+    },
+    matches: [baseMatch, postMatchEntry],
+    gaps: [],
+  };
+
+  beforeEach(() => {
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.setState({ metadata: metaWithPostMatch as never, hasBackup: false });
+    useAppStateStore.getState().navigate('complete');
+  });
+
+  it('renders post_match match without crashing (no-crash lock #805)', () => {
+    expect(() => render(<CompleteScreen />)).not.toThrow();
+  });
+
+  it('shows match count including post_match entry', () => {
+    render(<CompleteScreen />);
+    // 2 matches total (1 active + 1 post_match)
+    const matchesValue = screen.getByText('試合数').nextSibling as HTMLElement;
+    expect(matchesValue.textContent).toBe('2');
+    // Both rows render
+    expect(screen.getByTestId('match-row-1')).toBeInTheDocument();
+    expect(screen.getByTestId('match-row-2')).toBeInTheDocument();
+  });
+
+  // Review P3-3: run the Phase 2 UI states (dimmed row + badge) through axe
+  // once (docs/a11y-policy.md per-screen axe 方針)。
+  it('has no axe violations with a post_match row (#805 Phase 2)', async () => {
+    const { container } = render(<CompleteScreen />);
+    expect(await axe(container)).toHaveNoViolations();
+  });
+
+  // #805 Phase 2: post_match rows are visually differentiated (badge + dimmed).
+  it('marks the post_match row with 試合後 badge and data attribute (Phase 2)', () => {
+    render(<CompleteScreen />);
+    const row = screen.getByTestId('match-row-2');
+    expect(row).toHaveAttribute('data-post-match', 'true');
+    expect(within(row).getByText('試合後')).toBeInTheDocument();
+    // review R2 #2: pin the dimming class so removing it fails the suite
+    // (spec §8 deliverable "dimmed" would otherwise be a false-green).
+    expect(row.className).toMatch(/listItemPostMatch/);
+    const normalRow = screen.getByTestId('match-row-1');
+    expect(normalRow).not.toHaveAttribute('data-post-match');
+    expect(within(normalRow).queryByText('試合後')).toBeNull();
+    expect(normalRow.className).not.toMatch(/listItemPostMatch/);
   });
 });

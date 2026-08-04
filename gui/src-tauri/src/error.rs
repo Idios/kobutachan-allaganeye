@@ -96,10 +96,11 @@ impl From<serde_json::Error> for AppError {
 }
 
 /// `?` 演算子で `String` error を AppError として propagate するための impl。
-/// 主に `Result<_, String>` を返す内部 helper (例 `run_ffmpeg_export_attempt`)
-/// を `Result<_, AppError>` を返す Tauri command 内で `?` 経由で呼び出すケース
-/// で使われる。code は `internal.error` 固定。新規コードでは call site で
-/// `AppError::new("domain.error_kind", message)` を構築するのが望ましい。
+/// 主に `Result<_, String>` を返す内部 helper (例 `untrack_child` 相当の
+/// 内部ヘルパー) を `Result<_, AppError>` を返す Tauri command 内で `?` 経由で
+/// 呼び出すケースで使われる。code は `internal.error` 固定。新規コードでは
+/// call site で `AppError::new("domain.error_kind", message)` を構築するのが
+/// 望ましい。
 ///
 /// `.with_default_hint()` chain は future-proof のため (`From<io::Error>` /
 /// `From<serde_json::Error>` と同 contract で integrity を保つ。現状
@@ -112,8 +113,8 @@ impl From<String> for AppError {
 }
 
 /// AppError code に対する日本語 default hint を返す。未登録 code は None。
-/// 24 codes (or-pattern `io.would_block | io.timed_out` を 2 codes に展開後、22 hint
-/// + 2 None = 24)。現在の lib.rs inventory: io.* / parse.* / state.* / subprocess.* /
+/// 25 codes (or-pattern `io.would_block | io.timed_out` を 2 codes に展開後、23 hint
+/// + 2 None = 25)。現在の lib.rs inventory: io.* / parse.* / state.* / subprocess.* /
 /// validation.* / path.* / platform.* / internal.*。
 /// 文言は `docs/tauri-commands.md` の AppError default hint mapping table と一致させる
 /// (本 fn が source of truth、docs は mirror、`.github/scripts/check-error-hint-drift.sh`
@@ -175,8 +176,11 @@ fn default_hint_for_code(code: &str) -> Option<&'static str> {
         ),
         "subprocess.cancelled" => None, // ユーザー操作によるキャンセルは hint 不要 (UI 側で「キャンセルされました」を表示で十分)
         // validation
+        "validation.boundary_invalid" => Some(
+            "試合の終了 (OUT) が開始 (IN) 以前になっています。終了が開始より後になるよう境界を調整してください"
+        ),
         "validation.path_invalid" => Some(
-            "入力されたパスが不正です。ファイル名と拡張子を確認してください (対応: mp4 / mkv / mov / m4v)"
+            "入力されたパスが不正です。ファイル名と拡張子を確認してください (対応: mp4 / mkv / avi / mov)"
         ),
         "validation.not_a_file" => Some(
             "指定されたパスはファイルではありません (フォルダや symlink ではなく動画ファイルを選択してください)"
@@ -303,6 +307,7 @@ mod tests {
             "parse.schema_invalid", "parse.ffprobe_output_invalid",
             "subprocess.spawn_failed", "subprocess.exit_failed",
             "validation.path_invalid", "validation.not_a_file", "validation.range_invalid",
+            "validation.boundary_invalid",
             "path.install_dir_unresolved", "platform.unsupported",
         ];
         for code in with_hint {
@@ -348,5 +353,14 @@ mod tests {
         let e: AppError = json_err.into();
         assert_eq!(e.code, "parse.json_invalid");
         assert!(e.hint.is_some());
+    }
+
+    // #834 -- path_invalid hint は config.py SUPPORTED_EXTENSIONS (mp4/mkv/avi/mov)
+    // と一致させる。旧 hint は avi 欠落 + m4v 誤記 (DropScreen / config.py と不整合)。
+    #[test]
+    fn path_invalid_hint_lists_supported_extensions() {
+        let hint = default_hint_for_code("validation.path_invalid").unwrap();
+        assert!(hint.contains("avi"), "hint should list avi (config.py accepts it)");
+        assert!(!hint.contains("m4v"), "hint should not list m4v (not accepted)");
     }
 }

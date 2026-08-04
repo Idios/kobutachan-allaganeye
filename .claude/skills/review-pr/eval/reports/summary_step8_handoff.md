@@ -2,7 +2,7 @@
 
 **実施日**: 2026-04-27
 **対象**: `.claude/skills/review-pr/SKILL.md` Step 8 (#594 で `/close-issue` 分離 + ハンドオフ専用化)
-**参照プロセス**: [mizchi empirical-prompt-tuning SKILL-ja.md](https://github.com/mizchi/skills/blob/main/empirical-prompt-tuning/SKILL-ja.md)
+**参照プロセス**: [mizchi empirical-prompt-tuning SKILL-ja.md](https://github.com/mizchi/skills/blob/main/meta/empirical-prompt-tuning/SKILL-ja.md)
 **先行事例**: 本 skill の `summary.md` (#511 改修、6 件構造的欠陥を Iter 1 で全件解消)
 
 > 本ファイルは #594 改修向けの empirical 検証サマリ。#511 改修のサマリは隣接の [`summary.md`](summary.md) を参照。

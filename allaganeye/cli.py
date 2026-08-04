@@ -149,6 +149,34 @@ def split(
             "Currently frozen: audio scan is always skipped regardless of this flag.",
         ),
     ] = False,
+    vtuber: Annotated[
+        bool,
+        typer.Option(
+            "--vtuber",
+            help="VTuber recording (game inset, decorated overlays): detects "
+            "matches from a scorebar-presence x motion timeline instead of "
+            "blackouts. Adjacent matches may merge when that evidence barely "
+            "lapses between them (e.g. an animated result screen).",
+        ),
+    ] = False,
+    masked: Annotated[
+        bool,
+        typer.Option(
+            "--masked",
+            help="Masked recording: a chat-hiding image is composited over the "
+            "full screen. Auto-detects a mask-free region and re-detects; this "
+            "flag forces that path even when some blackouts are found.",
+        ),
+    ] = False,
+    keep_trailing: Annotated[
+        bool,
+        typer.Option(
+            "--keep-trailing",
+            help="Emit the post-match trailing segment as a normal match. "
+            "By default it is kept in metadata with post_match=true but "
+            "excluded from the split output (#805).",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -171,6 +199,8 @@ def split(
             raise ConfigValidationError("--quiet and --verbose are mutually exclusive")
         if gpu and no_gpu:
             raise ConfigValidationError("--gpu and --no-gpu are mutually exclusive")
+        if vtuber and masked:
+            raise ConfigValidationError("--vtuber and --masked are mutually exclusive")
         if video_path is not None and from_metadata is not None:
             raise ConfigValidationError(
                 "VIDEO_PATH and --from-metadata are mutually exclusive"
@@ -211,6 +241,9 @@ def split(
                 workers=workers,
                 no_cache=no_cache,
                 no_audio=no_audio,
+                vtuber=vtuber,
+                masked=masked,
+                keep_trailing=keep_trailing,
             )
             from allaganeye.commands.split_matches import run_split_from_metadata
 
@@ -239,6 +272,9 @@ def split(
             workers=workers,
             no_cache=no_cache,
             no_audio=no_audio,
+            vtuber=vtuber,
+            masked=masked,
+            keep_trailing=keep_trailing,
         )
 
         from allaganeye.commands.split_matches import run_split
@@ -319,6 +355,34 @@ def detect(
             "Currently frozen: audio scan is always skipped regardless of this flag.",
         ),
     ] = False,
+    vtuber: Annotated[
+        bool,
+        typer.Option(
+            "--vtuber",
+            help="VTuber recording (game inset, decorated overlays): detects "
+            "matches from a scorebar-presence x motion timeline instead of "
+            "blackouts. Adjacent matches may merge when that evidence barely "
+            "lapses between them (e.g. an animated result screen).",
+        ),
+    ] = False,
+    masked: Annotated[
+        bool,
+        typer.Option(
+            "--masked",
+            help="Masked recording: a chat-hiding image is composited over the "
+            "full screen. Auto-detects a mask-free region and re-detects; this "
+            "flag forces that path even when some blackouts are found.",
+        ),
+    ] = False,
+    keep_trailing: Annotated[
+        bool,
+        typer.Option(
+            "--keep-trailing",
+            help="Emit the post-match trailing segment as a normal match. "
+            "By default it is kept in metadata with post_match=true but "
+            "excluded from the split output (#805).",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -353,6 +417,8 @@ def detect(
             raise ConfigValidationError("--quiet and --verbose are mutually exclusive")
         if gpu and no_gpu:
             raise ConfigValidationError("--gpu and --no-gpu are mutually exclusive")
+        if vtuber and masked:
+            raise ConfigValidationError("--vtuber and --masked are mutually exclusive")
         if progress_format not in ("text", "json"):
             raise ConfigValidationError(
                 f"Invalid --progress-format: {progress_format!r}. "
@@ -388,6 +454,9 @@ def detect(
             workers=workers,
             no_cache=no_cache,
             no_audio=no_audio,
+            vtuber=vtuber,
+            masked=masked,
+            keep_trailing=keep_trailing,
         )
 
         from allaganeye.commands.detect import run_detect
@@ -475,6 +544,11 @@ def _report_app_error(
     show_hint: bool = True,
 ) -> None:
     """Render an ``AllaganEyeError`` per matrix v2 19a/19b/19c (#428, #351).
+
+    Note: 19d (click-level option-parse error such as ``allaganeye -version``)
+    is handled separately in :func:`main` and never reaches this function.
+    See ``docs/cli-spec.md`` section ``click-level option-parse error`` for details.
+
 
     - 19a (verbose=True):  ``Error: <msg>`` + ``verbose_detail()`` context
       lines + full traceback (exceptions are raised ``from None`` in the
@@ -569,6 +643,17 @@ def _suggest_long_option_hint(argv: list[str]) -> str | None:
             return f"--{name}"
 
     return None
+
+
+# #761 -- register export + encoder-slots commands. Hidden commands stay
+# out of `allaganeye --help` listings but remain dispatchable.
+from allaganeye.commands import encoder_slots as _encoder_slots_cmd  # noqa: E402
+from allaganeye.commands import export as _export_cmd  # noqa: E402
+from allaganeye.commands import minimap as _minimap_cmd  # noqa: E402
+
+_export_cmd.register(app)
+_encoder_slots_cmd.register(app)
+_minimap_cmd.register(app)
 
 
 def main() -> None:

@@ -6,21 +6,22 @@ FF14 PvPコンテンツ「フロントライン」の長時間録画動画（OBS
 
 ### 段階的アーキテクチャ
 
-**コアレイヤー（L1〜L5）**
+**コアレイヤー（L1〜L6）**
 
 | レイヤー | 処理 | 技術 | 状態 |
 | --- | --- | --- | --- |
 | L1: 試合分割 | 暗転検知で試合単位に分割 | FFmpeg（検知+分割） | **リリース済み** (v0.1.0-preview 2026-04-17, v0.1.1 2026-04-20) |
-| L2: 配布・統合 | GUI + ゼロ環境構築配布 | Tauri 2.x + React 19 + TS | **開発中** |
-| L3: メタデータ化 | キルログ・音声・チャットをタイムスタンプ化 | Tesseract / Whisper | 未着手 |
-| L4: 価値評価 | 抽出データをMLが判定 | ローカル ML（scikit-learn 等） | 未着手 |
-| L5: 自動編集 | 判定に基づき動画切り出し・投稿提案 | MoviePy / FFmpeg | 未着手 |
+| L2: 配布・統合 | GUI + ゼロ環境構築配布 | Tauri 2.x + React 19 + TS | **リリース済み** (v0.2.0 / v0.2.1) |
+| L3 (new): 配信形式対応 + 性能改善 | minimap 切抜き / masked (チャット欄画像マスク) 品質 / export 並列・ZIP size・detect 高速化 (2026-07-06 rescope #872 で VTuber を一旦後送 → 2026-07-17 再開 #895 timeline 再設計、release 割当は /release Step 0c 判断。GUI responsiveness は v0.3.0 外 #670) | OpenCV / template matching / NVENC・QSV・AMF / Tauri | **開発中** (v0.3.0 target) |
+| L4 (former L3): メタデータ化 | キルログ・音声・チャットをタイムスタンプ化 | Tesseract / Whisper | 未着手 |
+| L5 (former L4): 価値評価 | 抽出データを ML が判定 | ローカル ML（scikit-learn 等） | 未着手 |
+| L6 (former L5): 自動編集 | 判定に基づき動画切り出し・投稿提案 | MoviePy / FFmpeg | 未着手 |
 
-**拡張レイヤー（L6、暫定）**
+**拡張レイヤー（L7、暫定）**
 
 | レイヤー | 処理 | 状態 |
 | --- | --- | --- |
-| L6: プライバシー・精密分割 | プレイヤー名ぼかし、再エンコード分割 | 計画中 |
+| L7 (former L6): プライバシー・精密分割 | プレイヤー名ぼかし、再エンコード分割 | 計画中 |
 
 **設計原則**: ツールの独立性・ポータビリティを保つため、Web 経由のサービスや大規模モデルをツールの実行時依存に含めない。AI（LLM）はツール自体の設計と評価にのみ用いる。動画編集・変換は FFmpeg/OpenCV 等のライブラリで実行する。ローカル ML（scikit-learn 等の軽量モデル）は信号処理・分類で必要に応じて使用してよい。
 
@@ -41,6 +42,7 @@ ruff check .
 ruff format --check .
 pyright
 bash scripts/check-markdownlint.sh   # markdownlint (CI と同 version で全 .md チェック、--fix で自動修正)
+# violation の fix recipe / ignore pattern 規約は docs/markdownlint-guide.md を参照
 
 # CLI
 allaganeye detect <video_path>                          # 検知のみ (metadata.json 出力、#463)
@@ -50,11 +52,15 @@ allaganeye split <video_path> -o <dir>  # 出力先指定
 allaganeye split <video_path> --gpu     # GPU アクセラレーション検知
 allaganeye split <video_path> --workers 8  # ワーカー数指定
 allaganeye split <video_path> --no-cache   # キャッシュ無視で再検知
-allaganeye split <video_path> --no-audio   # 音声昇格を無効化（視覚のみ）
+allaganeye split <video_path> --no-audio   # 音声昇格の無効化フラグ（#327 で凍結中のため現在は常にスキップ）
 allaganeye split <video_path> --quiet      # 進捗抑制（出力ファイルのみ）
 allaganeye split <video_path> -v           # verbose（環境情報・パイプライン統計を表示、#336）
 allaganeye --version                       # バージョン表示（短縮形: -V、#337）
 allaganeye debug-brightness <video_path>   # フレーム輝度 CSV 出力
+allaganeye minimap <metadata.json>                               # エリアマップ window 領域を提案（exit 4）
+allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR]    # 指定領域で crop + H.264 encode
+allaganeye export <metadata.json> -o <dir>                       # metadata から並列書き出し (#761、default codec=copy)
+allaganeye export <metadata.json> -o <dir> --codec h264           # H.264 再エンコード（NVENC/QSV/AMF/libx264 を自動選択）
 
 # GUI (L2a Tauri、#483 で bootstrap)
 # 詳細は docs/gui-development.md を参照
@@ -73,7 +79,7 @@ cd gui/src-tauri && cargo check         # Rust 型/依存チェック
 
 ```text
 MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
-           → detector.py（ffmpeg 並列 -ss プローブで暗転検知 → 試合境界タイムスタンプ）
+           → detector.py（チャンク分割デコードで暗転検知 → 試合境界タイムスタンプ）
            → splitter.py（FFmpeg -c copy で無劣化分割）
            → 出力: 試合ごとのMP4 + metadata.json
 ```
@@ -86,36 +92,54 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `config.py` | 設定管理（検知閾値、出力パス等） |
 | `exceptions.py` | エラークラス + exit code マッピング |
 | `ffmpeg_path.py` | ffmpeg/ffprobe のパス自動検索（winget, Homebrew, PATH, 環境変数） |
+| `system_info.py` | `-v` verbose ヘッダ用のハード情報取得 (#377) + GPU vendor probe (`probe_gpu_vendors`)。全 public helper は失敗しても例外を投げない。失敗時の戻り値は型ごとに異なり、`str` を返すスカラ helper (`get_cpu_info` / `get_gpu_info` / `get_memory_info` / `get_disk_info`) は `"(unavailable)"`、`list` を返す helper (`probe_gpu_vendors` / `get_gpu_info_lines`) は空リスト、`gpu_vendor_probe_warning` は `None` を返す |
+| `integrity.py` | Portable ZIP 同梱物の整合性検査 (#668)。`integrity-manifest.json` を読み CLI `--version` で検証 (exit 7)。Rust 側 `gui/src-tauri/src/integrity.rs` が同ロジックをミラー |
+| `metadata_types.py` | **自動生成** (`python scripts/codegen/generate.py`、#612)。`schemas/metadata.schema.json` から TypedDict を生成。手編集禁止 |
 | `commands/split_matches.py` | split コマンドのオーケストレーション。タイムスタンプ表示・gap 検出・sample_interval 自動調整 |
 | `commands/debug_brightness.py` | debug-brightness コマンド。フレーム輝度を CSV 出力（閾値チューニング用） |
 | `video/probe.py` | ffprobe でメタデータ取得（解像度、fps、長さ） |
-| `video/detector.py` | ffmpeg 並列プローブで暗転検知、試合境界抽出（CPU モード） |
+| `video/detector.py` | チャンク分割デコードで暗転検知、試合境界抽出（CPU モード、#214 以降）。Pass 2 の精密計測のみ per-frame `-ss` プローブを使う |
 | `video/gpu_detector.py` | GPU アクセラレーション検知（チャンク並列デコード） |
-| `video/scorebar.py` | スコアバーフィルタリング（暗転分類・試合内/非FL判定）+ 音声昇格 |
+| `video/capture_region.py` | 検出 ROI（`CaptureRegion`）の解決。scorebar 帯 anchor の多フレーム consensus（`detect_scorebar_band_region` / `consensus_scorebar_localization`）/ FULL_FRAME 縮退。`--vtuber` gate 内でのみ有効（L3 Phase 1）。`localize_scorebar_at_anchor`（anchor ±60px 帯 + x-IoU gate、per-video v2 相当、#822）は masked fallback の at-anchor presence primitive として共用。検出 subsystem の現状 map は [docs/detection-map.md](docs/detection-map.md)。解決結果は metadata.json `capture_regions` に永続化 (#810、RegionTimeline serialize 形 + 縮退 provenance) |
+| `video/presence.py` | presence（scorebar 在/不在）ベースの試合検出エンジン + GT 突合ハーネス基盤（L3 Phase 1。2 信号 fusion 再アーキ spec 参照） |
+| `video/vtuber_timeline.py` | VTuber presence x motion timeline 検出 V0-V4。`--vtuber` gate 内でのみ動作（OBS/masked path は非接触）。V0 anchor 解決 / V1 全域 10s stride scan / V2 rolling-window 粗 segmentation / V3 gap merge 裁定 + blackout-peek override + 境界 snap / V4 segment 検証。縮退 4 trigger（anchor 失敗 / UNKNOWN 過半 / V2 空 / V4 が全 segment を drop）で従来 band-crop path へ fall back。詳細 spec: [docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md](docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md) |
+| `video/probe_state.py` | probe 失敗縮退の統一契約型（`PresenceState` tri-state / `PresenceSample` / `ProbeFailurePolicy`、#824）。presence / capture_region / scorebar / detector から import される中立 module（circular import 回避） |
+| `video/scorebar.py` | スコアバーフィルタリング（暗転分類・試合内/非FL判定）+ 音声昇格。masked path では `_presence_at_anchor_from_raw`（at-anchor tri-state）を使い、分類規則を変更（in_match 全除去 / non_fl keep）。masked fallback の 2 層構成（Layer 1 anchor 解決 + Layer 2 segment 検証）は [#822 spec](docs/superpowers/specs/2026-07-11-issue-822-masked-oversplit-anchor-design.md) および [docs/detection-map.md](docs/detection-map.md) §5.4 を参照 |
 | `video/splitter.py` | FFmpeg で動画分割（-c copy） |
+| `export/encoder.py` | H.264 エンコーダ選択ロジック (#761)。GUI Rust 側から移植し CLI / GUI で単一の正を共有 |
+| `export/nvenc_probe.py` | SKU テーブルによる NVENC 物理エンジン数の推定 (#761)。live な `nvidia-smi` probe は不採用 |
+| `export/pool.py` | 並列 export オーケストレータ (#761)。`ThreadPoolExecutor` で N ワーカーを起動し、`cancel_event` で in-flight ffmpeg を kill |
+| `export/ffmpeg_runner.py` | 単一 match の ffmpeg 起動 + libx264 fallback retry (#761)。NVDEC/NVENC 失敗パターン検知は `_nvenc_decode_stage_failure` (#791 / #899) |
+| `export/schema.py` | stdout JSON Lines の wire protocol dataclass (#761)。Rust `start_export` が `ExportProgress` イベントへ変換 |
+| `export/wire.py` | thread-safe な stdout JSON Lines emitter (#761)。`threading.Lock` で 1 行 emit の原子性を保証 |
 | `audio/extract.py` | ffmpeg で音声 PCM 抽出 |
 | `audio/features.py` | log-mel スペクトログラム計算と保存 |
 | `audio/matcher.py` | 参照 BGM と target の相互相関で peak 検出 |
 | `audio/scan.py` | 動画全域を走査して Fanfare ピークを返す |
-| `audio/refs/` | 同梱参照特徴量（`fanfare.npz`） |
+| `audio/refs/` | 同梱参照特徴量（`fanfare.npz` / `war_room.npz`、#306） |
 | `commands/detect.py` | detect コマンド。検知のみ実行し metadata.json を出力 (#463) |
-| `detection/` | 検知パイプラインの共有ヘルパ (#463)。`format.py` (フォーマッタ) / `metadata_writer.py` (atomic read/write) |
-| `gui/` | L2a Tauri GUI (React 19 + TS + Vite + Zustand + zod)。`#483` で bootstrap、`#463` で data 層、`#464` で画面骨格 + CSS Modules、`#516` で `[元に戻す]` 機能、`#514` で排他管理 (mtime 検知 + ConflictModal)、`#587` で a11y polish (focus trap / Escape / DisabledTooltip / jest-axe)。詳細は [docs/gui-development.md](docs/gui-development.md) / [docs/design/README.md](docs/design/README.md) / [docs/ui-architecture.md](docs/ui-architecture.md) / [docs/ui-interaction-spec.md](docs/ui-interaction-spec.md) (#590, UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理) / [docs/a11y-policy.md](docs/a11y-policy.md) (#587, screen reader scope / キーボード全機能 / focus visible 等) |
-| `gui/src/screens/` | 5 画面 (drop / detecting / complete / preview / export) + phase reducer。#464 で追加 |
-| `gui/src/components/` | 共通 UI コンポーネント (AllaganCorner / AllaganSigil / WindowChrome / BrightnessTimeline / RestoreButton / SampleModeBanner / ConflictModal 等)。#464 で追加、#633 で sample mode 全画面 read-only |
+| `commands/minimap.py` | minimap コマンド。提案モード（領域検出・表示、exit 4）/ crop モード（`--region` 指定、H.264 encode + metadata write-back、#481） |
+| `commands/export.py` | export コマンド (#761)。metadata.json (positional または `--stdin`) を読み、エンコーダスロットを列挙して並列 export を実行。`--json` で JSON Lines 進捗を emit |
+| `commands/encoder_slots.py` | 隠しコマンド `encoder-slots` (#761)。GUI Tauri `enumerate_h264_encoders` が subprocess で呼び、EncoderSlot 一覧を JSON で返す |
+| `video/areamap.py` | エリアマップ window の seed 検出 + per-match consensus（`resolve_match_regions`）。cv2 は lazy import（opencv 未インストール環境でも import 失敗しない）。提案モード専用 (#481) |
+| `detection/` | 検知パイプラインの共有ヘルパ (#463)。`format.py` (フォーマッタ) / `metadata_writer.py` (atomic read/write) / `migrations.py` (`schema_version` 検証 + 前方 migration、#515) / `progress_emitter.py` (`--progress-format json` の JSON Lines emitter、#569) / `warnings.py` (metadata `warnings` の payload scaffold、#518) |
+| `tools/regen_audio_refs.py` | 同梱参照特徴量 (`audio/refs/*.npz`) をメンテナ手元の録画から再生成する開発用スクリプト |
+| `gui/` | L2a Tauri GUI (React 19 + TS + Vite + Zustand + zod)。`#483` で bootstrap、`#463` で data 層、`#464` で画面骨格 + CSS Modules、`#516` で `[元に戻す]` 機能、`#514` で排他管理 (mtime 検知 + ConflictModal)、`#587` で a11y polish (focus trap / Escape / DisabledTooltip / jest-axe)、`#893` で minimap crop GUI 統合 (MinimapScreen + `start_minimap` Tauri command、GUI 完結)。詳細は [docs/gui-development.md](docs/gui-development.md) / [docs/design/README.md](docs/design/README.md) / [docs/ui-architecture.md](docs/ui-architecture.md) / [docs/ui-interaction-spec.md](docs/ui-interaction-spec.md) (#590, UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理) / [docs/a11y-policy.md](docs/a11y-policy.md) (#587, screen reader scope / キーボード全機能 / focus visible 等) |
+| `gui/src/screens/` | 6 画面 (drop / detecting / complete / preview / export / minimap) + phase reducer。#464 で追加、#893 で MinimapScreen 追加（minimap crop GUI 統合、drag-select + 数値入力 + 自動検出 + 進捗表示） |
+| `gui/src/components/` | 共通 UI コンポーネント (AllaganCorner / AllaganFrame / AllaganSigil / StateSwitcher / BrightnessTimeline / FrameStrip / MatchThumb / RestoreButton / SampleModeBanner / ConflictModal / DraftRestoreModal / ErrorModal / DisabledTooltip 等)。#464 で追加、#633 で sample mode 全画面 read-only。カスタム title bar は不採用 (prototype の `WindowChrome` は未実装。Windows-only #451 のため Tauri ネイティブ title bar に一本化 — 正は [docs/ui-architecture.md](docs/ui-architecture.md) §コンポーネント階層) |
 | `gui/src/state/` | Zustand store (`appStateStore` = screen + selection + detectionParams / `metadataStore` = load/apply/restore/loadSample / `recentStore` = `<install dir>/recent.json` 履歴 #571 + PR #655 Round 2 で exe ディレクトリ配置に変更) |
 | `gui/src/styles/tokens.css` | `aetherTheme` の CSS 変数定義 (#464 で追加) |
 | `gui/src/styles/path-display.module.css` | 5 画面横断のファイルパス表示 CSS Module (`.pathDisplay` container / `.pathSecondary` parent dir 行 RTL ellipsis truncate)、#676 で追加 (`docs/ui-interaction-spec.md §1.6` 参照) |
 | `gui/src/utils/path.ts` | Windows / POSIX path 操作 utility。`stripExtendedPathPrefix` (Windows `\\?\` prefix 除去) / `joinPath` (OS-appropriate separator) / `splitPath` (fileName + parentDir 分解、#676 で追加) |
-| `gui/src-tauri/` | Tauri 2 Rust バックエンド (`load_metadata` / `apply_changes` / `restore_from_original` / `check_backup_exists` / `get_metadata_mtime` / `export_match` / `select_h264_encoder_for_export` (#591) / `read_recent` / `add_recent` / `clear_recent` (#571) command、axum/tower-http による動画配信は #465 で実装)。`H264Encoder` enum + `select_h264_encoder` + `is_gpu_encoder_failure` で GUI export の H.264 エンコーダ自動選択と libx264 fallback retry を実装 (#591) |
+| `gui/src-tauri/` | Tauri 2 Rust バックエンド (`load_metadata` / `apply_changes` / `restore_from_original` / `check_backup_exists` / `get_metadata_mtime` / `start_export` / `enumerate_h264_encoders` (#761) / `start_minimap` (#893) / `read_recent` / `add_recent` / `clear_recent` (#571) command、axum/tower-http による動画配信は #465 で実装)。`start_export` は Python subprocess を起動して JSON Lines で進捗を受け取り、`enumerate_h264_encoders` は GPU SKU table から利用可能エンコーダスロット一覧を返す (#761)。`start_minimap` は `allaganeye minimap` subprocess を起動し `minimap-progress` イベントで進捗を emit する (#893)。GUI → CLI 呼び出し口と argv の正は [`docs/system-architecture.md`](docs/system-architecture.md) §2.3 |
 
 ### 検知アルゴリズム（detector.py）
 
 **Pass 1: 粗いスキャン**
 
 1. `duration_hint` から `sample_interval` 秒間隔のタイムスタンプを生成（長時間動画は自動で 2-3s に調整）
-2. 各タイムスタンプで `ffmpeg -threads 1 -ss {t} -i` により 1 フレームを 320x180 grayscale でデコード
-3. `ThreadPoolExecutor(max_workers=min(cpu_count, 32))` で並列実行
+2. 動画をチャンクに分割し、各チャンクをそれぞれ 1 プロセスの ffmpeg で dual seek + `select='not(mod(n,N))'` filter によりデコード。フレームは 320x180 grayscale (#214 / #576)
+3. `ThreadPoolExecutor` で並列実行。チャンク数は `_scan_cpu`、ワーカー数上限は `_resolve_workers` が解決する (正: `allaganeye/video/detector.py`)
 4. 各フレームの平均輝度が `blackout_threshold` 以下なら暗転と判定
 5. 連続する暗転フレームを `_group_blackout_regions()` で blackout region にマージ
 
@@ -129,12 +153,12 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 8. `filter_blackouts_with_scorebar()` で各暗転領域の前後フレームのスコアバー有無を判定し、暗転を分類（`match_boundary` / `in_match` / `non_fl`）。V2 検出 (`_has_scorebar_v2`) は 1920x1080 リサイズ後に **two-path OR semantics** で GC 紋章 3 点 AND 判定 (#307, #522): **Primary=absolute `_EMBLEM_POSITIONS`** (pre-#522 validated)、**Rescue=dynamic span (`_find_scorebar_horizontal_range`) + `_EMBLEM_RELATIVE_POSITIONS` 相対比**。Primary pass で short-circuit、両 path fail で False。`raw_rgb` None / opencv 未インストール時のみ None → V1 (`_has_scorebar`, channel-std + edge) フォールバック。1080p OBS validated set の挙動を完全保持しつつ 4K Game DVR の HUD スケール差異は Rescue で救済
 9. `non_fl`（非FL暗転）と短い `in_match`（試合内暗転）を除外。隣接する `match_boundary` ペア間の短いギャップをマージ
 
-**音声昇格**（`--no-audio` 未指定時、#288）
+**音声昇格**（#288。**現在は凍結中 #327**: `AUDIO_FROZEN=True` のため `--no-audio` の値に関わらずスキャンは常にスキップされ、verbose では `audio=frozen` と表示される #384。以下は解凍時の挙動）
 
 - `audio/scan.py` で動画全域の音声から Fanfare ピーク（log-mel 相関 sim ≥ 0.65）を抽出
 - `in_match` 分類された暗転のうち、暗転終了後 0-60s 以内に Fanfare ピークがあるものを `match_boundary` に昇格
 - スコアバー残像で誤分類された試合境界（例: 2026-04-08 57:53）を救済
-- 既知の制約: Fanfare は試合中にも弱いピーク（sim 0.65-0.75）を出すため、本条件のみでは偽陽性が混入しうる。WR 参照 (#301) 同梱後に WR→Fanfare 間隔による (B) 条件を追加して偽陽性除去
+- 既知の制約: Fanfare は試合中にも弱いピーク（sim 0.65-0.75）を出すため、本条件のみでは偽陽性が混入しうる。WR 参照は #306 で同梱済み（`war_room.npz`）。解凍時に WR→Fanfare 間隔による (B) 条件を追加して偽陽性を除去する計画（#327 の解凍判断と合わせて再評価）
 
 **フィルタリング・抽出**
 10. `min(min_blackout_duration, _REFINED_MIN_BLACKOUT)` 未満の短い暗転を除外（リスポーン暗転の誤判定防止）
@@ -145,19 +169,23 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 - 動作確認済み: ハイスペック PC（高速 SSD、高性能 GPU）での OBS 録画。試合間暗転 2-5 秒程度
 - 未検証: 低スペック環境でローディング画面が長い（10 秒超）ケース
 - 既知の制限: ローディング画面が純粋な黒画面でなく UI 要素（スピナー、ロゴ等）を含む場合、brightness が 15-55 の範囲で変動し暗転が分断されることがある。分断された各区間が `min_blackout_duration` 未満になると試合境界を検出できない
-- 既知の制限: ffmpeg `fps` filter のフレーム選択は version 依存。8.1 で output PTS と実フレーム内容に最大 ~1.1s のオフセットが発生する事例あり (#575)。極短 (< 1s) blackout の取りこぼしによる baseline drift は #576 で根本対策検討中。判定 flow は [`docs/testing-guide.md`](docs/testing-guide.md) §「baseline drift の判定」、検証データは [`docs/video-processing.md`](docs/video-processing.md) §「ffmpeg fps filter の version 依存制約」を参照
+- 既知の制限 (legacy fps filter path、#576 で v0.3.0 構造的対策実装済): ffmpeg `fps` filter のフレーム選択は version 依存で、8.1 で output PTS と実フレーム内容に最大 ~1.1s のオフセットが発生する事例あり (#575)。v0.3.0 default の新 path (`-vf select='not(mod(n,N))'` + dual seek、frame-index ベース) は ffmpeg version 非依存。緊急 rollback が必要な場合のみ env var `ALLAGANEYE_DETECT_FPS_FILTER=1` で legacy path に戻せる (transitional、v0.3.x patch release で削除予定)。判定 flow は [`docs/testing-guide.md`](docs/testing-guide.md) §「baseline drift の判定」、検証データは [`docs/video-processing.md`](docs/video-processing.md) §「ffmpeg fps filter の version 依存制約」を参照
+- post-match trailing の扱い ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) 段階2 Phase 1 で default path 非破壊化済): 試合終了後の trailing (lobby/city) は `_flag_post_match_trailing` (#797 の不可逆削除を置換) が **scorebar 不在を根拠に `post_match: true` フラグ付与**するのみで、削除はしない。default split (MP4) からは除外しつつ metadata には保持する (detect / split --from-metadata / export 全経路でフラグ保持 + MP4 除外)。これにより「scorebar FN 環境 (未対応 HUD layout / 4K Game DVR 等) で実試合の trailing を silent に削除しうる」という旧 silent-loss リスクは構造的に消滅した (削除という不可逆操作自体が存在しない)。視覚 UX (badge/dimming + ExportScreen non-selectable row) も Phase 2 で実装済み (#805 完結: CompleteScreen/PreviewScreen badge + ExportScreen 選択不可 + 常時 `—` mark)
 
 **GPU モード** (`--gpu`)
 
 - CPU モードの Pass 1 を GPU チャンク並列デコードで代替（`gpu_detector.py`）
-- 動画を N チャンク（短動画は `min(cpu_count, 16)`、長動画は `_TARGET_CHUNK_WALL_SECS=90s` を目安に `_MAX_CHUNKS=32` まで細分化 / #437）に分割し、各チャンクで長寿命の ffmpeg プロセスを `-hwaccel auto` + `fps` フィルタで起動
+- 動画を N チャンク（短動画は `min(cpu_count, 16)`、長動画は `_TARGET_CHUNK_WALL_SECS=90s` を目安に `_MAX_CHUNKS=32` まで細分化 / #437）に分割し、各チャンクで長寿命の ffmpeg プロセスを vendor 別 hwaccel (`-hwaccel <name>` (+ 必要なら `-hwaccel_output_format`) + `-c:v <decoder>`、vendor が解決できない場合のみ `-hwaccel auto`) + dual seek + `select='not(mod(n,N))'` フィルタで起動 (正: [`docs/video-processing.md`](docs/video-processing.md) §GPU アクセラレーション)
 - ffmpeg 並列上限は `max_parallel = min(cpu_count, 16)` で固定、長動画では chunks > max_parallel となり wave 実行（chunk 完了ごとにラベル更新頻度を確保）
 - GPU 初期化コストを分散し、1プロセスあたり多数フレームをデコードすることで効率化
 - Pass 1 以降の処理（transition expansion, Pass 2, フィルタリング）は CPU/GPU 共通
 - GPU 利用不可時は自動で CPU モードにフォールバック
 - vendor 自動選択 (#546 / #553 / #550 / #582): `allaganeye.system_info.probe_gpu_vendors()` で検出した GPU から `_VENDOR_PREFERENCE = ("nvidia", "amd", "intel")` 順で選択。実装済み vendor は NVIDIA (cuvid, #546) / AMD (d3d11va + hwdownload, #553) / Intel (QSV + hwdownload, #550 h264/hevc/av1 + #582 vp9) の 3 つ。default (auto) は NVIDIA > AMD > Intel の preference 順で実装済み vendor を選ぶ
+- Windows の GPU 列挙は `wmic` を第一候補とし、`wmic` 非搭載環境 (Windows 11 24H2 以降で既定削除) では PowerShell `Get-CimInstance Win32_VideoController` にフォールバックする (#860)。両方失敗した場合は vendor 検出なし = CPU モードに縮退する
 - probe 結果は metadata.json `system_info` フィールドに記録され (#591)、GUI export 画面が H.264 再エンコードのエンコーダ選択 (NVENC / QSV / AMF / libx264 fallback) に使う。`--no-gpu` 指定時でも probe は実行し `gpu_vendors_available` を埋めるが、`gpu_vendor_used` は `null` になる
-- GUI export の H.264 再エンコード (#591): metadata の `system_info.gpu_vendors_available` + `vendor_preference` を `select_h264_encoder_for_export` Tauri コマンドで `H264Encoder` enum に解決し、ffmpeg を `h264_nvenc` / `h264_qsv` / `h264_amf` / `libx264` のいずれかで起動。GPU 初期化失敗 (NVENC `No NVENC capable devices found` 等) は `is_gpu_encoder_failure` で検知して libx264 で 1 回 retry し、`stage="fallback"` の `export-progress` イベントを emit (フロントエンドが per-match notice 表示)
+- GUI export の H.264 再エンコード (#761): GUI 書き出し開始時に `start_export` Tauri コマンドへ単発 invoke → Python subprocess が `enumerate_h264_encoders` で決定した N スロット分の ffmpeg を pool 並列で spawn。GPU 初期化失敗 (NVENC `No NVENC capable devices found` 等) は Python 側で検知して libx264 で 1 回 retry し、`stage="fallback"` の `export-progress` イベントを emit (フロントエンドが per-match notice 表示)
+- NVENC 選択時は NVDEC zero-copy decode 経路 (`-hwaccel cuda -hwaccel_output_format cuda` を `-i` の前に挿入、#791)。NVENC encoder init failure に加え NVDEC decode-stage 失敗 (CUDA dynamic load / device creation / decoder device setup / `cuvidCreateDecoder` / `hwaccel transfer data failed` 等) も libx264 fallback の trigger 対象 (`_GPU_ENCODER_FAILURE_PATTERNS[NVENC]` 計 14 pattern = encoder-init 3 + NVDEC 11 を 3 layer 構成: Layer 1 CUDA dynamic load 2 / Layer 2 device creation・setup 5 / Layer 3 decoder・transfer 4)。QSV/AMF 側の decode hwaccel は #762 で実機検証込みで wire 予定 (現状 `_DECODE_HWACCEL_ARGS` で `()` no-op)
+- minimap crop 等 `-vf crop` フィルタ有りの NVENC 経路は zero-copy が使えない (GPU frame を CPU crop に渡せない) ため、#899 で `-hwaccel cuda` 単独 (auto-download) で NVDEC decode + CPU crop + NVENC encode する。fallback は 3-tier: NVDEC decode 段失敗 → software decode + NVENC (silent、fallback_cb 呼ばない) → NVENC encode 失敗 → libx264。`_DECODE_HWACCEL_ARGS_FILTERED` / `_nvenc_decode_stage_failure` (`allaganeye/export/ffmpeg_runner.py`)。
 
 ### Exit Codes
 
@@ -169,14 +197,18 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | 3 | FFmpeg / ffprobe エラー |
 | 4 | 検知失敗（試合境界が見つからない） |
 | 5 | 設定値不正（パラメータの範囲外等） |
+| 6 | metadata write-back の CAS 衝突 (外部変更検知、GUI が ConflictModal 表示) |
 | 7 | 同梱物欠損 (Portable ZIP integrity-manifest.json で listed file が missing / size 不一致、#668) |
+| 130 | SIGINT (Ctrl+C) によるキャンセル。`export` (#761) / `minimap` crop (#481) が並列処理の中断時に返す |
+
+> コマンド別の詳細 (どのコマンドがどのコードを返すか) は [`docs/cli-spec.md`](docs/cli-spec.md) の各コマンド §Exit Codes を参照。
 
 ### 外部依存
 
 - **ffmpeg / ffprobe**: 4.1 以上。PATH、`ALLAGANEYE_FFMPEG` 環境変数、または OS 別既知パスから自動検索（`allaganeye/ffmpeg_path.py`）。配布版・開発環境ともに LGPLv3 版 (BtbN FFmpeg-Builds `win64-lgpl-shared`、libdav1d 入り) の使用を推奨 (#508)
   - Windows: `ALLAGANEYE_FFMPEG` で BtbN LGPL ビルドを指定する運用を推奨。既存 winget (`Gyan.FFmpeg`, GPL) のインストール先も後方互換で自動検索される
   - macOS: Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) を自動検索
-- **Python パッケージ**: numpy, typer, scipy, opencv-python-headless（scorebar V2 検出で使用 #307）
+- **Python パッケージ**: numpy, typer, click, scipy, opencv-python-headless（scorebar V2 検出で使用 #307）。click は `allaganeye/cli.py` / `commands/split_matches.py` / tests が直接 import するため明示依存として宣言し、`typer<0.25` / `click<8.4` に pin している (#808)
 - **対応プラットフォーム**: Windows のみ（実動画での動作確認済み）。Linux・macOS は未検証（CI では lint/型チェックのみ ubuntu で実行）
 
 ### 動画サンプルデータ
@@ -194,10 +226,19 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 - MKV: OBSの長時間録画（30-80GB、複数試合を含む）
 - サブディレクトリ（`20260116/` 等）: 手動で試合分割済みのMP4（`YYYYMMDD_N.mp4`）
 - 未設定の場合、`sample_video_dir` fixture を使うテスト（`slow` マーカー）はスキップされる
+- VTuber/masked 系 slow テスト用 VOD は別変数 `ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER`（既定 `E:/allaganeye-samples`）。詳細は [`docs/testing-guide.md`](docs/testing-guide.md) §サンプル動画データの設定
 
 ## Portable ZIP 哲学
 
 ツール側はユーザー環境を変更しない。ファイル関連付け / レジストリ / PATH / 自動起動登録は提案禁止。展開 = インストール、削除 = アンインストール の Portable ZIP 哲学を維持する (2026-04-27 ユーザー方針確定)。
+
+## 外部依存 URL 規約
+
+> §アーキテクチャ §外部依存 (runtime deps: ffmpeg / Python pkg / platforms) とは別。本 § は **DL URL の pin ルール**。
+
+外部依存 (Python / npm / cargo / OS binary tarball 等) の DL コードは **immutable URL** で pin する。詳細・受け入れ可能ソース・禁止パターン・検証手順は [`docs/l2-workflow.md` §外部依存規約](docs/l2-workflow.md#外部依存規約-649651703721-教訓) を参照。
+
+代表事例: get-pip.py SHA pin (#649→#651→#703)、BtbN FFmpeg monthly snapshot (#721)。
 
 ## セキュリティ検査（allaganeye-guard 運用連携）
 
@@ -210,7 +251,7 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 ## リリース戦略
 
-詳細は [`docs/release-process.md`](docs/release-process.md) を参照。
+詳細は [`docs/release-process.md`](docs/release-process.md) を参照。Patch release (v0.M.N → v0.M.(N+1)) は [§Patch release の Track 構造](docs/release-process.md#patch-release-の-track-構造) (Track A-D 並列化) に従う。
 
 ## 開発ワークフロー
 
@@ -219,6 +260,7 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 - 既存 skill: `/review-pr`, `/iterate-review`, `/enforce-acceptance-criteria`, `/scope-guard`, `/create-task`, `/close-issue`, `/release`
 - 計画立案・実装・PR テストは Plan モード + 通常ツール + TodoWrite で代替
 - ユーザー (Idios) が戦略・方針を判断し、Claude は選択肢提示と実装を担う
+- skill (`.claude/skills/*/SKILL.md`) 改修 PR は mizchi `empirical-prompt-tuning` protocol に従う。詳細は [`docs/l2-workflow.md` §skill 改修ワークフロー](docs/l2-workflow.md#skill-改修ワークフロー-empirical-prompt-tuning) を参照
 
 ### `/iterate-review` workflow と (A) 強優先方針
 
@@ -245,6 +287,24 @@ PR 作成後は `/iterate-review <PR#>` で review-fix ループを自走させ�
 
 バグ修正は「修正実装」だけで完了せず、**根本原因分析 + 類似バグ調査 + 必要なら追加 issue 起票** をセットで行う。指示通りに直すだけでは同種のバグが残り続けるため、根本原因の横展開で品質を底上げする。
 
+#### encoding boundary audit checklist (#656/#657/#662 教訓)
+
+subprocess / IPC / OS API を介した encoding fix を行うときは、**以下 3 層をすべて audit** すること。1 層だけ fix すると別層で再発する (F4: PR #657 Python 側 fix → #662 Rust 側追加 fix が必要だった事例)。
+
+1. **Python 側** (CLI / scripts): `subprocess.Popen(..., encoding=...)` / `sys.stdout.reconfigure(encoding='utf-8')` / `os.fsencode` / `Path` の Unicode 扱い
+2. **Rust 側** (Tauri / `gui/src-tauri/`): `tokio::process::Command` の stdin/stdout encoding / `OsString` / `Path::to_string_lossy()` の `\u{FFFD}` 混入 / `serde_json::from_str` の BOM 拒否
+3. **OS code page**: Windows なら `chcp 65001` 想定の動作 / cp932 環境での fallback / GitHub Actions runner (`pwsh` UTF-8 BOM-less 出力 vs PowerShell 5.1 BOM 付き)
+
+実装 PR では各 fix が 3 層のうちどこを touch するか PR 本文に明示。3 層に跨る fix は **Phase 分割の対象**になりうる (`docs/refactor-pattern.md`)。
+
+#### `/codex:rescue` 限定使用 (C4、spec O5 (b) 確定)
+
+根本原因分析 / 類似バグ調査 phase で `/codex:rescue` を限定的に併用してよい。常用は禁止 (Codex review = tier 1 `codex-companion.mjs review` を優先)。詳細は §Codex 運用 §rescue を参照。
+
+### 大規模 refactor の Phase 分割
+
+単一 PR で touched files > 30 file or diff > 1000 line を超えそうな refactor は [`docs/refactor-pattern.md`](docs/refactor-pattern.md) §1 適用条件を確認し、Phase 分割を検討する。AppError migration (#663→#689→#714/716/725/730/733→#745→#746) が reference 実例。
+
 ## Plugin との関係 (override 宣言)
 
 session 先頭で有効化されている plugin (`superpowers` v5.0.7 / `andrej-karpathy-skills` v1.0.0) のプロセス規律を以下のとおり全面採用する。本 project と plugin の見解が分かれる点は project 側の立場をここで明示する。
@@ -256,6 +316,76 @@ session 先頭で有効化されている plugin (`superpowers` v5.0.7 / `andrej
 - **Worktree**: トリガー別に住み分け。
   - Idios が新規セッションを立ち上げた場合: Claude Code session が自動生成する `.claude/worktrees/<name>/` を使用 (L2 workflow §単一ワークツリー)
   - plugin のワークフロー (例: `superpowers:using-git-worktrees`) が worktree 作成を要求する場合: plugin の per-feature 手動 worktree を使用
+
+## Codex 運用
+
+Codex (`openai-codex` プラグイン 1.0.4) を Iron Law 3 / 5 と衝突しない形で workflow に統合する。設計原則: **Codex は adversarial second-opinion 専用、自身に独断 fix させない**。詳細 spec は [`docs/superpowers/specs/2026-05-17-v020-v021-retro-codex-integration-design.md`](docs/superpowers/specs/2026-05-17-v020-v021-retro-codex-integration-design.md) §4.3 / §7。
+
+### review / adversarial-review (C2 / C3)
+
+- 全 turn 自動の Stop-time review gate は **OFF のまま**保持 (spec O1 (b) 確定)
+- 代わりに `/review-pr` (Step 5a) と `/iterate-review` 内で**明示 invocation**
+- Iron Law 6 Pre-flight Step 5 として Codex adversarial-review を必ず実行 ([`docs/l2-workflow.md` §PR 作成 Pre-flight](docs/l2-workflow.md#pr-作成-pre-flight-iron-law-6-サブ条))
+- **invocation path は 3-tier** (#795): slash command `/codex:adversarial-review` は plugin frontmatter `disable-model-invocation: true` により agent から invoke 不可のため、**tier 1 (default) = companion script 直接呼び出し** (`codex-companion.mjs adversarial-review`、本物の Codex を agent 一気通貫) / tier 2 (fallback) = Codex CLI fail 時のみ superpowers subagent + Codex fallback notice (C6) / tier 3 (escalation) = Idios が直接 slash command invoke。詳細は [`docs/l2-workflow.md` §Step 5 の invocation path](docs/l2-workflow.md#step-5-の-invocation-path-3-tier795)
+
+### rescue (C4)
+
+- `/codex:rescue` は **root-cause 調査専用** (spec O5 (b) 確定、常用禁止)
+- rescue の slash command は `disable-model-invocation` **なし** = agent からの invoke 可 (3-tier (#795) の制約は review / adversarial-review のみ。rescue を tier 3 = Idios 専用と誤読しない)
+- 機能実装 / refactor / docs 改修等の default invocation は禁止
+- 使う場合は rescue prompt に `<action_safety>` で「scope を超える finding → 独断 fix 禁止、BLOCKED 報告」を必ず明記 (M3 整合)
+- `--write` default のままだが、Codex が write する場合は staging のみ、commit / push は controller の明示指示後
+- rescue 完了後、Idios に finding を提示し AskUserQuestion で「本 PR 修正 / 別 issue / 無視」の 3 択
+- `/scope-guard` skill が Codex commit (`git log --author='codex\|Codex'`) を検査範囲に含める
+
+### Token 枯渇時の fallback (C6)
+
+Codex CLI が rate-limit / quota / network / auth 等で fail した場合、Claude Code 側で superpowers subagent (`requesting-code-review` for review、`systematic-debugging` for rescue) を fallback として起動する。**fallback 実行時は skill report に「Codex fallback notice」を必須記載** (Iron Law 5 整合、Codex review 済との誤認防止)。
+
+詳細 (検出条件 / 戦略 / 擬似コード example) は [`docs/l2-workflow.md` §Codex fallback](docs/l2-workflow.md#codex-fallback) を参照。
+
+### subagent + Codex 直列構成 (C5)
+
+大規模実装 / 重要 PR では superpowers `subagent-driven-development` で Claude 内 fresh subagent が実装 → controller が reachability 確認 → Codex review (agent 実行は `codex-companion.mjs review` = 3-tier の tier 1 と同様、slash `/codex:review` は Idios 専用) で adversarial pass → Claude + Idios で triage、の **4 stage 直列**で進める。Iron Law 6 Pre-flight Step 5 (C2、PR 作成直前 / 必須) とは別用途で、`/review-pr` 段階の **deep-dive** で使う optional flow。
+
+詳細 (Flow 図 / 違い table / 並列ではなく直列にする理由) は [`docs/l2-workflow.md` §subagent + Codex 直列構成](docs/l2-workflow.md#subagent--codex-直列構成-c5) を参照。
+
+## モデルルーティング（用途別モデル使い分け）
+
+開発時のサブエージェント/レビューを用途別のモデルへ振り分ける。**本ツールの実行時依存ではなく開発運用のみ**（CLI/GUI の挙動・出力は変わらない）。設計 spec は [`docs/superpowers/specs/2026-07-14-per-use-case-model-routing-design.md`](docs/superpowers/specs/2026-07-14-per-use-case-model-routing-design.md) を参照。
+
+ルーティングは**アドバイザリ**（hook 強制はしない）。担保は 3 層: agent 定義 `model:` / 本節のガイダンス / 主エージェントの規律。
+
+### 対応表
+
+| 用途 | モデル/ツール | 呼び出し |
+| --- | --- | --- |
+| メイン（設計判断・複雑デバッグ・アーキ変更・新機能・統括） | ユーザー選択（既定 Opus 最新 / 高難度は最初から Fable 最新）。**固定しない** | セッションモデル |
+| 技術レビュー・相談（バグ/セキュリティ/GPU fallback/encoding/adversarial） | Codex | 既存 3-tier（§Codex 運用）。**不変** |
+| 全体レビュー・相談（設計方針/UX/ドキュメント整合/受け入れ条件妥当性/俯瞰） | Fable 最新 | `Agent(subagent_type=fable-consult)` |
+| 中難度定型（原因既知バグ修正/テスト作成/スコープ明確 refactor/doc 更新） | Sonnet 最新 | `Agent(subagent_type=allaganeye-sonnet-worker)` |
+| 低難度定型（検索/リネーム/フォーマット/boilerplate/要約/情報収集） | Haiku 最新 | `Agent(subagent_type=allaganeye-haiku-worker)`。ビルトイン Explore は `model:"haiku"` を渡す |
+
+- **エイリアス指定**（`fable` / `opus` / `sonnet` / `haiku`）で各系統の最新に自動追従（フル ID 固定はしない）。
+- agent 定義は **project-local**（`.claude/agents/`）に置く。worker は user-level model-router の同名定義（`~/.claude/agents/{sonnet,haiku}-worker.md`）との衝突を構造的に避けるため **`allaganeye-` prefix** で命名する（precedence 依存を排除し、弱い前提の silent 誤ルーティングを根絶。#889 Codex adversarial-review 反映）。
+
+### fable-consult の推奨トリガー地点（原則。強制ではない）
+
+- spec/design doc 執筆完了後・ユーザーレビュー前
+- brainstorming で選択肢が割れて決めきれないとき
+- 受け入れ条件を新規策定した issue の起票前
+
+### Fable と Codex の棲み分け
+
+- **修正先が「コード/テスト diff」→ Codex**、**「文書・方針・プロセス」→ Fable**。
+- invariant / 不可逆操作に関わる spec は**両方**にかける（併存レイヤー、重複コスト許容）。
+- **「Fable にレビューさせた」≠ Codex レビュー不要**。Fable 一次通過を Codex 省略の口実にしない。
+
+### ビルトインエージェント
+
+- Explore は `model:"haiku"`（fan-out 検索は低難度）。
+- Plan・general-purpose 等その他は model 未指定（メイン inherit）を既定とし、明らかに定型のみ `sonnet` 明示。Plan（高難度）を惰性で haiku に落とさない。
+- fork はモデル上書き不可で常に親（メイン）を継承する。
 
 ## CLAUDE.md 継続改善
 

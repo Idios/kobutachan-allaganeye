@@ -6,6 +6,7 @@ import { CompleteScreen } from './screens/CompleteScreen';
 import { DetectingScreen } from './screens/DetectingScreen';
 import { DropScreen } from './screens/DropScreen';
 import { ExportScreen } from './screens/ExportScreen';
+import { MinimapScreen } from './screens/MinimapScreen';
 import { PreviewScreen } from './screens/PreviewScreen';
 import { useAppStateStore } from './state/appStateStore';
 import styles from './App.module.css';
@@ -41,6 +42,7 @@ export default function App() {
             <PreviewScreen key={selectedMatchIndex ?? 'none'} />
           )}
           {screen === 'export' && <ExportScreen />}
+          {screen === 'minimap' && <MinimapScreen />}
         </main>
       </div>
       {/* #514 — global modal for metadata.json external-modification conflicts. */}

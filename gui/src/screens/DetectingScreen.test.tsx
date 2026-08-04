@@ -421,6 +421,7 @@ describe('DetectingScreen', () => {
           /* never resolves */
         });
       }
+      if (cmd === 'kill_tracked_processes') return Promise.resolve(0);
       return Promise.resolve(null);
     });
     render(<DetectingScreen />);
@@ -434,6 +435,177 @@ describe('DetectingScreen', () => {
     await waitFor(() => {
       expect(useAppStateStore.getState().screen).toBe('drop');
     });
+  });
+
+  // #813 (AC1) -- 中断 click は phase 遷移だけでなく走行中 detect を
+  // kill_tracked_processes で reap する。export cancel (§2.5.10) と同経路。
+  it('invokes kill_tracked_processes when [中断] is clicked (#813)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      if (cmd === 'kill_tracked_processes') return Promise.resolve(0);
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalled();
+    });
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: '中断' }));
+    });
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.some(([c]) => c === 'kill_tracked_processes'),
+      ).toBe(true);
+    });
+  });
+
+  // #813 (AC2) -- 旧 run の straggler detect-progress (run_id mismatch) は
+  // 現在 run の UI に反映されない。現在 run の event (run_id 一致) は適用される。
+  it('ignores detect-progress events from a stale run (run-id fence, #813)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    // start_detect 起動後 (run id が args に乗る) まで待つ。
+    await waitFor(() => {
+      expect(
+        invokeMock.mock.calls.some(([c]) => c === 'start_detect'),
+      ).toBe(true);
+    });
+    const startCall = invokeMock.mock.calls.find(([c]) => c === 'start_detect');
+    const runId = (startCall?.[1] as { runId?: string } | undefined)?.runId;
+    expect(typeof runId).toBe('string');
+
+    // 旧 run の event (run_id mismatch) -> 無視。meta 行は変化しない。
+    act(() => {
+      emitDetectProgress({
+        phase: 'probing',
+        run_id: 'stale-run-id',
+        width: 1280,
+        height: 720,
+        fps: 30,
+        codec: 'hevc',
+        duration_s: 120,
+      });
+    });
+    expect(screen.queryByText(/1280x720/)).not.toBeInTheDocument();
+
+    // 現在 run の event (run_id 一致) -> 適用される。
+    act(() => {
+      emitDetectProgress({
+        phase: 'probing',
+        run_id: runId,
+        width: 1920,
+        height: 1080,
+        fps: 60,
+        codec: 'h264',
+        duration_s: 240,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-meta').textContent).toContain(
+        '1920x1080',
+      );
+    });
+  });
+
+  // #813 review (codex HIGH) -- detect must still start (not silently hang)
+  // when the WebView runtime lacks crypto.randomUUID (old WebView2 / non-
+  // secure context). The run id falls back to a non-crypto token.
+  // #813 review (codex HIGH) -- if the component is cancelled/unmounted while
+  // listen() is still resolving, run() must NOT spawn a detect afterwards
+  // (the cancel's kill already ran and would miss it, orphaning the process).
+  it('does not spawn detect when unmounted before listen() resolves (#813)', async () => {
+    let resolveListen!: (fn: () => void) => void;
+    const pendingListen = new Promise<() => void>((res) => {
+      resolveListen = res;
+    });
+    // Override the default (immediately-resolving) listen mock with one that
+    // stays pending until the test resolves it.
+    listenMock.mockImplementation((channel: string, handler) => {
+      if (channel === 'detect-progress') {
+        lastDetectProgressHandler = handler as (event: {
+          payload: unknown;
+        }) => void;
+      }
+      return pendingListen;
+    });
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'kill_tracked_processes') return Promise.resolve(0);
+      return Promise.resolve(null);
+    });
+
+    const { unmount } = render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalled();
+    });
+    // listen() is still pending, so start_detect must not have run yet.
+    expect(
+      invokeMock.mock.calls.some(([c]) => c === 'start_detect'),
+    ).toBe(false);
+
+    // Simulate cancel -> navigate('drop') -> unmount (sets cancelled = true).
+    unmount();
+
+    // listen() now resolves; run() continues past the await.
+    await act(async () => {
+      resolveListen(() => {
+        lastDetectProgressHandler = null;
+      });
+      await Promise.resolve();
+    });
+
+    // The post-listen cancelled guard must prevent the spawn.
+    expect(
+      invokeMock.mock.calls.some(([c]) => c === 'start_detect'),
+    ).toBe(false);
+  });
+
+  it('starts detect with a fallback run id when crypto.randomUUID is unavailable (#813)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    const originalRandomUUID = crypto.randomUUID;
+    // Simulate a runtime where crypto.randomUUID does not exist.
+    Object.defineProperty(crypto, 'randomUUID', {
+      configurable: true,
+      value: undefined,
+    });
+    try {
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(
+          invokeMock.mock.calls.some(([c]) => c === 'start_detect'),
+        ).toBe(true);
+      });
+      const startCall = invokeMock.mock.calls.find(
+        ([c]) => c === 'start_detect',
+      );
+      const runId = (startCall?.[1] as { runId?: string } | undefined)?.runId;
+      expect(typeof runId).toBe('string');
+      expect(runId).toBeTruthy();
+      // No error UI -> the screen did not hang/throw.
+      expect(screen.queryByTestId('detecting-error')).not.toBeInTheDocument();
+    } finally {
+      Object.defineProperty(crypto, 'randomUUID', {
+        configurable: true,
+        value: originalRandomUUID,
+      });
+    }
   });
 
   // #646 -- start_detect reject から drop へは silent 復帰せず、error
@@ -637,7 +809,11 @@ describe('DetectingScreen', () => {
       expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
     });
     const back = screen.getByTestId('detecting-error-back');
-    expect(document.activeElement).toBe(back);
+    // autofocus runs in a mount effect; wait for the flush so the assertion
+    // isn't racing the effect under full-suite parallel load (#813 R2 flake).
+    await waitFor(() => {
+      expect(document.activeElement).toBe(back);
+    });
   });
 
   // #646 review Round 2 課題 3 -- a11y: Escape key on the error view
@@ -653,9 +829,20 @@ describe('DetectingScreen', () => {
     await waitFor(() => {
       expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
     });
+    // the keydown listener attaches in a mount effect (same flush as the
+    // autofocus effect); wait for the focus so the dispatch isn't racing
+    // the listener attach under full-suite parallel load (#813 R2 flake).
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByTestId('detecting-error-back'),
+      );
+    });
     act(() => {
       fireEvent.keyDown(window, { key: 'Escape' });
     });
+    // onBack is a synchronous zustand navigate('drop'); the focus guard
+    // above already serialized the listener attach, so assert synchronously
+    // to keep the "Escape transitions synchronously" contract tight.
     expect(useAppStateStore.getState().screen).toBe('drop');
   });
 
@@ -769,6 +956,36 @@ describe('DetectingScreen', () => {
     refiningRow = screen.getByTestId('phase-row-refining');
     expect(refiningRow.textContent).toContain('分類');
     expect(refiningRow.textContent).not.toContain('refine');
+  });
+
+  // #814 (AC3) -- a detect that finished but whose metadata.json can't be read
+  // must surface the error in the error view, not silently land on complete.
+  it('routes a post-detect metadata load failure to the error view (#814)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return Promise.resolve({
+          metadata_path: 'C:/videos/test_allaganeye/metadata.json',
+          matches: 1,
+        });
+      }
+      if (cmd === 'load_metadata') {
+        return Promise.reject({
+          code: 'parse.json_invalid',
+          message: 'metadata.json is corrupt',
+          hint: 'rerun allaganeye split',
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('detecting-error-message')).toHaveTextContent(
+      'metadata.json is corrupt',
+    );
+    // must NOT navigate to complete on a failed load
+    expect(useAppStateStore.getState().screen).toBe('detecting');
   });
 
   it('falls back to loadSample when no video is selected (StateSwitcher dev mode)', async () => {

@@ -14,13 +14,16 @@ module matures further we can hoist those helpers into
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
 import typer
 
 from allaganeye.commands.split_matches import (
+    _audio_status_str,
     _auto_sample_interval,
     _build_metadata_payload,
     _build_system_info,
@@ -30,20 +33,26 @@ from allaganeye.commands.split_matches import (
     _emit_total_time,
     _find_gaps,
     _format_duration,
+    _format_region_token,
     _iso_utc_now,
-    _load_cache,
+    _load_cache_hit,
+    _partition_post_match,
     _print_environment_header,
     _print_detection_stats,
     _resolve_gpu_mode_with_probe,
     _run_audio_scan,
     _run_detection,
     _save_cache,
+    _workers_summary_str,
     build_brightness_samples,
 )
 from allaganeye.config import SplitConfig
 from allaganeye.detection.metadata_writer import write_metadata_atomic
 from allaganeye.detection.progress_emitter import ProgressEmitter
+from allaganeye.detection.warnings import build_warnings
 from allaganeye.exceptions import DetectionError
+from allaganeye.metadata_types import CaptureRegions
+from allaganeye.video.capture_region import RegionTimeline
 from allaganeye.video.detector import DetectionStats
 from allaganeye.video.probe import probe_video
 
@@ -123,21 +132,27 @@ def run_detect(
 
     cache_path = config.output_dir / ".detection_cache.json"
     boundaries = None
+    # #821 -- resolved masked fallback。cache-hit は cache 記録値を引き継ぎ、
+    # cache-miss は detection callback で捕捉する。
+    masked_fallback_used = False
+    # #810 -- capture region timeline。cache-hit は cache 記録値を引き継ぎ、
+    # cache-miss は detection callback で捕捉する。
+    captured_region: CaptureRegions | None = None
     use_gpu = False
     gpu_vendor: str | None = None
     available_vendors: list[str] = []
     if not config.no_cache:
-        boundaries = _load_cache(cache_path, video_path, effective_interval, config)
-        if boundaries is not None:
+        hit = _load_cache_hit(cache_path, video_path, effective_interval, config)
+        if hit is not None:
+            boundaries = hit.boundaries
+            masked_fallback_used = hit.masked_fallback_used
+            captured_region = hit.capture_regions
             if show and verbose:
                 _display_cache_hit_params(cache_path, config)
             if show:
                 _display_results(boundaries, metadata, video_path, verbose, cached=True)
             if json_mode and progress_emitter is not None:
-                progress_emitter.emit(
-                    "cache_hit",
-                    boundaries=len(boundaries),
-                )
+                progress_emitter.emit("cache_hit", boundaries=len(boundaries))
 
     if boundaries is None:
         use_gpu, gpu_vendor, available_vendors = _resolve_gpu_mode_with_probe(
@@ -157,7 +172,31 @@ def run_detect(
 
         audio_hits = _run_audio_scan(video_path, config, show=show, verbose=verbose)
 
+        if show and verbose:
+            # run_split の cache-miss summary と同形 (PR #823 R2)。vtuber token
+            # は検出 mode の provenance を stdout に残す (cache-hit 側は
+            # _display_cache_hit_params が担う)。
+            typer.echo(
+                f"Detecting match boundaries "
+                f"(interval={effective_interval}s, "
+                f"threshold={config.blackout_threshold}, "
+                f"workers={_workers_summary_str(config.workers)}, "
+                f"min_match={config.min_match_duration}s, "
+                f"min_blackout={config.min_blackout_duration}s, "
+                f"audio={_audio_status_str(config.no_audio)}, "
+                f"vtuber={'on' if config.vtuber else 'off'}, "
+                f"masked={'on' if config.masked else 'off'})"
+            )
+
         detect_stats: DetectionStats | None = {} if verbose else None
+
+        def _on_masked_fallback() -> None:
+            nonlocal masked_fallback_used
+            masked_fallback_used = True
+
+        def _on_region(timeline: RegionTimeline) -> None:
+            nonlocal captured_region
+            captured_region = cast("CaptureRegions", timeline.to_dict())
 
         boundaries = _run_detection(
             video_path,
@@ -171,6 +210,8 @@ def run_detect(
             gpu_vendor=gpu_vendor,
             progress_emitter=progress_emitter,
             brightness_callback=on_brightness,
+            masked_fallback_callback=_on_masked_fallback,
+            region_callback=_on_region,
         )
 
         if not boundaries:
@@ -189,12 +230,21 @@ def run_detect(
 
         if verbose and show and detect_stats is not None:
             _print_detection_stats(detect_stats)
+            if captured_region is not None:
+                typer.echo(f"  Region: {_format_region_token(captured_region)}")
 
         if show:
             _display_results(boundaries, metadata, video_path, verbose)
 
         _save_cache(
-            cache_path, video_path, metadata, effective_interval, config, boundaries
+            cache_path,
+            video_path,
+            metadata,
+            effective_interval,
+            config,
+            boundaries,
+            masked_fallback_used=masked_fallback_used,
+            capture_regions=captured_region,
         )
 
     gaps = _find_gaps(boundaries, metadata["duration"], min_gap=300.0)
@@ -212,12 +262,20 @@ def run_detect(
             f"Cannot create output directory {config.output_dir}: {e}"
         ) from e
 
+    # #805 段階2: active (MP4 生成対象) と post_match (flag 方式、MP4 不生成) に
+    # 分離する。detector の `_flag_post_match_trailing` が最終 segment に
+    # post_match=True を立てた場合、それを output_file 無しの post_match Match
+    # として metadata に搬送する (`_split_and_write_metadata` と同形)。
+    # post_match が無い場合 (常態) は active == boundaries で従来と bit-exact。
+    active_boundaries, post_match_boundaries = _partition_post_match(boundaries)
+
     # Placeholder names are relative to ``output_dir``; ``_build_metadata_payload``
     # serialises them via ``Path.as_posix`` so the resulting ``output_file``
     # entries match what ``split --from-metadata`` will produce (just the
-    # basename, parent is implicit from the metadata location).
+    # basename, parent is implicit from the metadata location). active のみに
+    # placeholder を割り当てる (post_match は MP4 を生成しないため output_file 無し)。
     placeholder_paths = [
-        Path(f"match_{i + 1:03d}.mp4") for i, _ in enumerate(boundaries)
+        Path(f"match_{i + 1:03d}.mp4") for i, _ in enumerate(active_boundaries)
     ]
 
     # #591 -- cache hit のときは _resolve_gpu_mode を通らないので
@@ -252,23 +310,45 @@ def run_detect(
         detection_completed_at=detection_completed_at,
         effective_interval=effective_interval,
         config=config,
-        boundaries=boundaries,
+        boundaries=active_boundaries,
+        post_match_boundaries=post_match_boundaries,
         output_files=placeholder_paths,
         gaps=gaps,
         system_info=system_info,
         brightness_samples=brightness_samples,
+        masked_fallback_used=masked_fallback_used,
+        # #805 段階2: warnings is always empty -- the W1
+        # post_match_trailing_dropped emission was removed; the non-destructive
+        # post_match flag on the Match now records a post-match trailing segment.
+        # post_match segment は post_match_boundaries 経由で output_file 無しの
+        # Match として書かれる (`_split_and_write_metadata` と同じ partition)。
+        warnings=build_warnings(),
+        capture_regions=captured_region,
     )
     metadata_path = config.output_dir / "metadata.json"
     write_metadata_atomic(metadata_path, payload)
 
+    # Report where the file actually landed, not the raw ``-o`` string
+    # (PR #930 did the same for export / minimap).  A relative ``-o`` --
+    # including a Windows drive-relative one like ``E:out``, which a lost
+    # shell quote turns ``E:\a\b`` into -- otherwise reaches the user as a
+    # path that does not say where anything was written.  ``abspath``
+    # normalises against the cwd without resolving symlinks, so the reported
+    # location is the one we wrote to, and ``Path`` keeps the platform's own
+    # separators so the line can be pasted back into a shell / explorer.
+    shown_metadata_path = Path(os.path.abspath(metadata_path))
+
     if show:
-        typer.echo(f"\nMetadata: {metadata_path}")
+        typer.echo(f"\nMetadata: {shown_metadata_path}")
 
     _emit_total_time(total_start, verbose, show)
 
     if progress_emitter is not None:
         progress_emitter.emit(
             "done",
-            metadata_path=str(metadata_path),
+            # #805 段階2: total detected segments (active + post_match)。post_match
+            # は MP4 化されないが「検出された試合数」の観測値としては数える
+            # (post_match が無い常態では active と一致 = 従来挙動)。
+            metadata_path=str(shown_metadata_path),
             matches=len(boundaries),
         )

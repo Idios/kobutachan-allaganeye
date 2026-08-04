@@ -83,6 +83,14 @@
     },
     "brightness_samples": {
       "$ref": "#/$defs/BrightnessSamples"
+    },
+    "capture_regions": {
+      "$ref": "#/$defs/CaptureRegions"
+    },
+    "minimap_regions": {
+      "type": "array",
+      "description": "#481: per-match area-map crop region (normalized) actually used by `allaganeye minimap --region`. Missing entry for a match = not cropped. Field absent = minimap crop never ran.",
+      "items": { "$ref": "#/$defs/MinimapRegionEntry" }
     }
   },
   "$defs": {
@@ -128,6 +136,18 @@
         "workers": {
           "description": "Parallel worker count. number for explicit, null for auto.",
           "type": ["number", "null"]
+        },
+        "vtuber": {
+          "description": "True when the --vtuber flag was supplied (#821; the VTuber path never auto-triggers, so request equals resolved). Optional: absent in pre-#821 outputs and means false.",
+          "type": "boolean"
+        },
+        "masked": {
+          "description": "True when the --masked flag was supplied (request, #821). The masked fallback can also auto-trigger on zero-blackout recordings; see masked_fallback_used for the resolved path. Optional: absent in pre-#821 outputs and means false.",
+          "type": "boolean"
+        },
+        "masked_fallback_used": {
+          "description": "True when the mask-free-region fallback actually produced this result (explicit --masked or zero-blackout auto-trigger, #821). Optional: absent in pre-#821 outputs and means false.",
+          "type": "boolean"
         }
       }
     },
@@ -144,8 +164,7 @@
         "end_display",
         "duration",
         "duration_display",
-        "type",
-        "output_file"
+        "type"
       ],
       "properties": {
         "index": {
@@ -192,6 +211,10 @@
           "description": "MP4 filename relative to the metadata.json directory.",
           "type": "string",
           "minLength": 1
+        },
+        "post_match": {
+          "description": "True when this segment is a post-match trailing run (#805 段階2). Non-destructive flag: excluded from default split output but retained in metadata. Absent / false = normal match.",
+          "type": "boolean"
         }
       }
     },
@@ -265,7 +288,7 @@
     },
     "SystemInfo": {
       "title": "SystemInfo",
-      "description": "GPU vendor probe snapshot recorded by detect/split (#591). GUI export uses this to pick the H.264 encoder (NVENC / QSV / AMF / libx264). Optional at the root because pre-#591 metadata.json files don't carry it.",
+      "description": "GPU vendor probe snapshot recorded by detect/split (#591, extended #761). GUI export uses this to pick the H.264 encoder (NVENC / QSV / AMF / libx264) and query the NVENC parallel slot count SKU table. Optional at the root because pre-#591 metadata.json files don't carry it.",
       "type": "object",
       "additionalProperties": false,
       "required": ["gpu_vendors_available", "gpu_vendor_used", "vendor_preference"],
@@ -283,6 +306,13 @@
         },
         "vendor_preference": {
           "description": "Snapshot of gpu_detector._VENDOR_PREFERENCE (currently [\"nvidia\",\"amd\",\"intel\"]).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "gpu": {
+          "description": "GPU model name strings from get_gpu_info_lines() (#761). Used by GUI export to query probe_nvenc_engine_count() for NVENC parallel slot count. Empty array on CPU-only hosts or when probing fails. Optional for backward compat with pre-#761 metadata.json.",
           "type": "array",
           "items": {
             "type": "string"
@@ -310,6 +340,75 @@
             "minimum": 0,
             "maximum": 255
           }
+        }
+      }
+    },
+    "CaptureRegion": {
+      "title": "CaptureRegion",
+      "description": "Game capture rectangle in normalized [0,1] frame coordinates (#810). Serialized form of allaganeye/video/capture_region.py::CaptureRegion (to_dict / from_dict).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "w", "h", "confidence", "source"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "w": { "type": "number", "minimum": 0, "maximum": 1 },
+        "h": { "type": "number", "minimum": 0, "maximum": 1 },
+        "confidence": {
+          "description": "Detector confidence in [0,1].",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "source": {
+          "description": "Detector that produced the region. Documented values: \"fallback\" (FULL_FRAME), \"band\" (scorebar band ROI), \"tierA\" (game rectangle), \"tierB\" (future per-segment precise). Free string: readers must accept unknown values (forward compat, same philosophy as warning codes).",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "RegionSegment": {
+      "title": "RegionSegment",
+      "description": "Per-segment precise region entry (Tier B; consumed by #480/#481). time_range is [t0, t1] in seconds.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["time_range", "region"],
+      "properties": {
+        "time_range": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0 },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "region": { "$ref": "#/$defs/CaptureRegion" }
+      }
+    },
+    "MinimapRegionEntry": {
+      "title": "MinimapRegionEntry",
+      "description": "#481: one per-match minimap crop entry. `match_index` references Match.index (1-based). `region` is the normalized crop rectangle used by `allaganeye minimap --region`.",
+      "type": "object",
+      "properties": {
+        "match_index": { "type": "integer", "minimum": 1 },
+        "region": { "$ref": "#/$defs/CaptureRegion" }
+      },
+      "required": ["match_index", "region"],
+      "additionalProperties": false
+    },
+    "CaptureRegions": {
+      "title": "CaptureRegions",
+      "description": "Capture-region timeline resolved by detection (#810; serialized RegionTimeline). `coarse` is the region actually used for Pass 1 brightness measurement: FULL_FRAME on standard OBS runs, the scorebar band ROI (source=\"band\", NOT the full game rectangle) on --vtuber runs, and the mask-free game rectangle (source=\"tierA\") when the masked fallback produced the result. `segments` is always [] until Tier B per-segment detection lands (#480). `fallback_reason` records band-anchor degradation on --vtuber runs (documented values: \"anchor_error\" = Stage 0 exception, \"consensus_miss\" = no band consensus); null = no degradation. Optional at the root: pre-#810 metadata.json doesn't carry it; cache hits from pre-#810 vtuber/masked caches omit it (region unknown).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coarse", "segments", "fallback_reason"],
+      "properties": {
+        "coarse": { "$ref": "#/$defs/CaptureRegion" },
+        "segments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RegionSegment" }
+        },
+        "fallback_reason": {
+          "type": ["string", "null"],
+          "description": "Band-anchor degradation provenance. Free string (readers accept unknown values); null = no degradation."
         }
       }
     }

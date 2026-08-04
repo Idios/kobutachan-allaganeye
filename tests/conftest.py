@@ -135,3 +135,54 @@ def _ffmpeg_interval(request: pytest.FixtureRequest) -> Iterator[None]:
     yield
     if request.node.get_closest_marker("slow"):
         time.sleep(1)
+
+
+@pytest.fixture(autouse=True)
+def _clear_allaganeye_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear ALLAGANEYE_DETECT_FPS_FILTER for every test (#576 S6 / R6).
+
+    The env var is a transitional rollback switch (will be deleted in
+    v0.3.x). Tests that need to exercise the legacy path must opt-in by
+    calling ``monkeypatch.setenv("ALLAGANEYE_DETECT_FPS_FILTER", "1")``
+    inside the test body.  This fixture prevents CI pollution where a
+    shell-set env var would silently make every test run the legacy code
+    path.
+    """
+    monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
+
+
+# --- slow_* submarker convention enforcement ---
+
+# pyproject.toml [tool.pytest.ini_options].markers に登録した slow_* と一致させること
+_SLOW_SUBMARKERS = frozenset({"slow_probe", "slow_detect", "slow_pipeline", "slow_gpu"})
+
+
+def slow_submarker_violations(marker_names_by_nodeid: dict[str, set[str]]) -> list[str]:
+    """slow_* サブマーカーを持つのに slow を持たない nodeid を返す.
+
+    testing-guide.md の「slow はサブマーカーのスーパーセット」契約を機械化する
+    (audit 2026-06-10 P1-3: 違反すると documented コマンドから test が漏れる)。
+    """
+    return sorted(
+        nodeid
+        for nodeid, names in marker_names_by_nodeid.items()
+        if names & _SLOW_SUBMARKERS and "slow" not in names
+    )
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """collection 時に slow マーカー契約違反を即エラーにする.
+
+    tryfirst で builtin の -m deselection より前に全 item を検査する
+    (deselect 後では addopts で除外された違反が素通りするため)。
+    """
+    mapping = {item.nodeid: {m.name for m in item.iter_markers()} for item in items}
+    violations = slow_submarker_violations(mapping)
+    if violations:
+        raise pytest.UsageError(
+            "slow_* submarker without 'slow' (testing-guide.md の slow スーパーセット契約違反):\n"
+            + "\n".join(f"  {nid}  -> @pytest.mark.slow を追加" for nid in violations)
+        )

@@ -1,0 +1,50 @@
+{
+ "source_file": "2772549129-151803977-da21c691-9ed6-4068-9a8b-4726a8a519a8.mp4",
+ "source_size_bytes": 7554775607,
+ "source_dir_label": "gyawa_vatos",
+ "source_env_var": "ALLAGANEYE_SAMPLE_VIDEO_DIR_GYAWA",
+ "ground_truth_provider": "agent (PoC 2026-07-17 dense probe + P3 boundary instrument + 目視裁定 2026-07-20)",
+ "ground_truth_provided_at": "2026-07-20",
+ "convention": "zone-in",
+ "tolerance_sec": 15,
+ "inclusive_slack_sec": 300.0,
+ "notes": "境界は検出器と独立の 1s dense probe (at-anchor presence + frozen 除外) の collapse/recovery + blackout marker から導出、曖昧 boundary は目視裁定。meteor #12 は実長 ~285s (min_match_duration 境界ケース) だが V2 window 平滑で検出される想定",
+ "matches": [
+  {
+   "index": 1,
+   "start_time": 247.0,
+   "end_time": 1217.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 2,
+   "start_time": 1437.0,
+   "end_time": 2361.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 3,
+   "start_time": 2631.0,
+   "end_time": 3634.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 4,
+   "start_time": 4265.0,
+   "end_time": 5241.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 5,
+   "start_time": 5457.0,
+   "end_time": 6378.0,
+   "type": "fl_match"
+  },
+  {
+   "index": 6,
+   "start_time": 6525.0,
+   "end_time": 7535.0,
+   "type": "fl_match"
+  }
+ ]
+}

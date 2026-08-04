@@ -8,9 +8,10 @@ const SCREEN_LABELS: Record<AppScreen, string> = {
   complete: '一覧',
   preview: '境界調整',
   export: '書出し',
+  minimap: 'ミニマップ',
 };
 
-const SCREENS: AppScreen[] = ['drop', 'detecting', 'complete', 'preview', 'export'];
+const SCREENS: AppScreen[] = ['drop', 'detecting', 'complete', 'preview', 'export', 'minimap'];
 
 /**
  * Dev-only screen switcher. Lets a developer jump between the 5 screens without

@@ -2,6 +2,26 @@
 # Inject project Iron Laws at session start / clear / compact.
 # Inspired by obra/superpowers pattern: prompt-weighted self-restraint.
 
+# 前セッションで stop.sh が記録した orphan commit があれば Iron Law inject の前に警告表示 (M6 / F7)。
+# heuristic で false positive を許容するため、user が log を rm することで dismiss できる運用。
+ORPHAN_LOG="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}/.claude/state/orphan-commits.log"
+if [[ -f "$ORPHAN_LOG" ]] && [[ -s "$ORPHAN_LOG" ]]; then
+  cat <<EOF
+⚠️ 前セッションで orphan commit が検出されました (M6 / F7、PR #741 教訓):
+
+\`\`\`
+$(head -10 "$ORPHAN_LOG")
+\`\`\`
+
+復旧手順:
+- 該当 commit が必要なら: \`git cherry-pick <SHA>\` で現 HEAD 上に再生成
+- ノイズ (Claude Opus co-author trailer 持ち正常 commit 等) なら: \`rm "$ORPHAN_LOG"\` で警告クリア
+
+本警告は false positive を許容する heuristic です (詳細は \`docs/l2-workflow.md\` §subagent 起動規約 参照)。
+
+EOF
+fi
+
 cat <<'EOF'
 <EXTREMELY_IMPORTANT>
 このプロジェクト (kobutachan-allaganeye) には以下の Iron Law がある。
@@ -33,7 +53,7 @@ cat <<'EOF'
 6. **NO PR CREATION WITHOUT VERIFIED CHECKS**
    - PR 作成前に変更ファイル path に応じた自動チェック (Python: `ruff check .` / `ruff format --check .` / `pyright` / `pytest`、GUI: `npm run lint` / `typecheck` / `test` / `build` / `cargo check`) を全 pass させる。「軽微だから skip」「Python のみだから GUI 側不要」は Red Flag (失敗パターン A 再発)
    - ロジック変更 (`gpu_detector.py` / `audio/*.py` / `video/detector.py` / `gui/src-tauri/**` 等) を含む場合は、ユーザー (Idios) に実機検証 (GPU / audio / 長時間動画 / GUI Tauri 起動) を `AskUserQuestion` で依頼する。「mock テスト pass = 実機検証不要」は Red Flag (失敗パターン B 再発)
-   - **PR 作成 Pre-flight (#659 で運用化、#722 で Step 0 ハードゲート追加)**: Step 0 = `gh pr list --search "<元issue#>" --state open` でハードゲート (<1s、build/verify の前) → Step 1 base 同期 (`git fetch origin <base>`) → Step 2 取り込み未済 commit (`git log HEAD..origin/<base>`) → Step 3 touched files 交差判定 → Step 4 並行 PR 重複再確認 (`gh pr list --search "<元issue#>" --state all`)。Step 0 と Step 4 は検出 window が異なるため両方実施。「コンフリクト出ないから OK」「Step 0 で 0 件だったから Step 4 skip」は Red Flag (失敗パターン C 再発、`docs/l2-workflow.md` §「PR 作成 Pre-flight」 参照)
+   - **PR 作成 Pre-flight (#659 で運用化、#722 で Step 0 ハードゲート追加、L-β β-4 で Step 5 Codex adversarial-review 追加)**: Step 0 = `gh pr list --search "<元issue#>" --state open` でハードゲート (<1s、build/verify の前) → Step 1 base 同期 (`git fetch origin <base>`) → Step 2 取り込み未済 commit (`git log HEAD..origin/<base>`) → Step 3 touched files 交差判定 → Step 4 並行 PR 重複再確認 (`gh pr list --search "<元issue#>" --state all`) → Step 5 Codex adversarial-review (agent は tier 1 = companion script `codex-companion.mjs adversarial-review` を直接呼び出し。slash `/codex:adversarial-review` は Idios 専用 tier 3。invocation path は `docs/l2-workflow.md` §「Step 5 の invocation path (3-tier、#795)」参照。focus 文字列で Iron Law 3 / encoding / GPU fallback / 同 issue 過去 PR root cause を疑う、C2)。Step 0 と Step 4 は検出 window が異なるため両方実施。「コンフリクト出ないから OK」「Step 0 で 0 件だったから Step 4 skip」は Red Flag (失敗パターン C 再発、`docs/l2-workflow.md` §「PR 作成 Pre-flight」 参照)
    - **resume-plan handoff (#722 で運用化)**: resume task prompt を user に提示する際は 1 行目に `EXECUTOR: self|dispatch (origin=..., generated=...)` を明記。生成側 origin が継続実行 (self) か abort (dispatch) かを prompt 自身で自記する。詳細は `docs/l2-workflow.md` §「resume-plan handoff protocol」 参照
    - PR 本文には machine-verified を `[x]` で、machine-unverifiable を plain bullet `-` で書き分ける (`docs/l2-workflow.md` §「Self-Test Report 規約」)。詳細手順は `docs/l2-workflow.md` §「PR 作成 path 別自動チェック」 / §「実機検証 trigger 表」 参照
 

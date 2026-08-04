@@ -9,6 +9,8 @@ import {
 import { sampleMetadata } from '../data/sampleMetadata';
 import type { Match, Metadata, TypeOverride } from '../types/metadata';
 import { MetadataSchema } from '../types/metadata.schema';
+import { fmtTime, fmtMatchDuration } from '../utils/time';
+import { isBoundaryValid } from '../utils/boundary';
 
 export type MatchEditPatch = Partial<
   Pick<Match, 'name' | 'type_override' | 'edited'>
@@ -122,6 +124,10 @@ export interface MetadataState {
 
   /** Phase 2 only: load the in-memory sample metadata (no filePath set). */
   loadSample: () => void;
+
+  /** #893: re-read metadata.json from disk (mtime + minimap_regions) after a
+   *  minimap crop subprocess wrote to it. Idempotent; no-op in sample mode. */
+  reloadFromDisk: () => Promise<void>;
 }
 
 const PERSISTABLE_TYPES = new Set<TypeOverride>(['fl_match', 'unknown']);
@@ -164,12 +170,24 @@ function normalizeForPersistence(metadata: Metadata): Metadata {
         index: m.index,
         start_time,
         end_time,
-        start_display: m.start_display,
-        end_display: m.end_display,
+        start_display: fmtTime(start_time),
+        end_display: fmtTime(end_time),
         duration,
-        duration_display: m.duration_display,
+        duration_display: fmtMatchDuration(duration),
         type: nextType,
-        output_file: m.output_file,
+        // #805 Phase 1 -- a post_match trailing segment never gets an MP4, so
+        // it has no output_file (metadata-spec §Match: NotRequired). Emit the
+        // key only when defined so the persisted shape omits it for post_match
+        // matches instead of writing `output_file: undefined`.
+        ...(m.output_file !== undefined ? { output_file: m.output_file } : {}),
+        // #805 Phase 1 (Codex HIGH 1) -- passthrough the non-destructive
+        // post_match flag so [適用] never strips it. Truthy-only: normal
+        // matches stay flag-free (never emit post_match: false/undefined),
+        // matching the detector / split / from-metadata payload convention.
+        // Dropping it here would let the next split/export re-encode a
+        // post_match trailing segment into an MP4, reversing the exclusion
+        // invariant the CLI establishes.
+        ...(m.post_match ? { post_match: true } : {}),
       };
     }),
   };
@@ -189,15 +207,53 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       applyErrorState: null,
       conflictErrorState: null,
     });
+    // #814 -- never persist a boundary the GUI can't read back. zod rejects
+    // end_time < start_time on reload, so writing one would brick metadata.json
+    // (audit P1-2). Enforce strict end > start here (the authoritative
+    // apply-time guard); Rust apply_changes re-checks as defense in depth.
+    // Read stays lenient (zod allows end >= start) so anything we write
+    // always reloads.
+    const normalized = normalizeForPersistence(metadata);
+    const invalid = normalized.matches.filter(
+      (m) => !isBoundaryValid(m.start_time, m.end_time),
+    );
+    if (invalid.length > 0) {
+      const idxs = invalid.map((m) => m.index).join(', ');
+      set({
+        applying: false,
+        applyErrorState: {
+          message: `境界が不正です (試合 ${idxs}): 終了 (OUT) は開始 (IN) より後である必要があります`,
+          hint: 'IN / OUT を調整してから再度適用してください',
+          code: 'validation.boundary_invalid',
+        },
+      });
+      return;
+    }
     try {
-      const normalized = normalizeForPersistence(metadata);
       const newMtime = await invoke<number>('apply_changes', {
         path: filePath,
         metadata: normalized,
         expectedMtimeMs: overwrite ? null : loadedMtimeMs,
       });
+      // #834 (P2-18) -- disk へ書く normalized は GUI-local field を strip 済
+      // (metadata-spec §GUI 編集契約)。in-memory には name/type_override を復元し
+      // apply 後も UI 表示が消えないようにする (disk と in-memory を分離)。
+      const editedById = new Map(metadata.matches.map((m) => [m.index, m]));
+      const retained: Metadata = {
+        ...normalized,
+        matches: normalized.matches.map((m) => {
+          const orig = editedById.get(m.index);
+          return {
+            ...m,
+            ...(orig?.name !== undefined ? { name: orig.name } : {}),
+            ...(orig?.type_override !== undefined
+              ? { type_override: orig.type_override }
+              : {}),
+          };
+        }),
+      };
       set({
-        metadata: normalized,
+        metadata: retained,
         dirty: false,
         applying: false,
         applyErrorState: null,
@@ -243,12 +299,15 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
 
   load: async (path) => {
     try {
+      // #834 -- capture mtime BEFORE reading contents so the recorded mtime is
+      // never newer than the parsed bytes. If the file is modified between the
+      // two calls, the stored mtime stays <= the content's, so a later apply
+      // detects the conflict (conservative) instead of silently overwriting.
+      // A missing mtime (file vanished between the two calls) is recorded as
+      // null; apply will then skip the check (#514).
+      const mtime = await invoke<number | null>('get_metadata_mtime', { path });
       const raw = await invoke<unknown>('load_metadata', { path });
       const parsed = MetadataSchema.parse(raw);
-      // #514: record mtime alongside contents so subsequent apply can detect
-      // external modifications. A missing mtime (file vanished between the
-      // two calls) is recorded as null; apply will then skip the check.
-      const mtime = await invoke<number | null>('get_metadata_mtime', { path });
       set({
         metadata: parsed as unknown as Metadata,
         filePath: path,
@@ -342,7 +401,11 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       await invoke('restore_from_original', { path: filePath });
       // Reload metadata from disk; load() also refreshes hasBackup.
       await get().load(filePath);
-      set({ restoring: false });
+      // #814 -- load() swallows its own failures into loadErrorState and never
+      // throws, so a restore whose reload failed would otherwise report success
+      // (RestoreButton then fires onRestored -> navigates to an empty screen).
+      // Treat the load failure as the restore's failure so the user sees it.
+      set({ restoring: false, restoreErrorState: get().loadErrorState });
     } catch (e) {
       set({ restoring: false, restoreErrorState: toErrorState(e) });
     }
@@ -498,6 +561,42 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       draftSaving: false,
       draftSaveErrorState: null,
     });
+  },
+
+  reloadFromDisk: async () => {
+    const path = get().filePath;
+    if (!path) return; // sample mode: no disk to reload
+    try {
+      // #834 order: read mtime BEFORE contents so a concurrent writer between
+      // the two calls leaves the stored mtime <= content's (conservative).
+      const mtime = await invoke<number | null>('get_metadata_mtime', { path });
+      const raw = await invoke<unknown>('load_metadata', { path });
+      const parsed = MetadataSchema.parse(raw);
+      set({
+        metadata: parsed as unknown as Metadata,
+        loadedMtimeMs: mtime ?? null,
+        dirty: false,
+        loadErrorState: null,
+        applyErrorState: null,
+        restoreErrorState: null,
+        conflictErrorState: null,
+      });
+      await get().refreshBackupStatus();
+    } catch (e) {
+      // reload failure surfaces an error but keeps the current in-memory
+      // metadata (the crop already wrote to disk; this is a read failure).
+      //
+      // Note: on reload failure, loadedMtimeMs is intentionally left stale
+      // (not reset here). This is conservatively SAFE: a later apply() will
+      // compare the stale (older) mtime against the newer disk mtime and
+      // detect a conflict (surfacing ConflictModal -> user reloads) rather
+      // than silently clobbering external changes. (#893 R2-3)
+      //
+      // Phase 1 has no live caller of reloadFromDisk yet; the caller-context
+      // behavior (e.g. how the MinimapScreen reacts to a reload failure) will
+      // be finalized in the Phase 2 MinimapScreen wiring PR.
+      set({ loadErrorState: toErrorState(e) });
+    }
   },
   };
 });
