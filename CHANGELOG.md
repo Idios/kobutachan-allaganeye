@@ -250,6 +250,15 @@ GPU 内に留め、Portable ZIP 同梱 CLI は PyInstaller で frozen 化した�
   fast-uri 3.1.2 → 3.1.5 / js-yaml 4.2.0 → 4.3.1 / nanoid 3.3.15 → 3.3.16 /
   postcss 8.5.15 → 8.5.25。`gui/package.json` は無変更。いずれも dev/build
   ツールチェーン依存で、配布 Tauri bundle には同梱されないため利用者への影響はない。
+- **undici の新規 advisory high × 1 / medium × 4** (タグ打ち直前に公開、Refs #862):
+  2026-08-03 に GHSA-4cwx-7wf7-3272 (high) / GHSA-8xcm-r25x-g524 / GHSA-m8rv-5g2x-5cg5 /
+  GHSA-jr45-8vmc-qm54 / GHSA-v3r7-h72x-cjcm (以上 medium) が公開された。いずれも
+  `>= 7.0.0, < 7.29.0` を対象とするため、**それまで patched だった 7.28.0 がそのまま
+  該当**した (既存の undici advisory とは別 ID で、既存 advisory の範囲が広がったわけでは
+  ない)。`npm update undici` で 7.29.0 へ transitive bump し解消 (`jsdom@29.0.2` の
+  `undici ^7.24.5` 範囲内。`gui/package.json` は無変更、lockfile のみ)。`jsdom` は
+  vitest の DOM 環境に使う devDependency で、配布 Tauri bundle には同梱されないため
+  利用者への影響はない。
 - **serde_with medium × 1** (Dependabot alert #22、Refs #862): GHSA-7gcf-g7xr-8hxj
   — `KeyValueMap` の serializer が要素長から `1` を引いてから最初の key field の
   存在を検証するため、空の内部 sequence / map entry を渡すと `Vec::with_capacity`
