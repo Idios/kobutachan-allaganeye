@@ -70,6 +70,8 @@ Error: --quiet and --verbose are mutually exclusive
 | `--no-cache` | 行 7 (Cache hit params) と行 13 の `(cached)` サフィックスが常に非出力。他行は影響なし |
 | `--no-audio` | 行 9 (検知パラメータ summary) の `audio=frozen` / `audio=off` トークンに反映。現状 AUDIO_FROZEN=True のため値に関わらず `frozen` 表示 (#384) |
 | `--vtuber` | 行 9 の `vtuber=on` トークンに反映。`--vtuber` 採用 run の verbose 検知統計 (行 11) に `Timeline (vtuber)` / `V3:` 行が追加される (#895)。`--vtuber` が縮退 (V0 失敗等) した場合は timeline 統計行は出力されず通常 pass 1/2 統計に戻る。cache ヒット時 (行 7) は `vtuber_algo=N` トークンが `masked_fallback` 直後に挿入される (vtuber 影響 run のみ) |
+| `--masked` | 行 9 の `masked=on` トークンに反映。masked fallback 採用 run では verbose 検知統計 (行 11) に `masked L2 validation` / `masked L2 zero-gap merge` 行が追加される (#822)。暗転が 1 件も検出できなかった録画では `--masked` 未指定でも fallback が自動発動するため、**行 9 が `masked=off` のままでもこれらの統計行が出力されうる** (#821)。cache ヒット時 (行 7) は `masked=` に加え resolved の `masked_fallback=` が出力され、masked 影響 run のみ `masked_algo=N` トークンが `masked_fallback` の直後に挿入される。`--vtuber` との同時指定は exit 5 |
+| `--keep-trailing` | 出力項目自体の有無には影響しない。cache ヒット時 (行 7) の `keep_trailing=on` トークン値に反映され、post-match trailing を通常 match として MP4 化するため行 17 のファイル一覧と行 11 の `Splitting: N matches` の件数が変化しうる (#805)。行 13 の `Detected N match(es)` と行 14 の Match 一覧は default でも post_match segment を数えるため、本フラグでは変化しない |
 | `-o`, `--sample-interval`, `--blackout-threshold`, etc. | 出力項目自体の有無には影響せず、値のみ変化 |
 
 直交フラグ × 主軸組合せの全網羅 (例: `--gpu × 8 = 16 組合せ`) は **系統的検証チェックリスト (#409)** で補完する。

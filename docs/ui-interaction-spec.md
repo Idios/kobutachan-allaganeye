@@ -902,7 +902,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | input: `idle` / `disabled` (`running \|\| cancelling \|\| isSample`。sample mode disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) → §1.4)。hint: `displayOnly` |
 | 遷移トリガー | input `onChange` → 即時 `setNamePattern(value)` |
 | store mutation | なし (session-local) |
-| 例外 / edge case | `formatName` で `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}` を置換。`{start}` は `formatStartForFilename` で `MM-SS` / `H-MM-SS` 形式 (Windows filename で `:` 不可のため `-` 置換)。malformed pattern (置換キーなし等) は実体ファイル名がそのまま出るのみで error にしない。重複ファイル名は ffmpeg `-y` で silent overwrite |
+| 例外 / edge case | `formatName` で `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}` を置換。`{start}` は `formatStartForFilename` で `MM-SS` / `H-MM-SS` 形式 (Windows filename で `:` 不可のため `-` 置換)。未知トークン (`{foo}` 等) は置換されず literal のまま出るだけで syntax error にはしない。ただし **置換キーなし等で 2 つ以上の match が同一ファイルに解決する pattern は、CLI 側の `resolve_export_output_paths` が ffmpeg 起動前 (mkdir よりも前) に検出し、1 件も書き出さずに exit 5** (#930 / #938)。GUI も `--stdin` で同じ `export` command を呼ぶため同じ preflight を通り、invoke reject → `EXPORT_ERROR` (§2.5.7) になる。**前回 run が残した同名ファイルへの上書き** (ffmpeg `-y`) は従来どおりで拒否対象ではない (§2.5.12)。拒否 5 条件の正は [cli-spec.md](cli-spec.md) の `--name-pattern` |
 
 #### §2.5.6 コーデック selector (copy / h264 buttons)
 
@@ -1156,7 +1156,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | `disabled={isSample \|\| running \|\| cancelling}`。`DisabledTooltip disabled={isSample} reason={sampleReason} inlineHint` |
 | 遷移トリガー | `onChange` → `setNamePattern`。default は `{idx:03}_{type}_{start}_minimap.mp4` |
 | store mutation | なし (§1.1 例外の session-local config) |
-| 例外 / edge case | 実際のファイル名生成は CLI (`allaganeye minimap`) 側が行い、GUI は文字列を渡すだけで validation しない。一覧 (§2.6.16) の表示名は `namePattern` を反映せず `match_NNN_minimap.mp4` 固定 |
+| 例外 / edge case | 実際のファイル名生成は CLI (`allaganeye minimap`) 側が行い、GUI は文字列を渡すだけで validation しない。一覧 (§2.6.16) の表示名は [filename.ts](../gui/src/utils/filename.ts) の `formatMatchFilename` で `namePattern` を展開した結果 (export の §2.5.5 と同一ロジックを共有、#932) |
 
 #### §2.6.12 errorMessage
 
@@ -1206,7 +1206,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | マークは `post_match` → `—` / `done` → `✓` / `running` → `●` / `error` → `!` / `skipped` → `—` / それ以外 → `○`。checkbox は `disabled={isSample \|\| type_override === 'skip' \|\| post_match \|\| running \|\| cancelling}` で、`checked` は skip / post_match / excluded のいずれにも該当しないときのみ true。進捗バーは `running \|\| completed \|\| status === 'done' \|\| status === 'error'` のときだけ render される。`post_match` 行は `styles.listItemPostMatch` (減光) + `data-post-match="true"` |
 | 遷移トリガー | checkbox `onChange` → `toggleMatchExclusion(index)` が local `excluded` の in/out を切り替える。進捗 / エラー / fallbackNotice は `minimap-progress` イベント由来 |
 | store mutation | なし (local `excluded` / `matchStates`) |
-| 例外 / edge case | **GPU fallback notice** ([#899](https://github.com/Idios/kobutachan-allaganeye/issues/899)): `stage === 'fallback'` の progress を受けると `message` (無ければ `` `${fallback_from ?? 'GPU encoder'} 失敗、libx264 で再試行` ``) を per-match に刻む。あわせて status を `running` に倒す (NVENC の初期化失敗は 1 frame も encode せずに落ちるため fallback がその match の**最初の** event になるのが通常ケースで、prior を保つと `○` (pending) のまま「libx264 で再試行中」と出る矛盾表示になる)。libx264 で encode をやり直すため進捗が 0% に戻ること自体は正しい挙動。`role="status"` の非 assertive 通知として `var(--ae-accent)` 色で表示する。per-match エラー文字列は 120 文字で切り詰める。表示ファイル名は §2.6.11 の `namePattern` を反映せず `match_NNN_minimap.mp4` 固定 |
+| 例外 / edge case | **GPU fallback notice** ([#899](https://github.com/Idios/kobutachan-allaganeye/issues/899)): `stage === 'fallback'` の progress を受けると `message` (無ければ `` `${fallback_from ?? 'GPU encoder'} 失敗、libx264 で再試行` ``) を per-match に刻む。あわせて status を `running` に倒す (NVENC の初期化失敗は 1 frame も encode せずに落ちるため fallback がその match の**最初の** event になるのが通常ケースで、prior を保つと `○` (pending) のまま「libx264 で再試行中」と出る矛盾表示になる)。libx264 で encode をやり直すため進捗が 0% に戻ること自体は正しい挙動。`role="status"` の非 assertive 通知として `var(--ae-accent)` 色で表示する。per-match エラー文字列は 120 文字で切り詰める。表示ファイル名は §2.6.11 の `namePattern` を `formatMatchFilename` ([filename.ts](../gui/src/utils/filename.ts)) で展開した結果 (`{idx:03}` / `{idx}` / `{type}` / `{start}` / `{date}` を置換。`{start}` は `MM-SS` / `H-MM-SS` 形式で、`m.edited` があるときは編集後の `start_time` を使う、#932) |
 
 #### §2.6.17 ConflictModal (minimap-local)
 

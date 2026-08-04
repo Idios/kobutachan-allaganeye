@@ -5,14 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - 2026-08-03
+## [0.3.0] - 2026-08-04
 
 L3 (配信形式対応 + 性能改善) リリース。エリアマップ切り抜き (`minimap` CLI + GUI 画面) と
 並列 export (`export` CLI、GUI 書き出しの Python コア共有) を新設し、masked (チャット欄
 マスク) / VTuber (ゲーム画面 inset) の配信録画を検出対象に加えた。detect の chunk decode は
 ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match trailing の不可逆削除は
-`post_match` フラグ方式に置き換えた。NVDEC decode 経路の追加で export / minimap の
-再エンコードを高速化し、Portable ZIP 同梱 CLI は PyInstaller で frozen 化した。
+`post_match` フラグ方式に置き換えた。export / minimap の再エンコードは NVDEC decode 経路で
+GPU 内に留め、Portable ZIP 同梱 CLI は PyInstaller で frozen 化した。
+
+> **アップグレード時の注意**: 検知キャッシュが全無効化されるため、**処理済みの動画でも初回は
+> フル再検知**になります。加えて detect 自体が v0.2.x 比で**約 1.7x 遅く**なっています
+> (取りこぼしていた短時間 blackout を拾うための trade-off)。また **v0.3.0 が書いた
+> `metadata.json` は v0.2.x の GUI では読み込めません**。詳細は Changed / Performance を参照。
 
 ### Added
 
@@ -51,6 +56,8 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   `detection_params.masked_fallback_used` で常に確認できる。`-v` の `masked_fallback=on`
   トークンは **cache hit 時のパラメータ要約行にのみ**出力される点に注意 (fallback が実際に
   発火する cache miss の初回 run では出ない)。初回 run の確認は metadata 側を見ること。
+  `--masked` は **CLI 専用フラグで GUI に指定 UI はない**が、0 暗転録画での自動 fallback は
+  検出コア側の挙動のため GUI 起動の検出でも同様に発動する。
 - **detect / split `--vtuber`** (#895): VTuber 配信録画 (ゲーム画面が inset、装飾
   オーバーレイ多数) 向けの timeline 検出を新規追加。暗転起点ではなく「試合中である」
   証拠 (scorebar presence AND 画面運動) の timeline から試合区間を抽出する (V0 anchor
@@ -68,6 +75,8 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   で合成した実効 66 セグメントと突合し **recall 100% (66/66、missed 0) / spurious 0**。
   tolerance は非対称 (損失方向 15s / 余分方向 300s = 試合内容の欠落を許さない側に厳格)。
   詳細は `docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md`。
+  `--vtuber` は **CLI 専用フラグで GUI に指定 UI はなく**、VTuber path は自動発動しないため、
+  GUI 起動の検出は常に従来 path で動く。
 - **post-match trailing の非破壊フラグ化** (#805): 試合終了後の trailing 区間を削除する
   代わりに `post_match: true` を付与する。default split の MP4 からは除外しつつ metadata
   には保持し、GUI では badge / dimming と ExportScreen の選択不可行で可視化する。
@@ -106,9 +115,10 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   `post_match: true` の entry は MP4 を生成しないため `output_file` を持たず、
   `matches[]` の件数と出力 MP4 の件数は一致しなくなった。`schema_version` は `"1"` の
   まま (追加 field はすべて optional) なので、metadata.json を読む外部スクリプトは
-  `output_file` の有無を存在チェックで判定すること。なお v0.3.0 が書いた post_match 入り
-  metadata.json は v0.2.x の GUI では読み込めない (旧 zod が `output_file` を必須として
-  いるため)。
+  `output_file` の有無を存在チェックで判定すること。
+  **v0.3.0 が書いた post_match 入りの metadata.json は、v0.2.x の GUI では読み込めない**
+  (旧 zod が `output_file` を必須としているため)。Portable ZIP は展開 = インストールで
+  複数バージョンを併存させられるので、旧 GUI を残している場合は注意すること。
 - **metadata.json の `source` フィールド**: `detect` / `split` が記録する値が**絶対パス**に
   なった (#930)。従来は argv の値 (pathlib 正規化のみ) を相対のまま保存していたため、相対
   パスで実行した run の metadata.json は、それを生成したカレントディレクトリからしか解釈
@@ -134,15 +144,6 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
 - **GUI brightness timeline** (#576 の副作用): #569 で追加した GUI 輝度タイムラインの
   Pass 1 brightness 値が新 path で正確化される (旧 path の fps filter drift で歪んで
   いた値が修正される方向)。timeline 形状の変化が user-visible になる可能性あり。
-- **Audit verification**: PR #793 detector を 5 OBS baseline
-  (obs-20260116/118/119/127/209、計 54 boundary) に対して
-  `scripts/audit-compare.py` (#796 deliverable, PR #799) で ground truth 比較。
-  **53/54 agreed (within ±5s、98.1%)**、唯一の残 finding は
-  obs-20260116 M6 end (#797) で、本リリースの #803 gate + #805 フラグ化で解消。
-  obs-20260118 ground truth は PR #793 detector で新発見した M2 boundary
-  (1686-2610s) を Idios 視覚再確認 (2026-05-21) で実 boundary 確定し
-  5→6 matches に修正。詳細は `docs/v030-baseline-audit.md`
-  §"2026-05-21 PR #793 verification update" 参照。
 
 ### Fixed
 
@@ -221,6 +222,19 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   テーマ既定のアクセント色で表示するよう修正。同じ欠陥を複製していた minimap 画面
   (v0.3.0 で新規追加のため未出荷) も同時に修正し、未定義 CSS 変数の参照を検出する
   回帰テストを追加した。
+- **検知の [中断] がプロセスを止めない** (#813、v0.2.0 から): 検知中に [中断] を押すと画面は
+  drop に戻るが、実際には Python の detect と最大 32 本の ffmpeg がそのまま動き続け、GUI を
+  終了するまで CPU / GPU を消費していた (GUI 終了時の残留自体は v0.2.1 #756 の Job Object で
+  既に塞いである)。同じ動画に対して二重に検知を開始でき、2 つのプロセスが同一の出力先へ
+  書き込みうる状態でもあった。[中断] で `kill_tracked_processes` を invoke してから phase を
+  遷移するよう修正し、あわせて検知イベントに run id を付与して旧 run のイベントが新しい
+  画面に混入しないようにした。
+- **境界編集で metadata.json が読み込み不能になり、無言の空画面になる** (#814、v0.2.0 から):
+  プレビュー画面の IN / OUT には相互の下限・上限が無く、OUT を IN より手前に置いたまま
+  保存できた。書き込まれた metadata.json は次回の読み込みで schema (`end_time >= start_time`)
+  に弾かれるが、その読み込みエラーはどの画面にも表示されず、GUI 内に復旧手段が無いまま
+  空画面になっていた。UI の相互クランプ / 保存前検証 / Rust `apply_changes` の guard の 3 層で
+  不正な境界の書き込みを塞ぎ、読み込みエラーを画面に表示するよう配線した。
 
 ### Security
 
@@ -288,9 +302,9 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
 
 ### Internal
 
-- GUI 安定化: detect 中断時の `kill_tracked_processes` invoke + run-id fencing
-  (#813)、metadata 境界検証 + load エラー可視化 (#814)、export/cancel 安定化
-  (#837)、stderr drain の bounded helper 化 (#838)、metadata / polish (#834)。
+- GUI 安定化 (P2-medium 分): export/cancel 安定化 (#837)、stderr drain の bounded
+  helper 化 (#838)、metadata / polish (#834)。P1-high の #813 / #814 は出荷済み
+  v0.2.x GUI に到達可能な不具合だったため `### Fixed` に記載。
 - CLI / export 整合 (#840)、detector core 堅牢化 (#842)、テスト配線拡充
   (split SHA gate / wire e2e CI 実走 / VTuber GT、#844 / #845)。
 - `--vtuber` の精度 gate 用に 6 source の VTuber ground truth
@@ -298,6 +312,12 @@ ffmpeg `fps` filter を退役させ frame-index ベースに刷新、post-match 
   `tests/scripts/poc_vtuber_timeline/gt_boundary_probe.py` を追加 (#895)。
   計測器は評価専用 (CLI / 配布物からは参照されない) で、GT 再現性のため
   production `_tolerant_runs` の copy を pin し drift 時に WARNING を出す。
+- 検出精度の audit verification: PR #793 detector を 5 OBS baseline
+  (obs-20260116/118/119/127/209、計 54 boundary) に対して `scripts/audit-compare.py`
+  (#796 deliverable, PR #799) で ground truth 比較し、**53/54 agreed (within ±5s、98.1%)**。
+  唯一の残 finding は obs-20260116 M6 end (#797) で、本リリースの #803 gate + #805
+  フラグ化で解消。詳細は `docs/v030-baseline-audit.md`
+  §"2026-05-21 PR #793 verification update" 参照。
 - v0.3.0 OBS baseline regression 基盤: compare-baseline + ground truth (#777)、
   動画セット選定 5 本 (#778)、baseline 生成 + split.json schema (#779)、
   audit-prepare / audit-compare の再現性硬化とクラッシュ復旧 (#796 / #798 / #800)、
