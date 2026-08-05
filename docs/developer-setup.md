@@ -221,11 +221,23 @@ pin を更新した後は必ず再インストールしてください。
 pip install -e ".[dev]" --upgrade
 ```
 
-現在インストールされている版は次で確認できます。
+現在の版は **CLI に聞いて**確認します。
 
 ```bash
-python -c "import importlib.metadata as m; print('ruff', m.version('ruff')); print('pyright', m.version('pyright'))"
+ruff --version
+pyright --version
 ```
+
+**`pyright` はパッケージ版と実行版が別物になりえます。** PyPI の `pyright` は wrapper で、解析器本体の版は `PYRIGHT_PYTHON_FORCE_VERSION` / `PYRIGHT_PYTHON_PYLANCE_VERSION` で上書きできます (`pyright/_utils.py` の `_get_configured_pyright_version()`)。実測:
+
+```text
+$ PYRIGHT_PYTHON_FORCE_VERSION=1.1.405 pyright --version
+pyright 1.1.405
+$ python -c "import importlib.metadata as m; print(m.version('pyright'))"
+1.1.411
+```
+
+つまり `importlib.metadata` で確認しても runtime の版は保証されません。**`pyright --version` の出力が pin と一致すること**を確認してください。上記の環境変数を設定している場合は、CI (未設定) と結果が食い違います。
 
 ### Windows: `pyright` の install が MAX_PATH で失敗する場合 (#907)
 
@@ -258,10 +270,12 @@ Windows の ANSI API はフルパスを **259 文字まで**しか扱えませ�
 | repo 直下の `.venv` (`<repo>\.venv\Lib\site-packages`) | 74 | 196 | OK (余裕 63 文字) |
 | worktree 内の `.venv` (`<repo>\.claude\worktrees\<name>\.venv\Lib\site-packages`) | 119 | 241 | OK (余裕 18 文字) |
 
-自分の環境で判定するには次を実行します (`OK` なら install できます)。**venv の外では pip はユーザー site-packages へ書く**ので、`site.getsitepackages()` (システム側、読み取り専用) ではなく実際の書き込み先を測る必要があります。
+自分の環境で判定するには次を実行します (`OK` なら install できます)。
+
+**venv の外では pip の書き込み先が一意に決まりません。** システム site-packages が書ければそこへ、書けなければユーザー site-packages へ落ちます (Microsoft Store 版 Python や `--user` 指定時)。そのため venv 外では **両方を表示**し、使う方の行を見てください。`site.getsitepackages()` だけを測ると、読み取り専用のシステム側 (短い) を見て `OK` と誤判定します。**venv を使えばこの曖昧さ自体が消えます。**
 
 ```bash
-python -c "import sys,site,sysconfig; p = sysconfig.get_paths()['purelib'] if sys.prefix != sys.base_prefix else site.getusersitepackages(); n=len(p); print(('venv' if sys.prefix != sys.base_prefix else 'user site'), n, n+122, 'OK' if n+122 <= 259 else 'NG')"
+python -c "import sys,site,sysconfig; venv = sys.prefix != sys.base_prefix; cands = [('venv', sysconfig.get_paths()['purelib'])] if venv else [('system', sysconfig.get_paths()['purelib']), ('user', site.getusersitepackages())]; [print(k, len(q), len(q)+122, 'OK' if len(q)+122 <= 259 else 'NG') for k,q in cands]"
 ```
 
 **対処は仮想環境を使うこと**です (本 doc が元々推奨している方法)。repo 直下の `.venv` が最も余裕があります。
