@@ -497,12 +497,27 @@ base は全 Track `develop-0.3.1` (D4)。
 
 | Track | 並列性 | 内容 | issue |
 | --- | --- | --- | --- |
-| **0** | 直列 (最初) | 本 spec + E1/E2/E3/E5/E6/E7 の issue 起票 (D10) + cv2 5.x 移行 issue の起票 (D8) + #326 の別 repo 転記と close (D12) | — |
+| **0** | 直列 (最初) | 本 spec + 7 事象の issue 起票 (D10、**完了**: #945-#950) + cv2 5.x 移行 issue の起票 (D8、**完了**: #951) + #326 の別 repo 転記と close (D12、**未**) | — |
 | **A′** | 直列 (Track 0 直後) | **ruff / pyright の pin 先行** | #907 相当 (#916 から切り出し) |
 | **A** | 並列可 | 依存 pin 本体 (constraints 方針、cv2 4.x 固定、typer/click 恒久化) | #916 #863 |
-| **B** | 並列可 | doc / コード小修正 / skill 文言 | #944 #923 #922 #920 #933 #913 #376 #906 #652 #658 #864 #865 #882 #856 #918 #935 #870 |
-| **C** | 並列可 | CI / gate | #936 #912 #910 #868 #934 #876 + E2/E3/E4/E5 の job |
+| **B** | 並列可 | doc / コード小修正 / skill 文言 | #944 #923 #922 #920 #933 #913 #376 #906 #652 #658 #864 #865 #882 #856 #918 #935 #870 #945 #949 #952 |
+| **C** | 並列可 | CI / gate | #936 #912 #910 #868 #934 #876 #946 #947 #948 #950 |
 | **D** | 直列 (最後) | version bump + CHANGELOG 確定 | — |
+
+#### 事象 → issue の対応 (D10 / D8 の起票結果、2026-08-05)
+
+| 事象 | issue | Track |
+| --- | --- | --- |
+| E1 Fable に発火点がない | [#945](https://github.com/Idios/kobutachan-allaganeye/issues/945) | B |
+| E2 Pre-flight 鮮度が検証されていない | [#946](https://github.com/Idios/kobutachan-allaganeye/issues/946) | C |
+| E3 `release/*` base の PR で CI が起動しない | [#947](https://github.com/Idios/kobutachan-allaganeye/issues/947) | C |
+| E4 doc スイープの軸のズレ | [#944](https://github.com/Idios/kobutachan-allaganeye/issues/944) (既存) | B |
+| E5 CHANGELOG 見出し日付 | [#948](https://github.com/Idios/kobutachan-allaganeye/issues/948) | C |
+| E6 Codex review 出力を読む規定がない | [#949](https://github.com/Idios/kobutachan-allaganeye/issues/949) | B |
+| E7 タグ直前の security 再チェック | [#950](https://github.com/Idios/kobutachan-allaganeye/issues/950) | C |
+| (D8) cv2 5.x 移行 | [#951](https://github.com/Idios/kobutachan-allaganeye/issues/951) | deferred |
+
+Fable 俯瞰レビュー (2026-08-03) 由来の独立 finding 2 件も同時に起票した — [#952](https://github.com/Idios/kobutachan-allaganeye/issues/952) (Release body の Added entry が読者に過剰) / [#953](https://github.com/Idios/kobutachan-allaganeye/issues/953) (minimap 実行中の画面離脱で進捗表示を失う扱いの決着)。#952 は Track B、#953 は決着方法が未定。
 
 ### 6.3 同一ファイルを触る組 (同一 PR か直列化が必須)
 
