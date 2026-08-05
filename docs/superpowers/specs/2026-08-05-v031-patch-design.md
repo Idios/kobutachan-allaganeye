@@ -167,9 +167,9 @@ deferred 棚卸しの引き継ぎ資料は吸収を「26 件」と記載して�
 | D7 | **CHANGELOG に `## [Unreleased]` 節を新設し、Track A-C の各 PR はそこへ追記する** | Track D が version 見出しへ確定させる。既リリース済み節を触らせない |
 | D8 | **cv2 は 4.x 固定 (`opencv-python-headless>=4.8,<5`)** | 実機検証・baseline 再取得が不要になり、ローカル (4.13) / CI / 出荷物の 3 者が初めて一致する。**5.x 移行は Track 0 で別 issue を起票して deferred** (GT / bit-exact baseline 再取得が要るため patch には載せない) |
 | D9 | **#936 (a) のブロッキング範囲は Self-Test Report のみ (10 box)** | Iron Law 1/3/4 群は heading filter の完全一致に掛からないため自動ではブロッキング化しない |
-| D10 | **E1 / E2 / E3 / E5 / E6 / E7 を個別 issue として起票する** | Track 表が open issue と 1:1 になる。#870 が問題にする「番号を持たない別 issue 宣言」を spec 自身が再生産しない |
+| D10 | **E1 / E2 / E3 / E5 / E6 / E7 を個別 issue として起票する** | 実装計画の PR 表が open issue と 1:1 になる。#870 が問題にする「番号を持たない別 issue 宣言」を spec 自身が再生産しない |
 | D11 | **EPT (empirical-prompt-tuning) は振る舞い変更を伴う skill 改修のみに適用する** | 対象 = #935 (判断基準の置換) / #918 (手順変更) / E1 (Fable step 新設)。#856 (語彙統一 4 箇所) は skip し、根拠を PR 本文に明記 |
-| D12 | **#326 は別 repo (`Idios/idios-claudecode-tools`) へ転記し、本 repo の #326 は close する** | 本 repo 側に実行できる作業が存在しない。別 repo への起票は Idios が行う。**順序制約 (Idios 判断 2026-08-05)**: 転記は skill / hook / CLAUDE.md 等の基本ドキュメントが固まってから。本 release でそれらを書き換えるのは #945 / #935 / #856 / #870 / **#918** であり、**#918 だけが Track C (PR-C4)** に置かれている (`check_version_consistency.py:268` の `args.tag` 分岐を #948 と共有するため)。したがって条件は「Track B 完了後」**ではなく** PR-B3 + PR-B4 + PR-C4 の 3 本すべてのマージ後。固まる前に転記すると転記先テンプレートが旧版を写す |
+| D12 | **#326 は別 repo (`Idios/idios-claudecode-tools`) へ転記し、本 repo の #326 は close する** | 本 repo 側に実行できる作業が存在しない。別 repo への起票は Idios が行う。**順序制約 (Idios 判断 2026-08-05)**: 転記は skill / hook / CLAUDE.md 等の基本ドキュメントが固まってから。本 release でそれらを書き換えるのは **#945 / #935 / #856 / #870 / #918 の 5 件**であり、**転記の条件はこの 5 件すべてのマージ後**である。条件を Track で表現しないこと — #918 は `check_version_consistency.py:268` の `args.tag` 分岐を #948 と共有する都合で他 4 件と別 Track に置かれており、「Track B 完了後」と書くと #918 を取りこぼす (Codex Round 1 で実際に検出された)。5 件を載せる PR は [実装計画](../plans/2026-08-05-v031-track-decomposition.md) を参照。固まる前に転記すると転記先テンプレートが旧版を写す |
 
 ## 5. 設計
 
@@ -483,82 +483,36 @@ Idios の実機は 1 台なので、**Track が違っても物理的に直列**�
 
 長時間 GPU job は memory `feedback_long_gpu_job_detached_execution` に従い `Start-Process -WindowStyle Hidden` で独立起動する (harness の background Bash はセッション死と共に kill される)。
 
-## 6. 実装 Track と issue 分解
+## 6. 実装 Track (設計判断)
+
+> **割り付けの正 (SSoT) は [実装計画](../plans/2026-08-05-v031-track-decomposition.md) の PR 表である。本節は issue → Track / PR の割り付けを一切持たない。**
+>
+> 初版は本節に Track ごとの issue 一覧を持っていたが、Codex adversarial-review が **3 ラウンド連続で「spec と plan の割り付けが同期していない」という同一クラスの finding** を出した。Round 2 で「参照用の派生ビュー」として縮小したが、その縮小版がさらに虚偽の coverage 記述を生んだ (Round 3)。部分的に残す試みが同一セッション中に 3 回とも drift したため、§5.3 G3「SSoT の複製と参照切れ」の処方 (機械可読な正を 1 箇所に置き、他方は参照にする) を本 spec 自身に全面適用し、割り付け情報を撤去した。
+>
+> 撤去した内容の行き先 — Track / PR 割り付けと事象→issue 対応、同一ファイルを触る組、Track D の作業内容、並列度の上限は、すべて plan が持つ。
 
 ### 6.1 Track 0 を裁定のみに限定する理由
 
 `docs/release-process.md:227` は Track 0 を「spec PR / 直列 (最初)」と定義し、前例 (v0.2.1 Track 0) も「4 Lane / 約 14 PR に分解する形で提案する」と決定と分解のみを行っている。
 
-**Track 0 に実装を積むと、直列最初の PR で Track A / B / C の着手が全部待たされ、Track 構造の目的そのものが潰れる。** したがって #935 (effort L) / #936 / #870 / #856 の**実編集は Track B / C へ移す**。Track 0 の成果物は本 spec と、D10 に基づく 6 件の issue 起票のみとする。
+**Track 0 に実装を積むと、直列最初の PR で Track A / B / C の着手が全部待たされ、Track 構造の目的そのものが潰れる。** したがって #935 (effort L) / #936 / #870 / #856 の**実編集は後続 Track へ移す** (どの Track / PR かは [実装計画](../plans/2026-08-05-v031-track-decomposition.md) が持つ)。Track 0 の成果物は本 spec と実装計画、および D10 / D8 に基づく issue 起票のみとする。
 
-### 6.2 Track 表
+### 6.2 Track 構造
 
-base は全 Track `develop-0.3.1` (D4)。
+base は全 Track `develop-0.3.1` (D4)。Track の意味づけは [`docs/release-process.md` §Patch release の Track 構造](../../release-process.md#patch-release-の-track-構造) に従い、D3 で「変更の性質で既存 4 Track に分配」と確定した。
 
-| Track | 並列性 | 内容 | issue |
-| --- | --- | --- | --- |
-| **0** | 直列 (最初) | 本 spec + 7 事象の issue 起票 (D10、**完了**: #945-#950) + cv2 5.x 移行 issue の起票 (D8、**完了**: #951) + #326 の別 repo 転記と close (D12、**未**) | — |
-| **A′** | 直列 (Track 0 直後) | **ruff / pyright の pin 先行** | #907 相当 (#916 から切り出し) |
-| **A** | 並列可 | 依存 pin 本体 (constraints 方針、cv2 4.x 固定、typer/click 恒久化) | #916 #863 |
-| **B** | 並列可 | doc / コード小修正 / skill 文言 | 18 件 |
-| **C** | 並列可 | CI / gate | 11 件 |
-| **D** | 直列 (最後) | version bump + CHANGELOG 確定 | — |
-
-**PR 作業の総数**: A′ 1 + A 2 + B 18 + C 11 = **32 件**。これに PR を持たない 4 件 (#923 close のみ / #326 別 repo 転記 / #951 #953 deferred) を足して 36 件。
-
-#### issue → Track の正 (SSoT)
-
-**本節は issue 番号を列挙しない。** issue → Track / PR の割り付けは **[実装計画](../plans/2026-08-05-v031-track-decomposition.md) の PR 表が単一の正 (SSoT)** である。
-
-本 spec 側の Track 表記は**派生ビュー**であり、正ではない。
-
-- §9.1 の Track 列 — 吸収 27 件のみを覆う。`/release` Step 0c が要求するのは `分類` 列 ((a)/(b)/(c)) であって Track ではないため、Track 列は参照用の付加情報
-- §6.2 の「事象 → issue の対応」表 — Track 0 で起票した 9 件 (#945-#953) のみを覆う
-
-**割り付けを変えるときは plan を先に直し、上の 2 つの派生ビューを追随させる。** 整合は次のコマンドで機械検査できる。
-
-```bash
-grep -c '^| #' docs/superpowers/specs/2026-08-05-v031-patch-design.md
-grep -oE '^\*\*issue:\*\*.*' docs/superpowers/plans/2026-08-05-v031-track-decomposition.md | grep -oE '#[0-9]+' | sort -u | wc -l
-```
-
-この形にした理由: 初版は本節にも issue 番号を列挙しており、#918 を Track B → Track C (PR-C4) へ動かしたときに plan だけを直して本節が古びた。Codex adversarial-review の Round 1 / Round 2 が**連続して同じクラスの同期ずれ**を検出したため、個別 patch を止めて §5.3 G3「SSoT の複製と参照切れ」の処方 (機械可読な正を 1 箇所に置き、他方は参照にする) を本 spec 自身に適用した。
-
-なお **#918 が Track C にある**のは `check_version_consistency.py:268` の `args.tag` 分岐を #948 と共有するためで (plan §6.3)、この配置が D12 (#326 の転記条件が PR-C4 を含む理由) の根拠になっている。Track B へ戻す場合は D12 も同時に見直すこと。
-
-#### 事象 → issue の対応 (D10 / D8 の起票結果、2026-08-05)
-
-| 事象 | issue | Track |
+| Track | 並列性 | 内容 |
 | --- | --- | --- |
-| E1 Fable に発火点がない | [#945](https://github.com/Idios/kobutachan-allaganeye/issues/945) | B |
-| E2 Pre-flight 鮮度が検証されていない | [#946](https://github.com/Idios/kobutachan-allaganeye/issues/946) | C |
-| E3 `release/*` base の PR で CI が起動しない | [#947](https://github.com/Idios/kobutachan-allaganeye/issues/947) | C |
-| E4 doc スイープの軸のズレ | [#944](https://github.com/Idios/kobutachan-allaganeye/issues/944) (既存) | B |
-| E5 CHANGELOG 見出し日付 | [#948](https://github.com/Idios/kobutachan-allaganeye/issues/948) | C |
-| E6 Codex review 出力を読む規定がない | [#949](https://github.com/Idios/kobutachan-allaganeye/issues/949) | B |
-| E7 タグ直前の security 再チェック | [#950](https://github.com/Idios/kobutachan-allaganeye/issues/950) | C |
-| (D8) cv2 5.x 移行 | [#951](https://github.com/Idios/kobutachan-allaganeye/issues/951) | deferred |
+| **0** | 直列 (最初) | 本 spec + 実装計画 + Track 0 で必要な issue 起票 |
+| **A′** | 直列 (Track 0 直後) | lint ツールの pin 先行 |
+| **A** | 並列可 | 依存 pin 本体 (constraints 方針、cv2 4.x 固定、typer / click 恒久化) |
+| **B** | 並列可 | doc / コード小修正 / skill 文言 |
+| **C** | 並列可 | CI / gate |
+| **D** | 直列 (最後) | version bump + CHANGELOG 確定 |
 
-Fable 俯瞰レビュー (2026-08-03) 由来の独立 finding 2 件も同時に起票した — [#952](https://github.com/Idios/kobutachan-allaganeye/issues/952) (Release body の Added entry が読者に過剰) / [#953](https://github.com/Idios/kobutachan-allaganeye/issues/953) (minimap 実行中の画面離脱で進捗表示を失う扱いの決着)。**#952 は Track B** — ただし v0.3.0 節は書き換えず、CHANGELOG 記述規約の制定と `## [Unreleased]` 節への適用に限る (D7 の「既リリース済み節を触らせない」と整合。Idios 判断 2026-08-05)。**#953 は deferred (v0.3.1 範囲外)** — listener を画面遷移を跨いで保持/復元するのは GUI の挙動変更であり、「機能追加は行わない」方針に照らして本 release では扱わない (Idios 判断 2026-08-05)。
+**A′ を新設した理由**: lint ツールの版が変わると `ruff format --check .` の結果が repo 全体で変わる。Track B / C を並列で走らせている最中に pin を変えると、先行 PR が rebase 時に一斉に赤化する (memory `feedback_ruff_version_drift_md_codeblocks` / `feedback_ruff_format_whole_repo_gate`)。既存の Track A に含めると並列扱いになるため、直列 slot として切り出した。
 
-### 6.3 同一ファイルを触る組 (同一 PR か直列化が必須)
-
-| 衝突ファイル | issue | 対処 |
-| --- | --- | --- |
-| `docs/l2-workflow.md:171-185` のコードフェンス + `review-pr/eval/requirements.md` | #935 (B) × #856 (B) | **同一 PR にまとめる**か #935 → #856 の順に直列化 |
-| `docs/output-spec.md` matrix v2 (L88-113) | #920 (B) × #933 (B) | 直列化または 1 PR 統合 |
-| `docs/cli-spec.md:625` | #376 (B) × #863 (A) | **Track を跨ぐ衝突。** merge 順序を調整する |
-| `scripts/check_version_consistency.py` の `--tag` 分岐 + `release.yml:98-106` | #918 item3 (C) × G1-3 (E5) | 両者とも新フラグと検証を追加する。**1 PR に統合する** |
-
-### 6.4 Track D の作業内容
-
-- **version bump: 6 ファイル 7 フィールド** (`scripts/check_version_consistency.py:62-100` の `VERSION_LOCATIONS` が正。`gui/package-lock.json` は 2 フィールド)。`release/SKILL.md:133` が「一括置換禁止・ピンポイント編集」を明記
-- **CHANGELOG**: `## [Unreleased]` (D7) を `## [0.3.1] - <タグ打ち日 JST>` (D6) へ確定する
-- Track D は `check_version_consistency.py --tag` を必ず通るため、**#918 item3 と G1-3 の両方が Track D の critical path 上にある**
-
-### 6.5 並列度の上限
-
-**PR merge は Idios 専任** (memory `feedback_pr_merge_idios_only`、deny ルールで物理ブロック済み)。Track A / B / C を並列で走らせても merge は 1 人の直列作業になる。同時 open PR 数はこれを踏まえて調整する。
+**どの issue がどの Track / PR に属するかは [実装計画](../plans/2026-08-05-v031-track-decomposition.md) を参照。** 同一ファイルを触る組の直列化、Track D の作業内容 (6 ファイル 7 フィールド)、実機スロット表、並列度の上限も plan 側にある。
 
 ## 7. 受け入れ基準 (全体)
 
@@ -597,9 +551,9 @@ Fable 俯瞰レビュー (2026-08-03) 由来の独立 finding 2 件も同時に�
 | --- | --- | --- |
 | R-1 | **G2-1 が v0.3.1 中に 1 度も発火しない** (D4 の帰結) | §7.2 で捨て PR による red 実証を必須化 |
 | R-2 | **G1-3 の TZ バグがリリース当日に Track D を止める** | Track C 実装時に JST 深夜値の pin test を同梱。過去 4 タグ中 2 件が該当する実データを test fixture にする |
-| R-3 | **A′ の pin 先行を怠ると Track B / C が rebase で一斉赤化** | Track 0 直後の直列 slot として §6.2 に明示 |
+| R-3 | **A′ の pin 先行を怠ると Track B / C が rebase で一斉赤化** | §6.2 で A′ を独立 Track として定義し、理由を明記 |
 | R-4 | **Self-Test Report 10 box × PR 本数の運用負荷** | 27 issue → 想定 10-15 PR。埋める手間が形骸化を招くなら D9 の範囲をさらに絞る |
-| R-5 | **skill 改修 3 件が同一ファイルで衝突** | §6.3 の対処表。#935 × #856 は同一 PR を第一候補にする |
+| R-5 | **skill 改修 3 件が同一ファイルで衝突** | 同一ファイルを触る組の対処は [実装計画](../plans/2026-08-05-v031-track-decomposition.md) を参照。#935 × #856 は同一 PR を第一候補にする |
 | R-6 | **#882 が Idios の物理作業待ちで release をブロックしうる** | agent 側の作業 (台帳照合 + doc 更新) と物理作業を分離し、物理作業は release 判定から外す |
 
 ### 8.2 オープン点 (実装前に決着が必要)
@@ -624,39 +578,39 @@ Fable 俯瞰レビュー (2026-08-03) 由来の独立 finding 2 件も同時に�
 
 open 65 件 + 前セッションで close 済み 2 件 = **67 行**。(a) 27 件 / (b) 38 件 / (c) 2 件。
 
-本 table は `/release` Step 0c を実施した時点 (2026-08-05、本 spec 作成前) の open issue 集合が対象である。**その後 Track 0 で起票した 9 件 (#945-#953) は本 table に含まれない** — 行き先は §6.2「事象 → issue の対応」表に記録している (#945-#950 と #952 は v0.3.1 で作業、#951 と #953 は deferred)。
+本 table は `/release` Step 0c を実施した時点 (2026-08-05、本 spec 作成前) の open issue 集合が対象である。**その後 Track 0 で起票した 9 件 (#945-#953) は本 table に含まれない** — 行き先は [実装計画](../plans/2026-08-05-v031-track-decomposition.md) が持つ (#945-#950 と #952 は v0.3.1 で作業、#951 と #953 は deferred)。
 
 ### 9.1 (a) v0.3.1 で吸収 — 27 件
 
-| issue # | title | 分類 | Track | 判断理由 |
-| --- | --- | --- | --- | --- |
-| #326 | ハイブリッド skill 方式を idios-claudecode-tools テンプレートに反映 | (a) 吸収 | 0 | 本 repo に作業なし。別 repo へ転記し close (D12) |
-| #376 | トップレベル CLI に -v をバージョン表示エイリアスとして追加 | (a) 吸収 | B | 軽微。トップレベル parser 限定で実装 (サブコマンドの `-v` = verbose と衝突しない形) |
-| #652 | verbose split を pipe 経由で実行すると progressbar が OSError 22 でクラッシュ | (a) 吸収 | B | 原因既知の小修正。実機 CLI 確認あり |
-| #658 | subprocess.run(text=True) encoding 漏れの AST regression test 追加 | (a) 吸収 | B | `tests/test_ascii_guard.py` を雛形に新設 |
-| #856 | skill/workflow doc の細部文言明確化 (EPT #854 残 unclear 3 点) | (a) 吸収 | B | 語彙統一 4 箇所。EPT skip (D11)。#935 と同一 PR |
-| #863 | typer<0.25 / click<8.4 pin の恒久対応 | (a) 吸収 | A | #916 に統合し単一 PR で決着 |
-| #864 | detect legacy fps filter path の撤去 (v0.3.x) | (a) 吸収 | B | 実機 baseline gate 必要 (R2)。他 detector 変更と並列させない |
-| #865 | AUDIO_FROZEN の決着 (解凍 or Q3 撤去) | (a) 吸収 | B | 「凍結継続」を明文化する方向で決着 (Idios 合意済み) |
-| #868 | pip-audit CI + dependabot 導入の決着 | (a) 吸収 | C | `security-audit.yml` の paths に pyproject.toml が無いのが本当の穴 (G2-5) |
-| #870 | roadmap triage 入力ルールの規約化 (台帳外残タスク) | (a) 吸収 | B | 4 系統を `docs/l2-workflow.md` §タスク発見 に明文化 (G1-5)。#944 がその実例 |
-| #876 | installer-pester の PSGallery flaky 対策 | (a) 吸収 | C | retry 追加。**red 実証手段を issue 側で指定必須** (正常時は永久に不発) |
-| #882 | 検証データ保全の恒久策 (第 3 系統) 追加 | (a) 吸収 | B | 物理作業は Idios。agent 側は台帳照合と doc 更新のみ (R2) |
-| #906 | cache corruption warning に cache_path を復元 | (a) 吸収 | B | `split_matches.py:2251` に `cache_path` 引数を追加する小修正 |
-| #907 | lint ツール (ruff / pyright) のバージョン pin | (a) 吸収 | A′ | **Track 0 直後に単独先行** (R1 の直列制約) |
-| #910 | ui-interaction-spec.md の行番号 anchor を名前参照へ移行 | (a) 吸収 | C | **AC-1 は PR #932 で完了済み。**残りは参照 guard の CI 化。#912 と 1 job に統合 |
-| #912 | system-architecture §2.3 の GUI→CLI 網羅宣言に enforcement がない | (a) 吸収 | C | #910 と同型。1 script / 1 job に統合 |
-| #913 | scorebar-detection-design の定数表が実装値を複製している | (a) 吸収 | B | rationale 列のみ残し実装を正に (G3) |
-| #916 | 未 pin 依存の version drift を封じる (constraints 方針の確定) | (a) 吸収 | A | cv2 4.x 固定 (D8) により実機検証不要。#863 / #907 を統合 |
-| #918 | /release skill の手順記述 3 件 | (a) 吸収 | **C** (PR-C4) | `check_version_consistency.py:268` の `args.tag` 分岐を #948 と共有するため PR-C4 に統合。`eval/requirements.md:18` の A-5 が廃止済み手順を pin しているため同時更新必須。EPT 適用 (D11) |
-| #920 | output-spec マトリクスに masked / vtuber 系 verbose 出力 4 行が欠落 | (a) 吸収 | B | #933 と同一表。直列化または 1 PR |
-| #922 | release-process の workflow_dispatch 記述が実態と不一致 | (a) 吸収 | B/C | 決定に依存 (O-3) |
-| #923 | cli-spec の `export --concurrency` が「上書き」と書かれている | (a) 吸収 | **PR なし** | **既に修正済み** (PR #941 + `d35386c`)。再検証して close するだけ (`/close-issue`) |
-| #933 | v0.3.0 doc 監査でスコープ外に置いた項目 (9 件) | (a) 吸収 | B | §A の npm audit 閾値判断 + §B の個別修正 |
-| #934 | path/schema 契約の機械検査化 | (a) 吸収 | C | 散文契約 7 件を機械検査化。#372 の解消状態を pin する場所 |
-| #935 | レビュー・ゲート規約の見直し 5 件 | (a) 吸収 | B | 5 箇所編集。EPT 適用 (D11)。#856 と同一 PR |
-| #936 | Self-Test Report は CI 強制されていない | (a) 吸収 | C | (a) checker scope 拡大で決着 (D2 / D9)。3 点セットで初めて発火 (G1-4) |
-| #944 | v0.3.0 機能が入口 doc・同梱 README・GUI 文言に未反映 | (a) 吸収 | B | **Track B 最優先。**出荷物 2 件 + 再発防止 CI (G2-2 / G2-3)。GUI は「発見できること」までが範囲 |
+| issue # | title | 分類 | 判断理由 |
+| --- | --- | --- | --- |
+| #326 | ハイブリッド skill 方式を idios-claudecode-tools テンプレートに反映 | (a) 吸収 | 本 repo に作業なし。別 repo へ転記し close (D12) |
+| #376 | トップレベル CLI に -v をバージョン表示エイリアスとして追加 | (a) 吸収 | 軽微。トップレベル parser 限定で実装 (サブコマンドの `-v` = verbose と衝突しない形) |
+| #652 | verbose split を pipe 経由で実行すると progressbar が OSError 22 でクラッシュ | (a) 吸収 | 原因既知の小修正。実機 CLI 確認あり |
+| #658 | subprocess.run(text=True) encoding 漏れの AST regression test 追加 | (a) 吸収 | `tests/test_ascii_guard.py` を雛形に新設 |
+| #856 | skill/workflow doc の細部文言明確化 (EPT #854 残 unclear 3 点) | (a) 吸収 | 語彙統一 4 箇所。EPT skip (D11)。#935 と同一 PR |
+| #863 | typer<0.25 / click<8.4 pin の恒久対応 | (a) 吸収 | #916 に統合し単一 PR で決着 |
+| #864 | detect legacy fps filter path の撤去 (v0.3.x) | (a) 吸収 | 実機 baseline gate 必要 (R2)。他 detector 変更と並列させない |
+| #865 | AUDIO_FROZEN の決着 (解凍 or Q3 撤去) | (a) 吸収 | 「凍結継続」を明文化する方向で決着 (Idios 合意済み) |
+| #868 | pip-audit CI + dependabot 導入の決着 | (a) 吸収 | `security-audit.yml` の paths に pyproject.toml が無いのが本当の穴 (G2-5) |
+| #870 | roadmap triage 入力ルールの規約化 (台帳外残タスク) | (a) 吸収 | 4 系統を `docs/l2-workflow.md` §タスク発見 に明文化 (G1-5)。#944 がその実例 |
+| #876 | installer-pester の PSGallery flaky 対策 | (a) 吸収 | retry 追加。**red 実証手段を issue 側で指定必須** (正常時は永久に不発) |
+| #882 | 検証データ保全の恒久策 (第 3 系統) 追加 | (a) 吸収 | 物理作業は Idios。agent 側は台帳照合と doc 更新のみ (R2) |
+| #906 | cache corruption warning に cache_path を復元 | (a) 吸収 | `split_matches.py:2251` に `cache_path` 引数を追加する小修正 |
+| #907 | lint ツール (ruff / pyright) のバージョン pin | (a) 吸収 | **他のすべてに先行して単独でマージする** (R1 の直列制約。pin が動くと `ruff format --check .` の結果が repo 全体で変わり、並列中の PR が rebase で一斉赤化する) |
+| #910 | ui-interaction-spec.md の行番号 anchor を名前参照へ移行 | (a) 吸収 | **AC-1 は PR #932 で完了済み。**残りは参照 guard の CI 化。#912 と 1 job に統合 |
+| #912 | system-architecture §2.3 の GUI→CLI 網羅宣言に enforcement がない | (a) 吸収 | #910 と同型。1 script / 1 job に統合 |
+| #913 | scorebar-detection-design の定数表が実装値を複製している | (a) 吸収 | rationale 列のみ残し実装を正に (G3) |
+| #916 | 未 pin 依存の version drift を封じる (constraints 方針の確定) | (a) 吸収 | cv2 4.x 固定 (D8) により実機検証不要。#863 / #907 を統合 |
+| #918 | /release skill の手順記述 3 件 | (a) 吸収 | `check_version_consistency.py:268` の `args.tag` 分岐を #948 と共有するため **#948 と同一 PR に統合**する (plan 参照)。`eval/requirements.md:18` の A-5 が廃止済み手順を pin しているため同時更新必須。EPT 適用 (D11) |
+| #920 | output-spec マトリクスに masked / vtuber 系 verbose 出力 4 行が欠落 | (a) 吸収 | #933 と同一表。直列化または 1 PR |
+| #922 | release-process の workflow_dispatch 記述が実態と不一致 | (a) 吸収 | 決定に依存 (O-3) |
+| #923 | cli-spec の `export --concurrency` が「上書き」と書かれている | (a) 吸収 | **既に修正済み** (PR #941 + `d35386c`)。再検証して close するだけ (`/close-issue`) |
+| #933 | v0.3.0 doc 監査でスコープ外に置いた項目 (9 件) | (a) 吸収 | §A の npm audit 閾値判断 + §B の個別修正 |
+| #934 | path/schema 契約の機械検査化 | (a) 吸収 | 散文契約 7 件を機械検査化。#372 の解消状態を pin する場所 |
+| #935 | レビュー・ゲート規約の見直し 5 件 | (a) 吸収 | 5 箇所編集。EPT 適用 (D11)。#856 と同一 PR |
+| #936 | Self-Test Report は CI 強制されていない | (a) 吸収 | (a) checker scope 拡大で決着 (D2 / D9)。3 点セットで初めて発火 (G1-4) |
+| #944 | v0.3.0 機能が入口 doc・同梱 README・GUI 文言に未反映 | (a) 吸収 | **本 release の最優先項目。**出荷物 2 件 + 再発防止 CI (G2-2 / G2-3)。GUI は「発見できること」までが範囲 |
 
 ### 9.2 (b) deferred 継続 — 38 件
 
