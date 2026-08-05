@@ -211,7 +211,11 @@ pip install -e ".[dev]"
 
 ### lint ツールの版を CI と揃える (#907)
 
-`ruff` と `pyright` は `pyproject.toml` の dev extras で上限付きに pin してあります (`ruff>=0.16,<0.17` / `pyright>=1.1.411,<1.2`)。上限がないと CI は毎回 latest を取り、ローカルは古いまま残るため、**同じコマンドがローカルで緑・CI で赤**になります。pin を更新した後は必ず再インストールしてください。
+`ruff` と `pyright` は `pyproject.toml` の dev extras で **exact pin** してあります (`ruff==0.16.1` / `pyright==1.1.411`)。
+
+**範囲指定 (`>=0.16,<0.17` 等) では足りません。** CI は毎回まっさらな環境へ `pip install -e ".[dev]"` するため、範囲内の新リリースが出た瞬間に CI だけが上がり、ローカルは古い範囲内バージョンのまま残ります。これは pin が潰そうとしている drift そのものです。`pyright` は patch リリースで診断が変わるため特に危険です。
+
+pin を更新した後は必ず再インストールしてください。
 
 ```bash
 pip install -e ".[dev]" --upgrade
@@ -232,13 +236,33 @@ ERROR: Could not install packages due to an OSError: [Errno 2] No such file or d
 '...\site-packages\pyright\dist\dist\typeshed-fallback\stubs\braintree\...\test_operation_performed_in_production_error.pyi'
 ```
 
-**原因はディスク不足でもパッケージ破損でもなくパス長です。** pyright が site-packages 直下に作る最長の相対パスは **122 文字**あるため、site-packages 自身のパスが 138 文字を超えると合計が 260 に達します。
+**原因はディスク不足でもパッケージ破損でもなくパス長です。**
 
-| site-packages の場所 | 長さ | +122 | 判定 |
+数え方を明示します。以下「suffix」は **site-packages の直後の区切り文字を含めた**部分の長さです。pyright が作る最長の suffix は次の 122 文字です。
+
+```text
+\pyright\dist\dist\typeshed-fallback\stubs\braintree\braintree\exceptions\test_operation_performed_in_production_error.pyi
+```
+
+したがってフルパス長は次で決まります。
+
+```text
+フルパス長 = len(site-packages のパス) + 122
+```
+
+Windows の ANSI API はフルパスを **259 文字まで**しか扱えません (終端 NUL を含めて 260)。つまり `len(site-packages) + 122 > 259` で失敗し、これは **site-packages が 138 文字以上**と同値です (138 ちょうどで既に NG)。
+
+| site-packages の場所 | 長さ | + suffix 122 | 判定 |
 | --- | --- | --- | --- |
-| Microsoft Store 版 Python のユーザー site-packages (`%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.3.12_...\LocalCache\local-packages\Python312\site-packages`) | 138 | 260 | **NG** |
-| repo 直下の `.venv` (`<repo>\.venv\Lib\site-packages`) | 74 | 196 | OK |
-| worktree 内の `.venv` (`<repo>\.claude\worktrees\<name>\.venv\Lib\site-packages`) | 119 | 241 | OK (余裕 19 文字) |
+| Microsoft Store 版 Python のユーザー site-packages (`%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.3.12_...\LocalCache\local-packages\Python312\site-packages`) | 138 | 260 | **NG** (上限 259 超) |
+| repo 直下の `.venv` (`<repo>\.venv\Lib\site-packages`) | 74 | 196 | OK (余裕 63 文字) |
+| worktree 内の `.venv` (`<repo>\.claude\worktrees\<name>\.venv\Lib\site-packages`) | 119 | 241 | OK (余裕 18 文字) |
+
+自分の環境で判定するには次を実行します (`OK` なら install できます)。**venv の外では pip はユーザー site-packages へ書く**ので、`site.getsitepackages()` (システム側、読み取り専用) ではなく実際の書き込み先を測る必要があります。
+
+```bash
+python -c "import sys,site,sysconfig; p = sysconfig.get_paths()['purelib'] if sys.prefix != sys.base_prefix else site.getusersitepackages(); n=len(p); print(('venv' if sys.prefix != sys.base_prefix else 'user site'), n, n+122, 'OK' if n+122 <= 259 else 'NG')"
+```
 
 **対処は仮想環境を使うこと**です (本 doc が元々推奨している方法)。repo 直下の `.venv` が最も余裕があります。
 

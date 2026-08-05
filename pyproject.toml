@@ -33,16 +33,19 @@ include = ["allaganeye*"]
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
-    # lint / 型チェックは上限を付けて CI とローカルの版を揃える (#907)。
-    # 上限がないと CI は毎回 latest を取り、ローカルは古いまま放置されるため、
-    # 同じコマンドがローカルで緑・CI で赤になる (memory: ruff 0.16 で実発生)。
+    # lint / 型チェックは **exact pin** で CI とローカルの版を揃える (#907)。
+    # 範囲指定 (>=0.16,<0.17) では不十分: CI は毎回まっさらな環境へ
+    # `pip install -e ".[dev]"` するため、範囲内の新リリース (0.16.2 等) が出た
+    # 瞬間に CI だけが勝手に上がり、ローカルは古い範囲内バージョンのまま残る。
+    # これは本 pin が潰そうとしている drift そのもの。pyright は patch
+    # リリースで診断が変わるため特に危険。
     # markdownlint が scripts/check-markdownlint.sh:22 の CLI2_VERSION で
     # 既に解いているのと同じ「ローカル・CI 同版」規律を lint 全体へ広げる。
-    # 更新するときは上限を上げたうえで `pip install -e ".[dev]"` を再実行し、
-    # ruff check . / ruff format --check . / pyright を repo 全体で回してから
-    # 上げること (取り込みタイミングを計画的に選ぶのが pin の目的)。
-    "ruff>=0.16,<0.17",
-    "pyright>=1.1.411,<1.2",
+    # 更新手順: 本行を書き換え -> `pip install -e ".[dev]" --upgrade` ->
+    # `ruff check .` / `ruff format --check .` / `pyright` を **repo 全体**で
+    # 回して緑を確認 -> commit。取り込みタイミングを計画的に選ぶのが目的。
+    "ruff==0.16.1",
+    "pyright==1.1.411",
     "datamodel-code-generator>=0.25",
     "jsonschema>=4",
 ]
