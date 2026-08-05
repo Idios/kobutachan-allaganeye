@@ -209,6 +209,47 @@ pip install -e ".[dev]"
 >
 > **注意**: 仮想環境を使わずに `pip install -e .` すると、`allaganeye` コマンドが PATH の通らないディレクトリにインストールされることがあります（特に Microsoft Store 版 Python）。仮想環境の使用を推奨します。
 
+### lint ツールの版を CI と揃える (#907)
+
+`ruff` と `pyright` は `pyproject.toml` の dev extras で上限付きに pin してあります (`ruff>=0.16,<0.17` / `pyright>=1.1.411,<1.2`)。上限がないと CI は毎回 latest を取り、ローカルは古いまま残るため、**同じコマンドがローカルで緑・CI で赤**になります。pin を更新した後は必ず再インストールしてください。
+
+```bash
+pip install -e ".[dev]" --upgrade
+```
+
+現在インストールされている版は次で確認できます。
+
+```bash
+python -c "import importlib.metadata as m; print('ruff', m.version('ruff')); print('pyright', m.version('pyright'))"
+```
+
+### Windows: `pyright` の install が MAX_PATH で失敗する場合 (#907)
+
+`pyright` は typeshed の stub を大量に同梱しており、パスの深いところへ入れると **Windows の MAX_PATH (260 文字)** に当たって install が失敗します。エラーは次の形で出ます。
+
+```text
+ERROR: Could not install packages due to an OSError: [Errno 2] No such file or directory:
+'...\site-packages\pyright\dist\dist\typeshed-fallback\stubs\braintree\...\test_operation_performed_in_production_error.pyi'
+```
+
+**原因はディスク不足でもパッケージ破損でもなくパス長です。** pyright が site-packages 直下に作る最長の相対パスは **122 文字**あるため、site-packages 自身のパスが 138 文字を超えると合計が 260 に達します。
+
+| site-packages の場所 | 長さ | +122 | 判定 |
+| --- | --- | --- | --- |
+| Microsoft Store 版 Python のユーザー site-packages (`%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.3.12_...\LocalCache\local-packages\Python312\site-packages`) | 138 | 260 | **NG** |
+| repo 直下の `.venv` (`<repo>\.venv\Lib\site-packages`) | 74 | 196 | OK |
+| worktree 内の `.venv` (`<repo>\.claude\worktrees\<name>\.venv\Lib\site-packages`) | 119 | 241 | OK (余裕 19 文字) |
+
+**対処は仮想環境を使うこと**です (本 doc が元々推奨している方法)。repo 直下の `.venv` が最も余裕があります。
+
+`LongPathsEnabled` を有効化する方法もありますが、レジストリ変更 + 管理者権限が必要で、他の開発者環境に前提を持ち込むため**推奨しません**。現在の設定は次で確認できます。
+
+```powershell
+Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled
+```
+
+**install が途中で失敗すると partial な `pyright` ディレクトリが残ります。** その状態では `import importlib.metadata; m.version('pyright')` が `PackageNotFoundError` を出す一方でファイルは存在するため、再 install の前に残骸を削除してください (削除自体も MAX_PATH に当たる場合は `robocopy` で空ディレクトリと同期する方法があります)。
+
 ### 仮想環境を抜ける
 
 作業が終わって仮想環境から抜けるときは、どのシェル・OS でも共通で `deactivate` と入力します。
@@ -302,13 +343,17 @@ pytest -m slow
 # 単体テスト
 pytest tests/test_detector.py
 
-# Lint
+# Lint (touched file だけでなく repo 全体を対象にする。`.` を省略しない)
 ruff check .
 ruff format --check .
 
 # 型チェック
 pyright
 ```
+
+> **`ruff format --check` は必ず `.` を付けて repo 全体で回す (#907)**: 触ったファイルだけを指定すると、subagent や別 PR が入れた変更を取りこぼして CI の Format check だけが赤になります。CI (`.github/workflows/ci.yml`) も `ruff format --check .` で全 repo を見ます。
+>
+> **版がずれていると同じコマンドでも結果が変わります。** `ruff` / `pyright` は `pyproject.toml` の dev extras で上限付きに pin してあるので、pin を更新したら `pip install -e ".[dev]" --upgrade` を実行してから回してください (§パッケージのインストール の注記参照)。
 
 ### Windows: Pester v5 (scripts/ 用 PowerShell ユニットテスト)
 
