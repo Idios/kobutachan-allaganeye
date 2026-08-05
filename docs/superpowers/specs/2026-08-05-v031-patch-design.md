@@ -218,7 +218,7 @@ E1 (routing がアドバイザリで skill / hook に 0 件) / E5 (見出し日�
 4. **`fable-consult` を `allaganeye-fable-consult` へ改名する**。user-level に同名が実在するため、#889 で worker に適用した precedence 非依存化を fable-consult にも適用する。CLAUDE.md §モデルルーティング の対応表と `fable-consult の推奨トリガー地点` 節、routing spec §8 の前提記述も同時更新する
 5. 呼び出しの有無を **Self-Test Report の必須フィールド**にする (D2、G1-4 と連動)
 
-**false-green の明示**: `/release` Step 0a は「達成 / 未達成 / **該当なし**」の 3 択なので、「該当なし」で通過できる。**finding 件数と消化件数の数値記入を required にしない限り no-op** である。この制約を skill 本文に明記する。
+**false-green の明示**: `/release` Step 0a は「達成 / 未達成 / **該当なし**」の 3 択なので (`.claude/skills/release/SKILL.md:27`)、「該当なし」で通過できる。**finding 件数と消化件数の数値記入を required にしない限り no-op** である。この制約を skill 本文に明記する。
 
 **受け入れ基準**:
 
@@ -547,7 +547,7 @@ base は全 Track `develop-0.3.1` (D4)。
 
 ### 7.3 SSoT 整合
 
-- [ ] `grep -rn "fable-consult" CLAUDE.md docs/ .claude/` の全 hit が `allaganeye-fable-consult` を指す (旧名 0 件)
+- [ ] `grep -rn "fable-consult" CLAUDE.md .claude/` の全 hit が `allaganeye-fable-consult` を指す (旧名 0 件)。**scope は living doc のみ** — `docs/l2-workflow.md:199` (#854 R2 確定) が「実行済み dated plans/specs 内の表記は historical record であり遡及書き換えを行わない。living doc = CLAUDE.md / l2-workflow / skill / hook / 現行 roadmap のみが整合対象」と定めているため、`docs/superpowers/plans/` `docs/superpowers/specs/` 配下は対象外とする。routing spec §8 の命名前提だけは事実として誤りになるので、書き換えではなく「本条項は 2026-08-05 spec G1-2 で消化済み」の 1 行注記を添える
 - [ ] `docs/release-process.md` の Track B 定義が「deferred 吸収」になっている (D3)
 - [ ] `docs/l2-workflow.md:193` の `--background` 記述が訂正されている (E6)
 - [ ] `docs/l2-workflow.md:208` の「CI ゲート増設なし」が G4-1 の実装と整合している
