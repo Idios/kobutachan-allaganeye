@@ -79,6 +79,21 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 
 ---
 
+## 同一ファイルを触る組 (同一 PR か直列化が必須)
+
+**本表が cross-PR のファイル衝突の正 (SSoT) である。** spec 側には持たない (spec は割り付けを持たない方針、spec §6 冒頭)。PR の割り付けを変えるときは本表も更新すること。
+
+| 衝突ファイル | issue (PR) | 対処 |
+| --- | --- | --- |
+| `docs/l2-workflow.md:171-185` のコードフェンス + `review-pr/eval/requirements.md` | #935 × #856 (両方 PR-B3) | **同一 PR に統合済み** |
+| `docs/output-spec.md` matrix v2 (L88-113) | #920 × #933 (両方 PR-B2) | **同一 PR に統合済み** |
+| `scripts/check_version_consistency.py:268` の `args.tag` 分岐 + `release.yml:98-106` | #918 × #948 (両方 PR-C4) | **同一 PR に統合済み** |
+| `docs/cli-spec.md:625` | #376 (PR-B6) × #863 (PR-A2) | **PR を跨ぐ衝突。** PR-A2 → PR-B6 の順に直列化する |
+| `docs/output-spec.md:201-` (解決済み絶対パスの契約) | #935 P2-4 (PR-B3) × #934 (PR-C7) | **契約の記述は PR-B3、機械検査は PR-C7** に分担。PR-B3 → PR-C7 の順。同じ `docs/output-spec.md` でも PR-B2 が触るのは L88-113 の matrix で領域が異なる |
+| `.claude/skills/release/SKILL.md` | #945 (PR-B4) × #918 (PR-C4) | 同一ファイルの別 Step を触る。PR-C4 (手順の骨格) → PR-B4 (Step 0a-2 追加) の順が安全 |
+
+---
+
 ## Task PR-A1: ruff / pyright の pin 先行 ★直列・最初★
 
 **issue:** #907 (#916 から切り出し)
@@ -181,7 +196,7 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 
 **issue:** #920 #933 #952
 
-**まとめる理由:** #920 と #933 は `docs/output-spec.md` の matrix v2 (`:88-113`) という**同一の表**を触る (spec §6.3)。#952 は CHANGELOG の記述を読者視点へ再構成するもので、同じ「doc 記述の質」カテゴリ。
+**まとめる理由:** #920 と #933 は `docs/output-spec.md` の matrix v2 (`:88-113`) という**同一の表**を触る (§同一ファイルを触る組)。#952 は CHANGELOG の記述を読者視点へ再構成するもので、同じ「doc 記述の質」カテゴリ。
 
 **Files:**
 
@@ -209,7 +224,7 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 
 **issue:** #935 #856 #870
 
-**まとめる理由:** 3 件とも `docs/l2-workflow.md` を触り、#935 P2-1 と #856 item3 は **`:171-185` の同一コードフェンス**を書き換える (spec §6.3)。別 PR にすると確実にコンフリクトする。
+**まとめる理由:** 3 件とも `docs/l2-workflow.md` を触り、#935 P2-1 と #856 item3 は **`:171-185` の同一コードフェンス**を書き換える (§同一ファイルを触る組)。別 PR にすると確実にコンフリクトする。
 
 **Files:**
 
@@ -315,7 +330,7 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 
 **issue:** #376 #906 #652 #658
 
-**依存:** **PR-A2 の後。** #376 と #863 (PR-A2) は `docs/cli-spec.md:625` の同一行を触る (spec §6.3)。
+**依存:** **PR-A2 の後。** #376 と #863 (PR-A2) は `docs/cli-spec.md:625` の同一行を触る (§同一ファイルを触る組)。
 
 **Files:**
 
@@ -495,7 +510,7 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 
 **issue:** #948 #918
 
-**まとめる理由:** #918 item3 (バンプ方向チェック) と #948 は `scripts/check_version_consistency.py:268` の**同じ `args.tag` 分岐**に新フラグと検証を追加する (spec §6.3、実測確認済み)。
+**まとめる理由:** #918 item3 (バンプ方向チェック) と #948 は `scripts/check_version_consistency.py:268` の**同じ `args.tag` 分岐**に新フラグと検証を追加する (§同一ファイルを触る組、実測確認済み)。
 
 **Files:**
 
