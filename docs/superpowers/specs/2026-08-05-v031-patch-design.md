@@ -169,7 +169,7 @@ deferred 棚卸しの引き継ぎ資料は吸収を「26 件」と記載して�
 | D9 | **#936 (a) のブロッキング範囲は Self-Test Report のみ (10 box)** | Iron Law 1/3/4 群は heading filter の完全一致に掛からないため自動ではブロッキング化しない |
 | D10 | **E1 / E2 / E3 / E5 / E6 / E7 を個別 issue として起票する** | Track 表が open issue と 1:1 になる。#870 が問題にする「番号を持たない別 issue 宣言」を spec 自身が再生産しない |
 | D11 | **EPT (empirical-prompt-tuning) は振る舞い変更を伴う skill 改修のみに適用する** | 対象 = #935 (判断基準の置換) / #918 (手順変更) / E1 (Fable step 新設)。#856 (語彙統一 4 箇所) は skip し、根拠を PR 本文に明記 |
-| D12 | **#326 は別 repo (`Idios/idios-claudecode-tools`) へ転記し、本 repo の #326 は close する** | 本 repo 側に実行できる作業が存在しない。別 repo への起票は Idios が行う |
+| D12 | **#326 は別 repo (`Idios/idios-claudecode-tools`) へ転記し、本 repo の #326 は close する** | 本 repo 側に実行できる作業が存在しない。別 repo への起票は Idios が行う。**順序制約 (Idios 判断 2026-08-05)**: 転記は skill / hook / CLAUDE.md 等の基本ドキュメントが固まってから — 本 release は #945 / #918 / #935 / #856 / #870 がそれらを書き換えるため、**Track B 完了後**に転記する。固まる前に転記すると転記先テンプレートが旧版を写す |
 
 ## 5. 設計
 
