@@ -397,7 +397,7 @@ E3 (`ci.yml` の branches filter が `release/*` を外す) / E4 (doc sweep の 
 | # | 変更 | 備考 |
 | --- | --- | --- |
 | #913 | `docs/scorebar-detection-design.md` の定数表 2 つ (L69-73 / L109-117) を (a) 参照化 / (b) 現状維持 / (c) 仕様主張と実測記録に分類 のいずれかへ分類し、rationale 列のみ残して実装を正にする | issue 本文は突合先を `scorebar.py` と誤記している。実際の定数は `detector.py` 側 |
-| #923 | **実装済み。再検証して close するだけ。** `docs/cli-spec.md:379` は PR #941 で、`export.py` の `--help` は commit `d35386c` (PR #924 に squash) で訂正済み | Track B の最小コスト項目 |
+| #923 | **実装済み。再検証して close するだけ。** `docs/cli-spec.md:379` は PR #941 で、`export.py` の `--help` は commit `d35386c` (PR #924 に squash) で訂正済み | PR を持たない。本 release の最小コスト項目 |
 | #922 | `docs/release-process.md:80` の workflow_dispatch 記述を実態に合わせるか、`release.yml` 側を doc に合わせるかを決めて実施 | 決定に依存して Track が B / C に分かれる |
 | #918 | `/release SKILL.md` の 4 箇所 (develop ブランチ作成タイミング / dangling Step 1 参照 / バンプ方向チェック / 廃止済み手順) | `eval/requirements.md:18` の A-5 が**廃止済み手順を pin している**ため同時更新が必須 |
 | #856 | 語彙統一 4 箇所 (Round summary / Codex fail fallback の優先順位 / `<version>` の実パス解決 / focus 文字列の矛盾) | **#935 と同一コードフェンス (`l2-workflow.md:171-185`) を触るため同一 PR か直列化が必須** |
@@ -500,9 +500,31 @@ base は全 Track `develop-0.3.1` (D4)。
 | **0** | 直列 (最初) | 本 spec + 7 事象の issue 起票 (D10、**完了**: #945-#950) + cv2 5.x 移行 issue の起票 (D8、**完了**: #951) + #326 の別 repo 転記と close (D12、**未**) | — |
 | **A′** | 直列 (Track 0 直後) | **ruff / pyright の pin 先行** | #907 相当 (#916 から切り出し) |
 | **A** | 並列可 | 依存 pin 本体 (constraints 方針、cv2 4.x 固定、typer/click 恒久化) | #916 #863 |
-| **B** | 並列可 | doc / コード小修正 / skill 文言 | #944 #923 #922 #920 #933 #913 #376 #906 #652 #658 #864 #865 #882 #856 #918 #935 #870 #945 #949 #952 |
-| **C** | 並列可 | CI / gate | #936 #912 #910 #868 #934 #876 #946 #947 #948 #950 |
+| **B** | 並列可 | doc / コード小修正 / skill 文言 | 18 件 |
+| **C** | 並列可 | CI / gate | 11 件 |
 | **D** | 直列 (最後) | version bump + CHANGELOG 確定 | — |
+
+**PR 作業の総数**: A′ 1 + A 2 + B 18 + C 11 = **32 件**。これに PR を持たない 4 件 (#923 close のみ / #326 別 repo 転記 / #951 #953 deferred) を足して 36 件。
+
+#### issue → Track の正 (SSoT)
+
+**本節は issue 番号を列挙しない。** issue → Track / PR の割り付けは **[実装計画](../plans/2026-08-05-v031-track-decomposition.md) の PR 表が単一の正 (SSoT)** である。
+
+本 spec 側の Track 表記は**派生ビュー**であり、正ではない。
+
+- §9.1 の Track 列 — 吸収 27 件のみを覆う。`/release` Step 0c が要求するのは `分類` 列 ((a)/(b)/(c)) であって Track ではないため、Track 列は参照用の付加情報
+- §6.2 の「事象 → issue の対応」表 — Track 0 で起票した 9 件 (#945-#953) のみを覆う
+
+**割り付けを変えるときは plan を先に直し、上の 2 つの派生ビューを追随させる。** 整合は次のコマンドで機械検査できる。
+
+```bash
+grep -c '^| #' docs/superpowers/specs/2026-08-05-v031-patch-design.md
+grep -oE '^\*\*issue:\*\*.*' docs/superpowers/plans/2026-08-05-v031-track-decomposition.md | grep -oE '#[0-9]+' | sort -u | wc -l
+```
+
+この形にした理由: 初版は本節にも issue 番号を列挙しており、#918 を Track B → Track C (PR-C4) へ動かしたときに plan だけを直して本節が古びた。Codex adversarial-review の Round 1 / Round 2 が**連続して同じクラスの同期ずれ**を検出したため、個別 patch を止めて §5.3 G3「SSoT の複製と参照切れ」の処方 (機械可読な正を 1 箇所に置き、他方は参照にする) を本 spec 自身に適用した。
+
+なお **#918 が Track C にある**のは `check_version_consistency.py:268` の `args.tag` 分岐を #948 と共有するためで (plan §6.3)、この配置が D12 (#326 の転記条件が PR-C4 を含む理由) の根拠になっている。Track B へ戻す場合は D12 も同時に見直すこと。
 
 #### 事象 → issue の対応 (D10 / D8 の起票結果、2026-08-05)
 
@@ -626,10 +648,10 @@ open 65 件 + 前セッションで close 済み 2 件 = **67 行**。(a) 27 件
 | #912 | system-architecture §2.3 の GUI→CLI 網羅宣言に enforcement がない | (a) 吸収 | C | #910 と同型。1 script / 1 job に統合 |
 | #913 | scorebar-detection-design の定数表が実装値を複製している | (a) 吸収 | B | rationale 列のみ残し実装を正に (G3) |
 | #916 | 未 pin 依存の version drift を封じる (constraints 方針の確定) | (a) 吸収 | A | cv2 4.x 固定 (D8) により実機検証不要。#863 / #907 を統合 |
-| #918 | /release skill の手順記述 3 件 | (a) 吸収 | B | `eval/requirements.md:18` の A-5 が廃止済み手順を pin しているため同時更新必須。EPT 適用 (D11) |
+| #918 | /release skill の手順記述 3 件 | (a) 吸収 | **C** (PR-C4) | `check_version_consistency.py:268` の `args.tag` 分岐を #948 と共有するため PR-C4 に統合。`eval/requirements.md:18` の A-5 が廃止済み手順を pin しているため同時更新必須。EPT 適用 (D11) |
 | #920 | output-spec マトリクスに masked / vtuber 系 verbose 出力 4 行が欠落 | (a) 吸収 | B | #933 と同一表。直列化または 1 PR |
 | #922 | release-process の workflow_dispatch 記述が実態と不一致 | (a) 吸収 | B/C | 決定に依存 (O-3) |
-| #923 | cli-spec の `export --concurrency` が「上書き」と書かれている | (a) 吸収 | B | **既に修正済み** (PR #941 + `d35386c`)。再検証して close するだけ |
+| #923 | cli-spec の `export --concurrency` が「上書き」と書かれている | (a) 吸収 | **PR なし** | **既に修正済み** (PR #941 + `d35386c`)。再検証して close するだけ (`/close-issue`) |
 | #933 | v0.3.0 doc 監査でスコープ外に置いた項目 (9 件) | (a) 吸収 | B | §A の npm audit 閾値判断 + §B の個別修正 |
 | #934 | path/schema 契約の機械検査化 | (a) 吸収 | C | 散文契約 7 件を機械検査化。#372 の解消状態を pin する場所 |
 | #935 | レビュー・ゲート規約の見直し 5 件 | (a) 吸収 | B | 5 箇所編集。EPT 適用 (D11)。#856 と同一 PR |
