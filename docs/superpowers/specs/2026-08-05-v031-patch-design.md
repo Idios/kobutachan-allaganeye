@@ -169,7 +169,7 @@ deferred 棚卸しの引き継ぎ資料は吸収を「26 件」と記載して�
 | D9 | **#936 (a) のブロッキング範囲は Self-Test Report のみ (10 box)** | Iron Law 1/3/4 群は heading filter の完全一致に掛からないため自動ではブロッキング化しない |
 | D10 | **E1 / E2 / E3 / E5 / E6 / E7 を個別 issue として起票する** | Track 表が open issue と 1:1 になる。#870 が問題にする「番号を持たない別 issue 宣言」を spec 自身が再生産しない |
 | D11 | **EPT (empirical-prompt-tuning) は振る舞い変更を伴う skill 改修のみに適用する** | 対象 = #935 (判断基準の置換) / #918 (手順変更) / E1 (Fable step 新設)。#856 (語彙統一 4 箇所) は skip し、根拠を PR 本文に明記 |
-| D12 | **#326 は別 repo (`Idios/idios-claudecode-tools`) へ転記し、本 repo の #326 は close する** | 本 repo 側に実行できる作業が存在しない。別 repo への起票は Idios が行う。**順序制約 (Idios 判断 2026-08-05)**: 転記は skill / hook / CLAUDE.md 等の基本ドキュメントが固まってから — 本 release は #945 / #918 / #935 / #856 / #870 がそれらを書き換えるため、**Track B 完了後**に転記する。固まる前に転記すると転記先テンプレートが旧版を写す |
+| D12 | **#326 は別 repo (`Idios/idios-claudecode-tools`) へ転記し、本 repo の #326 は close する** | 本 repo 側に実行できる作業が存在しない。別 repo への起票は Idios が行う。**順序制約 (Idios 判断 2026-08-05)**: 転記は skill / hook / CLAUDE.md 等の基本ドキュメントが固まってから。本 release でそれらを書き換えるのは #945 / #935 / #856 / #870 / **#918** であり、**#918 だけが Track C (PR-C4)** に置かれている (`check_version_consistency.py:268` の `args.tag` 分岐を #948 と共有するため)。したがって条件は「Track B 完了後」**ではなく** PR-B3 + PR-B4 + PR-C4 の 3 本すべてのマージ後。固まる前に転記すると転記先テンプレートが旧版を写す |
 
 ## 5. 設計
 
@@ -517,7 +517,7 @@ base は全 Track `develop-0.3.1` (D4)。
 | E7 タグ直前の security 再チェック | [#950](https://github.com/Idios/kobutachan-allaganeye/issues/950) | C |
 | (D8) cv2 5.x 移行 | [#951](https://github.com/Idios/kobutachan-allaganeye/issues/951) | deferred |
 
-Fable 俯瞰レビュー (2026-08-03) 由来の独立 finding 2 件も同時に起票した — [#952](https://github.com/Idios/kobutachan-allaganeye/issues/952) (Release body の Added entry が読者に過剰) / [#953](https://github.com/Idios/kobutachan-allaganeye/issues/953) (minimap 実行中の画面離脱で進捗表示を失う扱いの決着)。#952 は Track B、#953 は決着方法が未定。
+Fable 俯瞰レビュー (2026-08-03) 由来の独立 finding 2 件も同時に起票した — [#952](https://github.com/Idios/kobutachan-allaganeye/issues/952) (Release body の Added entry が読者に過剰) / [#953](https://github.com/Idios/kobutachan-allaganeye/issues/953) (minimap 実行中の画面離脱で進捗表示を失う扱いの決着)。**#952 は Track B** — ただし v0.3.0 節は書き換えず、CHANGELOG 記述規約の制定と `## [Unreleased]` 節への適用に限る (D7 の「既リリース済み節を触らせない」と整合。Idios 判断 2026-08-05)。**#953 は deferred (v0.3.1 範囲外)** — listener を画面遷移を跨いで保持/復元するのは GUI の挙動変更であり、「機能追加は行わない」方針に照らして本 release では扱わない (Idios 判断 2026-08-05)。
 
 ### 6.3 同一ファイルを触る組 (同一 PR か直列化が必須)
 
@@ -585,7 +585,7 @@ Fable 俯瞰レビュー (2026-08-03) 由来の独立 finding 2 件も同時に�
 | # | 内容 | 決着方法 |
 | --- | --- | --- |
 | O-1 | `dependabot/alerts` API が空配列を返す理由 (token scope か、全件 close か) | `security_events` scope 付きトークンで再取得。**G4-2 の案 2 がこの API に依拠するため実装前に必須** |
-| O-2 | `.github/dependabot.yml` (version updates) を導入するか | #868 の判断。security updates 経路は既に稼働中 (#758 / #831 の PR 実績) なので、未導入なのは定期 bump のみ。見送る場合は根拠と手動 bump 周期を `docs/ci-security-audit.md` に明文化 |
+| O-2 | `.github/dependabot.yml` (version updates) を導入するか | #868 の判断。security updates 経路は稼働しており PR が自動生成される (#758 は merged、#831 は生成されたが未 merge のまま stale 化し 2026-08-05 に superseded として close)。未導入なのは定期 bump のみ。**#831 が 50 日間 open のまま放置された事実は「PR は来るが消化されない」ことを示すので、version updates を有効化する判断材料に含める**。見送る場合は根拠と手動 bump 周期を `docs/ci-security-audit.md` に明文化 |
 | O-3 | #922 を doc 修正で解くか `release.yml` 修正で解くか | 決定に依存して Track が B / C に分かれる |
 | O-4 | 配布 build (`build-portable-zip.ps1:473`) に constraints を効かせるか | 効かせないと出荷物の cv2 が未固定のまま残る (R1 表) |
 | O-5 | JST 深夜帯 (00:00-09:00 JST) にタグを打つ運用を許容するか | 許容するなら G1-3 は `Asia/Tokyo` 固定で足りる。禁止するなら規約に 1 行足して検査を単純化できる |
@@ -601,6 +601,8 @@ Fable 俯瞰レビュー (2026-08-03) 由来の独立 finding 2 件も同時に�
 ## 9. §deferred 全件検証結果 (`/release` Step 0c)
 
 open 65 件 + 前セッションで close 済み 2 件 = **67 行**。(a) 27 件 / (b) 38 件 / (c) 2 件。
+
+本 table は `/release` Step 0c を実施した時点 (2026-08-05、本 spec 作成前) の open issue 集合が対象である。**その後 Track 0 で起票した 9 件 (#945-#953) は本 table に含まれない** — 行き先は §6.2「事象 → issue の対応」表に記録している (#945-#950 と #952 は v0.3.1 で作業、#951 と #953 は deferred)。
 
 ### 9.1 (a) v0.3.1 で吸収 — 27 件
 

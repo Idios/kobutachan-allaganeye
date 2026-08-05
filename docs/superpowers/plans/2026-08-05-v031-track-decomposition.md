@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: 各 PR に着手する時点で `superpowers:writing-plans` を再度回し、その PR 単位の TDD ステップ計画を作ってから `superpowers:subagent-driven-development` で実行する。本計画は **PR 分割と順序制約の確定**までを担い、コードレベルのステップは持たない (2 層構成)。
 
-**Goal:** v0.3.1 の 35 issue を 18 PR に割り付け、直列制約・ファイル衝突・実機スロットを事前に確定させて、Track A/B/C を安全に並列実行できる状態にする。
+**Goal:** v0.3.1 で作業する **32 issue を 18 PR に割り付け**、直列制約・ファイル衝突・実機スロットを事前に確定させて、Track A/B/C を安全に並列実行できる状態にする。関係する 36 issue の残り 4 件 (close のみ 1 / 別 repo 転記 1 / deferred 2) も本計画で行き先を確定させ、**「判断待ち」の未割り当てを 0 件にする**。
 
 **Architecture:** [Track 0 spec](../specs/2026-08-05-v031-patch-design.md) の裁定 D1-D12 と根本原因 4 群 (G1-G4) に従う。base は全 PR `develop-0.3.1` (D4)。Track 0 は裁定のみで実装を持たず、skill / doc の実編集は Track B、CI job は Track C が担う。
 
@@ -68,13 +68,14 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 | PR-C7 | C | #934 | L | — | — |
 | PR-D1 | D | — | M | — | **全 PR マージ後** |
 
-**PR を持たない作業 3 件**:
+**PR を持たない 4 件**:
 
 - **#923** — 実装済み。`docs/cli-spec.md:379` は既に「N 以下に絞る (上限のみ。実装は `slots[:N]` で、スロット数を増やすことはできない)」と正しく記述されている。**再検証して close するだけ** (`/close-issue`)
-- **#326** — 別 repo (`Idios/idios-claudecode-tools`) へ転記して本 repo は close。**Track B 完了後** (spec D12 の順序制約)。転記は Idios が行う
-- **#951** — cv2 5.x 移行。deferred のため本 release では作業なし
+- **#326** — 別 repo (`Idios/idios-claudecode-tools`) へ転記して本 repo は close。転記は Idios が行う。**依存: PR-B3 + PR-B4 + PR-C4 の 3 本すべてのマージ後。** spec D12 の順序制約は「skill / hook / CLAUDE.md が固まってから」であり、これを担うのは #945 (PR-B4) / #935 #856 #870 (PR-B3) / **#918 (PR-C4 = Track C)** である。**「Track B 完了後」では #918 を取りこぼす** — #918 は `check_version_consistency.py:268` の `args.tag` 分岐を #948 と共有する都合で Track C へ移してあるため。転記先テンプレートが `/release` skill の旧版を写さないよう、PR-C4 のマージを待つこと
+- **#951** — cv2 5.x 移行。**deferred (v0.3.1 範囲外)** のため本 release では作業なし
+- **#953** — minimap 実行中の画面離脱で進捗表示を失う。**deferred (v0.3.1 範囲外、Idios 判断 2026-08-05)**。listener を画面遷移を跨いで保持するか復元するかは GUI の挙動変更であり、「機能追加は行わない」方針に照らして本 release では扱わない
 
-**未決の判断 1 件**: **#953** (minimap 実行中の画面離脱で進捗表示を失う) は「Known Issues として doc 追記」か「修正 issue」かが未定。PR-B5 着手時に Idios へ確認する。
+**内訳の確認 (割り付け漏れゼロの根拠):** v0.3.1 で作業する issue は **32 件**で、すべて PR-A1〜PR-D1 のいずれかに属する。残る 4 件の内訳は上記のとおり — close のみ 1 (#923) / 別 repo 転記 1 (#326) / deferred 2 (#951 #953)。合計 36 件。**「判断待ち」の未割り当ては 0 件。**
 
 ---
 
@@ -187,17 +188,20 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 - Modify: `docs/output-spec.md:88-113` — masked / vtuber 系 verbose 出力 4 行を追加し、default / `-v` / `-q` / `--dry-run` / `-v --dry-run` / `-q --dry-run` / `-v -q` の各列を実装のガード条件と逐条突合 (#920)
 - Modify: `docs/output-spec.md` — disk 空き容量 warning 行 (#933 §B)
 - Modify: `.github/workflows/security-audit.yml:92` の `npm audit --audit-level=high` 閾値の採否判断を記録 (#933 §A)
-- Modify: `CHANGELOG.md` の v0.3.0 節 — `--vtuber` / `--masked` の Added entry を「使い方 2-3 行 + spec リンク」へ再構成 (#952)
+- Modify: `docs/release-process.md` — **CHANGELOG Added entry の記述規約**を新設 (#952)。「利用者向けの使い方 2-3 行 + spec へのリンク。アルゴリズム段階名・内部識別子 (V0-V4 / quorum / anchor / presence 等) は spec 側に置き CHANGELOG には出さない」
+- Modify: `CHANGELOG.md` — `## [Unreleased]` 節を新設し、以降の v0.3.1 entry は上記規約に従って書く (D7)
 
-**#952 の背景:** `scripts/extract_release_notes.py` が CHANGELOG から Release body を生成するため、CHANGELOG の書き方がそのまま GitHub Release の本文になる。現状 V0-V4 / quorum / anchor / presence といった内部用語が並び、読者 (FF14 プレイヤー) に届いていない。
+**#952 の背景:** `scripts/extract_release_notes.py` が CHANGELOG から Release body を生成するため、CHANGELOG の書き方がそのまま GitHub Release の本文になる。v0.3.0 では V0-V4 / quorum / anchor / presence といった内部用語が並び、読者 (FF14 プレイヤー) に届いていなかった (Fable 俯瞰レビュー 2026-08-03 の指摘)。
+
+**v0.3.0 節は書き換えない (Idios 判断 2026-08-05):** D7 の判断理由は「**既リリース済み節を触らせない**」であり、v0.3.0 の Release body は既に公開済みで CHANGELOG を直しても再生成しない限り変わらない。`docs/l2-workflow.md:199` (#854 R2) が dated 記録の遡及書き換えを禁じているのと同じ原則を適用し、**v0.3.0 節は歴史記録として残す**。#952 が生むのは**規約と、それを適用した v0.3.1 の entry** である。
 
 **受け入れゲート:**
 
 - [ ] matrix v2 の各行が実装のガード条件と 1 対 1 で対応している (逐条引用を PR 本文に)
+- [ ] `docs/release-process.md` に CHANGELOG Added entry の記述規約がある
+- [ ] `CHANGELOG.md` に `## [Unreleased]` 節が存在し、Track A-C の各 PR がそこへ追記できる状態になっている
+- [ ] **v0.3.0 節の diff が 0 行** (`git diff origin/develop-0.3.1 -- CHANGELOG.md` に v0.3.0 節の変更が含まれないこと)
 - [ ] `bash scripts/check-markdownlint.sh` が 0 error
-- [ ] CHANGELOG v0.3.0 節の `--vtuber` / `--masked` entry から内部用語が消え、spec へのリンクがある
-
-**注意:** #952 は v0.3.0 の**既リリース済み節**を触る。D7 の「Track A-C は version 見出しを触らない」は Unreleased 節への追記ルールであり、過去節の記述改善は別問題。Track D の作業と衝突しないよう、`## [Unreleased]` は作らずに v0.3.0 節内だけを編集する。
 
 ---
 
