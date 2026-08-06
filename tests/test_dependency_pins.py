@@ -194,6 +194,14 @@ def _workflow_pip_install_lines() -> list[tuple[pathlib.Path, int, str]]:
     行ベースの走査である。YAML の `run:` は literal scalar なので中身は素の
     シェルスクリプトであり、行単位で見るのが実態に合う。行頭 / 行末のシェル
     コメントは落とす。
+
+    既知の挙動 (実測):
+      - `\\` で複数行に分割した pip install は 1 行目で検出され、`-c` が 2 行目に
+        あると **false-red** になる。fail-open ではないので安全側だが、その場合は
+        1 行にまとめること。
+      - `uv pip install` も検出対象に入る。
+      - workflow から呼ぶ外部スクリプト内の pip install は対象外
+        (現時点でそのような間接呼び出しは無く、composite action も存在しない)。
     """
     hits: list[tuple[pathlib.Path, int, str]] = []
     for path in sorted(_WORKFLOW_DIR.glob("*.yml")) + sorted(
