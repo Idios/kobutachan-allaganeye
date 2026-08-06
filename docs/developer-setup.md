@@ -241,42 +241,34 @@ $ python -c "import importlib.metadata as m; print(m.version('pyright'))"
 
 ### Windows: `pyright` の install が MAX_PATH で失敗する場合 (#907)
 
-`pyright` は typeshed の stub を大量に同梱しており、パスの深いところへ入れると **Windows の MAX_PATH (260 文字)** に当たって install が失敗します。エラーは次の形で出ます。
+`pyright` は typeshed の stub を大量に同梱しており、パスの深いところへ入れると **Windows の MAX_PATH** に当たって install が失敗します。エラーは次の形で出ます。
 
 ```text
 ERROR: Could not install packages due to an OSError: [Errno 2] No such file or directory:
-'...\site-packages\pyright\dist\dist\typeshed-fallback\stubs\braintree\...\test_operation_performed_in_production_error.pyi'
+'...\site-packages\pyright\dist\dist\typeshed-fallback\stubs\...\<長いファイル名>.pyi'
 ```
 
 **原因はディスク不足でもパッケージ破損でもなくパス長です。**
 
-数え方を明示します。以下「suffix」は **site-packages の直後の区切り文字を含めた**部分の長さです。pyright が作る最長の suffix は次の 122 文字です。
+数え方を明示します。以下「suffix」は **site-packages の直後の区切り文字を含めた**部分の長さです。**pyright 1.1.411 で全 6344 ファイルを走査した最長 suffix は 127 文字**でした。
 
 ```text
-\pyright\dist\dist\typeshed-fallback\stubs\braintree\braintree\exceptions\test_operation_performed_in_production_error.pyi
+\pyright\dist\dist\typeshed-fallback\stubs\oauthlib\oauthlib\oauth2\rfc6749\grant_types\resource_owner_password_credentials.pyi
 ```
 
-したがってフルパス長は次で決まります。
-
-```text
-フルパス長 = len(site-packages のパス) + 122
-```
-
-Windows の ANSI API はフルパスを **259 文字まで**しか扱えません (終端 NUL を含めて 260)。つまり `len(site-packages) + 122 > 259` で失敗し、これは **site-packages が 138 文字以上**と同値です (138 ちょうどで既に NG)。
-
-| site-packages の場所 | 長さ | + suffix 122 | 判定 |
-| --- | --- | --- | --- |
-| Microsoft Store 版 Python のユーザー site-packages (`%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.3.12_...\LocalCache\local-packages\Python312\site-packages`) | 138 | 260 | **NG** (上限 259 超) |
-| repo 直下の `.venv` (`<repo>\.venv\Lib\site-packages`) | 74 | 196 | OK (余裕 63 文字) |
-| worktree 内の `.venv` (`<repo>\.claude\worktrees\<name>\.venv\Lib\site-packages`) | 119 | 241 | OK (余裕 18 文字) |
-
-自分の環境で判定するには次を実行します (`OK` なら install できます)。
-
-**venv の外では pip の書き込み先が一意に決まりません。** システム site-packages が書ければそこへ、書けなければユーザー site-packages へ落ちます (Microsoft Store 版 Python や `--user` 指定時)。そのため venv 外では **両方を表示**し、使う方の行を見てください。`site.getsitepackages()` だけを測ると、読み取り専用のシステム側 (短い) を見て `OK` と誤判定します。**venv を使えばこの曖昧さ自体が消えます。**
+**エラーに出るパスが最長とは限りません** (install 順で最初に失敗したものが表示されます)。上の 127 は pyright 1.1.411 の実測値で、版が変われば変わります。install 済みの環境では次で測り直せます。
 
 ```bash
-python -c "import sys,site,sysconfig; venv = sys.prefix != sys.base_prefix; cands = [('venv', sysconfig.get_paths()['purelib'])] if venv else [('system', sysconfig.get_paths()['purelib']), ('user', site.getusersitepackages())]; [print(k, len(q), len(q)+122, 'OK' if len(q)+122 <= 259 else 'NG') for k,q in cands]"
+python -c "import pathlib,site; sp=pathlib.Path(site.getsitepackages()[-1]); print(max(len(str(f)[len(str(sp)):]) for f in (sp/'pyright').rglob('*')))"
 ```
+
+Windows の ANSI API はフルパスを **259 文字まで**しか扱えません (終端 NUL を含めて 260)。つまり `len(site-packages) + 127 > 259` で失敗し、これは **site-packages が 133 文字以上**と同値です。
+
+| site-packages の場所 | 長さ | + suffix 127 | 判定 |
+| --- | --- | --- | --- |
+| Microsoft Store 版 Python のユーザー site-packages (`%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.3.12_...\LocalCache\local-packages\Python312\site-packages`) | 138 | 265 | **NG** (上限 259 超) |
+| repo 直下の `.venv` (`<repo>\.venv\Lib\site-packages`) | 74 | 201 | OK (余裕 58 文字) |
+| worktree 内の `.venv` (`<repo>\.claude\worktrees\<name>\.venv\Lib\site-packages`) | 119 | 246 | OK (余裕 13 文字) |
 
 **対処は仮想環境を使うこと**です (本 doc が元々推奨している方法)。repo 直下の `.venv` が最も余裕があります。
 
@@ -286,7 +278,15 @@ python -c "import sys,site,sysconfig; venv = sys.prefix != sys.base_prefix; cand
 Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled
 ```
 
-**install が途中で失敗すると partial な `pyright` ディレクトリが残ります。** その状態では `import importlib.metadata; m.version('pyright')` が `PackageNotFoundError` を出す一方でファイルは存在するため、再 install の前に残骸を削除してください (削除自体も MAX_PATH に当たる場合は `robocopy` で空ディレクトリと同期する方法があります)。
+書き込み先の長さは次で確認できます。venv の外では pip の書き込み先が一意に決まらない (システム側が書ければそこへ、書けなければユーザー側へ落ちる) ため、両方を表示します。
+
+```bash
+python -c "import sys,site,sysconfig; venv = sys.prefix != sys.base_prefix; cands = [('venv', sysconfig.get_paths()['purelib'])] if venv else [('system', sysconfig.get_paths()['purelib']), ('user', site.getusersitepackages())]; [print(k, len(q), len(q)+127, 'OK' if len(q)+127 <= 259 else 'NG') for k,q in cands]"
+```
+
+**このコマンドが返すのは既定の `pip install` 構成での目安であって保証ではありません。** `PIP_TARGET` / `PIP_PREFIX` / `pip install --target` / pip config の `target` などで書き込み先を変えている場合、venv の中にいても pip は表示されたパスとは別の場所へ書きます。**確実な判定は実際に `pip install` を走らせること**で、本節はそれが失敗したときに原因を読み解くためのものです。
+
+**install が途中で失敗すると partial な `pyright` ディレクトリが残ります。** その状態では `importlib.metadata` が `PackageNotFoundError` を出す一方でファイルは存在するため、再 install の前に残骸を削除してください (削除自体も MAX_PATH に当たる場合は `robocopy` で空ディレクトリと同期する方法があります)。
 
 ### 仮想環境を抜ける
 
