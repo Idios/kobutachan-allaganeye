@@ -188,17 +188,49 @@ def test_constraints_pins_match_installed_versions() -> None:
     )
 
 
-def _workflow_pip_install_lines() -> list[tuple[pathlib.Path, int, str]]:
-    """全 workflow から `pip install` 行を [(path, lineno, 行本文)] で返す.
+def _scan_pip_installs(text: str) -> list[tuple[int, str]]:
+    """シェルスクリプト片から pip install 相当の論理行を [(lineno, 本文)] で返す.
 
-    行ベースの走査である。YAML の `run:` は literal scalar なので中身は素の
-    シェルスクリプトであり、行単位で見るのが実態に合う。行頭 / 行末のシェル
-    コメントは落とす。
+    **シェルの行継続 (`\\`) を先に畳む。** これをしないと
+        python -m pip \\
+            install some-package
+    のように `pip` と `install` を別の物理行へ分けるだけで検査を素通りできる
+    (どちらの行も単独では `pip install` に一致しない) = false-green。
+    Codex adversarial-review round 2 の指摘。
+
+    行頭 / 行末のシェルコメントは落とす。lineno は論理行の開始行を返す。
+    """
+    logical: list[tuple[int, str]] = []
+    buf = ""
+    start = 0
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        # 行末コメントを落とす (空白 + # 以降)。URL の fragment 等は
+        # 直前に空白が無いので誤除去しない。
+        line = re.sub(r"(^|\s)#.*$", "", raw).rstrip()
+        if not buf:
+            start = lineno
+        if line.endswith("\\"):
+            buf += line[:-1] + " "
+            continue
+        buf += line
+        if buf.strip():
+            logical.append((start, buf.strip()))
+        buf = ""
+    if buf.strip():
+        logical.append((start, buf.strip()))
+
+    return [
+        (lineno, line)
+        for lineno, line in logical
+        if re.search(r"\bpip\b[^\n]*?\binstall\b", line)
+    ]
+
+
+def _workflow_pip_install_lines() -> list[tuple[pathlib.Path, int, str]]:
+    """全 workflow から pip install の論理行を [(path, lineno, 本文)] で返す.
 
     既知の挙動 (実測):
-      - `\\` で複数行に分割した pip install は 1 行目で検出され、`-c` が 2 行目に
-        あると **false-red** になる。fail-open ではないので安全側だが、その場合は
-        1 行にまとめること。
+      - シェルの行継続 (`\\`) は畳んでから検査する。
       - `uv pip install` も検出対象に入る。
       - workflow から呼ぶ外部スクリプト内の pip install は対象外
         (現時点でそのような間接呼び出しは無く、composite action も存在しない)。
@@ -207,17 +239,38 @@ def _workflow_pip_install_lines() -> list[tuple[pathlib.Path, int, str]]:
     for path in sorted(_WORKFLOW_DIR.glob("*.yml")) + sorted(
         _WORKFLOW_DIR.glob("*.yaml")
     ):
-        for lineno, raw in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
-            # 行末コメントを落とす (空白 + # 以降)。URL の fragment 等は
-            # 直前に空白が無いので誤除去しない。
-            line = re.sub(r"(^|\s)#.*$", "", raw).strip()
-            if not line:
-                continue
-            if re.search(r"\bpip\s+install\b", line):
-                hits.append((path, lineno, line))
+        for lineno, line in _scan_pip_installs(path.read_text(encoding="utf-8")):
+            hits.append((path, lineno, line))
     return hits
+
+
+def _is_constrained(line: str) -> bool:
+    """pip install 行が constraints を通しているか (短長両方の形を受ける)."""
+    return bool(re.search(r"(^|\s)(-c|--constraint)[=\s]+\S*constraints\.txt", line))
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        # 素直な形
+        "          pip install some-package",
+        # 行継続で pip と install を分ける (round 2 で指摘された回避形)
+        "          python -m pip \\\n            install some-package",
+        # 引数だけを次行へ送る形
+        "          pip install \\\n            some-package",
+        # uv 経由
+        "          uv pip install some-package",
+    ],
+)
+def test_workflow_scanner_detects_unconstrained_forms(snippet: str) -> None:
+    """未 constrained な pip install の各種表記を確実に検出すること.
+
+    guard 自身が「走っているのに何も見ていない」状態になるのを防ぐ negative
+    fixture。行継続で分割した形を素通ししていたのを round 2 で修正した。
+    """
+    found = _scan_pip_installs(snippet)
+    assert found, f"未 constrained な pip install を検出できていない: {snippet!r}"
+    assert not any(_is_constrained(line) for _, line in found)
 
 
 def test_all_workflow_pip_installs_use_constraints() -> None:
@@ -237,7 +290,7 @@ def test_all_workflow_pip_installs_use_constraints() -> None:
     for path, lineno, line in hits:
         if re.search(r"install\s+--upgrade\s+pip\b", line):
             continue  # pip 自身の更新は対象外
-        if "-c constraints.txt" not in line:
+        if not _is_constrained(line):
             violations.append(f"  {path.as_posix()}:{lineno}: {line}")
 
     assert not violations, (
