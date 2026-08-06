@@ -45,6 +45,7 @@ TypeScript 単独は `gui/` 配下で `npm run generate-types` でも実行可�
 ## トラブルシューティング
 
 - **改行差分**: Windows ↔ Linux で CRLF/LF が混ざると CI で diff 発生 → `.gitattributes` で `text eol=lf` 強制済み
-- **datamodel-code-generator が見つからない**: `pip install -e ".[dev]"` で dev deps を入れ直す
+- **datamodel-code-generator が見つからない**: `pip install -e ".[dev]" -c constraints.txt` で dev deps を入れ直す
+- **生成物が CI と一致しない**: 整形は `datamodel-code-generator` / `black` / `isort` の版に依存する。3 つとも `constraints.txt` で exact pin してあるので、`-c constraints.txt` を付けずに install していると差分が出る (#916)
 - **json-schema-to-typescript が見つからない**: `cd gui && npm install` で dev deps を入れ直す
 - **Python orchestrator から TS 生成失敗**: `node` が PATH にあるか確認 (`gui-frontend` CI ジョブは `actions/setup-node@v4` で導入済み、ローカルは Node 22+ 推奨)

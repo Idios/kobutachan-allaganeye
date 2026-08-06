@@ -56,6 +56,11 @@ on:
       # release CI で実際に走らせて、ガードが壊れたまま merge されるのを防ぐ。
       - 'scripts/check_version_consistency.py'
       - 'pyproject.toml'
+      # #916: build venv の pip install が -c constraints.txt を通すようになったため、
+      # constraints.txt の単独変更 (cv2 / numpy / scipy の bump 等) も Portable ZIP
+      # build と smoke test を PR 時点で走らせる。ここに入れないと、frozen artifact の
+      # regression を最も捕まえやすい検査を素通りして merge できてしまう。
+      - 'constraints.txt'
       # GUI 関連: tauri build を release CI で実行するため (#570)。
       # tauri.conf.json / Cargo.toml / Rust src / TS src / vite config の単独変更でも
       # release CI を trigger し、Tauri build 失敗の検出が遅れないようにする。
@@ -198,7 +203,12 @@ jobs:
       - name: Install PyInstaller (#752)
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r scripts/installer/requirements-pyinstaller.txt
+          # -c constraints.txt は build venv 側と規約を揃えるため (#916)。この
+          # base Python は ZIP の中身には入らない (build script が自前の venv を
+          # 作る) が、「package を入れる pip install には必ず -c を付ける」規約を
+          # workflow 横断で一様にしておく。tests/test_dependency_pins.py の
+          # test_all_workflow_pip_installs_use_constraints が全 workflow を検査する。
+          python -m pip install -r scripts/installer/requirements-pyinstaller.txt -c constraints.txt
 
       - name: Build Portable ZIP (skip archive)
         run: ./scripts/build-portable-zip.ps1 -Version '${{ needs.version-check.outputs.version }}' -SkipArchive

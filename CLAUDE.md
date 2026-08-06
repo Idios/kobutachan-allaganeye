@@ -232,13 +232,15 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 ツール側はユーザー環境を変更しない。ファイル関連付け / レジストリ / PATH / 自動起動登録は提案禁止。展開 = インストール、削除 = アンインストール の Portable ZIP 哲学を維持する (2026-04-27 ユーザー方針確定)。
 
-## 外部依存 URL 規約
+## 外部依存の版固定規約
 
-> §アーキテクチャ §外部依存 (runtime deps: ffmpeg / Python pkg / platforms) とは別。本 § は **DL URL の pin ルール**。
+> §アーキテクチャ §外部依存 (runtime deps: ffmpeg / Python pkg / platforms) とは別。本 § は **版を固定するルール** (DL URL / 依存 manifest / constraints)。
 
-外部依存 (Python / npm / cargo / OS binary tarball 等) の DL コードは **immutable URL** で pin する。詳細・受け入れ可能ソース・禁止パターン・検証手順は [`docs/l2-workflow.md` §外部依存規約](docs/l2-workflow.md#外部依存規約-649651703721-教訓) を参照。
+外部依存 (Python / npm / cargo / OS binary tarball 等) は版を固定する。(a) DL コードは **immutable URL** で pin する (b) 依存 manifest は**上限を付ける** (c) 再現が要る版は **exact pin** する。詳細・受け入れ可能ソース・禁止パターン・検証手順は [`docs/l2-workflow.md` §外部依存規約](docs/l2-workflow.md#外部依存規約-649651703721-教訓) を参照。
 
-代表事例: get-pip.py SHA pin (#649→#651→#703)、BtbN FFmpeg monthly snapshot (#721)。
+Python 依存は 2 層構成 (#916)。`pyproject.toml` = **外部への互換範囲の宣言** (上限必須)、`constraints.txt` = **repo 内の再現環境** の exact pin。範囲指定は「範囲内の最新」に解決されるので再現にはならない (`>=4.8,<5` は実測で 4.14.0.94 に解決する)。`pip install` を足すときは `-c constraints.txt` を必ず付ける。
+
+代表事例: get-pip.py SHA pin (#649→#651→#703)、BtbN FFmpeg monthly snapshot (#721)、cv2 の 4.x 固定 + baseline provenance の exact pin (#916)。
 
 ## セキュリティ検査（allaganeye-guard 運用連携）
 

@@ -1,0 +1,77 @@
+# Dependency constraints (#916 / #863)
+#
+# 役割分担:
+#   pyproject.toml  = 外部に対する互換範囲の宣言 (公開契約)。PyPI から install
+#                     する第三者が満たすべき範囲。
+#   constraints.txt = **この repo 自身の再現環境** の exact pin。CI / ローカル /
+#                     Portable ZIP build の 3 者を同一版に揃えるためだけに使う。
+#   -> 両者を矛盾させないこと。constraints の値は必ず pyproject の範囲内にする。
+#      (矛盾すると pip は ResolutionImpossible で落ち、
+#       "The user requested (constraint) ..." という読みにくい形で報告される)
+#
+# 使い方:
+#   pip install -e ".[dev]" -c constraints.txt
+#
+# pip の性質 (前提として理解しておくこと):
+#   - constraints は「どの版を入れるか」だけを決め、install はトリガーしない。
+#     依存グラフに現れない名前を書いても pip は **無言で無視する**
+#     (unused constraint を検出するコードパスが pip に存在しない)。
+#     = pin が朽ちても CI は緑のまま。
+#     -> tests/test_dependency_pins.py が「各 == 行が実際にその版で解決されたか」
+#        を検査する。行を足したら必ずこのテストが赤 -> 緑になることを確認すること。
+#   - editable / extras 付き / 名前なしの行は書けない (InstallationError)。
+#     本プロジェクト自身 (kobutachan-allaganeye) を書いてはいけない。
+#   - `-c` は PEP 517 の分離ビルド環境に伝播しない。したがって
+#     [build-system] requires の setuptools は本ファイルでは固定できない
+#     (#916 の既知の残余。docs/l2-workflow.md §外部依存規約 参照)。
+#   - 本ファイルには `name==version` だけを書く。範囲行は pin として機能せず、
+#     tests/test_dependency_pins.py の検査対象からも静かに外れる。
+#
+# ここに書かないもの (理由):
+#   - ruff / pyright  : pyproject.toml の dev extras が exact pin の SSoT (#907)。
+#                       重複させると片方だけ bump したとき解決不能になる。
+#   - typer / click   : pyproject.toml の <0.25 / <8.4 が事実上 exact (#863)。
+#   - kobutachan-allaganeye 自身 : constraint 化すると `-e .` の解決に当たりうる。
+#
+# bump 手順: docs/developer-setup.md §9 「依存 constraints の bump 手順」
+
+# --- 検出出力に影響する runtime 依存 (bit-exact baseline の provenance) ---
+# v0.3.0 の bit-exact baseline (tests/baselines/v0.3.0/) を取得した環境の版。
+# ここを動かすと baseline 再取得 (実機 detect、数時間規模) が必要になる。
+#
+# 実測した provenance:
+#   - baseline 生成は 2026-07-11 (obs-20260116.metadata.json の detected_at)
+#   - 当時 venv にあった cv2 は 4.13.0.92 (dist-info mtime 2026-04-04)
+#   - numpy 2.4.4 (2026-04-04) / scipy 1.17.1 (2026-04-15) も同じく baseline 以降
+#     更新されていない = 生成時そのものの版
+#
+# pyproject 側は >=4.8,<5 (裁定 D8) だが、その範囲は 4.14.0.94 (2026-07-29
+# リリース) にも解決する = baseline を取った実装と別物になる。範囲だけでは
+# 足りないので exact pin する。5.x 移行は #951 (deferred)。
+#
+# numpy / scipy を含める理由は cv2 と同型: detector の brightness 平均・閾値
+# 比較は numpy の縮約を経由しており、baseline は bit-exact 比較なので
+# 数値実装の差が境界を動かしうる。
+opencv-python-headless==4.13.0.92
+numpy==2.4.4
+scipy==1.17.1
+
+# --- codegen gate (.github/workflows/ci.yml) の出力を決める整形系 ---
+# `python scripts/codegen/generate.py --py` の出力は datamodel-code-generator と
+# それが内部で呼ぶ black / isort の版で変わる。ci.yml が生成物を
+# `git diff --exit-code` で gate しているため、固定しないとコード変更ゼロの PR が
+# 上流リリースだけで赤くなる (ruff 0.16 と同一クラスの時限爆弾)。
+#
+# black / isort は repo から一度も import していないので pyproject には宣言しない
+# (直接依存ではない = 宣言すると事実と違う)。transitive の版だけをここで固定する。
+# datamodel-code-generator は pyproject.toml の dev extras で >=0.25 として宣言済み
+# なので、ここでは範囲内の exact 値を与えるだけ。
+datamodel-code-generator==0.72.1
+black==26.5.1
+isort==8.0.1
+
+# --- CLI 出力の整形に効く transitive ---
+# typer が --help / traceback の整形に使う。rich 15 以降は色付き環境で option 名を
+# ANSI 分割するため、help 出力を assert するテストの gate 能力に影響する (#916 で
+# 実測。PR #915 でテスト側は version 非依存な形へ作り直し済み)。
+rich==14.3.3

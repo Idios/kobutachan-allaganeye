@@ -202,8 +202,10 @@ source .venv/bin/activate
 パッケージをインストールする:
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev]" -c constraints.txt
 ```
+
+**`-c constraints.txt` を省略しないでください。** `pyproject.toml` の範囲指定は「範囲内の最新」に解決されるため、それだけでは CI・他の開発者・配布物と同じ版になりません (#916)。省略すると `pytest tests/test_dependency_pins.py` が赤くなります。
 
 > SSH を使う場合: `git clone git@github.com:Idios/kobutachan-allaganeye.git`
 >
@@ -213,12 +215,12 @@ pip install -e ".[dev]"
 
 `ruff` と `pyright` は `pyproject.toml` の dev extras で **exact pin** してあります (`ruff==0.16.1` / `pyright==1.1.411`)。
 
-**範囲指定 (`>=0.16,<0.17` 等) では足りません。** CI は毎回まっさらな環境へ `pip install -e ".[dev]"` するため、範囲内の新リリースが出た瞬間に CI だけが上がり、ローカルは古い範囲内バージョンのまま残ります。これは pin が潰そうとしている drift そのものです。`pyright` は patch リリースで診断が変わるため特に危険です。
+**範囲指定 (`>=0.16,<0.17` 等) では足りません。** CI は毎回まっさらな環境へ `pip install -e ".[dev]" -c constraints.txt` するため、範囲内の新リリースが出た瞬間に CI だけが上がり、ローカルは古い範囲内バージョンのまま残ります。これは pin が潰そうとしている drift そのものです。`pyright` は patch リリースで診断が変わるため特に危険です。
 
 pin を更新した後は必ず再インストールしてください。
 
 ```bash
-pip install -e ".[dev]" --upgrade
+pip install -e ".[dev]" -c constraints.txt --upgrade
 ```
 
 現在の版は **CLI に聞いて**確認します。
@@ -371,7 +373,7 @@ git pull
 ```
 
 editable install (`pip install -e .`) のため、通常は `git pull` だけで更新が反映されます。
-依存パッケージが追加・変更された場合のみ `pip install -e ".[dev]"` の再実行が必要です。
+依存パッケージが追加・変更された場合のみ `pip install -e ".[dev]" -c constraints.txt` の再実行が必要です。
 
 ## 4. 開発用コマンド
 
@@ -395,7 +397,7 @@ pyright
 
 > **`ruff format --check` は必ず `.` を付けて repo 全体で回す (#907)**: 触ったファイルだけを指定すると、subagent や別 PR が入れた変更を取りこぼして CI の Format check だけが赤になります。CI (`.github/workflows/ci.yml`) も `ruff format --check .` で全 repo を見ます。
 >
-> **版がずれていると同じコマンドでも結果が変わります。** `ruff` / `pyright` は `pyproject.toml` の dev extras で上限付きに pin してあるので、pin を更新したら `pip install -e ".[dev]" --upgrade` を実行してから回してください (§パッケージのインストール の注記参照)。
+> **版がずれていると同じコマンドでも結果が変わります。** `ruff` / `pyright` は `pyproject.toml` の dev extras で上限付きに pin してあるので、pin を更新したら `pip install -e ".[dev]" -c constraints.txt --upgrade` を実行してから回してください (§パッケージのインストール の注記参照)。
 
 ### Windows: Pester v5 (scripts/ 用 PowerShell ユニットテスト)
 
@@ -525,3 +527,31 @@ bump 頻度: 4-6 か月毎を目安、PyInstaller 公式 release notes を確認
 Python interpreter 自体は CI 上 `actions/setup-python@v5` で 3.11.9 に pin される (`.github/workflows/release.yml`)。local build では `python --version` (PATH 上の `python` コマンド) を build script 冒頭で sanity check する。
 
 > **履歴**: 旧 Python 3.11 embed + get-pip.py SHA pin フローは [#649](https://github.com/Idios/kobutachan-allaganeye/issues/649) (PR [#651](https://github.com/Idios/kobutachan-allaganeye/pull/651)) → [PR #675](https://github.com/Idios/kobutachan-allaganeye/pull/675) Round 2 #7 → [#681](https://github.com/Idios/kobutachan-allaganeye/issues/681) / PR [#703](https://github.com/Idios/kobutachan-allaganeye/pull/703) の versioned tag 化を経て [#752](https://github.com/Idios/kobutachan-allaganeye/issues/752) で PyInstaller `--onedir` に移行した。
+
+### 依存 constraints の bump 手順 (#916)
+
+Python 依存は 2 層で管理します。
+
+| ファイル | 役割 | 書き方 |
+| --- | --- | --- |
+| `pyproject.toml` | **外部への互換範囲の宣言** (公開契約)。PyPI から install する第三者が満たすべき範囲 | 上限付きの範囲 (`>=X,<Y`)。直接 import するものだけを宣言する |
+| `constraints.txt` | **この repo 自身の再現環境**。CI / ローカル / Portable ZIP build を同一版に揃える | `name==version` の exact pin のみ |
+
+**範囲指定は再現環境になりません。** `opencv-python-headless>=4.8,<5` は実測で 4.14.0.94 に解決します (bit-exact baseline を取得した 4.13.0.92 とは別実装)。再現は `constraints.txt` の `==` が担います。
+
+bump 手順:
+
+1. `constraints.txt` の該当行を更新する。値は必ず `pyproject.toml` の範囲内にすること (矛盾すると pip が `ResolutionImpossible` で落ちる)
+2. `pip install -e ".[dev]" -c constraints.txt --upgrade` で再インストールする
+3. `pytest tests/test_dependency_pins.py` が緑になることを確認する。**pip は constraints file の未使用行を無言で無視する**ため、この test が「pin が実際に効いているか」の唯一の検査です
+4. 影響範囲に応じて追加検証する (下表)
+
+| bump するもの | 追加で必要な検証 |
+| --- | --- |
+| `opencv-python-headless` / `numpy` / `scipy` | **bit-exact baseline の再取得** (`pytest -m slow_detect`、実機 GPU で数時間規模)。検出出力が変わりうるため必須。`cv2` の場合は `tests/test_dependency_pins.py` の `getBuildInformation` の `GUI:` 行 assert も実出力に合わせて再確認する |
+| `datamodel-code-generator` / `black` / `isort` | `python scripts/codegen/generate.py --py` を実行し `git diff --exit-code allaganeye/metadata_types.py` が緑であること (CI の codegen gate と同じ検査) |
+| `rich` | `pytest tests/test_cli.py` (help 出力の整形に影響する) |
+
+同時に触る場所: `constraints.txt` / `pyproject.toml` (範囲を外れる場合) / `.github/workflows/ci.yml` (install 行を増やした場合は `-c` を付ける) / `scripts/build-portable-zip.ps1` (同上。Pester の `Dependency constraints wiring (#916)` が statement 数と call-form を pin している)。
+
+**`-c` の射程外**: `[build-system] requires` の `setuptools` は PEP 517 の分離ビルド環境で解決されるため constraints では固定できません。`pip` 自身の版も固定していません。第三者の `pip install kobutachan-allaganeye` にも効きません (そちらは `pyproject.toml` の範囲だけが効く)。
