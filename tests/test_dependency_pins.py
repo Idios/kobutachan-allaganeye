@@ -19,6 +19,13 @@ constraints.txt の行が依存グラフから外れて no-op 化しても、CI 
 - **`-c constraints.txt` を渡さずに install した環境**では、本テストは
   「pin と違う版が入っている」ことを検出するが、**なぜ違うのか** (constraints を
   渡し忘れたのか、pin 値が古いのか) は区別しない。
+- **resolver 到達性は検査していない。** 見ているのは
+  `importlib.metadata.version()` = 「今この環境に何が入っているか」だけである。
+  ある pin が依存グラフから外れて no-op 化しても、**使い回しのローカル venv には
+  その版のまま残る** (pip は不要になった依存を自動削除しない) ため、ローカルでは
+  緑のままになりうる。これを落とすのは **CI のまっさらな環境**で、そこでは
+  install されず `PackageNotFoundError` として検出される。
+  つまり本テストの no-op 検出は **CI との組み合わせで成立する**。
 - **`[build-system] requires` の setuptools** は検査対象外。`-c` は PEP 517 の
   分離ビルド環境に伝播しないため constraints では固定できない (既知の残余)。
 - **pip 自身の版**は検査しない (`--upgrade pip` が CI / 配布 build にある)。
@@ -43,6 +50,7 @@ import pytest
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _PYPROJECT = _PROJECT_ROOT / "pyproject.toml"
 _CONSTRAINTS = _PROJECT_ROOT / "constraints.txt"
+_WORKFLOW_DIR = _PROJECT_ROOT / ".github" / "workflows"
 
 # `name==version` 行のみを拾う。`>=` 等の範囲行は「再現環境の pin」ではないので
 # 対象外にする (constraints.txt には exact pin だけを書く運用)。
@@ -51,6 +59,26 @@ _PIN_RE = re.compile(r"^([A-Za-z0-9._-]+)==([A-Za-z0-9.!+*-]+)\s*$")
 _REINSTALL_HINT = (
     'pip install -e ".[dev]" -c constraints.txt --upgrade (repo 直下で実行すること)'
 )
+
+# **pin されていること自体**を要求するパッケージ。
+#
+# これが無いと、constraints.txt から行を消しても「残った行は一致している」ので
+# テストは緑のまま = 保護範囲が静かに縮む。版そのものは constraints.txt が唯一の
+# 正で、本表は「どのカテゴリを pin し続けるか」という契約だけを持つ (版は複製しない)。
+#
+# 意図的に減らす場合は本表も同時に編集すること (= 意識的な判断になる)。
+_REQUIRED_PINS = {
+    # 検出出力に効く。動かすと bit-exact baseline の再取得が要る。
+    "opencv-python-headless",
+    "numpy",
+    "scipy",
+    # codegen gate (ci.yml) の生成物の整形を決める。
+    "datamodel-code-generator",
+    "black",
+    "isort",
+    # CLI help 出力の整形に効く。
+    "rich",
+}
 
 
 def _pyproject_requirements() -> list[str]:
@@ -112,6 +140,22 @@ def test_constraints_file_exists() -> None:
     )
 
 
+def test_required_packages_are_still_pinned() -> None:
+    """保護対象のパッケージが constraints.txt から消えていないこと.
+
+    版の一致だけを見ていると、行を削除したときに「残った行は一致している」ので
+    緑のまま通り、保護範囲が静かに縮む。削除を検出するのが本テスト。
+    """
+    pinned = {name for name, _ in _constraints_pins()}
+    missing = sorted(_REQUIRED_PINS - pinned)
+    assert not missing, (
+        "constraints.txt から pin が消えている: " + ", ".join(missing) + "\n"
+        "これらは検出出力 / codegen 出力 / CLI 整形に効くため exact pin を維持する。\n"
+        "意図的に外す場合は tests/test_dependency_pins.py の _REQUIRED_PINS も\n"
+        "同時に編集すること (無言で保護範囲が縮むのを防ぐため)。"
+    )
+
+
 def test_constraints_pins_match_installed_versions() -> None:
     """constraints.txt の各 pin が実際にその版で解決されていること.
 
@@ -141,6 +185,58 @@ def test_constraints_pins_match_installed_versions() -> None:
         "constraints.txt の pin が実環境と一致しない:\n"
         + "\n".join(mismatches)
         + f"\n\n復旧: {_REINSTALL_HINT}"
+    )
+
+
+def _workflow_pip_install_lines() -> list[tuple[pathlib.Path, int, str]]:
+    """全 workflow から `pip install` 行を [(path, lineno, 行本文)] で返す.
+
+    行ベースの走査である。YAML の `run:` は literal scalar なので中身は素の
+    シェルスクリプトであり、行単位で見るのが実態に合う。行頭 / 行末のシェル
+    コメントは落とす。
+    """
+    hits: list[tuple[pathlib.Path, int, str]] = []
+    for path in sorted(_WORKFLOW_DIR.glob("*.yml")) + sorted(
+        _WORKFLOW_DIR.glob("*.yaml")
+    ):
+        for lineno, raw in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            # 行末コメントを落とす (空白 + # 以降)。URL の fragment 等は
+            # 直前に空白が無いので誤除去しない。
+            line = re.sub(r"(^|\s)#.*$", "", raw).strip()
+            if not line:
+                continue
+            if re.search(r"\bpip\s+install\b", line):
+                hits.append((path, lineno, line))
+    return hits
+
+
+def test_all_workflow_pip_installs_use_constraints() -> None:
+    """全 workflow の package install が `-c constraints.txt` を通ること.
+
+    `ci.yml` だけを直しても、別 workflow に未 constrained な install が残ると
+    「CI の依存解決は constraints を通る」という主張が成立しない。**新しい
+    workflow を足したときにも効く**ように、ファイルを列挙して検査する。
+
+    pip 自身の self-upgrade (`pip install --upgrade pip`) だけは対象外
+    (pip の版は固定していない。既知の残余)。
+    """
+    hits = _workflow_pip_install_lines()
+    assert hits, "workflow に pip install が 1 行も見つからない (走査が壊れている)"
+
+    violations: list[str] = []
+    for path, lineno, line in hits:
+        if re.search(r"install\s+--upgrade\s+pip\b", line):
+            continue  # pip 自身の更新は対象外
+        if "-c constraints.txt" not in line:
+            violations.append(f"  {path.as_posix()}:{lineno}: {line}")
+
+    assert not violations, (
+        "constraints を通さない pip install が workflow に残っている:\n"
+        + "\n".join(violations)
+        + "\n\npackage を入れる pip install には `-c constraints.txt` を付けること (#916)。\n"
+        "pip 自身の更新 (`pip install --upgrade pip`) だけが対象外。"
     )
 
 

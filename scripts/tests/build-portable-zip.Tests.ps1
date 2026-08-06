@@ -784,12 +784,29 @@ Describe 'Dependency constraints wiring (#916)' {
     $script:ConstraintsBuildScript = Join-Path $script:ConstraintsRepoRoot 'scripts\build-portable-zip.ps1'
     $script:ConstraintsFile = Join-Path $script:ConstraintsRepoRoot 'constraints.txt'
 
-    # 行頭コメントを除去してからバッククォート継続を畳み、論理 statement にする。
-    $lines = Get-Content $script:ConstraintsBuildScript
-    $stripped = $lines | Where-Object { $_.Trim() -notmatch '^#' }
-    $joined = ($stripped -join "`n") -replace '`\s*\n\s*', ' '
+    # **正規表現によるテキスト走査ではなく PowerShell の AST を使う。**
+    # 行ベースの scan は次のすべてを取り違える:
+    #   - 行末コメント (`# TODO: -c ...` と書いただけで配線済みに見える)
+    #   - ブロックコメント `<# ... #>` / here-string の中身 (コードではないのに拾う)
+    #   - バッククォート継続の畳み方の差
+    # AST はパーサ本体の結果なので、コメントも here-string も CommandAst にならない。
+    $tokens = $null
+    $parseErrors = $null
+    $scriptAst = [System.Management.Automation.Language.Parser]::ParseFile(
+      $script:ConstraintsBuildScript, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors -and $parseErrors.Count -gt 0) {
+      throw "build-portable-zip.ps1 の parse に失敗した: $($parseErrors[0].Message)"
+    }
+    $commandAsts = $scriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.CommandAst]
+      }, $true)
+
+    # 実行されるコマンドのうち `... pip install ...` の形のものだけを取る。
     $script:PipInstallStatements = @(
-      $joined -split "`n" | Where-Object { $_ -match '-m\s+pip\s+install\b' }
+      $commandAsts |
+        ForEach-Object { $_.Extent.Text } |
+        Where-Object { $_ -match '\bpip\b' -and $_ -match '\binstall\b' }
     )
     # pip 自身の self-upgrade は constraints の対象外 (pip の版は固定していない。
     # 既知の残余として docs/l2-workflow.md §外部依存規約 に記載)。
