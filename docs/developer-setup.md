@@ -209,6 +209,89 @@ pip install -e ".[dev]"
 >
 > **注意**: 仮想環境を使わずに `pip install -e .` すると、`allaganeye` コマンドが PATH の通らないディレクトリにインストールされることがあります（特に Microsoft Store 版 Python）。仮想環境の使用を推奨します。
 
+### lint ツールの版を CI と揃える (#907)
+
+`ruff` と `pyright` は `pyproject.toml` の dev extras で **exact pin** してあります (`ruff==0.16.1` / `pyright==1.1.411`)。
+
+**範囲指定 (`>=0.16,<0.17` 等) では足りません。** CI は毎回まっさらな環境へ `pip install -e ".[dev]"` するため、範囲内の新リリースが出た瞬間に CI だけが上がり、ローカルは古い範囲内バージョンのまま残ります。これは pin が潰そうとしている drift そのものです。`pyright` は patch リリースで診断が変わるため特に危険です。
+
+pin を更新した後は必ず再インストールしてください。
+
+```bash
+pip install -e ".[dev]" --upgrade
+```
+
+現在の版は **CLI に聞いて**確認します。
+
+```bash
+ruff --version
+pyright --version
+```
+
+**`pyright` はパッケージ版と実行版が別物になりえます。** PyPI の `pyright` は wrapper で、解析器本体の版は `PYRIGHT_PYTHON_FORCE_VERSION` / `PYRIGHT_PYTHON_PYLANCE_VERSION` で上書きできます (`pyright/_utils.py` の `_get_configured_pyright_version()`)。実測:
+
+```text
+$ PYRIGHT_PYTHON_FORCE_VERSION=1.1.405 pyright --version
+pyright 1.1.405
+$ python -c "import importlib.metadata as m; print(m.version('pyright'))"
+1.1.411
+```
+
+つまり `importlib.metadata` で確認しても runtime の版は保証されません。**`pyright --version` の出力が pin と一致すること**を確認してください。上記の環境変数を設定している場合は、CI (未設定) と結果が食い違います。
+
+### Windows: `pyright` の install が MAX_PATH で失敗する場合 (#907)
+
+`pyright` は typeshed の stub を大量に同梱しており、パスの深いところへ入れると **Windows の MAX_PATH** に当たって install が失敗します。エラーは次の形で出ます。
+
+```text
+ERROR: Could not install packages due to an OSError: [Errno 2] No such file or directory:
+'...\site-packages\pyright\dist\dist\typeshed-fallback\stubs\...\<長いファイル名>.pyi'
+```
+
+**原因はディスク不足でもパッケージ破損でもなくパス長です。**
+
+数え方を明示します。以下「suffix」は **site-packages の直後の区切り文字を含めた**部分の長さです。**pyright 1.1.411 で全 6344 ファイルを走査した最長 suffix は 127 文字**でした。
+
+```text
+\pyright\dist\dist\typeshed-fallback\stubs\oauthlib\oauthlib\oauth2\rfc6749\grant_types\resource_owner_password_credentials.pyi
+```
+
+**エラーに出るパスが最長とは限りません** (install 順で最初に失敗したものが表示されます)。上の 127 は pyright 1.1.411 の実測値で、版が変われば変わります。次のコマンドで測り直せます。
+
+```bash
+python -c "import pathlib,pyright; r=pathlib.Path(pyright.__file__).parent; sp=r.parent; print(max(len(str(f)[len(str(sp)):]) for f in r.rglob('*')), r)"
+```
+
+`site.getsitepackages()` を決め打ちせず **`pyright` のパッケージ位置から導出**しているので、venv の内外やユーザー site へ落ちた場合でも正しい場所を測ります。測定先のパスも併せて出力するので、意図した環境を見ているか確認してください。
+
+**install が完了している環境で実行してください。** 後述の partial install が残っていると、そこを import できてしまい**実際より小さい値を黙って返します** (本 repo の環境で実測 120)。`python -c "import importlib.metadata as m; m.version('pyright')"` が `PackageNotFoundError` を出す場合は partial install です。
+
+Windows の ANSI API はフルパスを **259 文字まで**しか扱えません (終端 NUL を含めて 260)。つまり `len(site-packages) + 127 > 259` で失敗し、これは **site-packages が 133 文字以上**と同値です。
+
+| site-packages の場所 | 長さ | + suffix 127 | 判定 |
+| --- | --- | --- | --- |
+| Microsoft Store 版 Python のユーザー site-packages (`%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.3.12_...\LocalCache\local-packages\Python312\site-packages`) | 138 | 265 | **NG** (上限 259 超) |
+| repo 直下の `.venv` (`<repo>\.venv\Lib\site-packages`) | 74 | 201 | OK (余裕 58 文字) |
+| worktree 内の `.venv` (`<repo>\.claude\worktrees\<name>\.venv\Lib\site-packages`) | 119 | 246 | OK (余裕 13 文字) |
+
+**対処は仮想環境を使うこと**です (本 doc が元々推奨している方法)。repo 直下の `.venv` が最も余裕があります。
+
+`LongPathsEnabled` を有効化する方法もありますが、レジストリ変更 + 管理者権限が必要で、他の開発者環境に前提を持ち込むため**推奨しません**。現在の設定は次で確認できます。
+
+```powershell
+Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled
+```
+
+書き込み先の長さは次で確認できます。venv の外では pip の書き込み先が一意に決まらない (システム側が書ければそこへ、書けなければユーザー側へ落ちる) ため、両方を表示します。
+
+```bash
+python -c "import sys,site,sysconfig; venv = sys.prefix != sys.base_prefix; cands = [('venv', sysconfig.get_paths()['purelib'])] if venv else [('system', sysconfig.get_paths()['purelib']), ('user', site.getusersitepackages())]; [print(k, len(q), len(q)+127, 'OK' if len(q)+127 <= 259 else 'NG') for k,q in cands]"
+```
+
+**このコマンドが返すのは既定の `pip install` 構成での目安であって保証ではありません。** `PIP_TARGET` / `PIP_PREFIX` / `pip install --target` / pip config の `target` などで書き込み先を変えている場合、venv の中にいても pip は表示されたパスとは別の場所へ書きます。**確実な判定は実際に `pip install` を走らせること**で、本節はそれが失敗したときに原因を読み解くためのものです。
+
+**install が途中で失敗すると partial な `pyright` ディレクトリが残ります。** その状態では `importlib.metadata` が `PackageNotFoundError` を出す一方でファイルは存在するため、再 install の前に残骸を削除してください (削除自体も MAX_PATH に当たる場合は `robocopy` で空ディレクトリと同期する方法があります)。
+
 ### 仮想環境を抜ける
 
 作業が終わって仮想環境から抜けるときは、どのシェル・OS でも共通で `deactivate` と入力します。
@@ -302,13 +385,17 @@ pytest -m slow
 # 単体テスト
 pytest tests/test_detector.py
 
-# Lint
+# Lint (touched file だけでなく repo 全体を対象にする。`.` を省略しない)
 ruff check .
 ruff format --check .
 
 # 型チェック
 pyright
 ```
+
+> **`ruff format --check` は必ず `.` を付けて repo 全体で回す (#907)**: 触ったファイルだけを指定すると、subagent や別 PR が入れた変更を取りこぼして CI の Format check だけが赤になります。CI (`.github/workflows/ci.yml`) も `ruff format --check .` で全 repo を見ます。
+>
+> **版がずれていると同じコマンドでも結果が変わります。** `ruff` / `pyright` は `pyproject.toml` の dev extras で上限付きに pin してあるので、pin を更新したら `pip install -e ".[dev]" --upgrade` を実行してから回してください (§パッケージのインストール の注記参照)。
 
 ### Windows: Pester v5 (scripts/ 用 PowerShell ユニットテスト)
 

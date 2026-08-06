@@ -33,8 +33,27 @@ include = ["allaganeye*"]
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
-    "ruff>=0.4",
-    "pyright>=1.1",
+    # lint / 型チェックは **exact pin** で CI とローカルの版を揃える (#907)。
+    # 範囲指定 (>=0.16,<0.17) では不十分: CI は毎回まっさらな環境へ
+    # `pip install -e ".[dev]"` するため、範囲内の新リリース (0.16.2 等) が出た
+    # 瞬間に CI だけが勝手に上がり、ローカルは古い範囲内バージョンのまま残る。
+    # これは本 pin が潰そうとしている drift そのもの。pyright は patch
+    # リリースで診断が変わるため特に危険。
+    # markdownlint が scripts/check-markdownlint.sh:22 の CLI2_VERSION で
+    # 既に解いているのと同じ「ローカル・CI 同版」規律を lint 全体へ広げる。
+    # 更新手順: 本行を書き換え -> `pip install -e ".[dev]" --upgrade` ->
+    # **`ruff --version` / `pyright --version` が本 pin と一致することを確認**
+    # -> `ruff check .` / `ruff format --check .` / `pyright` を repo 全体で
+    # 回して緑を確認 -> commit。取り込みタイミングを計画的に選ぶのが目的。
+    #
+    # version 確認を省かないこと: pyright の PyPI パッケージは wrapper で、
+    # PYRIGHT_PYTHON_FORCE_VERSION / PYRIGHT_PYTHON_PYLANCE_VERSION を設定
+    # していると **パッケージ版を pin しても実行される解析器の版が変わる**
+    # (実測: FORCE_VERSION=1.1.405 で `pyright --version` は 1.1.405、
+    # importlib.metadata は 1.1.411)。CI はこれらを設定しないため、ローカル
+    # だけ緑という状態が起きうる。詳細は docs/developer-setup.md 参照。
+    "ruff==0.16.1",
+    "pyright==1.1.411",
     "datamodel-code-generator>=0.25",
     "jsonschema>=4",
 ]
