@@ -17,6 +17,7 @@ spec から逐語で持ち込む。**全 PR の要件に暗黙で含まれる。
 - **cv2 は `opencv-python-headless>=4.8,<5`** (spec D8)。5.x 移行は #951 で deferred
 - **CHANGELOG 見出し日付 = タグを打つ日 (JST)** (spec D6)
 - **CHANGELOG への追記は `## [Unreleased]` 節へ** (spec D7)。Track A-C は version 見出しを触らない。確定は Track D
+  - **ただし節を新設するのは PR-B2 (Track B)** であり、それより先に走る Track A′ / A の PR は追記先が存在しない。実際 **PR-A1 (#955、#907) と PR-A2 (#956、#916 / #863) は CHANGELOG を触っていない**。**PR-B2 が `## [Unreleased]` 節を作る際に、この 2 本分の entry を back-fill すること** (2026-08-06 追記)
 - **`docs/release-process.md` §共通項目 は patch にも適用する** (spec D5)
 - **新規 spec / plan は markdownlint 対象**。commit 前に `bash scripts/check-markdownlint.sh --fix`。ただし `--fix` は行頭 `#NNN` を見出しに誤変換するので、issue 番号を行頭に置かない
 - **PR merge とタグ push と `gh release create` は Idios 専任**。agent は実行しない
@@ -88,7 +89,7 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 | `docs/l2-workflow.md:171-185` のコードフェンス + `review-pr/eval/requirements.md` | #935 × #856 (両方 PR-B3) | **同一 PR に統合済み** |
 | `docs/output-spec.md` matrix v2 (L88-113) | #920 × #933 (両方 PR-B2) | **同一 PR に統合済み** |
 | `scripts/check_version_consistency.py:268` の `args.tag` 分岐 + `release.yml:98-106` | #918 × #948 (両方 PR-C4) | **同一 PR に統合済み** |
-| `docs/cli-spec.md:625` | #376 (PR-B6) × #863 (PR-A2) | **PR を跨ぐ衝突。** PR-A2 → PR-B6 の順に直列化する |
+| ~~`docs/cli-spec.md:625`~~ | ~~#376 (PR-B6) × #863 (PR-A2)~~ | **解消済み (2026-08-06、PR #956)。** #863 は pin 継続を選んだため PR-A2 は `docs/cli-spec.md` を触らず、衝突自体が発生しなかった。**PR-B6 に PR-A2 待ちの制約は無い。** なお `docs/cli-spec.md` は 631 行しかなく、当初の `:625` / `:611-635` という行参照も実態とずれていた (該当節 `### click-level option-parse error` は 612-631) |
 | `docs/output-spec.md:201-` (解決済み絶対パスの契約) | #935 P2-4 (PR-B3) × #934 (PR-C7) | **契約の記述は PR-B3、機械検査は PR-C7** に分担。PR-B3 → PR-C7 の順。同じ `docs/output-spec.md` でも PR-B2 が触るのは L88-113 の matrix で領域が異なる |
 | `.claude/skills/release/SKILL.md` | #945 (PR-B4) × #918 (PR-C4) | 同一ファイルの別 Step を触る。PR-C4 (手順の骨格) → PR-B4 (Step 0a-2 追加) の順が安全 |
 
@@ -215,6 +216,7 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 - [ ] matrix v2 の各行が実装のガード条件と 1 対 1 で対応している (逐条引用を PR 本文に)
 - [ ] `docs/release-process.md` に CHANGELOG Added entry の記述規約がある
 - [ ] `CHANGELOG.md` に `## [Unreleased]` 節が存在し、Track A-C の各 PR がそこへ追記できる状態になっている
+- [ ] **先行マージ済みの PR-A1 (#955 / #907) と PR-A2 (#956 / #916 #863) の entry を back-fill した** — 節が無い時点でマージされたため、この 2 本は自分では追記できていない (2026-08-06 追記)
 - [ ] **v0.3.0 節の diff が 0 行** (`git diff origin/develop-0.3.1 -- CHANGELOG.md` に v0.3.0 節の変更が含まれないこと)
 - [ ] `bash scripts/check-markdownlint.sh` が 0 error
 
@@ -330,7 +332,7 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 
 **issue:** #376 #906 #652 #658
 
-**依存:** **PR-A2 の後。** #376 と #863 (PR-A2) は `docs/cli-spec.md:625` の同一行を触る (§同一ファイルを触る組)。
+**依存:** **なし (2026-08-06 更新)。** 当初は「PR-A2 の後」としていたが、その根拠だった `docs/cli-spec.md` の同一行衝突は発生しなかった (#863 が pin 継続を選び PR-A2 は cli-spec を触らなかった)。PR-A2 は PR #956 でマージ済みで、いずれにせよ待ちは無い。
 
 **Files:**
 
