@@ -466,11 +466,16 @@ $VenvDir = Join-Path $BuildDir 'venv'
 $VenvPython = Join-Path $VenvDir 'Scripts\python.exe'
 
 # 2. Install allaganeye + PyInstaller into venv
+# 依存版は constraints.txt で CI / ローカルと揃える (#916)。効かせないと build した
+# 日の PyPI 最新が ZIP に入り、CI が検証した版と別物になる。相対パス不可 (build venv
+# の cwd が repo root とは限らない) なので Join-Path で絶対パス化する。
+# pip 自身の self-upgrade だけは constraints の対象外 (既知の残余)。
 & $VenvPython -m pip install --upgrade pip --no-cache-dir
 & $VenvPython -m pip install `
     -r (Join-Path $RepoRoot 'scripts\installer\requirements-pyinstaller.txt') `
+    -c (Join-Path $RepoRoot 'constraints.txt') `
     --no-cache-dir
-& $VenvPython -m pip install $RepoRoot --no-cache-dir
+& $VenvPython -m pip install $RepoRoot -c (Join-Path $RepoRoot 'constraints.txt') --no-cache-dir
 
 # 3. Run PyInstaller (frozen --onedir) and copy the frozen app into the payload.
 # PyInstaller output: $BuildDir/pyinstaller-dist/allaganeye/ (allaganeye.exe +

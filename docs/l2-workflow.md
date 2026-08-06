@@ -982,11 +982,17 @@ Stage 3 で Codex CLI が token 枯渇 / network failure 等で fail した場�
 
 ## 外部依存規約 (#649/#651/#703/#721 教訓)
 
-外部依存 (Python / npm / cargo / OS binary tarball 等) の DL コードは **immutable URL** で pin する。`master` / `main` / `latest` / `raw HEAD` を含む URL は禁止。
+外部依存 (Python / npm / cargo / OS binary tarball 等) の**版を固定する**。3 つの形がある。
+
+1. **DL URL は immutable にする** — `master` / `main` / `latest` / `raw HEAD` を含む URL は禁止
+2. **依存 manifest には上限を付ける** — `>=X` (上限なし) は新 major を無検証で招き入れる
+3. **再現が要る版は exact pin する** — 範囲指定は「範囲内の最新」に解決されるので再現環境にはならない
 
 ### Why
 
 PR #649 → #651 (get-pip.py SHA pin) → #703 (versioned tag URL 切替) → #721 (BtbN monthly snapshot) の 3 hotfix 連発 (F2)。最初から immutable URL ルールがあれば 1 PR で完結した。BtbN daily の retention 14 日 / get-pip.py master の breaking change 等、上流側の breaking が DL URL に影響する。
+
+Python 依存側でも同型が起きた (#916)。`opencv-python-headless>=4.8` (上限なし) が CI と配布物で **5.x** に解決される一方、検出精度の bit-exact baseline は 4.13.0 でしか検証されていなかった。`rich` は上限なしの transitive のまま 15 系へ上がり、`assert "--vtuber" not in result.stdout` 形の pin を **CI で常に真 = false-green** 化していた (#915 で実測)。「上限がない = 上流のリリース判断がそのまま本 repo の検証前提になる」。
 
 ### 受け入れ可能なソース
 
@@ -997,6 +1003,8 @@ PR #649 → #651 (get-pip.py SHA pin) → #703 (versioned tag URL 切替) → #7
 | npm registry version pin | `package.json` の `dependencies` で `"^X.Y.Z"` (transitive は package-lock.json で fix) | tauri / vite |
 | cargo registry version pin | `Cargo.toml` の `tauri = "2.11"` (transitive は Cargo.lock で fix) | tauri-utils |
 | SHA-pinned download | `https://.../...-<commit-hash>.tar.gz` + SHA256 checksum | FFmpeg checksum |
+| pip manifest version pin | `pyproject.toml` の dependencies / optional-dependencies で**上限付き** (`>=X,<Y`)。直接 import するものだけを宣言する | opencv-python-headless / typer / click |
+| pip exact pin (再現環境) | `constraints.txt` の `name==version`。**repo 内の再現専用**で、直接依存にしたくない transitive (rich / black / isort) の固定にも使う | cv2 / numpy / scipy / codegen chain |
 
 ### 禁止パターン
 
@@ -1007,14 +1015,24 @@ PR #649 → #651 (get-pip.py SHA pin) → #703 (versioned tag URL 切替) → #7
 | `https://.../latest/...` | retention / 互換性が保証されない |
 | `https://raw.githubusercontent.com/.../HEAD/...` | HEAD は git ref として可変 |
 | `npm install <pkg>` (version 未指定) | semver caret semantics で意図せぬ major up に脱する |
+| `pyproject.toml` の `>=X` (上限なし) | 新 major が CI と配布物へ無検証で流入する (#916: cv2 が 4.x 前提の baseline のまま 5.x に解決されていた) |
+| 範囲指定を「再現環境の pin」と見なす | `>=4.8,<5` は実測で 4.14.0.94 に解決する。範囲は**互換性の宣言**であって再現ではない。再現は `constraints.txt` の `==` が担う |
 
 ### 検証手順
 
 `scripts/build-portable-zip.ps1` / `.github/workflows/*.yml` / 任意の install script を編集する場合:
 
 1. 該当行のコメントに「must be immutable (versioned tag / SHA pinned)」と記載
-2. Pester regression (`tests/installer/build-portable-zip.Tests.ps1`) で URL に `master`, `main`, `latest`, `HEAD` の literal が含まれていないことを assert
+2. Pester regression (`scripts/tests/build-portable-zip.Tests.ps1`) で URL に `master`, `main`, `latest`, `HEAD` の literal が含まれていないことを assert
 3. `/review-pr` skill が installer / workflow PR を review するときに本 § を引いて URL 規約適合を Step 5b トリアージで逐条検証
+
+`pyproject.toml` / `constraints.txt` を編集する場合 (#916):
+
+1. `constraints.txt` に行を足したら **`pytest tests/test_dependency_pins.py` が赤 → 緑になることを確認する**。pip は constraints file の**未使用行を無言で無視する** (依存グラフに現れない名前を書いても警告が出ない) ため、「pin したつもり」が no-op 化していても pip 自身は気づかせてくれない
+2. 新しい `pip install` を足したら `-c constraints.txt` を付ける。**付け忘れると同一 workflow / build 内に constraints 非適用の解決が 1 本残る**。`scripts/build-portable-zip.ps1` 側は Pester の `Dependency constraints wiring (#916)` が statement 数と call-form を pin している
+3. 検出出力に影響する依存 (cv2 / numpy / scipy) を bump する場合は **bit-exact baseline の再取得が必要**。手順は [`docs/developer-setup.md`](developer-setup.md) §9 を参照
+
+**`-c` の射程外 (既知の残余)**: constraints は PEP 517 の分離ビルド環境へ伝播しないため、`[build-system] requires` の `setuptools` は `constraints.txt` では固定できない。`pip` 自身の版も固定していない (`--upgrade pip` が CI / 配布 build にある)。また constraints は **本 repo の install 経路専用**で、第三者の `pip install kobutachan-allaganeye` には効かない (そちらは `pyproject.toml` の範囲だけが効く)。
 
 ## 参考
 

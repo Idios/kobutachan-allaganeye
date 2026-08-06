@@ -770,3 +770,49 @@ Describe 'PyInstaller artifacts (#752)' {
     $spec | Should -Match "'sphinx'"
   }
 }
+
+Describe 'Dependency constraints wiring (#916)' {
+  # 出荷物の依存版を CI と揃えるための配線を pin する。効かせないと build した日の
+  # PyPI 最新 4.x が ZIP に入り、CI が検証した版と別物になる (#916 と同型の穴が
+  # 配布側に残る)。
+  #
+  # bare-name の全文 scan は production comment や無関係な statement を拾って
+  # false-green になるため、**statement 単位に scope してから call-form まで**
+  # assert する (memory: source-scan guard は statement に scope + call-form assert)。
+  BeforeAll {
+    $script:ConstraintsRepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    $script:ConstraintsBuildScript = Join-Path $script:ConstraintsRepoRoot 'scripts\build-portable-zip.ps1'
+    $script:ConstraintsFile = Join-Path $script:ConstraintsRepoRoot 'constraints.txt'
+
+    # 行頭コメントを除去してからバッククォート継続を畳み、論理 statement にする。
+    $lines = Get-Content $script:ConstraintsBuildScript
+    $stripped = $lines | Where-Object { $_.Trim() -notmatch '^#' }
+    $joined = ($stripped -join "`n") -replace '`\s*\n\s*', ' '
+    $script:PipInstallStatements = @(
+      $joined -split "`n" | Where-Object { $_ -match '-m\s+pip\s+install\b' }
+    )
+    # pip 自身の self-upgrade は constraints の対象外 (pip の版は固定していない。
+    # 既知の残余として docs/l2-workflow.md §外部依存規約 に記載)。
+    $script:PackageInstallStatements = @(
+      $script:PipInstallStatements | Where-Object { $_ -notmatch 'install\s+--upgrade\s+pip\b' }
+    )
+  }
+
+  It 'constraints.txt exists at repo root' {
+    Test-Path $script:ConstraintsFile | Should -BeTrue
+  }
+
+  It 'finds exactly 2 package-installing pip statements (new unguarded install fails here)' {
+    # 本数を pin することで、`-c` を付け忘れた 3 本目が静かに増えるのを防ぐ。
+    # 増減させた場合は下の call-form assert も併せて見直すこと。
+    $script:PackageInstallStatements.Count | Should -Be 2
+  }
+
+  It 'every package-installing pip statement passes -c with an absolute constraints path' {
+    # 相対パス不可: build venv の cwd が repo root とは限らないため、
+    # `Join-Path $RepoRoot` で絶対パス化されていることまで assert する。
+    foreach ($stmt in $script:PackageInstallStatements) {
+      $stmt | Should -Match '-c\s+\(Join-Path\s+\$RepoRoot\s+''constraints\.txt''\)'
+    }
+  }
+}
