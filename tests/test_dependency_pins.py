@@ -301,6 +301,47 @@ def test_all_workflow_pip_installs_use_constraints() -> None:
     )
 
 
+def test_release_workflow_triggers_on_constraints_change() -> None:
+    """`constraints.txt` の単独変更で release CI (Portable ZIP build) が起動すること.
+
+    本 PR で build venv の `pip install` が `-c constraints.txt` を通すように
+    なったため、constraints.txt は**出荷物の中身を決めるファイル**になった。
+    `release.yml` の `pull_request.paths` に入れておかないと、cv2 / numpy の
+    bump だけを含む PR が Windows build と smoke test を走らせずに merge できて
+    しまう (frozen artifact の regression を最も捕まえやすい検査を素通りする)。
+
+    `pull_request:` ブロック内に scope して探すので、他の場所に同じ文字列が
+    あっても緑にはならない。
+    """
+    text = (_WORKFLOW_DIR / "release.yml").read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    try:
+        start = next(
+            i for i, ln in enumerate(lines) if ln.rstrip() == "  pull_request:"
+        )
+    except StopIteration:  # pragma: no cover - 構造が変わったら気づけるように
+        pytest.fail("release.yml に `  pull_request:` ブロックが見つからない")
+
+    # 次の同レベル (2 スペース) キーまでを当ブロックとみなす。
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        ln = lines[i]
+        if ln.strip() and not ln.startswith("    ") and ln.startswith("  "):
+            end = i
+            break
+
+    block = lines[start:end]
+    assert any(
+        ln.strip() in ("- 'constraints.txt'", '- "constraints.txt"') for ln in block
+    ), (
+        "release.yml の pull_request.paths に constraints.txt が無い。\n"
+        "constraints.txt は build venv の pip install に効くため出荷物の中身を\n"
+        "決める。paths に入れないと constraints だけを変えた PR が Portable ZIP\n"
+        "build / smoke test を走らせずに merge できてしまう (#916)。"
+    )
+
+
 def test_non_headless_opencv_is_not_installed() -> None:
     """非 headless の opencv-python が同居していないこと.
 
