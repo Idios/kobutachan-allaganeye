@@ -256,11 +256,15 @@ ERROR: Could not install packages due to an OSError: [Errno 2] No such file or d
 \pyright\dist\dist\typeshed-fallback\stubs\oauthlib\oauthlib\oauth2\rfc6749\grant_types\resource_owner_password_credentials.pyi
 ```
 
-**エラーに出るパスが最長とは限りません** (install 順で最初に失敗したものが表示されます)。上の 127 は pyright 1.1.411 の実測値で、版が変われば変わります。install 済みの環境では次で測り直せます。
+**エラーに出るパスが最長とは限りません** (install 順で最初に失敗したものが表示されます)。上の 127 は pyright 1.1.411 の実測値で、版が変われば変わります。次のコマンドで測り直せます。
 
 ```bash
-python -c "import pathlib,site; sp=pathlib.Path(site.getsitepackages()[-1]); print(max(len(str(f)[len(str(sp)):]) for f in (sp/'pyright').rglob('*')))"
+python -c "import pathlib,pyright; r=pathlib.Path(pyright.__file__).parent; sp=r.parent; print(max(len(str(f)[len(str(sp)):]) for f in r.rglob('*')), r)"
 ```
+
+`site.getsitepackages()` を決め打ちせず **`pyright` のパッケージ位置から導出**しているので、venv の内外やユーザー site へ落ちた場合でも正しい場所を測ります。測定先のパスも併せて出力するので、意図した環境を見ているか確認してください。
+
+**install が完了している環境で実行してください。** 後述の partial install が残っていると、そこを import できてしまい**実際より小さい値を黙って返します** (本 repo の環境で実測 120)。`python -c "import importlib.metadata as m; m.version('pyright')"` が `PackageNotFoundError` を出す場合は partial install です。
 
 Windows の ANSI API はフルパスを **259 文字まで**しか扱えません (終端 NUL を含めて 260)。つまり `len(site-packages) + 127 > 259` で失敗し、これは **site-packages が 133 文字以上**と同値です。
 
