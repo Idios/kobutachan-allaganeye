@@ -41,12 +41,15 @@ N つに限られる」という網羅宣言が、`gui/src-tauri/src/**/*.rs` �
 しても、その symbol の振る舞いに関する doc の説明が正しいかは検査しない。
 具体的には以下が検査外である。
 
-* **`の` 形以外の backtick** — `docs/ui-interaction-spec.md` にはコードリンクと
-  同じ行に並ぶ backtick が 314 span あるが、C2 が見るのはそのうち `の` で束縛
-  された 80 span だけである。残りは散文・UI ラベル (`[× 閉じる]`)・CSS 値
-  (`pointer-events: none`)・テンプレート (`${index}`) が大半で、リンク先ファイル
-  への所属を主張していない。**この集合には実際に stale なコード名が含まれる**
-  (実測: `setCurrentT` / `loadErrorHint` / `addErrorHint` / `PROGRESS_EVENT` /
+* **`の` 形以外の backtick** — `docs/ui-interaction-spec.md` にはコードリンクの
+  後ろに並ぶ backtick が 322 span あるが、C2 が見るのはそのうち `の` で束縛
+  された 81 span だけで、**241 span は無検査である** (2026-08-07 実測)。残りは
+  散文・UI ラベル (`[× 閉じる]`)・CSS 値 (`pointer-events: none`)・テンプレート
+  (`${index}`) が大半で、リンク先ファイルへの所属を主張していない。全部を
+  検査対象にすると 98/314 が red になり、その大半が正常な散文だった (実測)
+  ため、束縛が明示された形だけを見ている。
+  **ただしこの無検査集合には実際に stale なコード名が含まれる** (実測:
+  `setCurrentT` / `loadErrorHint` / `addErrorHint` / `PROGRESS_EVENT` /
   `var(--ae-accent)` はいずれも repo に存在しない)。C2 はこれらを捕捉しない。
 * **`docs/superpowers/**`** — plan / spec の archive は走査対象外。実測で 168 本
   のリンクが既に壊れている (相対パスの階層ミス) が、archival 文書なので本 gate
