@@ -227,9 +227,9 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
    exit 0 でなければタグを打たない（exit 1 = 見出し日付 / バンプ方向の不一致、exit 2 = 検査自体の構造エラー）。**同じ検査を `release.yml` の `version-check` job がタグ push 時に実行する**ため、ここを飛ばすと*タグを打った後に*赤くなり、タグの打ち直しが必要になる
 
-**この commit をどこへ載せるか**: **`release/v<新バージョン>`（リリース PR の head）へ直接 commit / push する。新しい PR は作らない。** リリース PR はまだマージ前なので、この commit は同じ PR に乗って `main` へ渡る。
+**この commit をどこへ載せるか**: **リリース PR の head ブランチ（`release/v<新バージョン>`）へ直接 commit / push する。日付のためだけの新しい PR は作らない。** リリース PR はまだマージ前なので、この commit は同じ PR に乗って Step 2-4 で決めた**宛先**へ渡る（minor / major なら `main`。patch で `develop-<新バージョン>` を経由する場合はまずそこへ渡り、後続の `develop-<新バージョン> → main` PR で `main` に載る）。**宛先の名前は Step 2-4 の表が正**で、ここの記述で上書きしない。
 
-> **実行順序の制約**: したがって Step 4 は**リリース PR をマージする前**に実行する。`main` は保護ブランチ（`release/vX.Y.Z → main` のマージのみ受け付ける、[`docs/release-process.md`](../../../docs/release-process.md) §ルール 1）なので、マージ後に日付だけ直そうとしても `main` へ直接 commit できない。**Step 4 → リリース PR マージ → タグ打ちを同じ JST 日のうちに終える**のが正しい順序で、v0.3.0 もこの順で確定させている。
+> **実行順序の制約**: Step 4 は**リリース PR をマージする前**に実行する。`main` は保護ブランチ（`release/vX.Y.Z → main` のマージのみ受け付ける、[`docs/release-process.md`](../../../docs/release-process.md) §ルール 1）なので、マージ後に日付だけ直そうとしても直接 commit できない。**Step 4 → リリース PR マージ → タグ打ちを同じ JST 日のうちに終える**のが正しい順序で、v0.3.0 もこの順で確定させている。
 >
 > なお基準日を省いた `python scripts/check_version_consistency.py --tag v<新バージョン>` は、日付欄の**存在**しか見ない（値は比較しない）。Step 3 のバンプ時点ではタグを打つ日が未確定なので、そちらでは省略形で構わない。
 

@@ -189,6 +189,59 @@ def test_main_writes_notes_file(
 
 
 # --------------------------------------------------------------------------
+# fenced code block (Release 本文の途中切れ)
+# --------------------------------------------------------------------------
+
+
+def test_fenced_heading_does_not_truncate_notes(tmp_path: Path) -> None:
+    """fence 内の `## [...]` で本文を打ち切らないこと。
+
+    リリースノートが見出しの書式例を fence で囲んで載せると、素朴な
+    `(?=\\n## \\[)` 終端がその例で止まり、**GitHub Release の本文が途中までしか
+    公開されない** (Codex adversarial-review round 2 medium finding)。
+    fence の中身は本文の一部として**そのまま残る**必要がある。
+    """
+    fence = "`" * 3
+    source = _changelog(
+        tmp_path,
+        "## [0.3.1] - 2026-08-07\n"
+        "\n"
+        "- 見出しの書式例:\n"
+        "\n"
+        f"{fence}text\n"
+        "## [9.9.9] - 2026-01-01\n"
+        f"{fence}\n"
+        "\n"
+        "- fence の後ろの変更点\n"
+        "\n"
+        "## [0.3.0] - 2026-08-04\n"
+        "\n"
+        "- 前リリース\n",
+    )
+
+    notes = ern.extract("0.3.1", source)
+
+    # fence を跨いで最後まで拾うこと。
+    assert "fence の後ろの変更点" in notes, "fence 内の見出しで本文が途中切れした"
+    # fence の中身は本文の一部としてそのまま残ること (マスクが出力へ漏れない)。
+    assert "## [9.9.9] - 2026-01-01" in notes
+    # それでも次の実在の見出しでは打ち切ること。
+    assert "前リリース" not in notes
+
+
+def test_fenced_heading_cannot_impersonate_a_missing_section(tmp_path: Path) -> None:
+    """fence 内にしか無いバージョンは抽出対象にならないこと (逆方向)。"""
+    fence = "~" * 3
+    source = _changelog(
+        tmp_path,
+        f"## [0.3.1] - 2026-08-07\n\n{fence}\n## [9.9.9] - 2026-01-01\n{fence}\n",
+    )
+
+    with pytest.raises(SystemExit):
+        ern.extract("9.9.9", source)
+
+
+# --------------------------------------------------------------------------
 # CRLF (Windows checkout)
 # --------------------------------------------------------------------------
 

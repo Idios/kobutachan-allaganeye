@@ -884,6 +884,69 @@ def test_pre_release_heading_is_compared(
     )
 
 
+def test_fenced_heading_is_not_counted_as_a_release(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """fenced code block 内の `## [...]` を実在のリリース節として数えないこと。
+
+    CHANGELOG が見出しの書式例を fence で囲んで載せると、素朴な行頭マッチは
+    それを架空の上位版として拾い、バンプ方向チェックが**恒久 red** になる
+    (Codex adversarial-review round 2 medium finding)。
+    """
+    _write_synthetic_repo(tmp_path, "0.3.1")
+    fence = "`" * 3
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n"
+        "\n"
+        "## [0.3.1] - 2026-08-07\n"
+        "\n"
+        "### Added\n"
+        "\n"
+        "- 見出しの書式例:\n"
+        "\n"
+        f"{fence}text\n"
+        "## [9.9.9] - 2026-01-01\n"
+        f"{fence}\n"
+        "\n"
+        "## [0.3.0] - 2026-08-04\n"
+        "\n"
+        "- 前リリース\n",
+        encoding="utf-8",
+    )
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.3.1"])
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 0, f"fence 内の見出しを実在版として拾った: {errors}"
+
+
+def test_suffix_tag_is_rejected_as_unsupported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """pre-release / build 識別子付きのタグは「未対応」と明示して落とすこと。
+
+    pre-release 同士の precedence (rc1 < rc2) は実装していない。近似のまま通すと
+    `v0.4.0-rc2` が `0.4.0-rc1` と同値になり「ダウングレード」という**理由の
+    分からない red** をリリース当日に出す (Codex round 2 medium finding)。
+    """
+    _write_synthetic_repo(tmp_path, "0.4.0-rc2")
+    _write_changelog(
+        tmp_path, (("0.4.0-rc2", "2026-08-02"), ("0.4.0-rc1", "2026-08-01"))
+    )
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.4.0-rc2"])
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 1
+    assert any("未対応" in line for line in errors), (
+        f"「未対応」と分かるメッセージが出ていない: {errors}"
+    )
+    # 「ダウングレード」という誤った説明をしていないこと。
+    assert not any("新しくありません" in line for line in errors), (
+        f"pre-release をダウングレードとして誤報告した: {errors}"
+    )
+
+
 def test_release_after_its_own_pre_release_is_allowed(tmp_path: Path) -> None:
     """`0.4.0-rc1` がある状態で `v0.4.0` を打てること (false-red を出さない)。
 
@@ -1027,9 +1090,9 @@ def _release_workflow_effective() -> str:
 
     comment を含めて検査すると両方向に壊れる:
 
-    * 肯定側 (`--changelog-date-from` があること) — comment 内に語があるだけで
+    * 肯定側 (`--changelog-date-from` があること): comment 内に語があるだけで
       通ってしまい、呼び出しが消えても気付けない
-    * 否定側 (`head_commit` が無いこと) — 「なぜ使わないか」を comment で説明
+    * 否定側 (`head_commit` が無いこと): 「なぜ使わないか」を comment で説明
       した瞬間に落ちる
 
     どちらも「語の有無」ではなく「実効行の有無」を見れば解決する。
@@ -1063,7 +1126,7 @@ def test_release_workflow_does_not_fall_back_to_commit_timestamp() -> None:
     (`git tag -a`) 違反時だけなので、弱い基準で通すより落とす方が正しい。
 
     具体的な false-green: commit が 2026-08-06 23:00 JST、lightweight tag を
-    2026-08-07 JST に push、CHANGELOG 見出しが `2026-08-06` — fallback があると
+    2026-08-07 JST に push、CHANGELOG 見出しが `2026-08-06` の場合、fallback があると
     これが通る。
     """
     assert "head_commit" not in _release_workflow_effective()

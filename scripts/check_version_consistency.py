@@ -140,6 +140,48 @@ _CHANGELOG_HEADING_RE = re.compile(
 # 見出し末尾の ` - YYYY-MM-DD`。`rest` を strip したものに当てる。
 _HEADING_DATE_RE = re.compile(r"^-\s+(?P<date>\d{4}-\d{2}-\d{2})$")
 
+# pre-release / build 識別子 (`0.4.0-rc1` / `0.4.0+build.2`)。
+_VERSION_SUFFIX_RE = re.compile(r"^\d+\.\d+\.\d+(?P<suffix>[-+].+)$")
+
+# fenced code block の開始 / 終了行 (``` または ~~~、markdown 仕様どおり
+# 先頭 3 文字までのインデントを許す)。
+_FENCE_RE = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})")
+
+
+def mask_fenced_blocks(text: str) -> str:
+    """fenced code block の中身を**同じ長さの空白**へ置き換える。
+
+    CHANGELOG の本文が見出しの書式例を fence で囲んで載せることがある。素朴に
+    行頭 `## [` を拾うと、その例が実在のリリース節として数えられてしまう:
+
+    * バンプ方向チェックが架空の上位版 (`## [9.9.9]`) を見て**恒久 red** になる
+    * release notes 抽出が fence 内の見出しで打ち切られ、**本文が途中までしか
+      公開されない**
+
+    長さを保つので、masked text 上で得た match の span を元テキストへそのまま
+    当てられる (抽出側はこれを使って fence を含む本文を無傷で返す)。
+
+    終端の無い fence は以降を全てマスクする。見出しを**でっち上げない**方向の
+    縮退なので、検査としては安全側に倒れる。
+    """
+    masked: list[str] = []
+    fence_char: str | None = None
+    for line in text.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        newline = line[len(body) :]
+        marker = _FENCE_RE.match(body)
+        if fence_char is None:
+            if marker is not None:
+                fence_char = marker.group("fence")[0]
+                masked.append(" " * len(body) + newline)
+                continue
+            masked.append(line)
+            continue
+        if marker is not None and marker.group("fence")[0] == fence_char:
+            fence_char = None
+        masked.append(" " * len(body) + newline)
+    return "".join(masked)
+
 
 @dataclass(frozen=True)
 class ChangelogHeading:
@@ -157,9 +199,12 @@ class ChangelogHeading:
 
 
 def parse_changelog_headings(text: str) -> list[ChangelogHeading]:
-    """CHANGELOG 本文から `## [...]` 見出しを出現順に**全て**取り出す。"""
+    """CHANGELOG 本文から `## [...]` 見出しを出現順に**全て**取り出す。
+
+    fenced code block の中身は見出しとして数えない (`mask_fenced_blocks` 参照)。
+    """
     headings: list[ChangelogHeading] = []
-    for match in _CHANGELOG_HEADING_RE.finditer(text):
+    for match in _CHANGELOG_HEADING_RE.finditer(mask_fenced_blocks(text)):
         trailing = match.group("rest").strip()
         date_match = _HEADING_DATE_RE.match(trailing)
         headings.append(
@@ -329,6 +374,18 @@ def _check_bump_direction(
     target = _release_order_key(expected_version)
     if target is None:
         return []
+
+    if _VERSION_SUFFIX_RE.match(expected_version):
+        # pre-release 同士の precedence (rc1 < rc2) は実装していない。近似のまま
+        # 通すと「rc2 が rc1 と同値なのでダウングレード扱い」という**理由の分から
+        # ない red** をリリース当日に出すので、未対応であることを明示して落とす。
+        # タグ形式の規約 (docs/release-process.md §タグ運用) も
+        # `v<major>.<minor>.<patch>` なので、そもそも規約違反にあたる。
+        return [
+            f"{CHANGELOG_PATH}: pre-release / build 識別子付きのバージョン "
+            f"({expected_version}) はバンプ方向検査に未対応です "
+            f"(タグ形式は v<major>.<minor>.<patch>: docs/release-process.md §タグ運用)"
+        ]
 
     others: list[tuple[tuple[int, int, int, int], str]] = []
     for heading in headings:
