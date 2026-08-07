@@ -51,7 +51,7 @@ EPT とは別に Iron Law 6 Pre-flight Step 5 の Codex adversarial-review を 3
 
 ## 残った細部不明瞭点 (deferred、本 PR スコープ外)
 
-いずれも **#948 / #918 の変更に由来しない pre-existing の papercut**。executor は自力で正しく解決しており `[critical]` を落としていないため、別 issue で追跡する。
+いずれも **#948 / #918 の変更に由来しない pre-existing の papercut**。executor は自力で正しく解決しており `[critical]` を落としていないため、[#962](https://github.com/Idios/kobutachan-allaganeye/issues/962) で追跡する (2026-08-08 Idios 判断で別 issue 起票)。
 
 1. **Step 3 の実行順序**: 3-2 (ファイル編集) が 3-3 (ブランチ作成) より前に並んでおり、字面どおりだと dirty tree のまま `git pull` する
 2. **Step 0c-2 の `<前タグ>` プレースホルダ**に解決コマンドが添えられていない (Step 2-2 の `git describe --tags --abbrev=0` と重複定義)
