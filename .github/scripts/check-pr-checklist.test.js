@@ -281,6 +281,20 @@ test('#936: 行頭でない `- [ ]` (文中・コードスパン) は数えな�
   assert.equal(result.checked, 2);
 });
 
+test('#936: 同じ本文を繰り返し渡しても結果が変わらない (module 級 /g regex の lastIndex 汚染なし)', () => {
+  const body = '## 受け入れ条件\n\n- [ ] a\n- [x] b\n';
+  const first = countAcceptanceCriteriaCheckboxes(body);
+  for (let i = 0; i < 3; i++) {
+    assert.deepEqual(countAcceptanceCriteriaCheckboxes(body), first);
+  }
+  assert.equal(first.unchecked, 1);
+});
+
+test('#936: 多段 blockquote 内の checkbox も数える', () => {
+  const result = countAcceptanceCriteriaCheckboxes('## 受け入れ条件\n\n> > - [ ] nested quote\n');
+  assert.equal(result.unchecked, 1);
+});
+
 test('#936: インデントされた入れ子の checkbox も数える', () => {
   const body = `
 ## 受け入れ条件
