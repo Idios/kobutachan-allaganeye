@@ -251,6 +251,48 @@ test('#936 D9: 実テンプレートは 22 box 中 12 box のみが gate 対象'
   assert.equal(result.unchecked, 12, 'gate 対象となる - [ ] の数 (受け入れ条件 2 + Self-Test 10)');
 });
 
+test('#936: `*` / `+` / 番号付き list marker の checkbox も数える (false-green 修正)', () => {
+  // Codex adversarial-review round 2 [medium]。GFM の task list は `-` 以外の marker でも
+  // checkbox としてレンダリングされるため、`- ` 固定だと可視の未消化を見逃す。
+  const body = `
+## Self-Test Report
+
+* [ ] pytest
++ [x] ruff
+1. [ ] pyright
+2) [x] markdownlint
+`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 2);
+  assert.equal(result.checked, 2);
+});
+
+test('#936: 行頭でない `- [ ]` (文中・コードスパン) は数えない (false-red 修正)', () => {
+  // GitHub は行中の `- [ ]` を checkbox としてレンダリングしない。
+  // checker 自身を説明する本文 (当 PR の本文がまさにそれ) が誤って red になるのを防ぐ。
+  const body = `
+## 受け入れ条件
+
+- [x] Self-Test Report に \`- [ ]\` を 1 件残すと非ゼロ exit する — 対応 test: 発火実証
+- [x] 文中に - [ ] と書いても checkbox にはならない
+`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+  assert.equal(result.checked, 2);
+});
+
+test('#936: インデントされた入れ子の checkbox も数える', () => {
+  const body = `
+## 受け入れ条件
+
+- [x] 親項目
+  - [ ] 入れ子の未消化
+`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+  assert.equal(result.checked, 1);
+});
+
 test('#936: HTML コメント内の heading は section を打ち切らない (false-green 修正)', () => {
   // Codex adversarial-review round 1 [high]。GitHub 上でレンダリングされないコメント行が
   // heading とみなされ、その後ろの**可視の** `- [ ]` が数えられない false-green があった。

@@ -109,10 +109,28 @@ function stripHtmlComments(text) {
   return text.replace(/<!--[\s\S]*?-->/g, '');
 }
 
+/**
+ * GFM の task list item にマッチする regex (#936 Codex adversarial-review round 2 [medium])。
+ *
+ * 行頭 (インデントと blockquote prefix を許容) + list marker + `[ ]` / `[x]` の形だけを数える。
+ *
+ * - `-` 以外の marker (`*` / `+` / `1.` / `1)`) も GitHub は checkbox としてレンダリングするため
+ *   数える。`- ` 固定だと `* [ ] pytest` のような**可視の未消化**を見逃す (false-green)
+ * - 逆に**行中**の `- [ ]` (文中の言及やコードスパン内の記入例) は GitHub が checkbox として
+ *   レンダリングしないので数えない。checker 自身を説明する PR 本文が誤って red になるのを防ぐ
+ *   (false-red)
+ *
+ * 実測: 直近 merged 25 本 + `.github/pull_request_template.md` では、substring 版 (`- \[ \]`) と
+ * 本 regex のカウントは全ファイルで一致する (挙動中立な硬化)。
+ */
+const TASK_ITEM_PREFIX = '^[ \\t]*(?:>[ \\t]*)*(?:[-*+]|\\d+[.)])[ \\t]+';
+const UNCHECKED_ITEM_RE = new RegExp(TASK_ITEM_PREFIX + '\\[ \\]', 'gm');
+const CHECKED_ITEM_RE = new RegExp(TASK_ITEM_PREFIX + '\\[x\\]', 'gim');
+
 function countAcceptanceCriteriaCheckboxes(body) {
   const { text, found } = extractRequiredSections(body);
-  const unchecked = (text.match(/- \[ \]/g) || []).length;
-  const checked = (text.match(/- \[x\]/gi) || []).length;
+  const unchecked = (text.match(UNCHECKED_ITEM_RE) || []).length;
+  const checked = (text.match(CHECKED_ITEM_RE) || []).length;
   return { unchecked, checked, hasAnySection: found };
 }
 

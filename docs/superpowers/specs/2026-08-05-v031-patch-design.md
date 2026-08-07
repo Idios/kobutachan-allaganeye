@@ -273,7 +273,12 @@ E1 (routing がアドバイザリで skill / hook に 0 件) / E5 (見出し日�
 - 直近 merged 25 本のうち **7 本** (#909 #914 #915 #917 #924 #926 #927) は `## Self-Test Report` + `### machine-verified` の形で、素朴な h2-h4 split では counted 0 box = **新 gate が無発火のまま**だった
 - **#956** の形 (`## 受け入れ条件` の中に `### 実装計画 PR-A2 の受け入れゲート` 小見出し) では、素朴な split が既存 AC gate を **13 box → 0 box** に縮小させた (silent な gate 縮小)
 - heading level 準拠なら、h2 節は配下の h3/h4 を本文として吸収する (= 現行の AC 挙動を厳密保存) 一方、h4 `#### Self-Test Report` は兄弟 h4 `#### 関連ドキュメント` で終わる (D9 の 10 box に収まる)
-- 副作用として、h2 `## Self-Test Report` 配下の `### machine-unverifiable` 小見出しも吸収される。同節は規約上 plain bullet `-` で書くため実害はない (実在 25 本すべてで plain bullet、`- [ ]` の使用はゼロ)
+- 副作用として、h2 `## Self-Test Report` 配下の `### machine-unverifiable` 小見出しも吸収される。同節は規約上 plain bullet `-` で書くため実害はない (実在 25 本すべてで plain bullet、checkbox の使用はゼロ)
+
+**counter のレンダリング整合 (Codex adversarial-review で摘出、同 PR 内で修正)**: gate の対象節が増えるぶん、「GitHub が実際に描画するもの」と counter のズレも影響が広がるため、以下 2 点を同時に硬化した。実測で直近 merged 25 本 + テンプレートのカウントは硬化前後で全ファイル一致する (挙動中立)。
+
+- **HTML コメント除去** ([high] false-green): 描画されないコメント行が heading とみなされて節を打ち切り、その後ろの**可視の**未消化 checkbox が数から漏れていた。base 実装でも `## 受け入れ条件` 節で同じ入力から再現する既存穴
+- **task list marker の整合** ([medium] false-green + false-red): `*` / `+` / `1.` / `1)` の checkbox も数える一方、**行中**の checkbox 記法 (文中の言及やコードスパン内の記入例) は数えない。後者を数えると、この checker 自身を説明する PR 本文が誤って red になる
 
 **blast radius (D9)**: テンプレートの `- [ ]` は実測で計 22 box ある (受け入れ条件 2 / Iron Law 1 が 2 / Iron Law 3 が 2 / Iron Law 4 が 1 / Self-Test Report 10 / 関連ドキュメント 5)。heading filter は受け入れ条件側が完全一致のままなので、**Iron Law 1 / 3 / 4 と関連ドキュメントの 4 群・10 box はカウント対象にならない** (`### Iron Law 1: 受け入れ条件検証` は prefix/suffix 付きのため完全一致で弾かれる)。新規に required になるのは **Self-Test Report の 10 box のみ**である。テンプレート本文を通した実測でも 22 box 中 **12 box** (受け入れ条件 2 + Self-Test 10) のみが gate 対象で、この数値は test で固定した。
 
