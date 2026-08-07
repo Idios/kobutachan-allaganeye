@@ -130,18 +130,34 @@ _C_STYLE_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".rs"})
 _BLOCK_ONLY_SUFFIXES = frozenset({".css", ".scss"})
 _HASH_SUFFIXES = frozenset({".py", ".yml", ".yaml", ".sh", ".bash", ".toml", ".ps1"})
 
-# `$` は境界文字として扱う (識別子の一部とみなさない)。doc が
-# `` `fallback-notice-` `` のようにテンプレートリテラルの固定 prefix を参照できる
-# ようにするため (source 側は `` `fallback-notice-${m.index}` ``)。rename 検出力は
-# 落ちない: `fallback-notice-v2-` へ改名されれば次の文字が `v` なので弾ける。
-# 実測で `gui/src/**` の識別子に `$` を含むものは 0 件。
-_IDENT_CHAR = re.compile(r"[A-Za-z0-9_]")
+# symbol の境界判定に使う文字クラス。
+#
+# `-` を含めるのは、doc が参照するのが JS 識別子だけでなく testid / CSS class
+# (`fallback-notice-` / `phase-row-detecting`) でもあるため。含めないと
+# `fallback-notice-` が `old-fallback-notice-` に前方一致して **prefix を変える
+# rename を見逃す**。
+#
+# `$` は含めない (境界として扱う)。doc がテンプレートリテラルの固定 prefix を
+# 参照できるようにするため (source 側は `` `fallback-notice-${m.index}` ``)。
+# rename 検出力は落ちない: `fallback-notice-v2-` へ改名されれば次の文字が `v`
+# なので弾ける。実測で `gui/src/**` の識別子に `$` を含むものは 0 件。
+_IDENT_CHAR = re.compile(r"[A-Za-z0-9_-]")
 
+# インデントされた fn も拾う。impl block の method 内に spawn が置かれたとき、
+# column 0 だけを見ていると直前の別 fn に誤って帰属し、診断が実態と食い違う。
 _FN_DECL = re.compile(
-    r"^(?:pub(?:\s*\([^)]*\))?\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+"
+    r"^[ \t]*(?:pub(?:\s*\([^)]*\))?\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+"
     r"([A-Za-z_][A-Za-z0-9_]*)",
     re.MULTILINE,
 )
+
+# Rust の char literal (`'x'` / `'\n'` / `'\''` / `'\\'`)。lifetime (`'a`) は
+# 閉じ引用符が無いので一致しない。
+_RUST_CHAR_LITERAL = re.compile(r"'(?:\\.|[^'\\\n])'")
+
+# 呼び出しではなく宣言 (`fn resolve_allaganeye_command(`) を除くための判定。
+# 単なる endswith("fn") だと `my_fn` のような識別子末尾にも一致してしまう。
+_FN_KEYWORD_TAIL = re.compile(r"(?<![A-Za-z0-9_])fn$")
 
 
 def strip_comments(source: str, suffix: str) -> str:
@@ -218,6 +234,15 @@ def strip_rust_comments_and_strings(source: str) -> str:
                     if source[i] != "\n":
                         out[i] = " "
                     i += 1
+        elif ch == "'" and (m := _RUST_CHAR_LITERAL.match(source, i)):
+            # char literal。`'"'` / `b'"'` / `'}'` を先に食っておかないと、
+            # 中の `"` が文字列の開始と誤認されて以降の走査が丸ごとずれ、
+            # **実在する spawn site が空白化されて false-green になる**。
+            # `'a` / `'static` のような lifetime は閉じ引用符が無いので
+            # ここには一致せず、通常の文字として素通りする。
+            for j in range(i, m.end()):
+                out[j] = " "
+            i = m.end()
         elif ch == "r" and (m := re.match(r'r(#*)"', source[i:])):
             # raw string r"..." / r#"..."#
             hashes = m.group(1)
@@ -289,31 +314,39 @@ def strip_cfg_test_modules(source: str) -> str:
 
 
 def symbol_present(haystack: str, symbol: str) -> bool:
-    """`symbol` が `haystack` に、末尾の識別子境界付きで現れるか。
+    """`symbol` が `haystack` に、識別子境界付きで現れるか。
 
-    先頭側の境界は要求しない。doc は CSS class を `.recentName` のように
-    先頭ドット付きで書くことがあり、source 側は `styles.recentName` だからで、
-    先頭境界まで要求すると false-red になる。末尾側は要求する。要求しないと
-    `styles.error` が `styles.errorMessage` に誤マッチし、rename を永久に
-    見逃す。
+    **末尾側は常に要求する。** 要求しないと `styles.error` が
+    `styles.errorMessage` に誤マッチし、名前を伸ばす rename を永久に見逃す。
+
+    **先頭側は symbol が識別子文字で始まるときだけ要求する。** doc は CSS class
+    を `.recentName` のように先頭ドット付きで書くことがあり、source 側は
+    `styles.recentName` なので、無条件に先頭境界を求めると false-red になる。
+    一方で `fallback-notice-` のような識別子始まりの symbol に先頭境界を課さない
+    と、`old-fallback-notice-` へ **prefix を変える rename** を見逃す。
     """
     if not symbol:
         return False
+    leading_required = _IDENT_CHAR.match(symbol[0]) is not None
     start = 0
     while True:
         idx = haystack.find(symbol, start)
         if idx < 0:
             return False
         end = idx + len(symbol)
+        preceding = haystack[idx - 1] if idx > 0 else ""
         following = haystack[end] if end < len(haystack) else ""
-        if not (following and _IDENT_CHAR.match(following)):
+        blocked_before = leading_required and preceding and _IDENT_CHAR.match(preceding)
+        blocked_after = following and _IDENT_CHAR.match(following)
+        if not blocked_before and not blocked_after:
             return True
         start = idx + 1
 
 
 # --- doc 走査 -------------------------------------------------------------
 
-_FENCE = re.compile(r"^\s*(?:```|~~~)")
+# blockquote 内の fence (`> ```) も fence として扱うため、行頭の `>` を許す。
+_FENCE = re.compile(r"^[ \t]*(?:>[ \t]*)*(?:```|~~~)")
 _LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 _SYMBOL_REF = re.compile(r"\[[^\]]+\]\((\.\.?/[^)\s]+)\)\s*の\s*`([^`]+)`")
 
@@ -325,13 +358,22 @@ def iter_prose_lines(text: str) -> Iterator[tuple[int, str]]:
     text)。走査すると図中の疑似コードを実参照と誤認する。
     """
     inside = False
+    opened_at = 0
     for lineno, line in enumerate(text.splitlines(), start=1):
         if _FENCE.match(line):
             inside = not inside
+            opened_at = lineno if inside else 0
             continue
         if inside:
             continue
         yield lineno, line
+    if inside:
+        # 閉じ忘れた fence は「以降の doc 全体を走査対象から外す」= 参照が
+        # 何本壊れていても緑になる、という最悪の失敗モードを作る。
+        raise GuardStructureError(
+            f"{opened_at} 行目で開いた code fence が閉じられていない。"
+            "以降が走査対象から丸ごと外れて緑になるため、構造エラーとして落とす。"
+        )
 
 
 def _unescape_markdown(value: str) -> str:
@@ -386,7 +428,7 @@ def rust_cli_spawn_sites(source: str) -> list[str]:
     for match in re.finditer(rf"\b{_RESOLVER}\s*\(", cleaned):
         # `fn resolve_allaganeye_command(` という宣言そのものは site ではない。
         preceding = cleaned[: match.start()].rstrip()
-        if preceding.endswith("fn"):
+        if _FN_KEYWORD_TAIL.search(preceding):
             continue
         prior = [name for offset, name in declarations if offset < match.start()]
         enclosing = prior[-1] if prior else "<top-level>"
@@ -619,33 +661,44 @@ def check_spawn_coverage(repo_root: Path) -> list[Violation]:
                 )
             )
 
-    # lib.rs の外へ spawn が移動していないか。
-    for pattern in _RUST_GLOBS:
-        for rs_path in sorted(repo_root.glob(pattern)):
-            if rs_path == lib_path:
-                continue
-            outside = rust_cli_spawn_sites(_read(rs_path))
+    # lib.rs の外へ spawn が移動していないか + choke point が壊れていないか。
+    # **どちらも全 Rust ファイルに対して行う。** lib.rs だけを見ていると、
+    # `fn build_cli_command(spec: &AllaganeyeCommand)` を別 module へ置くだけで、
+    # 5 サイトの集合を一切変えずに 6 本目の spawn を生やせてしまう。
+    rust_paths = sorted(
+        {p for pattern in _RUST_GLOBS for p in repo_root.glob(pattern) if p.is_file()}
+    )
+    if not rust_paths:
+        raise GuardStructureError(
+            f"Rust ソースが 1 件も見つからない ({', '.join(_RUST_GLOBS)})。走査が壊れている。"
+        )
+    for rs_path in rust_paths:
+        rs_source = lib_source if rs_path == lib_path else _read(rs_path)
+        relative = rs_path.relative_to(repo_root).as_posix()
+
+        if rs_path != lib_path:
+            outside = rust_cli_spawn_sites(rs_source)
             if outside:
                 violations.append(
                     Violation(
                         "spawn",
-                        rs_path.relative_to(repo_root).as_posix(),
+                        relative,
                         f"lib.rs の外に CLI spawn がある: {sorted(set(outside))}。"
                         f"{_ARCH_DOC} §2.3 は lib.rs に限定して網羅を主張している",
                     )
                 )
 
-    # choke point の破壊 (spec を受け取る spawn helper への抽出) を検出。
-    leaks = allagan_command_signature_leaks(lib_source, allowed=_RESOLVER_FAMILY)
-    if leaks:
-        violations.append(
-            Violation(
-                "spawn",
-                "gui/src-tauri/src/lib.rs",
-                f"{_COMMAND_TYPE} が resolver 以外の signature に露出している: {sorted(leaks)}。"
-                " spawn の choke point が壊れており、この guard は網羅を保証できない",
+        leaks = allagan_command_signature_leaks(rs_source, allowed=_RESOLVER_FAMILY)
+        if leaks:
+            violations.append(
+                Violation(
+                    "spawn",
+                    relative,
+                    f"{_COMMAND_TYPE} が resolver 以外の signature に露出している: "
+                    f"{sorted(leaks)}。spawn の choke point が壊れており、"
+                    "この guard は網羅を保証できない",
+                )
             )
-        )
 
     # argv 表が指す argv 構築関数が実在すること。
     known_fns = rust_fn_names(strip_rust_comments_and_strings(lib_source))

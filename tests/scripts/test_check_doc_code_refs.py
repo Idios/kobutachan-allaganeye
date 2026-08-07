@@ -214,6 +214,164 @@ def test_spawn_site_extraction_finds_real_sites(
     )
 
 
+_Q = chr(34)
+_BS = chr(92)
+_SQ = chr(39)
+
+# Rust の字句解析を狂わせて **実在する spawn site を空白化させる** 形。
+# desync すると guard は「site 0 件」を返し、宣言との不一致で落ちる場合もあるが、
+# doc 側の宣言も同時に空なら緑になる。いずれにせよ実態を見失っている。
+_LEXER_ATTACKS: list[tuple[str, str, list[str]]] = [
+    (
+        # `'"'` の中の二重引用符を文字列開始と誤認すると以降が全部ずれる
+        "char-literal-containing-double-quote",
+        f"""
+fn quote_char() -> char {{ {_SQ}{_Q}{_SQ} }}
+
+async fn start_detect(app: A) {{
+    let cmd_spec = resolve_allaganeye_command(&app);
+}}
+""",
+        ["start_detect"],
+    ),
+    (
+        "byte-char-literal-containing-double-quote",
+        f"""
+fn q() -> u8 {{ b{_SQ}{_Q}{_SQ} }}
+
+async fn start_export(app: A) {{
+    let cmd_spec = resolve_allaganeye_command(&app);
+}}
+""",
+        ["start_export"],
+    ),
+    (
+        # byte string の中の名前は site ではない
+        "byte-string-literal-evasion",
+        f"""
+fn pattern() -> &{_SQ}static [u8] {{ b{_Q}resolve_allaganeye_command({_Q} }}
+""",
+        [],
+    ),
+    (
+        "raw-string-with-multiple-hashes",
+        f"r##{_Q}resolve_allaganeye_command({_Q}##",
+        [],
+    ),
+    (
+        # 文字列末尾のエスケープ済みバックスラッシュで閉じ引用符を食わないこと
+        "escaped-backslash-at-end-of-string",
+        f"""
+fn p() -> &{_SQ}static str {{ {_Q}back{_BS}{_BS}{_Q} }}
+
+async fn start_minimap(app: A) {{
+    let cmd_spec = resolve_allaganeye_command(&app);
+}}
+""",
+        ["start_minimap"],
+    ),
+    (
+        # lifetime は char literal ではない
+        "lifetime-and-generics",
+        f"""
+async fn detect_minimap_regions<{_SQ}a>(app: &{_SQ}a A) {{
+    let cmd_spec = resolve_allaganeye_command(&app);
+}}
+""",
+        ["detect_minimap_regions"],
+    ),
+    (
+        # 宣言除外が `my_fn` のような識別子末尾に誤反応しないこと
+        "identifier-ending-in-fn-before-call",
+        """
+async fn start_detect(app: A) {
+    let my_fn
+        = resolve_allaganeye_command(&app);
+}
+""",
+        ["start_detect"],
+    ),
+    (
+        # char literal 内の brace が cfg(test) mod の brace matching を壊さないこと
+        "brace-inside-char-literal-in-cfg-test-mod",
+        f"""
+#[cfg(test)]
+mod tests {{
+    fn brace_char() -> char {{ {_SQ}}}{_SQ} }}
+    fn fake() {{ let c = resolve_allaganeye_command(&app); }}
+}}
+
+async fn start_export(app: A) {{
+    let cmd_spec = resolve_allaganeye_command(&app);
+}}
+""",
+        ["start_export"],
+    ),
+    (
+        "nested-block-comment",
+        """
+/* outer /* inner */ still comment resolve_allaganeye_command(&app) */
+async fn start_detect(app: A) {
+    let cmd_spec = resolve_allaganeye_command(&app);
+}
+""",
+        ["start_detect"],
+    ),
+    (
+        # impl block の method は column 0 でないため、column 0 だけを見ると
+        # 直前の別 fn へ誤帰属する
+        "spawn-inside-impl-block-method",
+        """
+async fn start_detect(app: A) {
+    let cmd_spec = resolve_allaganeye_command(&app);
+}
+
+impl Foo {
+    async fn method_spawn(&self, app: A) {
+        let cmd_spec = resolve_allaganeye_command(&app);
+    }
+}
+""",
+        ["start_detect", "method_spawn"],
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "source", "expected"),
+    _LEXER_ATTACKS,
+    ids=[a[0] for a in _LEXER_ATTACKS],
+)
+def test_rust_lexer_survives_attacks(
+    label: str, source: str, expected: list[str]
+) -> None:
+    """字句解析の desync で spawn site を取り違えないこと."""
+    assert guard.rust_cli_spawn_sites(source) == expected, (
+        f"{label!r} で走査がずれた。desync すると実在する spawn site が空白化され、"
+        " guard は実態を見失ったまま結論を出す。"
+    )
+
+
+def test_unclosed_fence_is_structural_not_silent() -> None:
+    """閉じ忘れた code fence を構造エラーにすること.
+
+    fence が閉じられていないと以降の doc 全体が走査対象から外れる。参照が何本
+    壊れていても緑になるので、最悪の失敗モードとして exit 2 で落とす。
+    """
+    text = "line1\n```text\nunclosed\n[x](../ghost.ts)\n"
+    with pytest.raises(guard.GuardStructureError):
+        list(guard.iter_prose_lines(text))
+
+
+def test_blockquote_fence_is_recognised() -> None:
+    """blockquote 内の fence も fence として扱うこと.
+
+    `> ```` の中の擬似コードを実参照と誤認すると false-red になる。
+    """
+    text = "> ```\n> [x](../ghost.ts)\n> ```\nafter\n"
+    assert [ln for _, ln in guard.iter_prose_lines(text)] == ["after"]
+
+
 def test_two_spawn_sites_in_one_fn_are_counted_twice() -> None:
     """同一 fn 内の 2 本目の spawn を潰さないこと.
 
@@ -289,6 +447,45 @@ def test_symbol_match_rejects_longer_identifier() -> None:
     """
     assert not guard.symbol_present("const a = styles.errorMessage;", "styles.error")
     assert guard.symbol_present("const a = styles.error;", "styles.error")
+
+
+def test_symbol_match_rejects_prefix_rename() -> None:
+    """prefix を伸ばす rename を見逃さないこと (Codex adversarial-review 指摘).
+
+    末尾境界だけを見ていると、doc の `fallback-notice-` が
+    `old-fallback-notice-${index}` に前方一致して緑のままになる。testid /
+    CSS class は `-` を含むので、`-` も境界文字として扱う必要がある。
+    """
+    assert guard.symbol_present(
+        "data-testid={`fallback-notice-${m.index}`}", "fallback-notice-"
+    )
+    assert not guard.symbol_present(
+        "data-testid={`old-fallback-notice-${m.index}`}", "fallback-notice-"
+    )
+
+
+def test_symbol_match_rejects_leading_identifier_extension() -> None:
+    """識別子始まりの symbol は先頭境界も要求すること."""
+    assert guard.symbol_present("const a = handleApply();", "handleApply")
+    assert not guard.symbol_present("const a = legacyhandleApply();", "handleApply")
+
+
+def test_allagan_command_leak_detects_impl_block_method() -> None:
+    """impl block の method に置かれた spawn helper も検出すること.
+
+    `_FN_DECL` を column 0 に限定していると、helper を impl の中へ移すだけで
+    choke point の破壊が不可視になる (Codex adversarial-review 指摘)。
+    """
+    source = """
+impl CliSpawner {
+    fn build_cli_command(spec: &AllaganeyeCommand) -> Command {
+        Command::new(&spec.program)
+    }
+}
+"""
+    assert guard.allagan_command_signature_leaks(source, allowed=frozenset()) == [
+        "build_cli_command"
+    ]
 
 
 def test_symbol_match_allows_leading_partial() -> None:
@@ -580,6 +777,47 @@ async fn spawn_from_another_module(app: tauri::AppHandle) {
     result = _run_on(tmp_path)
     assert result.returncode == guard.EXIT_DRIFT, result.stdout + result.stderr
     assert "spawn_from_another_module" in result.stderr
+
+
+def test_injected_choke_point_extraction_outside_lib_fails(tmp_path: Path) -> None:
+    """別 module へ置いた spawn helper も exit 1 になること.
+
+    lib.rs だけに leak 検査をかけていると、helper を process_util へ移すだけで
+    5 サイトの集合を変えずに 6 本目の spawn を生やせる (Codex 指摘)。
+    """
+    _make_repo(tmp_path)
+    other = tmp_path / "gui" / "src-tauri" / "src" / "process_util"
+    other.mkdir(parents=True, exist_ok=True)
+    (other / "mod.rs").write_text(
+        """
+impl CliSpawner {
+    fn build_cli_command(spec: &AllaganeyeCommand) -> Command {
+        Command::new(&spec.program)
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    result = _run_on(tmp_path)
+    assert result.returncode == guard.EXIT_DRIFT, result.stdout + result.stderr
+    assert "build_cli_command" in result.stderr
+
+
+def test_injected_unclosed_fence_is_structural(tmp_path: Path) -> None:
+    """doc に閉じ忘れ fence を注入したら exit 2 になること.
+
+    fence 前に有効な参照が 1 本でもあれば zero-count の構造ガードは通ってしまう
+    ので、fence 自体を構造エラーにする必要がある (Codex 指摘)。
+    """
+    _make_repo(tmp_path)
+    doc = tmp_path / "docs" / "system-architecture.md"
+    doc.write_text(
+        doc.read_text(encoding="utf-8")
+        + "\n```text\nunclosed\n[gone](../gui/src-tauri/src/ghost.rs)\n",
+        encoding="utf-8",
+    )
+    result = _run_on(tmp_path)
+    assert result.returncode == guard.EXIT_STRUCTURAL, result.stdout + result.stderr
 
 
 def test_injected_choke_point_extraction_fails(tmp_path: Path) -> None:
