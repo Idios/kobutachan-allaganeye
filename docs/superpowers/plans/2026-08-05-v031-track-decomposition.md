@@ -415,19 +415,21 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 
 **Files:**
 
-- Modify: `.github/scripts/check-pr-checklist.js:26` — `stripped.split(/^##\s+/m)` → `/^#{2,4}\s+/m`
-- Modify: `.github/scripts/check-pr-checklist.js:31` — heading filter に `Self-Test Report` を **prefix match** で追加
+- Modify: `.github/scripts/check-pr-checklist.js` — section 抽出を **heading level 準拠**に変更 (当初案の `split(/^#{2,4}\s+/m)` は実装時に却下。下記「実装時の訂正」)
+- Modify: `.github/scripts/check-pr-checklist.js` — heading filter に `Self-Test Report` を **prefix match** で追加
 - Modify: `.github/scripts/check-pr-checklist.test.js:45` — pin test を反転
 
 **3 点セットで初めて発火する (これを外すと no-op):**
 
-1. `split` を `/^#{2,4}\s+/m` へ緩める
+1. section 分割を heading level 準拠にする (当初案は `split` を `/^#{2,4}\s+/m` へ緩めるだけだった)
 2. heading filter に `Self-Test Report` を **prefix match** で追加 — 実際の heading は `#### Self-Test Report (machine-verified — 全件 [x] で validate-checklist 通過)` と括弧書きが付くため `\s*$` の完全一致では拾えない
 3. pin test の反転
 
 **実測で再現確認済み:** 受け入れ条件を `[x]` で埋め `#### Self-Test Report` に `- [ ]` を 3 件置いた本文を `countAcceptanceCriteriaCheckboxes` に渡すと `{"unchecked":0,"checked":1,"hasAnySection":true}` を返し **CI pass** する。
 
-**blast radius (D9):** テンプレートの `- [ ]` は実測で計 22 box (受け入れ条件 2 / Iron Law 1 が 2 / Iron Law 3 が 2 / Iron Law 4 が 1 / Self-Test Report 10 / 関連ドキュメント 5)。split を緩めても heading filter が完全一致のままなので、**Iron Law 1/3/4 と関連ドキュメントの 4 群・10 box はカウント対象にならない**。新規に required になるのは **Self-Test Report の 10 box のみ**。`## 受け入れ条件` 節内に h3/h4 は無いので既存 gate の縮小も起きない。
+**実装時の訂正 (Idios 裁定、実測根拠):** 当初案の素朴な `split(/^#{2,4}\s+/m)` は**テンプレート本文でしか動かない**。直近 merged 25 本で実測したところ、7 本 (#909 #914 #915 #917 #924 #926 #927 = `## Self-Test Report` + `### machine-verified` 形) で counted 0 box = 新 gate が無発火のままで、さらに #956 形 (`## 受け入れ条件` の中に `###` 小見出し) では既存 AC gate が 13 box → 0 box に縮小した。そのため section の終端を「自分と同じか浅いレベルの次 heading」とする heading level 準拠の抽出に変更した。テンプレート本文での結果は当初案と完全一致 (12 box)。
+
+**blast radius (D9):** テンプレートの `- [ ]` は実測で計 22 box (受け入れ条件 2 / Iron Law 1 が 2 / Iron Law 3 が 2 / Iron Law 4 が 1 / Self-Test Report 10 / 関連ドキュメント 5)。受け入れ条件側の heading filter が完全一致のままなので、**Iron Law 1/3/4 と関連ドキュメントの 4 群・10 box はカウント対象にならない**。新規に required になるのは **Self-Test Report の 10 box のみ** (テンプレート実測で 22 box 中 12 box が gate 対象、test で固定)。heading level 準拠なので `## 受け入れ条件` 節が配下に h3/h4 を持つ本文でも既存 gate の縮小は起きない。
 
 **文書側:** (a) を採るので `docs/l2-workflow.md` L140 / L287 / L345 / L349 / L353 / L359 / L362 と `.github/pull_request_template.md` L72 / L77 / L78 の主張は**正しくなる**ため書き換え不要。正しい記述 (`template` L58 / L103 / L106、`l2-workflow.md:208`) は事実なので触らない。
 
@@ -438,6 +440,8 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 - [ ] Self-Test Report に `- [ ]` を 1 件残した PR body で `check-pr-checklist.js` が **非ゼロ exit** (実注入で確認)
 - [ ] Iron Law 1/3/4 群に `- [ ]` を残しても pass することを **pin test で固定** (D9 の範囲を回帰から守る)
 - [ ] 括弧書き付き heading が prefix match で拾われることを test で固定
+- [ ] 実在 merged PR 25 本を通して false-red が 0 件 (gate 拡大の対照実験)
+- [ ] `## 受け入れ条件` 配下に小見出しを持つ本文 (#956 形) で既存 gate が縮小しないことを pin test で固定
 - [ ] `node --test` (`.github/workflows/check-pr-checklist-test.yml`) が緑
 
 ---

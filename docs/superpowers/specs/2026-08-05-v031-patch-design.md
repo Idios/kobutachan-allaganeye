@@ -254,7 +254,7 @@ E1 (routing がアドバイザリで skill / hook に 0 件) / E5 (見出し日�
 
 #### G1-4: Self-Test Report の CI 強制 (#936、D2 / D9)
 
-**ファイル**: `.github/scripts/check-pr-checklist.js` / `.github/scripts/check-pr-checklist.test.js` / `.github/pull_request_template.md` / `docs/l2-workflow.md`
+**ファイル**: `.github/scripts/check-pr-checklist.js` / `.github/scripts/check-pr-checklist.test.js` (実際に変更するのはこの 2 つ。`.github/pull_request_template.md` と `docs/l2-workflow.md` は (a) 採用により記述が正しくなるため**変更しない**)
 
 **問題の精密化**: checker が Self-Test Report を見ない原因は heading 正規表現だけではない。
 
@@ -264,13 +264,20 @@ E1 (routing がアドバイザリで skill / hook に 0 件) / E5 (見出し日�
 
 **変更内容 (3 点セットで初めて発火する)**:
 
-1. `split` を `/^#{2,4}\s+/m` へ緩める
+1. section 分割を **heading level 準拠**にする (#936 の実装時に訂正。当初案は `split` を `/^#{2,4}\s+/m` へ緩めるだけだったが、実測により却下した。下記「実装時の訂正」参照)
 2. heading filter に `Self-Test Report` を **prefix match** で追加する (実際の heading は `#### Self-Test Report (machine-verified — 全件 [x] で validate-checklist 通過)` と括弧書きが付くため `\s*$` の完全一致では拾えない)
 3. `check-pr-checklist.test.js:45` の pin test を反転する
 
-**blast radius (D9)**: テンプレートの `- [ ]` は実測で計 22 box ある (受け入れ条件 2 / Iron Law 1 が 2 / Iron Law 3 が 2 / Iron Law 4 が 1 / Self-Test Report 10 / 関連ドキュメント 5)。split を緩めても heading filter が完全一致のままなので、**Iron Law 1 / 3 / 4 と関連ドキュメントの 4 群・10 box はカウント対象にならない**。新規に required になるのは **Self-Test Report の 10 box のみ**である。`## 受け入れ条件` 節内に h3/h4 は無いので、split 緩和による既存 gate の縮小も起きない。
+**実装時の訂正 (#936 実装 PR、Idios 裁定)**: 当初案の「`split` を `/^#{2,4}\s+/m` へ緩める」は、テンプレート本文では意図どおり動くが**実在の PR 本文には届かない**ことが実測で判明したため、**heading level 準拠の section 抽出**へ変更した。section は「自分と同じか浅いレベルの次 heading」で終わる。
 
-**false-green の明示**: **split だけ直しても no-op である。** 1 行直して緑になるので、実装者がそこで止まらないよう本 spec と issue に 3 点セットを明記する。
+- 直近 merged 25 本のうち **7 本** (#909 #914 #915 #917 #924 #926 #927) は `## Self-Test Report` + `### machine-verified` の形で、素朴な h2-h4 split では counted 0 box = **新 gate が無発火のまま**だった
+- **#956** の形 (`## 受け入れ条件` の中に `### 実装計画 PR-A2 の受け入れゲート` 小見出し) では、素朴な split が既存 AC gate を **13 box → 0 box** に縮小させた (silent な gate 縮小)
+- heading level 準拠なら、h2 節は配下の h3/h4 を本文として吸収する (= 現行の AC 挙動を厳密保存) 一方、h4 `#### Self-Test Report` は兄弟 h4 `#### 関連ドキュメント` で終わる (D9 の 10 box に収まる)
+- 副作用として、h2 `## Self-Test Report` 配下の `### machine-unverifiable` 小見出しも吸収される。同節は規約上 plain bullet `-` で書くため実害はない (実在 25 本すべてで plain bullet、`- [ ]` の使用はゼロ)
+
+**blast radius (D9)**: テンプレートの `- [ ]` は実測で計 22 box ある (受け入れ条件 2 / Iron Law 1 が 2 / Iron Law 3 が 2 / Iron Law 4 が 1 / Self-Test Report 10 / 関連ドキュメント 5)。heading filter は受け入れ条件側が完全一致のままなので、**Iron Law 1 / 3 / 4 と関連ドキュメントの 4 群・10 box はカウント対象にならない** (`### Iron Law 1: 受け入れ条件検証` は prefix/suffix 付きのため完全一致で弾かれる)。新規に required になるのは **Self-Test Report の 10 box のみ**である。テンプレート本文を通した実測でも 22 box 中 **12 box** (受け入れ条件 2 + Self-Test 10) のみが gate 対象で、この数値は test で固定した。
+
+**false-green の明示**: **split だけ直しても no-op である。** 1 行直して緑になるので、実装者がそこで止まらないよう本 spec と issue に 3 点セットを明記する。さらに上記の訂正のとおり、**テンプレート本文だけで発火実証を済ませると「実在本文には届かない gate」を出荷しうる** (7/25 が無発火だった)。発火実証は実在 PR 本文の形でも行うこと。
 
 **文書側 (10 箇所)**: `docs/l2-workflow.md` L140 / L287 / L345 / L349 / L353 / L359 / L362 と `.github/pull_request_template.md` L72 / L77 / L78 が「CI 強制」を主張している。(a) を採るのでこれらは**正しくなる**ため書き換え不要。ただし正しい記述 (`template` L58 / L103 / L106、`l2-workflow.md:208` の「plain bullet は無視される」) は事実なので触らない。
 
@@ -281,6 +288,8 @@ E1 (routing がアドバイザリで skill / hook に 0 件) / E5 (見出し日�
 - Self-Test Report に `- [ ]` を 1 件残した PR body で `check-pr-checklist.js` が非ゼロ exit する (実注入で確認)
 - Iron Law 1/3/4 群に `- [ ]` を残しても pass することを pin test で固定 (D9 の範囲を回帰から守る)
 - `#### Self-Test Report (…)` の括弧書き付き heading が prefix match で拾われることを test で固定
+- 実在 merged PR 本文 (直近 25 本) を通して false-red が 0 件であること (gate 拡大で既存の書き方が red 化しないことの対照実験)
+- `## 受け入れ条件` 配下に小見出しを持つ本文 (#956 の形) で既存 gate が縮小しないことを pin test で固定
 
 #### G1-5: その他の G1 適用
 
