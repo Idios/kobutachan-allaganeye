@@ -69,6 +69,8 @@ GUI は以下のタイミングで CLI を subprocess として呼び出す (`to
 
 argv 列の各行には末尾に `gui/src-tauri/src/lib.rs` 側の argv 構築関数名を括弧書きで添える。argv を変更したときにどの行を直すべきかが一意に決まり、突合先が行ごとに固定されるため。`[...]` は条件付きで付く引数を表す。
 
+> **この網羅宣言は CI で強制される ([#912](https://github.com/Idios/kobutachan-allaganeye/issues/912))**: `scripts/check_doc_code_refs.py` (CI job `doc-code-refs`) が、下の「以下 N つに限られること:」の列挙と `gui/src-tauri/src/**/*.rs` の実態を突合する。6 個目の CLI spawn site を足すと CI が落ちるので、同じ PR で本節を更新すること。**関数名の backtick と「以下 N つ」の書式が guard の parse anchor** なので、散文を改稿するときは script 側の `_SPAWN_CLAIM` / `_SECTION_23` も併せて直す (anchor を見失った場合は「0 件と一致した」で緑を返さず exit 2 で落ちる)。guard は spawn 箇所の**数と名前**を見るだけで、argv の中身が正しいかは見ない。
+
 網羅性の根拠は `gui/src-tauri/src/lib.rs` で CLI (`cmd_spec.program`) を spawn する箇所が以下 5 つに限られること: `start_detect` / `enumerate_h264_encoders` / `start_export` / `start_minimap` / `detect_minimap_regions`。ffprobe / ffmpeg / explorer.exe を Rust から直接 spawn する経路 (サムネイル生成・フォルダを開く等) は CLI 呼び出しではないため本表の対象外 (プロセス木と孤児対策の観点での spawn 一覧は [process-tree-orphan-audit.md](process-tree-orphan-audit.md) が別途持つ)。
 
 | GUI 画面 | subprocess 引数 | 生成物 | 実装 PR |

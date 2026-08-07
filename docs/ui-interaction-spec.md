@@ -6,6 +6,10 @@
 
 本 doc は [#590](https://github.com/Idios/kobutachan-allaganeye/issues/590) で起票し、[#589](https://github.com/Idios/kobutachan-allaganeye/issues/589) (PreviewScreen の state mutation flow / disabled 理由表示 / silent edit loss) の root cause を構造的に再発防止することが第一目的。
 
+> **実装参照の書き方 (CI で検査される、[#910](https://github.com/Idios/kobutachan-allaganeye/issues/910))**: 実装箇所は **行番号 anchor を使わず名前参照で書く**。行番号は GUI コードに 1 PR 入るだけで無言でズレるため。書式は「ファイルへの相対リンク + `の` + backtick で囲んだ symbol」で、例えば [PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `handleApply` のように書く (この一文自体が検査対象の実例になっている)。`の` が「その symbol はそのファイルにある」という所属の主張になる。この形の参照は `scripts/check_doc_code_refs.py` (CI job `doc-code-refs`) が検査し、リンク先ファイルと `symbol` の実在を確認する。照合はリンク先の**コメントを除去した** source に対して行うので、リネーム後にコメントだけ古い名前が残っている状態は stale として落ちる。テンプレートリテラルを指すときは固定 prefix (例: `` `fallback-notice-` ``) を書けば検査できる。
+>
+> **検査されない範囲**: `の` で束縛されていない backtick (散文・UI ラベル・CSS 値・状態名) は検査対象外で、記述内容の正しさも見ない。詳細は `scripts/check_doc_code_refs.py` の docstring §「この gate が見ていない集合」を参照。
+
 ## 1. 共通原則
 
 6 画面すべての UI 部品は本節の原則に準拠する。違反は #589 系統のバグとして扱い、レビュー時は本節を逐条照合する。
@@ -39,7 +43,7 @@
 - inline hint は赤字エラーではなく `var(--ae-text-dim)` 系の補助色。情報レベル
 - 理由文は **行動指針を含む形** (例:「サンプル動画では保存できません。実際の動画を選択してください。」)。否定形だけで終わらせない
 
-**アンチパターン**: 理由表示なしの disabled。ユーザーは原因不明で「壊れた」と認識する ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `[適用]` button (`aria-label="apply"`) の `applying || !filePath` による sample mode 永続 disabled が #589 該当ケース。[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で tooltip / inline hint / 上部 banner を実装し解消済)。
+**アンチパターン**: 理由表示なしの disabled。ユーザーは原因不明で「壊れた」と認識する ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `aria-label="apply"` button (`[適用]`) の `applying || !filePath` による sample mode 永続 disabled が #589 該当ケース。[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で tooltip / inline hint / 上部 banner を実装し解消済)。
 
 ### 1.3 silent loss 防止: dirty consume 側で confirm
 
@@ -844,7 +848,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 - `errorMessage` (phase=`error`、全試合 fail) → inline `role="alert"` ([ExportScreen.tsx](../gui/src/screens/ExportScreen.tsx) の `styles.errorMessage`)
 - per-match `s.error` → listItem 内 inline `role="alert"` ([ExportScreen.tsx](../gui/src/screens/ExportScreen.tsx) の `styles.listError`、120 文字 slice)
-- per-match `s.fallbackNotice` (#591 GPU encoder fallback 通知) → listItem 内 `role="status"` ([ExportScreen.tsx](../gui/src/screens/ExportScreen.tsx) の `data-testid="fallback-notice-${index}"`、エラーではなく info)
+- per-match `s.fallbackNotice` (#591 GPU encoder fallback 通知) → listItem 内 `role="status"` ([ExportScreen.tsx](../gui/src/screens/ExportScreen.tsx) の `fallback-notice-` prefix を持つ `data-testid`、エラーではなく info)
 - `openFolderError` ([フォルダを開く] 失敗) → primary button 直下に inline `role="alert"` ([ExportScreen.tsx](../gui/src/screens/ExportScreen.tsx) の `styles.openFolderError` + `data-testid="open-folder-error-hint"`)
 
 global toast 未採用 (画面が log 中心で各情報源と表示位置が固定されているため、inline 集約で十分)。Phase 2.5 / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) で他画面と統一した toast 方針が決まればそれに合わせる。

@@ -260,6 +260,22 @@ jobs:
         shell: bash
         run: bash .github/scripts/check-error-hint-drift.sh
 
+  doc-code-refs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+
+      # scripts/check_doc_code_refs.py は標準ライブラリのみで動くため
+      # pip install を持たない (依存を増やさず job を軽く保つ)。
+      # exit 1 = 参照が壊れている / exit 2 = 検査自体が壊れている (#912 / #910)。
+      - name: Check doc -> code references (link / symbol / spawn coverage)
+        shell: bash
+        run: python scripts/check_doc_code_refs.py
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:
