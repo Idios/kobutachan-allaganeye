@@ -5,12 +5,20 @@
 `--tag` で tag との突合も行う。
 
     python scripts/check_version_consistency.py [--tag vX.Y.Z] [--github-output]
+                                                [--changelog-date-from ISO8601]
+
+`--tag` 指定時は追加で CHANGELOG.md も検査する (#948 / #918):
+
+* 対象バージョンの節が存在し、`## [x.y.z] - YYYY-MM-DD` の日付を持つこと
+* `--changelog-date-from` を渡した場合、その日付が**タグを打つ日** (`Asia/Tokyo`) と
+  一致すること (裁定 D6、`docs/release-process.md` §タグ運用)
+* バンプ方向が正しいこと (既存の最新リリースより新しいこと、#918 item3)
 
 exit code:
 
-* 0 -- 全箇所一致 (`--tag` 指定時は tag とも一致)
-* 1 -- バージョン不一致
-* 2 -- 構造エラー (ファイル欠損 / パース不能 / フィールド欠損)
+* 0 -- 全箇所一致 (`--tag` 指定時は tag / CHANGELOG とも一致)
+* 1 -- バージョン不一致 / CHANGELOG 見出しの不備 / バンプ方向が不正
+* 2 -- 構造エラー (ファイル欠損 / パース不能 / フィールド欠損 / 基準日を解釈できない)
 
 1 と 2 を分けるのは「ズレている」と「検査自体が壊れた」を CI ログ上で区別するため。
 検査の自己崩壊を 0 で通すと、ガードが無いより有害になる。
@@ -27,9 +35,11 @@ import argparse
 import io
 import json
 import os
+import re
 import sys
 import tomllib
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -98,6 +108,212 @@ VERSION_LOCATIONS: tuple[VersionLocation, ...] = (
         consumer="cargo が Cargo.toml から同期",
     ),
 )
+
+
+CHANGELOG_PATH = "CHANGELOG.md"
+
+# CHANGELOG 見出し日付の基準タイムゾーン (裁定 D6)。規約の正は
+# `docs/release-process.md` §タグ運用 で、`tests/scripts/test_check_version_consistency.py`
+# が doc と本定数の突合を行う。
+#
+# **`zoneinfo.ZoneInfo("Asia/Tokyo")` を使わない理由**: Windows には IANA tz
+# database が同梱されておらず、`tzdata` パッケージ無しでは
+# `ZoneInfoNotFoundError` になる (本 repo の venv で実測)。CI (ubuntu) だけ通って
+# **開発機 (Windows、本 repo の唯一の対応プラットフォーム) で落ちる**ため、
+# `/release` の手元実行が壊れる。日本標準時は 1951 年を最後に夏時間を廃止しており
+# UTC+9 固定なので、扱う範囲 (2026 年以降のリリース日) では固定 offset が IANA
+# `Asia/Tokyo` と一致する。一致することは CI 側 (tzdata のある環境) の
+# `test_fixed_offset_matches_iana_asia_tokyo` が実データで突合する。
+CHANGELOG_TIMEZONE_NAME = "Asia/Tokyo"
+CHANGELOG_TIMEZONE = timezone(timedelta(hours=9), CHANGELOG_TIMEZONE_NAME)
+
+# `## [0.3.0] - 2026-08-04` / 日付を持たない `## [Unreleased]` の両方を受ける。
+# 日付の有無で節を捨てないのは、D7 で新設する `## [Unreleased]` を「日付欠落の
+# リリース節」と誤認しないため。
+_CHANGELOG_HEADING_RE = re.compile(
+    r"^## \[(?P<version>[^\]]+)\](?:\s+-\s+(?P<date>\d{4}-\d{2}-\d{2}))?[ \t]*$",
+    re.MULTILINE,
+)
+
+
+@dataclass(frozen=True)
+class ChangelogHeading:
+    """CHANGELOG.md の `## [...]` 見出し 1 行。
+
+    `raw_date` は書式 (`YYYY-MM-DD`) だけを満たした文字列で、暦日として妥当か
+    (`2026-13-45` でないか) は検査時に判定する。
+    """
+
+    version: str
+    raw_date: str | None
+
+
+def parse_changelog_headings(text: str) -> list[ChangelogHeading]:
+    """CHANGELOG 本文から version 見出しを出現順に取り出す。"""
+    return [
+        ChangelogHeading(version=match.group("version"), raw_date=match.group("date"))
+        for match in _CHANGELOG_HEADING_RE.finditer(text)
+    ]
+
+
+def _release_order_key(version: str) -> tuple[int, int, int] | None:
+    """`X.Y.Z` を比較可能なタプルにする。該当しない見出しは `None`。
+
+    `Unreleased` や `0.4.0-rc1` のような節は順序比較の対象外にする
+    (取りこぼしは `check_changelog_heading` の docstring に列挙してある)。
+    """
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def parse_reference_date(raw: str) -> date:
+    """ISO8601 の時刻を `Asia/Tokyo` の暦日へ変換する。
+
+    offset を持たない値は**推測せずに落とす**。naive な値を UTC / JST のどちらかと
+    見なす実装は、本検査が潰そうとしている「1 日ずれ」を検査側で再生産する。
+    """
+    try:
+        moment = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise VersionProbeError(
+            f"--changelog-date-from を ISO8601 として解釈できません ({raw!r}): {exc}"
+        ) from exc
+    if moment.tzinfo is None:
+        raise VersionProbeError(
+            f"--changelog-date-from には UTC オフセット付きの ISO8601 が必要です "
+            f"({raw!r})。オフセットの無い値を UTC / JST のどちらかとして推測すると、"
+            f"本検査が防ごうとしている 1 日ずれを検査側で作り込むことになる"
+        )
+    return moment.astimezone(CHANGELOG_TIMEZONE).date()
+
+
+def check_changelog_heading(
+    repo_root: Path,
+    expected_version: str,
+    reference_date: date | None,
+) -> list[str]:
+    """CHANGELOG.md の対象バージョン見出しを検査する (#948 / #918 item3)。
+
+    戻り値は `::error::` として出す問題の一覧 (空 = 合格)。CHANGELOG.md 自体を
+    読めない場合は `VersionProbeError` (呼び出し側が exit 2 に倒す)。
+
+    `reference_date` は**タグを打つ日** を `Asia/Tokyo` の暦日で表したもの。
+    `None` のときは日付の**値**を比較せず、日付欄が存在することだけを見る
+    (`/release` のバンプ手順は、タグを打つ日より前に手元で走ることがあるため)。
+
+    **この検査が見ていない集合** (spec §5.2 G2-0 の共通処方。列挙できない検査は
+    「網羅している」と誤読されるため入れない):
+
+    * **`--tag` 指定時しか発火しない。** `release.yml` は tag push でのみ `--tag`
+      を付けるため、PR / `workflow_dispatch` / branch push では 1 度も走らない。
+      Track D の PR 段階は緑のままで、タグ push で初めて赤になる
+    * **`--changelog-date-from` を渡さなければ日付の値は見ない。** 呼び出し側が
+      引数を落とすと構造チェックまで縮退する。退化の検知は
+      `tests/scripts/test_check_version_consistency.py` の release.yml 配線 pin
+      に依存しており、本関数自身は検知できない
+    * **基準日は「タグを打った瞬間」そのものではない。** annotated tag の
+      `taggerdate` を渡せばタグ作成時刻だが、fallback の
+      `head_commit.timestamp` は**タグが指す commit の日時**である。commit と
+      タグ push が日を跨ぐ運用では規約とズレた値を「正」として比較する
+    * **日付以外の中身は検査しない。** 主要変更点 / breaking changes / リンク
+      定義の欠落は `docs/release-process.md` §共通項目 の人手チェックのまま
+    * **対象バージョン以外の節の日付は見ない。** 既リリース節が後から書き換え
+      られても検知しない (D7 の「既リリース済み節を触らせない」は運用規約で
+      あって検査ではない)
+    * **`X.Y.Z` でない版はバンプ方向比較の対象外。** `0.4.0-rc1` のような
+      pre-release 識別子付きの節は順序比較から静かに外れる
+    * **CHANGELOG.md だけを触る PR では `release.yml` が起動しない**
+      (`pull_request.paths` に CHANGELOG.md が無い)。ただし本 script の test は
+      `ci.yml` の `pytest` に載る
+    """
+    path = repo_root / CHANGELOG_PATH
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise VersionProbeError(f"{path}: 読み込めません ({exc})") from exc
+
+    headings = parse_changelog_headings(text)
+    matched = [heading for heading in headings if heading.version == expected_version]
+
+    if not matched:
+        listed = ", ".join(heading.version for heading in headings) or "(見出しなし)"
+        return [
+            f"{CHANGELOG_PATH}: バージョン {expected_version} の節がありません "
+            f"(検出した見出し: {listed})"
+        ]
+    if len(matched) > 1:
+        # 同じ版の節が複数あると、どれを検査すべきか決められない。打ち直し
+        # (既リリース版の再タグ) もここで捕まる。
+        return [
+            f"{CHANGELOG_PATH}: バージョン {expected_version} の節が "
+            f"{len(matched)} 個あります (1 個であるべき)"
+        ]
+
+    problems: list[str] = []
+    heading_date: date | None = None
+    raw_date = matched[0].raw_date
+
+    if raw_date is None:
+        problems.append(
+            f"{CHANGELOG_PATH}: 見出し `## [{expected_version}]` に日付がありません "
+            f"(`## [{expected_version}] - YYYY-MM-DD` の形で、タグを打つ日を "
+            f"{CHANGELOG_TIMEZONE_NAME} で書く)"
+        )
+    else:
+        try:
+            heading_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
+        except ValueError:
+            problems.append(
+                f"{CHANGELOG_PATH}: 見出しの日付 {raw_date!r} が暦日として不正です"
+            )
+
+    if heading_date is not None and reference_date is not None:
+        if heading_date != reference_date:
+            problems.append(
+                f"{CHANGELOG_PATH}: 見出し日付 {heading_date.isoformat()} が "
+                f"タグを打つ日 {reference_date.isoformat()} "
+                f"({CHANGELOG_TIMEZONE_NAME}) と一致しません"
+            )
+
+    problems.extend(_check_bump_direction(expected_version, headings))
+    return problems
+
+
+def _check_bump_direction(
+    expected_version: str, headings: list[ChangelogHeading]
+) -> list[str]:
+    """既存の最新リリースより新しいバージョンであることを見る (#918 item3)。
+
+    比較対象を CHANGELOG から採るのは、`version-check` job の checkout が
+    `fetch-depth: 1` で **git 履歴を持たない**ため (`git describe HEAD^` が
+    `fatal: Not a valid object name` で落ちることを実測済み)。呼び出し側が
+    比較対象を渡す形にすると、渡し忘れで検査が静かに消える。
+    """
+    target = _release_order_key(expected_version)
+    if target is None:
+        return []
+
+    others: list[tuple[tuple[int, int, int], str]] = []
+    for heading in headings:
+        if heading.version == expected_version:
+            continue
+        key = _release_order_key(heading.version)
+        if key is not None:
+            others.append((key, heading.version))
+
+    if not others:
+        # 初回リリース (比較対象なし)。
+        return []
+
+    highest_key, highest_version = max(others)
+    if target <= highest_key:
+        return [
+            f"{CHANGELOG_PATH}: バンプ方向が不正です — タグ {expected_version} は "
+            f"既存の最新リリース {highest_version} より新しくありません"
+        ]
+    return []
 
 
 def _describe(keys: tuple[str, ...]) -> str:
@@ -219,6 +435,14 @@ def main(argv: list[str] | None = None) -> int:
         help="突合する git tag (例: v0.3.0)。省略時は箇所間の相互一致のみ検証する",
     )
     parser.add_argument(
+        "--changelog-date-from",
+        default=None,
+        metavar="ISO8601",
+        help="CHANGELOG 見出し日付の基準となる時刻 (UTC オフセット必須)。"
+        f"{CHANGELOG_TIMEZONE_NAME} へ変換した暦日と突合する。--tag と併用する "
+        "(省略時は日付欄の有無だけを見る)",
+    )
+    parser.add_argument(
         "--github-output",
         action="store_true",
         help="一致時に version=<値> を $GITHUB_OUTPUT へ追記する",
@@ -245,6 +469,16 @@ def main(argv: list[str] | None = None) -> int:
         for path in dict.fromkeys(location.path for location in VERSION_LOCATIONS):
             print(path)
         return 0
+
+    if args.changelog_date_from is not None and args.tag is None:
+        # 日付検査は --tag 指定時のみ発火する。基準日だけ渡されている状態は
+        # 「検査させたいのに発火しない」呼び出し側の配線ミスなので、0 で通すと
+        # release.yml がこの形へ退化しても気付けない (false-green)。
+        print(
+            "::error::--changelog-date-from は --tag と併用してください "
+            "(単独指定では CHANGELOG 日付検査が発火しません)"
+        )
+        return 2
 
     try:
         collected = collect_versions(args.repo_root)
@@ -275,6 +509,31 @@ def main(argv: list[str] | None = None) -> int:
             )
             failed = True
         resolved = expected
+
+        # CHANGELOG 見出し日付 / バンプ方向 (#948 / #918)。--tag 指定時のみ発火。
+        try:
+            reference_date = (
+                parse_reference_date(args.changelog_date_from)
+                if args.changelog_date_from is not None
+                else None
+            )
+            changelog_problems = check_changelog_heading(
+                args.repo_root, expected, reference_date
+            )
+        except VersionProbeError as exc:
+            print(f"::error::CHANGELOG 検査に失敗しました: {exc}")
+            return 2
+
+        if reference_date is not None:
+            # どの日付を「正」として比較したかを release 当日のログに残す。
+            print(
+                f"CHANGELOG 見出し日付の基準日: {reference_date.isoformat()} "
+                f"({CHANGELOG_TIMEZONE_NAME}, from {args.changelog_date_from})"
+            )
+        for problem in changelog_problems:
+            print(f"::error::{problem}")
+        if changelog_problems:
+            failed = True
 
     if failed:
         return 1

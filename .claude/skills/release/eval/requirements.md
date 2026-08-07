@@ -17,16 +17,21 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 2. **[critical]** **A-2**: Step 0b で `gh issue list --label deferred --state open --limit 200` を実行し、件数 0 を検出して deferred 分類 (Step 0c) を skip (※not_planned 残タスク確認の要否は C-3 で検証)
 3. **[critical]** **A-3**: 全ゲート通過後に Step 1 リリース準備に進む
 4. minor release は `docs/release-process.md` §Patch release Track 構造 (A2) の適用対象外と判断
-5. **[critical]** **A-5**: Step 3-2 の version bump 確認 grep に `--include='*.json'` を含め、`gui/src-tauri/tauri.conf.json` / `gui/package.json` のバージョン参照も対象にしている (#817 / P2-33。`*.py` / `*.toml` のみで `*.json` を落としていたら失格)
+5. **[critical]** **A-5**: Step 3-2 の version bump で `scripts/check_version_consistency.py` の `VERSION_LOCATIONS` を正として**全フィールド**を更新し、`--tag v0.3.0` で exit 0 を確認している。stage は `--list-paths` の出力から行う (#911)。**`grep -r '<旧バージョン>' --include=...` ベースの旧手順を使ったら失格** — `Cargo.lock` がどの glob にも載らず取りこぼすため #911 で置換済み (旧 A-5 が pin していた #817 / P2-33 の手順は廃止)
+6. **[critical]** **A-6**: Step 4 で `CHANGELOG.md` の `## [0.3.0] - YYYY-MM-DD` の日付を**タグを打つ当日の JST 日付**へ更新し、`--changelog-date-from` を渡した `check_version_consistency.py --tag` が exit 0 であることを確認してから commit している (#948 / 裁定 D6)。既リリース済みの節を書き換えていない (D7)
+7. **[critical]** **A-7**: タグ打ち案内が **annotated tag** (`git tag -a`) で、GitHub Release は `release.yml` がタグ push で自動作成すると説明している。**`gh release create ... --notes-from-tag` を手順として提案したら失格** (#918 item4。二重作成 + CHANGELOG が本文に反映されない)
+8. **[critical]** **A-8**: `develop-<次バージョン>` を **タグ打ち + GitHub Release 作成の後**に `main` から切ると案内している (#918 item1。リリース PR の main マージ前やタグ打ち前と答えたら失格)
 
 ---
 
-## シナリオ B (patch release v0.3.1、deferred 5 件 / うち 2 件は次 patch 吸収)
+## シナリオ B (patch release v0.3.1、deferred 67 件 / うち 27 件は本 patch 吸収)
 
-モック: deferred ラベル 5 件 (#374 #458 #743 #749 #756 を想定)。spec PR (Track 0) を起票。
+モック: deferred ラベル付き issue が **67 件** (open 65 件 + 直前セッションで close 済み 2 件)。spec PR (Track 0) を起票し、分類結果は (a) 次 release 吸収 27 件 / (b) deferred 継続 38 件 / (c) close 2 件。
 
-1. **[critical]** **B-1**: Step 0b で `gh issue list --label deferred ... --limit 200` 全件取得
-2. **[critical]** **B-2**: 件数 5 ≥ 3 のため、Step 0c 冒頭で Iron Law 2 bulk pre-check (サンプル 1 件 + 全件 OK / 個別調整 / やめる 3 択) を user に提示
+> 件数の出典は [v0.3.1 patch design spec](../../../../docs/superpowers/specs/2026-08-05-v031-patch-design.md) §9 §deferred 全件検証結果。**「5 件」を前提にしていた旧モックは実態と乖離していた** (spec §8.2 O-7)。件数が 1 桁か 2 桁かで Iron Law 2 の bulk pre-check の要否判断そのものが変わるため、実測値に合わせる。
+
+1. **[critical]** **B-1**: Step 0b で `gh issue list --label deferred ... --limit 200` 全件取得 (**`--limit` が既定の 30 だと 67 件を取りこぼす**ので、200 を明示していること)
+2. **[critical]** **B-2**: 件数 67 ≥ 3 のため、Step 0c 冒頭で Iron Law 2 bulk pre-check (サンプル 1 件 + 全件 OK / 個別調整 / やめる 3 択) を user に提示
 3. **[critical]** **B-3**: 「個別調整」選択時、各 issue を 1 件ずつ AskUserQuestion で (a) 次 release 吸収 / (b) deferred 継続 / (c) close の 3 択分類
 4. **[critical]** **B-4**: 分類結果を spec PR (Track 0) の §deferred 全件検証結果 table として保存
 5. **[critical]** **B-5**: (a) 分類が `docs/release-process.md` §Patch release Track 構造 の Track B 吸収候補と関連付けされる

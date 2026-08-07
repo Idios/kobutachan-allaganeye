@@ -110,6 +110,10 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    - **minor/major**: 現在の `develop-<新バージョン>` （既存 develop ブランチ）
    - **patch**: ホットフィックス扱い。現在の `develop-<新バージョン>` がある場合はそこへ、無ければ `main` へ PR。判断が曖昧な場合は `git branch -r | grep -E 'origin/develop-|origin/main'` の結果を提示してユーザー確認
 
+   > **`develop-<次バージョン>` を切るタイミング** (#918 item1): ここで指す `develop-<新バージョン>` は**今リリースするバージョンの開発統合先**であり、**既に存在している**ブランチである。本スキルが新規作成することはない。
+   >
+   > *次*のバージョン用の `develop-<次バージョン>` は、**タグ打ちと GitHub Release 作成が完了した後**に `main` から切る（[`docs/release-process.md`](../../../docs/release-process.md) §レイヤー間の移行手順 の 5、§ルール の 4）。リリース PR を `main` へマージする前でも、タグを打つ前でもない。切った直後に[バージョン保持箇所](../../../docs/versioning.md)を全箇所まとめて次バージョンへ更新する。
+
 ### Step 3: バージョンバンプと PR 作成
 
 1. **事前品質チェック** ([`docs/l2-workflow.md`](../../../docs/l2-workflow.md) §「PR 作成 path 別自動チェック」):
@@ -178,7 +182,7 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
     <コミット分析結果のサマリー>
 
     ### deferred issue レビュー結果
-    <Step 1 の判断結果を記載>
+    <Step 0c の 3 択分類結果を記載>
 
     ### チェックリスト
     - [ ] バージョン保持フィールドが全て一致 (\`python scripts/check_version_consistency.py --tag v<新バージョン>\` が exit 0)
@@ -196,10 +200,33 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
 7. ユーザーに PR URL とバージョン変更内容を報告
 
+### Step 4: CHANGELOG 見出し日付をタグ打ち日に合わせる（タグ打ちの直前、必須）
+
+`CHANGELOG.md` の対象バージョン見出しは `## [<新バージョン>] - YYYY-MM-DD` の形をとり、**日付 = そのタグを打つ日 (JST)** とする（[`docs/release-process.md`](../../../docs/release-process.md) §タグ運用、裁定 D6 / #948）。リリース PR の作成からタグ打ちまでは日を跨ぐことがある（v0.3.0 では見出し日付が 2 回書き換わった）ため、**タグを打つ当日に**見出し日付を確認・更新して commit する。
+
+1. `CHANGELOG.md` の `## [<新バージョン>] - ...` の日付を**当日の JST 日付**へ直す。**既にリリース済みのバージョン節は触らない**（裁定 D7）
+2. 検査してから commit する:
+
+   ```bash
+   # 基準日はローカル時刻を offset 付き ISO8601 で渡す（スクリプトが Asia/Tokyo へ変換する）。
+   python scripts/check_version_consistency.py --tag v<新バージョン> \
+     --changelog-date-from "$(python -c 'import datetime; print(datetime.datetime.now().astimezone().isoformat())')"
+
+   git add -- CHANGELOG.md
+   git commit -m "docs: set CHANGELOG date for v<新バージョン> [<session-id>]"
+   ```
+
+   exit 0 でなければタグを打たない（exit 1 = 見出し日付 / バンプ方向の不一致、exit 2 = 検査自体の構造エラー）。**同じ検査を `release.yml` の `version-check` job がタグ push 時に実行する**ため、ここを飛ばすと*タグを打った後に*赤くなり、タグの打ち直しが必要になる
+
+> 基準日を省いた `python scripts/check_version_consistency.py --tag v<新バージョン>` は、日付欄の**存在**しか見ない（値は比較しない）。Step 3 のバンプ時点ではタグを打つ日が未確定なので、そちらでは省略形で構わない。
+
 ### タグ打ち・GitHub Release 作成
 
 リリース PR マージ後の手順（本スキル範囲外、`docs/release-process.md` §タグ運用 を参照）:
 
-- patch リリース: マージされたブランチで `git tag v<新バージョン>` → `git push origin v<新バージョン>`
+- patch リリース: マージされたブランチで `git tag -a v<新バージョン> -m "Release v<新バージョン>: <概要>"` → `git push origin v<新バージョン>`
 - minor/major リリース: `develop-<新バージョン>` を `main` にマージしてから `main` でタグ打ち
-- `gh release create v<新バージョン> --notes-from-tag` で GitHub Release 作成
+- **annotated tag（`-a`）で打つ**。`version-check` job は CHANGELOG 見出し日付の基準日として annotated tag の `taggerdate` を第一候補に読む
+- **GitHub Release は `git push origin v<新バージョン>` で [`release.yml`](../../../.github/workflows/release.yml) が自動作成する**。本文は [`scripts/extract_release_notes.py`](../../../scripts/extract_release_notes.py) が CHANGELOG.md の該当セクションから抽出し、Portable ZIP も自動添付される
+  - 手動で `gh release create ... --notes-from-tag` を叩かない（#918 item4）。Release が二重作成されるうえ、`--notes-from-tag` はタグメッセージを本文にするため CHANGELOG の内容が反映されない
+  - CI 障害等で手動作成が必要な場合のみ、[`docs/release-process.md`](../../../docs/release-process.md) §手動リリース手順 (CI 迂回) に従う（Actions の一時無効化を含む手順一式がある）
