@@ -204,6 +204,14 @@ PR の変更種別に応じて以下を確認する。**code quality (logic / ar
 - [`docs/l2-workflow.md` §外部依存規約](../../../docs/l2-workflow.md#外部依存規約-649651703721-教訓) §受け入れ可能なソース / §禁止パターン に沿うか
 - 違反があれば Step 5b トリアージ表で **(A)** PR 内修正 とし、URL pin 形式 (versioned tag / SHA pin 等) への変更を要請
 
+**規約 / ガード / チェックを新設する PR の場合 (G1-1)**:
+
+- 本 PR が CI job / hook / skill step / 規約文を**新設**しているなら、[`docs/l2-workflow.md` §「規約・ガード導入の 3 点セット」](../../../docs/l2-workflow.md) の 3 点に照らして**逐条検証**する:
+  1. **発火点**が skill step / CI job / hook のいずれかに**ファイルと行で**指定されているか (「doc に書いた」だけでは発火点ではない)
+  2. **非実施時の 1 行記録義務**が課されているか (skip と失念が事後に区別できるか)
+  3. **発火側の red 実証** — 違反を一時注入し **exit code の生値**で発火を観測した記録 + pin test が同梱されているか
+- 欠けている項目は Step 5b トリアージ表に計上する。**③ が最も落ちやすい** — 保護機構は不発でも green のままなので、CI が no-op を mask する
+
 **diff 外 doc の確認ができない場合の処置**: 関連 doc の整合性確認がレビューセッションで完結しない (ファイルが session context 外 / アクセス不可 / 判断に専門領域知識が必要) 場合、「確認不要」と自己判断して省略せず、**(A) PR コメントで PR 作成セッションに整合性確認を依頼** する。Iron Law 3 / 5 に従い、曖昧な判断は独断で skip しない。
 
 ### 5a. ギャップ分析 (明示指示不要で自動実施)
@@ -224,6 +232,7 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 - 長時間動画 (2 時間以上) / GPU mode / audio 統合 / 大規模入力 等は mock 不可
 - レビュー側は「手動検証が必要」と明示し、PR 作成セッションが PR 提出前に実機検証済みであることを確認する。未実施なら受け入れ条件未充足として (A) PR コメントで再検証を要求 (`docs/l2-workflow.md` §「実機検証 trigger 表」 参照)
 - 自動 CI で担保できる範囲と、手動検証が必須な範囲の境界を明示してユーザー / PR 作成セッションに伝達する
+- **手動ゲートの異常観測記録の確認 (Refs #935 P2-3)**: 実機検証の記録に「実施中に観測した想定外の挙動」が書かれているか、**または「観測ゼロ」が明記されているか**を確認する。未記載なら Step 5b トリアージ表へ計上する ([`docs/l2-workflow.md` §「実施中に観測した想定外の挙動」](../../../docs/l2-workflow.md) 参照)。**「主目的は達成した (N/N 完走)」だけの記録は pass の根拠にならない** — 観測された異常は主目的の成否とは別の軸である。異常が別 issue へ切り離されている場合は、切り離し先が 1 行で記録されているかまで確認する
 
 **大規模 refactor 観点 (#L-γ A1)**
 
@@ -253,6 +262,8 @@ Codex の finding は Step 5b トリアージ表に「出所 = codex:review」�
 
 Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback) の検出条件 table に従い:
 
+> **step の優先順 (逐語、#856 item2)**: step 1 の分類後、**必ず step 2 の重要 PR 判定を先に評価する**。重要 PR に該当したら step 2 の AskUserQuestion で確定させ、**step 3 / 4 は評価しない (短絡)**。step 3 / 4 は「重要 PR に該当しなかった場合」にのみ到達する分岐であり、step 2 と並列の選択肢ではない。判定順は `1 → 2 → (2 に該当すれば終了) → 3 または 4` である。
+
 1. stderr を keyword match (rate-limit / quota / 429 / auth / timeout 等) で分類
 2. **重要 PR 判定 (I-5 fix、spec C6 限界節)**: 以下のいずれかを満たす場合は「重要 PR」とし、**自動 fallback の前に user に AskUserQuestion 3 択を提示**:
    - release 直前 (`pyproject.toml` version bump を含む or develop-X.Y.Z → main 統合 PR)
@@ -263,7 +274,7 @@ Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §C
    - (A) Codex 復旧待ち (本 PR 一時 abort、Codex 復旧後に再 invoke) [Recommended]
    - (B) Claude fallback で push (superpowers `requesting-code-review` subagent fallback)
    - (C) abort (本 PR 全体停止、user 手動判断)
-3. **明確な failure (重要 PR でない)** → 自動 fallback: superpowers `requesting-code-review` subagent を起動 (Codex 用 focus 文字列を流用)
+3. **明確な failure (重要 PR でない)** → 自動 fallback: superpowers `requesting-code-review` subagent を起動する。**focus の渡し方 (#856 item4)**: tier 1 の `codex-companion.mjs review` は **focus positional を受け付けない**ため「Codex に渡した focus 文字列」は**存在しない**。「流用」できる文字列は無いので、fallback subagent には [`docs/l2-workflow.md` §「Step 5 の focus 導出手順」](../../../docs/l2-workflow.md) で**導出した focus を渡す** (project 固有 focus を Codex 側へ渡す場合に `adversarial-review` subcommand で使うはずだったものと同じ導出結果)
 4. **曖昧 (重要 PR でない)** → user に AskUserQuestion (再試行 / Claude fallback / abort) 3 択
 5. fallback 実行時は **Step 6 レビュー報告に「Codex fallback notice」を必須記載** (Iron Law 5 整合、template は docs/l2-workflow.md §Codex fallback 参照)
 
@@ -349,6 +360,44 @@ Step 5 / 5a / 5b で root cause (literal mismatch / 古い API 残存 / DCE 誇�
 「explicit な 4 箇所」を依頼すると implementer が同 file 内の他 hits を見落とし、Round 2/3 で再指摘するパターンが発生する (#682 issue 本文 PR #675 経緯参照)。
 
 **複数 root cause が混在する場合** (literal mismatch / 古い API 残存 / DCE 誇張表現 / **base regression (他 PR 由来フィールド欠落)** 等の異なる種類が同一 PR で発生): 各 root cause を最初に個別識別し、root cause ごとに独立した grep コマンドを生成する。base regression は Step 2.2 で列挙した影響候補 PR のフィールド・関数引数・新規エクスポートが本 PR の変更対象ファイルに統合されているか確認することで検出する。異なる root cause を同一 grep パターンで混在させると sweep 漏れが発生するため、root cause 数 = grep コマンド数を原則とする。
+
+#### 意味クラス root cause の sweep (Refs #935 P2-2)
+
+上記 1-3 は **root cause が文字列パターンとして表現できる**場合の手順である (literal mismatch / 古い API 残存 / 命名 drift 等)。root cause が**意味クラス** — 単一の grep パターンでは表現できないもの — の場合は、パターンではなく**能力の呼び出し箇所を全列挙して述語を 1 件ずつ当てる**。
+
+代表的な意味クラス (いずれかに該当したら本手順へ):
+
+| 意味クラス | 全列挙する対象 | 各件に当てる述語 |
+| --- | --- | --- |
+| **破壊的操作の述語** | 不可逆書込 (上書き / 削除 / truncate) の全呼び出し | 削除・上書きの対象を選ぶ判定が、名前・文字列一致ではなく**解決後の同一性** (OID / realpath / content hash) か |
+| **外部入力の検証** | CLI option / metadata field / GUI 自由入力 / 環境変数の全取得点 | 値が書込先・実行対象の決定に到達するか。到達するなら sandbox 検証があるか |
+| **パス解決規則** | ユーザーに提示する / 永続化する path の全生成点 | 絶対化されているか。相対・ドライブ相対のまま外へ出ていないか |
+
+**手順**:
+
+1. **能力の呼び出し箇所を全列挙する。** パターンは「欠陥の形」ではなく**「能力の形」**で書く:
+
+   ```bash
+   # 例: 不可逆書込の全呼び出し (欠陥ではなく能力を拾う)
+   grep -rnE '(open\([^)]*["'"'"']w|write_text|write_bytes|unlink|rmtree|os\.remove|truncate|os\.replace|fs::remove|fs::write)' \
+     allaganeye/ gui/src-tauri/src/
+   ```
+
+2. **各 hit に述語を 1 件ずつ当て、判定結果を Step 5b の表に転記する。** 「diff 内にあるか」ではなく「述語を満たすか」で分類する。**diff 外の hit も対象**である (root cause が横断クラスである以上、同じ欠陥が diff 外に既存で潜んでいる可能性がまさに論点)
+3. 述語を満たさない hit は、diff 内なら **(A)**、diff 外なら Step 5b の判定基準で **(A)** / **(B)** を決める。**「diff 外だから対象外」は理由にならない。** 対象外にするなら「別領域・別機能」trigger を満たすかで判定する
+4. hit にはコメント・docstring も混入する (粗い網)。**網を細くして取りこぼすより、粗く拾って仕分ける**方を選ぶ
+
+> **なぜ grep だけでは足りないか**: 「破壊的操作の述語が弱い」という root cause は、欠陥側の文字列では表現できない。**正しい実装と誤った実装が同じ語彙を使う**ためである。能力側 (書込呼び出し) を全列挙して述語を人が当てるしかない。この構造は memory `feedback_destructive_predicate_needs_identity` / `feedback_source_scan_guard_scope` で 2 度実証されている。
+
+#### mirror 元の検証状況確認 (Refs #935 P2-2)
+
+**mirror 元を参照する実装を書いた / 見つけた場合、mirror 元自身の検証状況を確認する。**
+
+- 「既存の X と同じ形にした」「X から移植した」「X をミラーした」という記述・コメント・PR 本文を見つけたら、**X が検証済みである根拠を確認する**
+- **mirror 元は「正」ではなく「未検証の前例」である可能性がある。** 検証済みの根拠 (test / 実機確認 / レビュー記録) が辿れないなら、mirror 先と同じ観点で mirror 元も点検し、欠陥があれば Step 5b の表に**両方**を計上する
+- 3 世代以上の複製 (A → B → C) を見つけたら **最初の A まで遡る**。複製が進むほど「前例があるから正しい」という誤った確信だけが強まる
+
+> **根拠**: PR #930 の欠陥は GUI → Python → Python の 3 世代複製で同クラスの 2 例目が新設されたものだった。memory `feedback_mirroring_impl_copies_latent_bugs` (「mirror 元は『正』でなく未検証の前例。#899→#591 で 2 リリース分の潜在バグを発掘」) が同じ構造を別件で実証している。
 
 ### 6. レビュー結果をユーザーに報告
 

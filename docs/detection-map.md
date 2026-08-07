@@ -137,7 +137,7 @@ segments 抽出 (_filter_and_extract_segments)
 ### 5.3 触ってはいけない (Phase 4 以降)
 
 - `_flag_post_match_trailing` (#805 で非破壊化済。§4 の通り v2 coupling 故に L3 再アーキ Phase 1-3 は据え置き)。
-- legacy fps filter path (cruft、別 issue で撤去)。
+- legacy fps filter path (cruft、#864 で撤去)。
 
 ### 5.4 masked path の現状 (2 層構成、#822)
 
