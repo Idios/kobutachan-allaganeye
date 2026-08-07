@@ -241,6 +241,82 @@ def test_fenced_heading_cannot_impersonate_a_missing_section(tmp_path: Path) -> 
         ern.extract("9.9.9", source)
 
 
+_BACKTICK = "`" * 3
+_TILDE = "~" * 3
+
+# fence 周りの厄介な入力。長さ保存が崩れる可能性のある形を並べる。
+_MASK_LENGTH_CASES = {
+    "lf-plain": "a\nb\n",
+    "crlf": "a\r\nb\r\n",
+    "no-trailing-newline": "a\nb",
+    "trailing-spaces": f"a   \n{_BACKTICK}x   \n## [9.9.9] - 2026-01-01  \n{_BACKTICK}  \n",
+    "tab-indented-fence": f"\t{_BACKTICK}\n## [9.9.9] - 2026-01-01\n{_BACKTICK}\n",
+    "three-space-indent": f"   {_BACKTICK}\n## [9.9.9] - 2026-01-01\n   {_BACKTICK}\n",
+    "backtick-open-tilde-close": f"{_BACKTICK}\n## [9.9.9] - 2026-01-01\n{_TILDE}\n",
+    "info-string": f"{_BACKTICK}md\n## [9.9.9] - 2026-01-01\n{_BACKTICK}\n",
+    "unterminated-fence": f"{_BACKTICK}\n## [9.9.9] - 2026-01-01\n",
+    "longer-fence": f"{'`' * 5}\n## [9.9.9] - 2026-01-01\n{'`' * 5}\n",
+    "crlf-fence": f"{_BACKTICK}\r\n## [9.9.9] - 2026-01-01\r\n{_BACKTICK}\r\n",
+    "empty": "",
+}
+
+
+@pytest.mark.parametrize("text", _MASK_LENGTH_CASES.values(), ids=_MASK_LENGTH_CASES)
+def test_mask_preserves_length_exactly(text: str) -> None:
+    """マスクが**長さを 1 文字も変えない**こと。
+
+    `extract` はマスク済みテキスト上で得た span を**元テキスト**へ当てて本文を
+    切り出す。長さがずれると span が別の位置を指し、**壊れた Release 本文を
+    publish する**。この不変条件が崩れると症状が「途中切れ」ではなく「文字化けした
+    ような切り出し」になり、原因に辿り着きにくい。
+    """
+    assert len(ern._mask_fenced_blocks(text)) == len(text)
+
+
+def test_longer_fence_is_not_closed_by_shorter_run(tmp_path: Path) -> None:
+    """4 連バッククォートの fence を、その中身の 3 連バッククォート行で閉じないこと。
+
+    CommonMark では閉じ fence は開始 fence **以上の長さ**が要る。長さを見ずに
+    文字種だけで閉じると、fence の中の短い fence を閉じ記号と誤認し、以降の
+    `## [...]` が露出する。結果として Release 本文がそこで途中切れする
+    (Codex adversarial-review round 3 high finding、実測で再現済み)。
+    """
+    b4, b3 = "`" * 4, "`" * 3
+    source = _changelog(
+        tmp_path,
+        "## [0.3.1] - 2026-08-07\n"
+        "\n"
+        "- fence の中に短い fence を含む例:\n"
+        "\n"
+        f"{b4}\n"
+        f"{b3}\n"
+        "## [9.9.9] - 2026-01-01\n"
+        f"{b3}\n"
+        f"{b4}\n"
+        "\n"
+        "- fence の後ろの変更点\n"
+        "\n"
+        "## [0.3.0] - 2026-08-04\n"
+        "\n"
+        "- 前リリース\n",
+    )
+
+    notes = ern.extract("0.3.1", source)
+
+    assert "fence の後ろの変更点" in notes, "短い fence で閉じたことにして途中切れした"
+    assert "## [9.9.9] - 2026-01-01" in notes, "fence の中身が本文から失われた"
+    assert "前リリース" not in notes, "実在の次見出しを越えて拾った"
+
+
+def test_backtick_fence_is_not_closed_by_tilde(tmp_path: Path) -> None:
+    """バッククォートで開いた fence を `~~~` では閉じないこと (markdown 仕様)。
+
+    種別を見ずに「fence らしい行」で閉じると、閉じたつもりの後ろが素通しになる。
+    """
+    masked = ern._mask_fenced_blocks(_MASK_LENGTH_CASES["backtick-open-tilde-close"])
+    assert "9.9.9" not in masked
+
+
 # --------------------------------------------------------------------------
 # CRLF (Windows checkout)
 # --------------------------------------------------------------------------

@@ -15,7 +15,7 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 
 1. **[critical]** **A-1**: Step 0a (旧 Step 0) でレイヤーリリース受け入れゲートを §共通項目 + §v0.3.0 固有項目 を user 提示し各項目 ○ 確認
 2. **[critical]** **A-2**: Step 0b で `gh issue list --label deferred --state open --limit 200` を実行し、件数 0 を検出して deferred 分類 (Step 0c) を skip (※not_planned 残タスク確認の要否は C-3 で検証)
-3. **[critical]** **A-3**: 全ゲート通過後に Step 1 リリース準備に進む
+3. **[critical]** **A-3**: 全ゲート通過後に **Step 2** リリース準備に進む (#918 item2。skill 側に Step 1 は存在しない — 過去の改番が eval 側へ伝播していなかった)
 4. minor release は `docs/release-process.md` §Patch release Track 構造 (A2) の適用対象外と判断
 5. **[critical]** **A-5**: Step 3-2 の version bump で `scripts/check_version_consistency.py` の `VERSION_LOCATIONS` を正として**全フィールド**を更新し、`--tag v0.3.0` で exit 0 を確認している。stage は `--list-paths` の出力から行う (#911)。**`grep -r '<旧バージョン>' --include=...` ベースの旧手順を使ったら失格** — `Cargo.lock` がどの glob にも載らず取りこぼすため #911 で置換済み (旧 A-5 が pin していた #817 / P2-33 の手順は廃止)
 6. **[critical]** **A-6**: Step 4 で `CHANGELOG.md` の `## [0.3.0] - YYYY-MM-DD` の日付を**タグを打つ当日の JST 日付**へ更新し、`--changelog-date-from` を渡した `check_version_consistency.py --tag` が exit 0 であることを確認してから commit している (#948 / 裁定 D6)。既リリース済みの節を書き換えていない (D7)

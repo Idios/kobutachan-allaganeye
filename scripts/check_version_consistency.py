@@ -144,8 +144,8 @@ _HEADING_DATE_RE = re.compile(r"^-\s+(?P<date>\d{4}-\d{2}-\d{2})$")
 _VERSION_SUFFIX_RE = re.compile(r"^\d+\.\d+\.\d+(?P<suffix>[-+].+)$")
 
 # fenced code block の開始 / 終了行 (``` または ~~~、markdown 仕様どおり
-# 先頭 3 文字までのインデントを許す)。
-_FENCE_RE = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})")
+# 先頭 3 文字までのインデントを許す)。`info` は開始行の言語指定 (```md 等)。
+_FENCE_RE = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 
 
 def mask_fenced_blocks(text: str) -> str:
@@ -163,9 +163,24 @@ def mask_fenced_blocks(text: str) -> str:
 
     終端の無い fence は以降を全てマスクする。見出しを**でっち上げない**方向の
     縮退なので、検査としては安全側に倒れる。
+
+    閉じ判定は CommonMark の fenced code block 規則に従う。**文字種だけでなく
+    開始時の長さも見る**のが要点で、これを落とすと 4 連バッククォートで開いた
+    fence が、その中身である 3 連バッククォートの行で閉じたことになり、以降の
+    `## [...]` が露出する (Codex adversarial-review round 3 high finding、実測で
+    架空の 9.9.9 混入と Release 本文の途中切れを再現済み)。閉じ行に info string
+    は付けられない、も規則どおり。
+
+    **markdown parser を使わない理由** (2026-08-08 Idios 判断): `release.yml` の
+    `version-check` / `release` は checkout + setup-python だけで動いており、
+    **pip install を 1 行も持たない** (実測)。parser を導入すると
+    「リリース当日の critical path に pip install step を新設する」ことになり、
+    最も失敗させたくない経路へ新しい失敗モードを持ち込む。fenced code block の
+    規則は有限なので、必要な部分集合を実装し切って test で固定する方を採る。
     """
     masked: list[str] = []
     fence_char: str | None = None
+    fence_length = 0
     for line in text.splitlines(keepends=True):
         body = line.rstrip("\r\n")
         newline = line[len(body) :]
@@ -173,12 +188,19 @@ def mask_fenced_blocks(text: str) -> str:
         if fence_char is None:
             if marker is not None:
                 fence_char = marker.group("fence")[0]
+                fence_length = len(marker.group("fence"))
                 masked.append(" " * len(body) + newline)
                 continue
             masked.append(line)
             continue
-        if marker is not None and marker.group("fence")[0] == fence_char:
+        if (
+            marker is not None
+            and marker.group("fence")[0] == fence_char
+            and len(marker.group("fence")) >= fence_length
+            and not marker.group("info").strip()
+        ):
             fence_char = None
+            fence_length = 0
         masked.append(" " * len(body) + newline)
     return "".join(masked)
 

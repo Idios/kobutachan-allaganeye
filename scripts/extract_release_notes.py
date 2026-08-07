@@ -26,7 +26,7 @@ from pathlib import Path
 _HEADING_DATE = r"\d{4}-\d{2}-\d{2}"
 
 # fenced code block の開始 / 終了行 (``` または ~~~、先頭 3 文字までのインデント可)。
-_FENCE_RE = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})")
+_FENCE_RE = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 
 
 def _mask_fenced_blocks(text: str) -> str:
@@ -37,12 +37,20 @@ def _mask_fenced_blocks(text: str) -> str:
     しか公開されない。長さを保つので、masked text 上で得た span を元テキストへ
     そのまま当てられる — 返す本文には fence の中身が無傷で含まれる。
 
+    閉じ判定は CommonMark の fenced code block 規則に従い、**文字種と開始時の
+    長さの両方**を見る。長さを落とすと 4 連バッククォートで開いた fence がその
+    中身の 3 連バッククォート行で閉じたことになり、以降の `## [...]` が露出して
+    本文が途中で切れる (Codex adversarial-review round 3 high finding)。
+
     `scripts/check_version_consistency.py` の `mask_fenced_blocks` と同じ処理を
     意図的に複製している。両スクリプトは CI の別 job から独立に呼ばれるので、
-    片方をもう片方に import させて結合させない。
+    片方をもう片方に import させて結合させない。両者が一致することは
+    `tests/scripts/test_check_version_consistency.py` の
+    `test_mask_implementations_stay_in_sync` が固定する。
     """
     masked: list[str] = []
     fence_char: str | None = None
+    fence_length = 0
     for line in text.splitlines(keepends=True):
         body = line.rstrip("\r\n")
         newline = line[len(body) :]
@@ -50,12 +58,19 @@ def _mask_fenced_blocks(text: str) -> str:
         if fence_char is None:
             if marker is not None:
                 fence_char = marker.group("fence")[0]
+                fence_length = len(marker.group("fence"))
                 masked.append(" " * len(body) + newline)
                 continue
             masked.append(line)
             continue
-        if marker is not None and marker.group("fence")[0] == fence_char:
+        if (
+            marker is not None
+            and marker.group("fence")[0] == fence_char
+            and len(marker.group("fence")) >= fence_length
+            and not marker.group("info").strip()
+        ):
             fence_char = None
+            fence_length = 0
         masked.append(" " * len(body) + newline)
     return "".join(masked)
 

@@ -920,6 +920,73 @@ def test_fenced_heading_is_not_counted_as_a_release(
     assert rc == 0, f"fence 内の見出しを実在版として拾った: {errors}"
 
 
+def test_mask_implementations_stay_in_sync() -> None:
+    """2 スクリプトの fence マスクが同じ結果を返すこと。
+
+    `scripts/extract_release_notes.py` は同じ処理を**意図的に複製**している
+    (CI の別 job から独立に呼ばれるので import で結合させない)。複製した以上、
+    片方だけ直して silent に挙動が割れるのを防ぐ必要がある。
+    """
+    ern_spec = importlib.util.spec_from_file_location(
+        "extract_release_notes_for_sync_check", SCRIPTS_DIR / "extract_release_notes.py"
+    )
+    assert ern_spec is not None and ern_spec.loader is not None
+    ern = importlib.util.module_from_spec(ern_spec)
+    sys.modules[ern_spec.name] = ern
+    ern_spec.loader.exec_module(ern)
+
+    backtick = "`" * 3
+    long_fence = "`" * 4
+    samples = [
+        "a\nb\n",
+        "a\r\nb\r\n",
+        f"{backtick}\n## [9.9.9] - 2026-01-01\n{backtick}\n",
+        f"\t{backtick}md\n## [9.9.9] - 2026-01-01\n{backtick}\n",
+        f"{backtick}\n## [9.9.9] - 2026-01-01\n",
+        # 長い fence の中に短い fence がある形 (round 3 high finding)。
+        f"{long_fence}\n{backtick}\n## [9.9.9] - 2026-01-01\n{backtick}\n{long_fence}\n",
+        # 閉じ行に info string が付いている (CommonMark では閉じない)。
+        f"{backtick}\n## [9.9.9] - 2026-01-01\n{backtick}md\n",
+        "",
+    ]
+    for sample in samples:
+        assert cvc.mask_fenced_blocks(sample) == ern._mask_fenced_blocks(sample)
+        assert len(cvc.mask_fenced_blocks(sample)) == len(sample)
+
+
+def test_longer_fence_is_not_closed_by_shorter_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """4 連バッククォートの fence 内の短い fence を閉じ記号と誤認しないこと。
+
+    誤認すると架空の上位版 (`## [9.9.9]`) が露出し、バンプ方向チェックが
+    恒久 red になる (Codex adversarial-review round 3 high finding)。
+    """
+    b4, b3 = "`" * 4, "`" * 3
+    _write_synthetic_repo(tmp_path, "0.3.1")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n"
+        "\n"
+        "## [0.3.1] - 2026-08-07\n"
+        "\n"
+        f"{b4}\n"
+        f"{b3}\n"
+        "## [9.9.9] - 2026-01-01\n"
+        f"{b3}\n"
+        f"{b4}\n"
+        "\n"
+        "## [0.3.0] - 2026-08-04\n"
+        "\n"
+        "- 前リリース\n",
+        encoding="utf-8",
+    )
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.3.1"])
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 0, f"fence 内の短い fence を閉じ記号と誤認した: {errors}"
+
+
 def test_suffix_tag_is_rejected_as_unsupported(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
