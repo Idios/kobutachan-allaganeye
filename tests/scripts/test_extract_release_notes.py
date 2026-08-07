@@ -189,6 +189,50 @@ def test_main_writes_notes_file(
 
 
 # --------------------------------------------------------------------------
+# CRLF (Windows checkout)
+# --------------------------------------------------------------------------
+
+
+def test_crlf_changelog_extracts_and_terminates(tmp_path: Path) -> None:
+    """CRLF 改行でも抽出でき、次の節の手前で打ち切ること。
+
+    本 repo は `core.autocrlf=true` で、CHANGELOG.md は `.gitattributes` の
+    `eol=lf` 対象**外**なので Windows では CRLF で checkout される (実測)。CI は
+    Linux (LF) なので、CRLF を壊しても CI は緑のまま。ここでは改行をバイト列で
+    書いてプラットフォームに依らず CRLF 経路を通す。
+    """
+    path = tmp_path / "CHANGELOG.md"
+    path.write_bytes(
+        "# Changelog\r\n"
+        "\r\n"
+        "## [0.3.1] - 2026-08-07\r\n"
+        "\r\n"
+        "- 出す変更\r\n"
+        "\r\n"
+        "## [0.3.0] - 2026-08-04\r\n"
+        "\r\n"
+        "- 前リリース\r\n".encode()
+    )
+
+    notes = ern.extract("0.3.1", path)
+
+    assert notes.startswith("## [0.3.1] - 2026-08-07")
+    assert "出す変更" in notes
+    # 次の見出しを跨いで前リリース分を巻き込まないこと。
+    assert "前リリース" not in notes
+    assert "0.3.0" not in notes
+
+
+def test_crlf_changelog_without_date_still_raises(tmp_path: Path) -> None:
+    """CRLF でも日付欠落を素通ししないこと (ガードの発火側)。"""
+    path = tmp_path / "CHANGELOG.md"
+    path.write_bytes(b"# Changelog\r\n\r\n## [0.3.1]\r\n\r\n- x\r\n")
+
+    with pytest.raises(SystemExit):
+        ern.extract("0.3.1", path)
+
+
+# --------------------------------------------------------------------------
 # 実 repo に対する pin test
 # --------------------------------------------------------------------------
 

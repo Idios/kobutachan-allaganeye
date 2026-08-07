@@ -21,6 +21,10 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 6. **[critical]** **A-6**: Step 4 で `CHANGELOG.md` の `## [0.3.0] - YYYY-MM-DD` の日付を**タグを打つ当日の JST 日付**へ更新し、`--changelog-date-from` を渡した `check_version_consistency.py --tag` が exit 0 であることを確認してから commit している (#948 / 裁定 D6)。既リリース済みの節を書き換えていない (D7)
 7. **[critical]** **A-7**: タグ打ち案内が **annotated tag** (`git tag -a`) で、GitHub Release は `release.yml` がタグ push で自動作成すると説明している。**`gh release create ... --notes-from-tag` を手順として提案したら失格** (#918 item4。二重作成 + CHANGELOG が本文に反映されない)
 8. **[critical]** **A-8**: `develop-<次バージョン>` を **タグ打ち + GitHub Release 作成の後**に `main` から切ると案内している (#918 item1。リリース PR の main マージ前やタグ打ち前と答えたら失格)
+9. **[critical]** **A-9**: minor release のリリース PR の `--base` を **`main`** としている。分岐元 (`develop-0.3.0`) と PR 宛先 (`main`) を別物として扱っていること。**`--base develop-0.3.0` で PR を作ったら失格** (実例: PR #924 は head=`release/v0.3.0` / base=`main`)
+10. **[critical]** **A-10**: Step 4 の CHANGELOG 日付 commit を **`release/v0.3.0` (リリース PR の head) へ載せる**としている。`main` へ直接 commit する / 日付用に別 PR を立てる と答えたら失格 (`main` は保護ブランチ)
+
+> A-9 / A-10 は **iteration 1 の findings を受けて iteration 2 前に追加**した項目。既存 [critical] の増減はしていない (mizchi protocol「[critical] タグを事後に増減しない」の趣旨は「合格しやすくする方向に動かさない」ことなので、新規発見の欠陥を追加するのは可)。iteration 1 の accuracy とは直接比較できない点に注意。
 
 ---
 

@@ -840,6 +840,91 @@ def test_forward_bump_returns_0(tmp_path: Path) -> None:
     assert cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.3.1"]) == 0
 
 
+def test_higher_version_with_malformed_date_is_still_compared(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """日付が壊れた上位版の節も比較対象に入ること (Codex medium finding)。
+
+    見出しを「日付として読めた行」だけに絞ると `## [0.4.0] - TBD` が見出しとして
+    存在しないことになり、0.4.0 が既にある CHANGELOG で v0.3.1 を打っても通る。
+    ダウングレード検出は履歴ではなく見出しから証拠を採るので、無視した見出しが
+    そのまま検出漏れになる。
+    """
+    _write_synthetic_repo(tmp_path, "0.3.1")
+    _write_changelog(tmp_path, (("0.4.0", None), ("0.3.1", "2026-08-07")))
+    # 日付欄が「無い」のではなく「壊れている」形にする。
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        changelog.read_text(encoding="utf-8").replace("## [0.4.0]", "## [0.4.0] - TBD"),
+        encoding="utf-8",
+    )
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.3.1"])
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 1
+    assert any("0.4.0" in line for line in errors), (
+        f"日付が壊れた上位版 0.4.0 を見落とした: {errors}"
+    )
+
+
+def test_pre_release_heading_is_compared(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """pre-release 識別子付きの上位版も比較対象に入ること (Codex medium finding)。"""
+    _write_synthetic_repo(tmp_path, "0.3.1")
+    _write_changelog(tmp_path, (("0.4.0-rc1", "2026-08-01"), ("0.3.1", "2026-08-07")))
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.3.1"])
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 1
+    assert any("0.4.0-rc1" in line for line in errors), (
+        f"pre-release の上位版を見落とした: {errors}"
+    )
+
+
+def test_release_after_its_own_pre_release_is_allowed(tmp_path: Path) -> None:
+    """`0.4.0-rc1` がある状態で `v0.4.0` を打てること (false-red を出さない)。
+
+    pre-release を「同 core の正式リリースと同値」にしてしまうと、rc を出した
+    バージョンが二度と正式リリースできなくなる。
+    """
+    _write_synthetic_repo(tmp_path, "0.4.0")
+    _write_changelog(
+        tmp_path,
+        (("0.4.0", "2026-09-01"), ("0.4.0-rc1", "2026-08-01"), ("0.3.1", "2026-08-07")),
+    )
+
+    assert cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.4.0"]) == 0
+
+
+def test_malformed_target_date_is_reported_distinctly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """対象節の日付が壊れているとき「日付が無い」と区別して報告すること。
+
+    リリース当日に「節はあるのに日付が無いと言われる」で原因探索の時間を使わない。
+    """
+    _write_synthetic_repo(tmp_path, "1.2.3")
+    _write_changelog(tmp_path, (("1.2.3", None), ("1.2.2", "2026-07-01")))
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        changelog.read_text(encoding="utf-8").replace(
+            "## [1.2.3]", "## [1.2.3] - 2026-8-7"
+        ),
+        encoding="utf-8",
+    )
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--tag", "v1.2.3"])
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 1
+    assert any("2026-8-7" in line for line in errors), (
+        f"壊れた日付文字列を報告していない: {errors}"
+    )
+
+
 def test_first_release_has_nothing_to_compare(tmp_path: Path) -> None:
     """比較対象が無い初回リリースは通ること。"""
     _write_synthetic_repo(tmp_path, "0.1.0")
@@ -856,6 +941,66 @@ def test_duplicate_version_headings_returns_1(tmp_path: Path) -> None:
     )
 
     assert cvc.main(["--repo-root", str(tmp_path), "--tag", "v1.2.3"]) == 1
+
+
+def test_crlf_changelog_is_handled(tmp_path: Path) -> None:
+    """CRLF 改行の CHANGELOG.md でも見出しを取り違えないこと。
+
+    本 repo は `core.autocrlf=true` の Windows 環境で開発されており、CHANGELOG.md は
+    `.gitattributes` の `eol=lf` 対象**外**なので実際に CRLF で checkout される
+    (実測)。一方 CI は Linux (LF) なので、**CRLF の取り扱いを壊しても CI は緑のまま
+    開発機だけが落ちる**。ここでは改行をバイト列で書いて、プラットフォームに依らず
+    CRLF 経路を通す (`Path.write_text` は既定で `\\n` を `os.linesep` へ変換するため、
+    それ任せだと Linux 側で CRLF を 1 度も踏まない)。
+    """
+    _write_synthetic_repo(tmp_path, "1.2.3")
+    (tmp_path / "CHANGELOG.md").write_bytes(
+        "# Changelog\r\n"
+        "\r\n"
+        "## [1.2.3] - 2026-08-04\r\n"
+        "\r\n"
+        "- 新しい\r\n"
+        "\r\n"
+        "## [1.2.2] - 2026-07-01\r\n"
+        "\r\n"
+        "- 古い\r\n".encode()
+    )
+
+    assert (
+        cvc.main(
+            [
+                "--repo-root",
+                str(tmp_path),
+                "--tag",
+                "v1.2.3",
+                "--changelog-date-from",
+                "2026-08-04T11:42:17+09:00",
+            ]
+        )
+        == 0
+    )
+
+
+def test_crlf_changelog_still_detects_wrong_date(tmp_path: Path) -> None:
+    """CRLF でもガードが**発火する**こと (CRLF 経路が素通しになっていない)。"""
+    _write_synthetic_repo(tmp_path, "1.2.3")
+    (tmp_path / "CHANGELOG.md").write_bytes(
+        b"# Changelog\r\n\r\n## [1.2.3] - 2026-08-01\r\n\r\n- x\r\n"
+    )
+
+    assert (
+        cvc.main(
+            [
+                "--repo-root",
+                str(tmp_path),
+                "--tag",
+                "v1.2.3",
+                "--changelog-date-from",
+                "2026-08-04T11:42:17+09:00",
+            ]
+        )
+        == 1
+    )
 
 
 def test_missing_changelog_file_returns_2(tmp_path: Path) -> None:
@@ -877,6 +1022,25 @@ def _release_workflow() -> str:
     )
 
 
+def _release_workflow_effective() -> str:
+    """`release.yml` から comment 行を除いた**実際に評価される**部分だけを返す。
+
+    comment を含めて検査すると両方向に壊れる:
+
+    * 肯定側 (`--changelog-date-from` があること) — comment 内に語があるだけで
+      通ってしまい、呼び出しが消えても気付けない
+    * 否定側 (`head_commit` が無いこと) — 「なぜ使わないか」を comment で説明
+      した瞬間に落ちる
+
+    どちらも「語の有無」ではなく「実効行の有無」を見れば解決する。
+    """
+    return "\n".join(
+        line
+        for line in _release_workflow().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+
+
 def test_release_workflow_passes_reference_date_on_tag_push() -> None:
     """`release.yml` が `--tag` と一緒に `--changelog-date-from` を渡していること。
 
@@ -884,11 +1048,25 @@ def test_release_workflow_passes_reference_date_on_tag_push() -> None:
     スクリプト側の test は全部緑のまま **CI では構造チェックしか走らない** という
     false-green になるので、呼び出し口を pin する (G1-1 3 点セットの 1 番目「発火点」)。
     """
-    workflow = _release_workflow()
+    workflow = _release_workflow_effective()
     assert "--changelog-date-from" in workflow
-    # 基準日の解決経路: annotated tag の taggerdate を第一、push payload を fallback。
+    # 基準日は annotated tag の taggerdate のみ。
     assert "taggerdate" in workflow
-    assert "head_commit.timestamp" in workflow
+
+
+def test_release_workflow_does_not_fall_back_to_commit_timestamp() -> None:
+    """基準日を `head_commit.timestamp` へ落とさないこと (Codex high finding)。
+
+    `head_commit.timestamp` は**タグが指す commit の日時**であってタグを打った
+    日時ではない。commit とタグ push が日を跨ぐと規約とズレた日付を「正」として
+    通してしまう。しかもそれが起きるのは lightweight tag を打った時 = 規約
+    (`git tag -a`) 違反時だけなので、弱い基準で通すより落とす方が正しい。
+
+    具体的な false-green: commit が 2026-08-06 23:00 JST、lightweight tag を
+    2026-08-07 JST に push、CHANGELOG 見出しが `2026-08-06` — fallback があると
+    これが通る。
+    """
+    assert "head_commit" not in _release_workflow_effective()
 
 
 def test_release_workflow_still_triggers_on_constraints_change() -> None:

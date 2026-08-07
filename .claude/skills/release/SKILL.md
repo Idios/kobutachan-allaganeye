@@ -1,6 +1,6 @@
 ---
 name: release
-description: deferred issue レビュー → バージョンバンプ → リリース PR 作成を自動化する
+description: deferred issue レビュー → バージョンバンプ → リリース PR 作成 → タグ打ち直前の CHANGELOG 見出し日付確定 を自動化する
 ---
 
 # リリーススキル
@@ -24,6 +24,8 @@ description: deferred issue レビュー → バージョンバンプ → リリ
 リリース PR を作成する前に、[`docs/release-process.md` §レイヤーリリース受け入れゲート](../../../docs/release-process.md) のチェックリストを全件達成しているか確認する。本ステップはスキップできない。
 
 1. 対象バージョン (例 `v0.2.0`) を特定し、§共通項目 + §`v0.x.0` (L?) 固有項目 の 2 ブロックをユーザーに提示
+   - **patch release には対応するレイヤー固有ブロックが存在しない**（固有項目は minor の `v0.x.0` 単位でしか定義されない）。その場合は §共通項目 のみを提示し、「レイヤー固有項目は該当なし（patch release のため）」と**明示**する。黙って 1 ブロックだけ出して済ませない
+   - §共通項目 は minor / patch の**両方**に適用される（裁定 D5）。patch だからと本ゲートごと省略しない
 2. 各項目について「達成 / 未達成 / 該当なし」を 1 件ずつ確認 (3 件以上の bulk 確認になる場合はサンプル提示 + 全件 OK / 個別調整 / 中止 の 3 択)
 3. 1 件でも未達成があれば本スキルは中断し、ユーザーに残タスクの優先処理を依頼
 4. 全件達成を確認してから Step 0b へ進む
@@ -106,9 +108,16 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    ```
 
 3. バージョン種別を決定（引数指定 or 上記「自動判定ルール」）
-4. ベースブランチを特定:
-   - **minor/major**: 現在の `develop-<新バージョン>` （既存 develop ブランチ）
-   - **patch**: ホットフィックス扱い。現在の `develop-<新バージョン>` がある場合はそこへ、無ければ `main` へ PR。判断が曖昧な場合は `git branch -r | grep -E 'origin/develop-|origin/main'` の結果を提示してユーザー確認
+4. **分岐元ブランチ**と**リリース PR の宛先 (`--base`)** を分けて特定する。**この 2 つは同じとは限らない**:
+
+   | 種別 | 分岐元 (`release/v<新バージョン>` をここから切る) | リリース PR の `--base` |
+   | --- | --- | --- |
+   | minor / major | `develop-<新バージョン>`（既存 develop ブランチ） | **`main`** |
+   | patch | `develop-<新バージョン>` があればそこ、無ければ `main` | 分岐元と同じ |
+
+   - 実例 (minor): v0.3.0 = PR [#924](https://github.com/Idios/kobutachan-allaganeye/pull/924) は head=`release/v0.3.0` / **base=`main`**、分岐元は `develop-0.3.0`。**`--base` に分岐元をそのまま渡すと、リリース PR が `main` ではなく develop を向く**
+   - 実例 (patch): v0.2.1 はバンプを `develop-0.2.1` に載せ、その後 `develop-0.2.1 → main` のリリース PR ([#774](https://github.com/Idios/kobutachan-allaganeye/pull/774)) を別途出している
+   - 判断が曖昧な場合は `git branch -r | grep -E 'origin/develop-|origin/main'` の結果を提示してユーザー確認
 
    > **`develop-<次バージョン>` を切るタイミング** (#918 item1): ここで指す `develop-<新バージョン>` は**今リリースするバージョンの開発統合先**であり、**既に存在している**ブランチである。本スキルが新規作成することはない。
    >
@@ -136,10 +145,10 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
    > 更新対象を `grep -r '<旧バージョン>' --include='*.py' --include='*.toml' --include='*.json'` で拾う旧手順は使わない。`Cargo.lock` のように上記 glob のどれにも載らない保持ファイルがあり、取りこぼす（#817 / audit P2-33 の手順を #911 で置換）
 
-3. リリースブランチを作成（Step 2-4 で特定したベースブランチから分岐）:
+3. リリースブランチを作成（Step 2-4 の表の**分岐元**から分岐。PR の `--base` とは別物なので取り違えない）:
 
    ```bash
-   git checkout <ベースブランチ>
+   git checkout <分岐元ブランチ>
    git pull
    git checkout -b release/v<新バージョン>
    ```
@@ -173,7 +182,7 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    git push -u origin release/v<新バージョン>
    ```
 
-6. リリース PR を作成（base は Step 2-4 で特定したベースブランチ、Windows + Git Bash での日本語本文破損回避のため `printf | --body-file -` 方式）:
+6. リリース PR を作成（`--base` は Step 2-4 の表の**リリース PR の宛先**。minor / major では **`main`** であって分岐元の develop ではない。Windows + Git Bash での日本語本文破損回避のため `printf | --body-file -` 方式）:
 
     ```bash
     printf '%s\n' "## Release v<新バージョン>
@@ -193,7 +202,7 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
     作成: <session-id>" | gh pr create \
       --title "Release v<新バージョン>" \
       --body-file - \
-      --base <ベースブランチ> \
+      --base <リリース PR の宛先> \
       --label "release" \
       --assignee Idios
     ```
@@ -218,7 +227,11 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
    exit 0 でなければタグを打たない（exit 1 = 見出し日付 / バンプ方向の不一致、exit 2 = 検査自体の構造エラー）。**同じ検査を `release.yml` の `version-check` job がタグ push 時に実行する**ため、ここを飛ばすと*タグを打った後に*赤くなり、タグの打ち直しが必要になる
 
-> 基準日を省いた `python scripts/check_version_consistency.py --tag v<新バージョン>` は、日付欄の**存在**しか見ない（値は比較しない）。Step 3 のバンプ時点ではタグを打つ日が未確定なので、そちらでは省略形で構わない。
+**この commit をどこへ載せるか**: **`release/v<新バージョン>`（リリース PR の head）へ直接 commit / push する。新しい PR は作らない。** リリース PR はまだマージ前なので、この commit は同じ PR に乗って `main` へ渡る。
+
+> **実行順序の制約**: したがって Step 4 は**リリース PR をマージする前**に実行する。`main` は保護ブランチ（`release/vX.Y.Z → main` のマージのみ受け付ける、[`docs/release-process.md`](../../../docs/release-process.md) §ルール 1）なので、マージ後に日付だけ直そうとしても `main` へ直接 commit できない。**Step 4 → リリース PR マージ → タグ打ちを同じ JST 日のうちに終える**のが正しい順序で、v0.3.0 もこの順で確定させている。
+>
+> なお基準日を省いた `python scripts/check_version_consistency.py --tag v<新バージョン>` は、日付欄の**存在**しか見ない（値は比較しない）。Step 3 のバンプ時点ではタグを打つ日が未確定なので、そちらでは省略形で構わない。
 
 ### タグ打ち・GitHub Release 作成
 

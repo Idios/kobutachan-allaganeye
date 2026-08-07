@@ -127,13 +127,18 @@ CHANGELOG_PATH = "CHANGELOG.md"
 CHANGELOG_TIMEZONE_NAME = "Asia/Tokyo"
 CHANGELOG_TIMEZONE = timezone(timedelta(hours=9), CHANGELOG_TIMEZONE_NAME)
 
-# `## [0.3.0] - 2026-08-04` / 日付を持たない `## [Unreleased]` の両方を受ける。
-# 日付の有無で節を捨てないのは、D7 で新設する `## [Unreleased]` を「日付欠落の
-# リリース節」と誤認しないため。
+# version 部分と、その後ろに続く文字列 (`rest`) を分けて捉える。
+#
+# **日付の妥当性で見出しを捨ててはいけない。** 日付が読めた行だけを見出しとして
+# 扱うと、`## [0.4.0] - TBD` のような書き損じが「見出しではない」ことになり、
+# バンプ方向チェックの比較対象から静かに消える (= 0.4.0 が既にある CHANGELOG で
+# v0.3.1 を打っても通る false-green)。まず全ての `## [...]` 行を拾い、日付として
+# 妥当かどうかは後段で別に判定する。
 _CHANGELOG_HEADING_RE = re.compile(
-    r"^## \[(?P<version>[^\]]+)\](?:\s+-\s+(?P<date>\d{4}-\d{2}-\d{2}))?[ \t]*$",
-    re.MULTILINE,
+    r"^## \[(?P<version>[^\]]+)\](?P<rest>.*)$", re.MULTILINE
 )
+# 見出し末尾の ` - YYYY-MM-DD`。`rest` を strip したものに当てる。
+_HEADING_DATE_RE = re.compile(r"^-\s+(?P<date>\d{4}-\d{2}-\d{2})$")
 
 
 @dataclass(frozen=True)
@@ -141,31 +146,53 @@ class ChangelogHeading:
     """CHANGELOG.md の `## [...]` 見出し 1 行。
 
     `raw_date` は書式 (`YYYY-MM-DD`) だけを満たした文字列で、暦日として妥当か
-    (`2026-13-45` でないか) は検査時に判定する。
+    (`2026-13-45` でないか) は検査時に判定する。`trailing` は version の後ろに
+    続く文字列 (前後 strip 済み) で、「日付が無い」(`## [Unreleased]`) と
+    「日付の書式が壊れている」(`## [0.4.0] - TBD`) を区別するために持つ。
     """
 
     version: str
     raw_date: str | None
+    trailing: str
 
 
 def parse_changelog_headings(text: str) -> list[ChangelogHeading]:
-    """CHANGELOG 本文から version 見出しを出現順に取り出す。"""
-    return [
-        ChangelogHeading(version=match.group("version"), raw_date=match.group("date"))
-        for match in _CHANGELOG_HEADING_RE.finditer(text)
-    ]
+    """CHANGELOG 本文から `## [...]` 見出しを出現順に**全て**取り出す。"""
+    headings: list[ChangelogHeading] = []
+    for match in _CHANGELOG_HEADING_RE.finditer(text):
+        trailing = match.group("rest").strip()
+        date_match = _HEADING_DATE_RE.match(trailing)
+        headings.append(
+            ChangelogHeading(
+                version=match.group("version"),
+                raw_date=date_match.group("date") if date_match else None,
+                trailing=trailing,
+            )
+        )
+    return headings
 
 
-def _release_order_key(version: str) -> tuple[int, int, int] | None:
-    """`X.Y.Z` を比較可能なタプルにする。該当しない見出しは `None`。
+def _release_order_key(version: str) -> tuple[int, int, int, int] | None:
+    """`X.Y.Z` (+ pre-release / build 識別子) を比較可能なタプルにする。
 
-    `Unreleased` や `0.4.0-rc1` のような節は順序比較の対象外にする
-    (取りこぼしは `check_changelog_heading` の docstring に列挙してある)。
+    `Unreleased` のような非リリース節は `None` を返して順序比較から外す。
+    第 4 要素は「正式リリースなら 1、pre-release 識別子付きなら 0」で、同一 core の
+    `0.4.0-rc1` を `0.4.0` より**下位**に置く。これがないと `0.4.0-rc1` を持つ
+    CHANGELOG で `v0.4.0` を打てなくなる (false-red)。
+
+    **近似であることの明示**: pre-release 同士の順序 (`rc1` < `rc2`) は見ない
+    (同値として扱うので `rc2` の打ち直しは重複扱いで落ちる)。本 repo は
+    CHANGELOG に pre-release 節を持たないため実害が無い範囲で単純化している。
     """
-    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?P<suffix>[-+].+)?", version)
     if match is None:
         return None
-    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    return (
+        int(match.group(1)),
+        int(match.group(2)),
+        int(match.group(3)),
+        0 if match.group("suffix") else 1,
+    )
 
 
 def parse_reference_date(raw: str) -> date:
@@ -213,17 +240,18 @@ def check_changelog_heading(
       引数を落とすと構造チェックまで縮退する。退化の検知は
       `tests/scripts/test_check_version_consistency.py` の release.yml 配線 pin
       に依存しており、本関数自身は検知できない
-    * **基準日は「タグを打った瞬間」そのものではない。** annotated tag の
-      `taggerdate` を渡せばタグ作成時刻だが、fallback の
-      `head_commit.timestamp` は**タグが指す commit の日時**である。commit と
-      タグ push が日を跨ぐ運用では規約とズレた値を「正」として比較する
+    * **基準日は呼び出し側が渡した値でしかない。** `release.yml` は annotated tag
+      の `taggerdate` (= タグを打った時刻) を渡すが、本関数はそれが本当にタグ
+      作成時刻かを検証できない。commit 日時のような別の値を渡されれば、それを
+      「正」として比較する
     * **日付以外の中身は検査しない。** 主要変更点 / breaking changes / リンク
       定義の欠落は `docs/release-process.md` §共通項目 の人手チェックのまま
     * **対象バージョン以外の節の日付は見ない。** 既リリース節が後から書き換え
       られても検知しない (D7 の「既リリース済み節を触らせない」は運用規約で
       あって検査ではない)
-    * **`X.Y.Z` でない版はバンプ方向比較の対象外。** `0.4.0-rc1` のような
-      pre-release 識別子付きの節は順序比較から静かに外れる
+    * **pre-release 同士の順序は見ない。** `0.4.0-rc1` と `0.4.0-rc2` は同値として
+      扱う (`_release_order_key` 参照)。`Unreleased` のように `X.Y.Z` で始まらない
+      節は順序比較の対象外
     * **CHANGELOG.md だけを触る PR では `release.yml` が起動しない**
       (`pull_request.paths` に CHANGELOG.md が無い)。ただし本 script の test は
       `ci.yml` の `pytest` に載る
@@ -256,8 +284,15 @@ def check_changelog_heading(
     raw_date = matched[0].raw_date
 
     if raw_date is None:
+        # 「日付欄が無い」と「日付欄はあるが書式が壊れている」を区別する。後者を
+        # 前者と同じ文言にすると、リリース当日に原因を探す時間が生まれる。
+        detail = (
+            "日付がありません"
+            if not matched[0].trailing
+            else f"日付として読めない文字列が続いています ({matched[0].trailing!r})"
+        )
         problems.append(
-            f"{CHANGELOG_PATH}: 見出し `## [{expected_version}]` に日付がありません "
+            f"{CHANGELOG_PATH}: 見出し `## [{expected_version}]` に{detail} "
             f"(`## [{expected_version}] - YYYY-MM-DD` の形で、タグを打つ日を "
             f"{CHANGELOG_TIMEZONE_NAME} で書く)"
         )
@@ -295,7 +330,7 @@ def _check_bump_direction(
     if target is None:
         return []
 
-    others: list[tuple[tuple[int, int, int], str]] = []
+    others: list[tuple[tuple[int, int, int, int], str]] = []
     for heading in headings:
         if heading.version == expected_version:
             continue
