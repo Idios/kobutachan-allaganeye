@@ -266,7 +266,7 @@ E1 (routing がアドバイザリで skill / hook に 0 件) / E5 (見出し日�
 
 1. section 分割を **heading level 準拠**にする (#936 の実装時に訂正。当初案は `split` を `/^#{2,4}\s+/m` へ緩めるだけだったが、実測により却下した。下記「実装時の訂正」参照)
 2. heading filter に `Self-Test Report` を **prefix match** で追加する (実際の heading は `#### Self-Test Report (machine-verified — 全件 [x] で validate-checklist 通過)` と括弧書きが付くため `\s*$` の完全一致では拾えない)
-3. `check-pr-checklist.test.js:45` の pin test を反転する
+3. `check-pr-checklist.test.js` の PR #622 pin test (実装前は :45) を反転する
 
 **実装時の訂正 (#936 実装 PR、Idios 裁定)**: 当初案の「`split` を `/^#{2,4}\s+/m` へ緩める」は、テンプレート本文では意図どおり動くが**実在の PR 本文には届かない**ことが実測で判明したため、**heading level 準拠の section 抽出**へ変更した。section は「自分と同じか浅いレベルの次 heading」で終わる。
 

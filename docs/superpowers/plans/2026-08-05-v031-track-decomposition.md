@@ -417,7 +417,7 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 
 - Modify: `.github/scripts/check-pr-checklist.js` — section 抽出を **heading level 準拠**に変更 (当初案の `split(/^#{2,4}\s+/m)` は実装時に却下。下記「実装時の訂正」)
 - Modify: `.github/scripts/check-pr-checklist.js` — heading filter に `Self-Test Report` を **prefix match** で追加
-- Modify: `.github/scripts/check-pr-checklist.test.js:45` — pin test を反転
+- Modify: `.github/scripts/check-pr-checklist.test.js` — 旧 PR #622 pin test (実装前は :45) を反転
 
 **3 点セットで初めて発火する (これを外すと no-op):**
 
