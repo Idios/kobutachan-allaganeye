@@ -251,6 +251,44 @@ test('#936 D9: 実テンプレートは 22 box 中 12 box のみが gate 対象'
   assert.equal(result.unchecked, 12, 'gate 対象となる - [ ] の数 (受け入れ条件 2 + Self-Test 10)');
 });
 
+test('#936: HTML コメント内の heading は section を打ち切らない (false-green 修正)', () => {
+  // Codex adversarial-review round 1 [high]。GitHub 上でレンダリングされないコメント行が
+  // heading とみなされ、その後ろの**可視の** `- [ ]` が数えられない false-green があった。
+  // テンプレート抜粋をコメントで貼る本文で実際に起こる。
+  const body = '## Self-Test Report\n<!--\n## hidden template heading\n-->\n- [ ] pytest\n';
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#936: 受け入れ条件 節でも同じ false-green が塞がれている (base からの既存穴)', () => {
+  // 同じ入力を base 実装に通すと unchecked=0 になる (実測済み)。gate 拡大にあわせて既存穴も塞ぐ。
+  const body = '## 受け入れ条件\n<!--\n## hidden\n-->\n- [ ] item\n';
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#936: HTML コメント内の - [ ] はカウントされない (不可視の項目は gate 対象外)', () => {
+  const body = `
+## 受け入れ条件
+
+<!-- 記入例: - [ ] (条件 1 を逐条記入) -->
+
+- [x] 実際の条件
+`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+  assert.equal(result.checked, 1);
+});
+
+test('#936: CRLF 改行の本文でも heading / checkbox を認識する', () => {
+  // GitHub の `pull_request.body` は CRLF で届く。行ベースの section 抽出が \r で崩れないことを固定。
+  const body = templateShapedBody('- [ ] `pytest`').replace(/\n/g, '\r\n');
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+  assert.equal(result.checked, 1);
+  assert.equal(result.hasAnySection, true);
+});
+
 // --- #936: 発火実証 (生の exit code) ----------------------------------------
 
 test('#936 発火実証: Self-Test Report に - [ ] が 1 件残ると非ゼロ exit', () => {

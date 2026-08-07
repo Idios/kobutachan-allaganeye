@@ -54,7 +54,7 @@ const HEADING_RE = /^(#{1,6})\s+(.*)$/;
  * heading 行自体は本文に含めない。
  */
 function extractRequiredSections(body) {
-  const lines = stripFencedBlocks(body).split(/\r?\n/);
+  const lines = stripHtmlComments(stripFencedBlocks(body)).split(/\r?\n/);
   const collected = [];
   let activeLevel = 0; // 0 = 収集していない / >0 = 収集中の section の heading level
   let found = false;
@@ -92,6 +92,23 @@ function extractRequiredSections(body) {
  * 関数名は既存 doc (docs/superpowers/plans/2026-05-08-lane-iv-b-group-g-implementation.md 等) からの
  * 参照があるため #936 の scope 拡大後も維持している。
  */
+/**
+ * HTML コメント (`<!-- ... -->`) を除去する (#936 Codex adversarial-review round 1 [high])。
+ *
+ * GitHub 上でレンダリングされないコメント行が heading とみなされて section を打ち切り、
+ * その後ろにある**可視の** `- [ ]` が数えられない false-green があった (base 実装からの既存穴。
+ * `## 受け入れ条件` 節でも同じ入力で再現する)。テンプレート抜粋をコメントで貼る本文で実際に起きる。
+ *
+ * 逆向きに、コメント内の `- [ ]` (記入例など) も数えなくなる。不可視の項目で CI を red に
+ * するほうが不当なので、これは意図した挙動である。
+ *
+ * fence 内に `<!--` が現れる場合を避けるため fence 除去の後に適用する。
+ * 閉じていない `<!--` は除去しない (閉じフェンスのみ除去する `stripFencedBlocks` の方針に合わせる)。
+ */
+function stripHtmlComments(text) {
+  return text.replace(/<!--[\s\S]*?-->/g, '');
+}
+
 function countAcceptanceCriteriaCheckboxes(body) {
   const { text, found } = extractRequiredSections(body);
   const unchecked = (text.match(/- \[ \]/g) || []).length;
