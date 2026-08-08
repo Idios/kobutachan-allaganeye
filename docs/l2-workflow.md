@@ -430,8 +430,11 @@ PR 本文を以下の構成で書き分ける (PR #615 / PR #625 修正で確立
 
 checker (`.github/scripts/check-pr-checklist.js`) は GitHub のレンダリングに寄せた 1 パスの行スキャナだが、完全一致ではない。誤りの向きは **false-red 側に倒す** 方針 (黙って通す false-green より、メッセージが見えて自己修正できる false-red のほうが安全)。以下は gate が見ていない / 近似している集合:
 
-- **節と項目の存在自体は強制しない**。`Self-Test Report` 節を書かなければ (削除 / 改名 / 項目を plain bullet に落とす) job は通る。証跡ゼロでも green になるため、これは**自己申告 gate**である
-- `**Self-Test Report**` のような bold 疑似見出しや、`####` の直後を全角空白で区切った見出しは GitHub 側でも heading にならないため節として成立しない = 上記と同じ扱いになる
+- **節と項目の存在は強制される (fail-closed、#967)**。`Self-Test Report` 節が認識できない場合、および節内に checkbox が 1 件も無い場合は **job が red になる** (以前は skip して pass していた)。したがって heading 形式の認識漏れ (下記) は「gate が黙って無効化される」ではなく「red になって作者が気づく」形に倒れている
+  - **認識される形**: ATX heading (`#` 1-6 個 + ASCII space/tab 区切り)、0-3 space インデント、blockquote 内、閉じ ATX (`#### ... ####`)、Unicode ハイフン / NBSP を含む heading text
+  - **認識されない形** (= red になる。heading を直せば解消): bold 疑似見出し (`**Self-Test Report**`)、`#` の直後が全角空白、setext (下線 `---` / `===`)、heading 先頭に絵文字などの前置文字、節の削除・改名、項目を全部 plain bullet に落とす
+  - **例外**: bot 作成の PR (`user.type === "Bot"`、dependabot 等) は節の存在要求を skip する。実在 #831 は heading 0 / checkbox 0 で、bot に template 遵守は求められないため。未消化 checkbox がある場合は bot でも red になる
+  - 必須化の範囲は実測で決めた: 実在 merged PR 本文 + テンプレート 29 本のうち **Self-Test Report 節は 29/29 に存在**、節内 checkbox は**最小 2 件**。一方 `## 受け入れ条件` の完全一致 heading は **22/31 に存在しない** (suffix 形が多い) ため**必須にしていない**
 - インデント 4 以上の行の解釈は「**開いている list の最も浅いインデント**」で近似している (list 継続なら task item / list が無ければ indented code block)。list item の content indent を超える深い入れ子 (6-8 space 等) は GitHub が code とするのに数える (false-red)
 - 未閉鎖の fence / 行頭 `<!--` は「**開いた container の終端まで**」読み飛ばす。root で開いた場合は文書末まで (GitHub と一致)、list / blockquote 内で開いた場合はその container の終端で閉じる
 - HTML block は **type 1** (`pre` / `script` / `style` / `textarea`、閉じタグまで) と **type 6** (ブロック要素タグ、空行まで) のみ扱う。type 7 (任意タグ単独行) は近似していない (false-red)。raw HTML の `<h2>` 等は読み飛ばすだけで heading としての節閉じ効果は持たない
@@ -440,10 +443,7 @@ checker (`.github/scripts/check-pr-checklist.js`) は GitHub のレンダリン�
 
 - heading を link 化した形 (`## [受け入れ条件](#ac)`) は heading text が完全一致に落ちるため対象外
 - **setext heading (`見出し` + `---` / `===`) は認識しない**。GitHub は heading にするが、実測で「setext を使う本文は 31 本中 0 件 / `---` 区切りを含む本文は 3 件」で、段落直後の `---` を setext と解釈すると偽の heading が対象節を打ち切る false-green が出る (実在 PR #943 の本文に `---` を 1 行足すと exit 1 → exit 0 に反転)。得るもの 0 / 害 3 なので認識しない側に倒した
-- **以下は既知の false-green として残っている** (#967 で計測済み、いずれも「GitHub 上には未消化 checkbox が見えるのに gate は通る」形):
-  - 折り返し行 (lazy continuation) の直後に 4 space 入れ子の項目を置く形
-  - heading text の先頭に絵文字などが付く形 (`#### ✅ Self-Test Report`) — prefix 一致に落ちる
-  - list marker の直後で改行し box を次行の先頭 (インデント付き) に置く形
+- **既知の false-green は 1 件残っている** (#967 で計測済み): 折り返し行 (lazy continuation) の直後に 4 space 入れ子の項目を置く形。節は認識されるため fail-closed では拾えず、GitHub 上に見える未消化 checkbox が 1 件数え落ちる。他の認識漏れ (絵文字前置 / bold 疑似見出し / 全角空白区切り / setext / marker 改行 box) は fail-closed により red になり解消済み
 
 同じ集合を `.github/scripts/check-pr-checklist.js` 冒頭のコメントにも記録している (doc だけに置くと次の実装者に届かないため)。期待値の決め方と再現材料は #967 / PR #970 の renderer 突合表 (`gh api markdown` の `aria-label="Incomplete task"` 個数と checker の counting を突き合わせたもの) を参照。**新しい角を見つけたら推測で直さず、まず renderer に通して期待値を決めること。**
 

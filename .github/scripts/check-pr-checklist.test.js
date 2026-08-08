@@ -21,18 +21,25 @@ const core = {
   info: (m) => process.stdout.write('[info] ' + m + '\\n'),
   setFailed: (m) => { process.stdout.write('::error::' + m + '\\n'); process.exitCode = 1; },
 };
-const context = { payload: { pull_request: { body: process.env.PR_BODY } } };
+const context = {
+  payload: {
+    pull_request: {
+      body: process.env.PR_BODY,
+      user: process.env.PR_USER_TYPE ? { type: process.env.PR_USER_TYPE } : undefined,
+    },
+  },
+};
 checker({ github: {}, context, core }).catch((e) => {
   process.stdout.write('[throw] ' + e.message + '\\n');
   process.exitCode = 2;
 });
 `;
 
-function runCheckerProcess(body) {
-  const result = spawnSync(process.execPath, ['-e', CHILD_SOURCE], {
-    env: { ...process.env, CHECKER_PATH, PR_BODY: body },
-    encoding: 'utf8',
-  });
+function runCheckerProcess(body, userType) {
+  const env = { ...process.env, CHECKER_PATH, PR_BODY: body };
+  if (userType) env.PR_USER_TYPE = userType;
+  else delete env.PR_USER_TYPE;
+  const result = spawnSync(process.execPath, ['-e', CHILD_SOURCE], { env, encoding: 'utf8' });
   return { status: result.status, stdout: result.stdout || '', stderr: result.stderr || '' };
 }
 
@@ -730,6 +737,91 @@ test('#936: CRLF 改行の本文でも heading / checkbox を認識する', () =
   assert.equal(result.unchecked, 1);
   assert.equal(result.checked, 1);
   assert.equal(result.hasAnySection, true);
+});
+
+// --- #967 修正方針 6: fail-closed (節と項目の存在を強制する) ----------------------
+//
+// heading 形式を認識できなかったとき、これまでは `hasAnySection=false` → skip → **green** だった。
+// つまり絵文字前置 / bold 疑似見出し / 全角空白区切り / setext / 節の削除・改名 はすべて
+// 「gate が黙って無効化される」false-green になっていた。認識漏れを **red 側に倒す** ことで
+// このクラス全体を一括で閉じる (Idios 裁定)。
+//
+// 必須化の範囲は実測で決めた (実在 merged PR 本文 + テンプレート 29 本):
+//   - Self-Test Report 節: 29/29 に存在 → **必須化しても blast radius ゼロ**
+//   - 節内の checkbox: 最小 2 件 (0 件の本文は無い) → **1 件以上を必須化してもゼロ**
+//   - `## 受け入れ条件` 節: **22/31 に存在しない** (`## 受け入れ条件 (issue #611) 最終判定` のような
+//     suffix 形が多く、完全一致 regex では拾えない #936 Q5 (A) 凍結仕様) → **必須にしない**
+//   - bot 作成 PR: 実在 1 件 (#831 dependabot) は heading 0 / checkbox 0 / `user.type=Bot`
+//     → bot は除外する
+
+test('#967 fail-closed: Self-Test Report 節が無い本文は非ゼロ exit', () => {
+  const body = '## 概要\n\n変更の説明。\n\n## 受け入れ条件\n\n- [x] 条件 1\n';
+  const { status, stdout } = runCheckerProcess(body);
+  assert.equal(status, 1, `exit code が 1 でない (stdout: ${stdout})`);
+  assert.match(stdout, /::error::/);
+});
+
+test('#967 fail-closed: 節はあるが checkbox が 1 件も無い本文は非ゼロ exit', () => {
+  // 項目を plain bullet に落として証跡ゼロで通す bypass を塞ぐ
+  const body = `#### ${ST_TITLE}\n\n- ruff check\n- pytest\n`;
+  const { status, stdout } = runCheckerProcess(body);
+  assert.equal(status, 1, `exit code が 1 でない (stdout: ${stdout})`);
+});
+
+test('#967 fail-closed: heading 認識漏れは red になる (絵文字前置)', () => {
+  // GitHub は `#### ✅ Self-Test Report` を h4 として描画するが、prefix 一致に落ちる。
+  // fail-closed なので「節が無い」と判定して red になり、作者が heading を直せる。
+  const body = `## 受け入れ条件\n\n- [x] 条件 1\n\n#### ✅ ${ST_TITLE}\n\n- [ ] pytest\n`;
+  const { status } = runCheckerProcess(body);
+  assert.equal(status, 1);
+});
+
+for (const [label, heading] of [
+  ['bold 疑似見出し', `**${ST_TITLE}**`],
+  ['全角空白区切り', `####　${ST_TITLE}`],
+  ['setext 形', `${ST_TITLE}\n---`],
+]) {
+  test(`#967 fail-closed: heading 認識漏れは red になる (${label})`, () => {
+    const body = `## 受け入れ条件\n\n- [x] 条件 1\n\n${heading}\n\n- [x] pytest\n`;
+    const { status } = runCheckerProcess(body);
+    assert.equal(status, 1);
+  });
+}
+
+test('#967 fail-closed: 節を削除しても red になる', () => {
+  const body = '## 受け入れ条件\n\n- [x] 条件 1\n\n## 備考\n\n特になし。\n';
+  const { status } = runCheckerProcess(body);
+  assert.equal(status, 1);
+});
+
+test('#967 fail-closed: 受け入れ条件節が無くても Self-Test があれば pass', () => {
+  // 実在 merged PR の 22/31 がこの形 (`## 受け入れ条件` の完全一致 heading を持たない)。
+  // 受け入れ条件節を必須にすると大量に red になるため必須にしない。
+  const body = `## Summary\n\n- 変更概要\n\n#### ${ST_TITLE}\n\n- [x] pytest\n- [x] ruff\n`;
+  const { status, stdout } = runCheckerProcess(body);
+  assert.equal(status, 0, `exit code が 0 でない (stdout: ${stdout})`);
+});
+
+test('#967 fail-closed: bot 作成の PR は節の存在を要求しない', () => {
+  // 実在 #831 (dependabot) は heading 0 / checkbox 0。bot に template 遵守は求められない。
+  const body = 'Bumps vite from 8.0.9 to 8.0.16.\n\nRelease notes ...\n';
+  const asHuman = runCheckerProcess(body);
+  const asBot = runCheckerProcess(body, 'Bot');
+  assert.equal(asHuman.status, 1, '人間の PR なら red');
+  assert.equal(asBot.status, 0, `bot の PR なら pass (stdout: ${asBot.stdout})`);
+});
+
+test('#967 fail-closed: bot でも未消化 checkbox があれば red', () => {
+  // bot 例外は「節の存在要求」だけを免除する。実際に未消化があるなら落とす。
+  const body = `#### ${ST_TITLE}\n\n- [ ] pytest\n`;
+  const { status } = runCheckerProcess(body, 'Bot');
+  assert.equal(status, 1);
+});
+
+test('#967 fail-closed: 実テンプレートを全件 [x] にした本文は pass (対照)', () => {
+  const body = templateShapedBody(['- [x] `ruff check .`', '- [x] `pytest`'].join('\n'));
+  const { status, stdout } = runCheckerProcess(body);
+  assert.equal(status, 0, `exit code が 0 でない (stdout: ${stdout})`);
 });
 
 // --- #936: 発火実証 (生の exit code) ----------------------------------------
