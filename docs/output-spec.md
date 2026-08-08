@@ -200,13 +200,15 @@ Metadata: <metadata.json path>
 
 ## ユーザーに提示するパスの契約 (Refs #935 P2-4)
 
-**ユーザーに提示するパス (完了行 / `--json` / GUI) は絶対パスで出す。** `-o` に渡された相対パス・ドライブ相対パスをそのまま提示してはならない。
+**CLI がユーザーに提示するパス (完了行 / `--json`) は絶対パスで出す。** `-o` に渡された相対パス・ドライブ相対パスをそのまま提示してはならない。
+
+**GUI は本契約の適用範囲外である** (現状パスを受け取っていないため。下表と #968 を参照)。**「提示するパスは絶対」を GUI にも適用済みと読まないこと。**
 
 | 提示先 | 形式 | 実装 |
 | --- | --- | --- |
 | `--json` の `output_path` | **絶対パス + POSIX 区切り** (`/`) | `Path(os.path.abspath(output_path)).as_posix()` (`allaganeye/export/schema.py` の `ProgressEvent.result`) |
 | 完了行 `[OK] match NNN -> <path>` | **絶対パス + プラットフォーム固有の区切り** (Windows は `\`) | 上記 payload を `Path(str(...))` で再構成 (`allaganeye/commands/export.py` / `allaganeye/commands/minimap.py`) |
-| GUI | 上記 `--json` payload をそのまま受け取る | Rust 側は `String` として透過 |
+| GUI | **パスを受け取らない (本契約の適用外)** | Rust 側は wire event の `output_path` を deserialize するが、フロントへ転送する `ExportProgress` (`gui/src-tauri/src/lib.rs`) に**パス field が無い**ため破棄される。GUI が画面に出す出力先はユーザーが指定した値そのもので、本契約の絶対化は**効いていない** (追跡: #968) |
 
 **規約の要点**:
 
@@ -218,7 +220,15 @@ Metadata: <metadata.json path>
 
 **GUI プレビューとの非対称 (既知・未解消)**: GUI の name-pattern プレビュー (`gui/src/utils/filename.ts` の `formatMatchFilename`) は pattern を展開するだけで、CLI 側 (`allaganeye/export/pool.py`) が持つ 4 つの sandbox 検証 (出力先外への脱出 / source 上書き / Windows 不正名 / 出力衝突) を**持たない**。そのため GUI 上では「書き出し時に exit 5 で拒否される名前」がプレビューとして正常に見える。**本節の契約は CLI 出力に対するものであり、GUI プレビューの検証欠落は #964 で追跡する** (CLI 側が exit 5 で拒否するためデータ損失は起きず、失敗を早く知れない UX の問題)。
 
-**機械検査**: 本契約が実装から乖離していないことの自動確認は #934 で導入する。**本節は契約の記述のみを持つ。**
+**本契約の 3 点セット** ([`docs/l2-workflow.md` §規約・ガード導入の 3 点セット](l2-workflow.md) 準拠):
+
+| | 実体 |
+| --- | --- |
+| ①発火点 | [`/review-pr`](../.claude/skills/review-pr/SKILL.md) Step 5「パス生成点・表示点を触る PR の場合」 |
+| ②非実施記録 | 同 step。非該当なら `パス契約: 非該当 (理由: パスの生成点・表示点に変更なし)` を Step 6 に 1 行 |
+| ③red 実証 | `tests/test_export_schema.py::test_progress_event_result_reports_absolute_path` (相対 `-o` を渡して絶対パスが返ることを assert。`os.path.abspath` を外すと red になることを PR #930 が実測済み) |
+
+`--json` の絶対化のみ ③ が存在する。**完了行のネイティブ区切りと GUI 側には pin test が無い**ため、この 2 つは現状 ③ 未達である (#934 で機械検査化する範囲に含める)。
 
 ## export コマンド出力
 
