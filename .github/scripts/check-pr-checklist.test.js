@@ -234,6 +234,64 @@ test('#967 false-green: 行中で開いた HTML コメントは後続行を飲�
   assert.equal(result.checked, 2);
 });
 
+// CommonMark のインデントは ASCII の space / tab のみ。JS の `trimStart()` / `trim()` は
+// NBSP や全角空白まで落とすため、GitHub 上では段落テキストの行が heading / task item に
+// 化けて gate の判定を狂わせる (Codex adversarial-review round 3 [high] + 自前 sweep)。
+const NBSP = ' ';
+const IDEOGRAPHIC_SPACE = '　';
+
+test('#967 false-red: checkbox の直後に空白が無い行は task item でない', () => {
+  // GFM の task list item は `[ ]` の後に空白を要求する。`- [ ]項目` は通常の list item
+  // として描画される (renderer 実測: Incomplete task 0 個)。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n- [ ]項目 (box の後に空白なし)\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967 false-red: HTML ブロック内の行は markdown として解釈されない', () => {
+  // `<div>` / `<details>` 等の HTML ブロックは空行まで続き、中身は markdown として
+  // 解釈されない (renderer 実測: Incomplete task 0 個)。`<details>` を使う PR 本文で
+  // 現実に起こる誤爆。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n<div>\n- [ ] div 内\n</div>\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967: HTML ブロックは空行で終わるので、その後の checkbox は数える', () => {
+  // `<details>` の後に空行を入れた形は markdown として解釈され、checkbox が描画される。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n<details>\n\n- [ ] details 内 (空行あり)\n\n</details>\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967 false-green: NBSP 始まりの行は heading でないので節を打ち切らない', () => {
+  // renderer 実測: NBSP 行は段落。直近の heading は Self-Test の h4 なので節は継続し、
+  // 未消化 1 件が節内に見える。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n${NBSP}#### 関連ドキュメント\n\n- [ ] pytest\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967 false-green: 全角空白始まりの行も heading でない', () => {
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n${IDEOGRAPHIC_SPACE}#### 関連ドキュメント\n\n- [ ] pytest\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967 false-red: NBSP 始まりの行は task item でない', () => {
+  // renderer 実測: Incomplete task 0 個 (段落テキストとして描画される)。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n${NBSP}- [ ] NBSP インデント項目\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967: NBSP 始まりの required heading は節を開始しない', () => {
+  // renderer 実測: heading にならないため Self-Test 節が存在せず、後続項目は gate 対象外。
+  const body = `## 受け入れ条件\n\n- [x] 条件 1\n\n## PR チェックリスト\n\n${NBSP}#### ${ST_TITLE}\n\n- [ ] pytest\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
 test('#967 false-green: blockquote 内で開いた fence は引用の外まで続かない', () => {
   // 引用が終われば中の fenced block も終わる。GitHub は引用の外の `- [ ]` を
   // Incomplete task として描画する (renderer 実測: Incomplete 1)。

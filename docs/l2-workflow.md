@@ -434,6 +434,7 @@ checker (`.github/scripts/check-pr-checklist.js`) は GitHub のレンダリン�
 - `**Self-Test Report**` のような bold 疑似見出しや、`####` の直後を全角空白で区切った見出しは GitHub 側でも heading にならないため節として成立しない = 上記と同じ扱いになる
 - インデント 4 以上の行の解釈は「直前に list があるか」で近似している (list 継続なら task item / そうでなければ indented code block)。深い入れ子や list 内の段落を挟む形では GitHub と食い違いうる
 - 閉じていない fence / 閉じていない `<!--` は「そこから先すべて」を code / コメントとして扱わない (行単位の近似)
+- HTML block は `<div>` / `<details>` 等の**ブロック要素タグで始まり空行で終わる形** (CommonMark type 6) のみ扱う。`<!-- -->` 以外の他 type (script / pre / 任意タグ単独行など) は近似していない
 - heading text は Unicode ハイフン類と NBSP 類を ASCII に畳んでから照合する。それ以外の異体字 (全角英字など) は畳まない
 - 受け入れ条件節の heading は**完全一致**のため `## 受け入れ条件 (追加)` のような suffix 付きは対象外 (凍結済み仕様)
 

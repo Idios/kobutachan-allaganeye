@@ -93,8 +93,29 @@ function matchFenceOpen(content) {
 /** list item (task list でないものも含む)。list 文脈の追跡に使う。 */
 const LIST_ITEM_RE = /^(?:[-*+]|\d+[.)])(?:[ \t]+|$)/;
 
-/** GFM task list item。marker は `-` / `*` / `+` / `1.` / `1)` を許容する。 */
-const TASK_ITEM_RE = /^(?:[-*+]|\d+[.)])[ \t]+\[([ xX])\]/;
+/**
+ * GFM task list item。marker は `-` / `*` / `+` / `1.` / `1)` を許容する。
+ *
+ * `[ ]` の**直後に空白 (または行末) を要求する** — GFM の task list item はそう定義されており、
+ * `- [ ]項目` は通常の list item として描画される。空白を要求しないと GitHub 上に checkbox が
+ * 無いのに数える false-red になる (renderer 実測で確認)。
+ */
+const TASK_ITEM_RE = /^(?:[-*+]|\d+[.)])[ \t]+\[([ xX])\](?=[ \t]|$)/;
+
+/**
+ * HTML block (CommonMark §4.6 type 6) の開始タグ。空行まで続き、中身は markdown として
+ * 解釈されない。`<details>` / `<div>` を使う PR 本文で、ブロック内の checkbox 記法を
+ * 数えてしまう false-red があった (renderer 実測で確認)。
+ *
+ * 空行を挟めば HTML block は終わるため、`<details>` の後に空行を置いた本文の checkbox は
+ * 従来どおり数える (GitHub もそう描画する)。
+ */
+const HTML_BLOCK_TAGS =
+  'address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|' +
+  'dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|' +
+  'hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|' +
+  'search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul';
+const HTML_BLOCK_START_RE = new RegExp('^</?(?:' + HTML_BLOCK_TAGS + ')(?:[ \\t>/]|$)', 'i');
 
 /** インデントがこの値以上で、かつ list 文脈でなければ indented code block とみなす。 */
 const INDENTED_CODE_WIDTH = 4;
@@ -106,6 +127,17 @@ const SPACE_LIKE_RE = /[   ]/g;
 function normalizeHeadingText(text) {
   return text.replace(HYPHEN_LIKE_RE, '-').replace(SPACE_LIKE_RE, ' ').trim();
 }
+
+/**
+ * 行頭の ASCII 空白 (space / tab) のみを「インデント」として扱う (#967 Codex round 3 [high])。
+ *
+ * JS の `trimStart()` / `trim()` は NBSP や全角空白まで落とすが、CommonMark はそれらを
+ * インデントと認めない。`trimStart()` を使うと GitHub 上では**段落テキスト**の行が
+ * heading / task item に化け、偽の兄弟 heading が節を打ち切る false-green や、
+ * 段落なのに task item として数える false-red になる (renderer 実測で確認)。
+ */
+const ASCII_INDENT_RE = /^[ \t]*/;
+const ASCII_BLANK_LINE_RE = /^[ \t]*$/;
 
 /** 先頭の空白幅 (tab は 4 として数える)。 */
 function measureIndent(line) {
@@ -158,6 +190,7 @@ function scanRequiredSections(body) {
   let fenceMarker = null; // fence 内なら開始マーカー文字列
   let fenceQuoteDepth = 0; // fence を開いた行の blockquote 深さ (引用境界で fence を閉じるため)
   let inComment = false;
+  let inHtmlBlock = false; // HTML block (type 6) 内。空行まで markdown として解釈しない
   let lastListIndent = null; // 直近の list item のインデント (list 文脈の追跡)
   let paragraphCandidate = null; // 直前の段落行 (setext heading の text 候補)
 
@@ -166,7 +199,7 @@ function scanRequiredSections(body) {
     const quoteDepth = quotePrefix ? (quotePrefix[0].match(/>/g) || []).length : 0;
     const line = raw.replace(BLOCKQUOTE_PREFIX_RE, '');
     const indent = measureIndent(line);
-    let content = line.slice(line.length - line.trimStart().length);
+    let content = line.slice(ASCII_INDENT_RE.exec(line)[0].length);
 
     // 1. fence 内は何も解釈しない (コメントも heading も code として描画される)
     if (fenceMarker !== null) {
@@ -205,12 +238,22 @@ function scanRequiredSections(body) {
     //    false-green になる。
     content = stripInlineComments(content).content;
 
-    if (content.trim() === '') {
+    if (ASCII_BLANK_LINE_RE.test(content)) {
+      // 空行は HTML block を終わらせる
+      inHtmlBlock = false;
       paragraphCandidate = null;
       continue;
     }
 
-    // 5. インデント 4 以上は list 文脈でなければ indented code block
+    // 5. HTML block (type 6) は空行まで markdown として解釈されない
+    if (inHtmlBlock) continue;
+    if (HTML_BLOCK_START_RE.test(content)) {
+      inHtmlBlock = true;
+      paragraphCandidate = null;
+      continue;
+    }
+
+    // 6. インデント 4 以上は list 文脈でなければ indented code block
     const inListContext = lastListIndent !== null && indent >= lastListIndent + 2;
     if (indent >= INDENTED_CODE_WIDTH && !inListContext) {
       lastListIndent = null;
@@ -218,7 +261,7 @@ function scanRequiredSections(body) {
       continue;
     }
 
-    // 6. fence 開始
+    // 7. fence 開始
     const fenceOpen = matchFenceOpen(content);
     if (fenceOpen !== null) {
       fenceMarker = fenceOpen;
@@ -227,7 +270,7 @@ function scanRequiredSections(body) {
       continue;
     }
 
-    // 7. setext heading (直前が段落行のときのみ)
+    // 8. setext heading (直前が段落行のときのみ)
     const setext = SETEXT_UNDERLINE_RE.exec(content);
     if (setext && paragraphCandidate !== null) {
       const level = setext[1][0] === '=' ? 1 : 2;
@@ -238,7 +281,7 @@ function scanRequiredSections(body) {
       continue;
     }
 
-    // 8. ATX heading
+    // 9. ATX heading
     const atx = ATX_HEADING_RE.exec(content);
     if (atx) {
       const text = normalizeHeadingText((atx[2] || '').replace(ATX_CLOSING_HASHES_RE, ''));
@@ -248,7 +291,7 @@ function scanRequiredSections(body) {
       continue;
     }
 
-    // 9. list item / task list item
+    // 10. list item / task list item
     if (LIST_ITEM_RE.test(content)) {
       lastListIndent = indent;
       paragraphCandidate = null;
@@ -260,7 +303,7 @@ function scanRequiredSections(body) {
       continue;
     }
 
-    // 10. 段落行
+    // 11. 段落行
     if (!inListContext) lastListIndent = null;
     paragraphCandidate = content;
   }
