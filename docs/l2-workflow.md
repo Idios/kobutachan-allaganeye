@@ -407,7 +407,11 @@ options:
 
 > originally from `feedback_pr_validate_checklist.md`, absorbed 2026-05-01
 
-PR 本文の checkbox (`- [ ]` / `- [x]`) は `validate-checklist` ジョブが counting している (`unchecked > 0` で fail)。マージ前ゲートで unchecked 項目があるとブロックされる。
+PR 本文の checkbox のうち **`受け入れ条件` / `Acceptance criteria` / `Self-Test Report` 節の中にあるもの**を `validate-checklist` ジョブが counting し、`unchecked > 0` で job を fail させる (#936 / #967 で実測)。
+
+**それ以外の節の checkbox は counting されない。** 実物テンプレートでは 22 box のうち gate 対象は 12 box (受け入れ条件 2 + Self-Test Report 10) で、Iron Law 1 群 2 / Iron Law 3 群 2 / Iron Law 4 群 1 / 関連ドキュメント群 5 = 計 10 box は未消化でも job は通る (「該当なしなら `[x]` + 理由付記」と書かれている項目も CI では強制されない)。
+
+**job が red でもマージは構造的にブロックされない。** repo に required status check が設定されていないため (`main` は branch protection ありだが `required_status_checks` は未設定、`develop-*` は無保護、ruleset なし)、`validate-checklist` の red は「気づくための信号」であってマージ阻止機構ではない。required status check 化の判断は #947 で扱う。
 
 ### Why
 
@@ -421,6 +425,19 @@ PR 本文を以下の構成で書き分ける (PR #615 / PR #625 修正で確立
 - **「## 実機検証 (machine-unverifiable)」セクション** (PR template では `#### 実機検証 (machine-unverifiable — plain bullet で書く)` h4): `npm run tauri dev` での手動操作、UI 目視確認、レビュー時にユーザーが実施する項目を **plain bullet `-`** (checkbox なし) で列挙
 
 `- [ ]` を残すと PR 提出直後の CI で fail する。`gh pr edit <N> --body-file -` で書き直せば validate-checklist は再実行され直ちに pass する (commit 不要)。
+
+### この gate が見ていない集合 (#967 で実測、checker は Markdown parser ではなく近似)
+
+checker (`.github/scripts/check-pr-checklist.js`) は GitHub のレンダリングに寄せた 1 パスの行スキャナだが、完全一致ではない。誤りの向きは **false-red 側に倒す** 方針 (黙って通す false-green より、メッセージが見えて自己修正できる false-red のほうが安全)。以下は gate が見ていない / 近似している集合:
+
+- **節と項目の存在自体は強制しない**。`Self-Test Report` 節を書かなければ (削除 / 改名 / 項目を plain bullet に落とす) job は通る。証跡ゼロでも green になるため、これは**自己申告 gate**である
+- `**Self-Test Report**` のような bold 疑似見出しや、`####` の直後を全角空白で区切った見出しは GitHub 側でも heading にならないため節として成立しない = 上記と同じ扱いになる
+- インデント 4 以上の行の解釈は「直前に list があるか」で近似している (list 継続なら task item / そうでなければ indented code block)。深い入れ子や list 内の段落を挟む形では GitHub と食い違いうる
+- 閉じていない fence / 閉じていない `<!--` は「そこから先すべて」を code / コメントとして扱わない (行単位の近似)
+- heading text は Unicode ハイフン類と NBSP 類を ASCII に畳んでから照合する。それ以外の異体字 (全角英字など) は畳まない
+- 受け入れ条件節の heading は**完全一致**のため `## 受け入れ条件 (追加)` のような suffix 付きは対象外 (凍結済み仕様)
+
+再現材料は #967 に置いた renderer 突合表 (`gh api markdown` の `aria-label="Incomplete task"` 個数と checker の counting を 22 ケースで突き合わせたもの) を参照。
 
 ## PR body 規約 (期待値 / 現状 / 修正内容)
 

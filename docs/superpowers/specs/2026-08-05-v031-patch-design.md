@@ -258,8 +258,8 @@ E1 (routing がアドバイザリで skill / hook に 0 件) / E5 (見出し日�
 
 **問題の精密化**: checker が Self-Test Report を見ない原因は heading 正規表現だけではない。
 
-- `check-pr-checklist.js:26` の `stripped.split(/^##\s+/m)` は `##` の直後に空白を要求するため `#### Self-Test Report` にマッチしない。h4 節は親 h2 (`## PR チェックリスト`) の本文として吸収される
-- `check-pr-checklist.js:31` の heading filter `/^(受け入れ条件|acceptance\s+criteria)\s*$/i` は**完全一致**である
+- `check-pr-checklist.js:26` (実装前の行番号。#967 で 1 パスの行スキャナに置き換えたため現在は該当行なし) の `stripped.split(/^##\s+/m)` は `##` の直後に空白を要求するため `#### Self-Test Report` にマッチしない。h4 節は親 h2 (`## PR チェックリスト`) の本文として吸収される
+- `check-pr-checklist.js:31` (実装前の行番号) の heading filter `/^(受け入れ条件|acceptance\s+criteria)\s*$/i` は**完全一致**である
 - 実測: 受け入れ条件を `[x]` で埋め、`#### Self-Test Report` に `- [ ]` を 3 件置いた本文を渡すと `{"unchecked":0,"checked":1,"hasAnySection":true}` を返し **CI pass** する
 
 **変更内容 (3 点セットで初めて発火する)**:
@@ -277,6 +277,8 @@ E1 (routing がアドバイザリで skill / hook に 0 件) / E5 (見出し日�
 
 **counter のレンダリング整合 (Codex adversarial-review で摘出、同 PR 内で修正)**: gate の対象節が増えるぶん、「GitHub が実際に描画するもの」と counter のズレも影響が広がるため、以下 2 点を同時に硬化した。実測で直近 merged 25 本 + テンプレートのカウントは硬化前後で全ファイル一致する (挙動中立)。
 
+> **後続 (#967)**: この「fence 除去 → HTML コメント除去 → heading 分割 → regex で数える」という多段 replace 構造そのものが、除去の順序依存と「heading 側と項目側でインデント / blockquote の許容が非対称」という 2 つの穴を持っており、マージ後の実測再検証で GitHub のレンダリングとの乖離が計 14 件見つかった。#967 で **blockquote prefix を剥がした view を共有する 1 パスの行スキャナ**に置き換え、`gh api markdown` の出力 (`aria-label="Incomplete task"` の個数) との突合 22 ケースを pin test にしている。以下の 2 点は #967 の実装にも引き継がれている。
+
 - **HTML コメント除去** ([high] false-green): 描画されないコメント行が heading とみなされて節を打ち切り、その後ろの**可視の**未消化 checkbox が数から漏れていた。base 実装でも `## 受け入れ条件` 節で同じ入力から再現する既存穴
 - **task list marker の整合** ([medium] false-green + false-red): `*` / `+` / `1.` / `1)` の checkbox も数える一方、**行中**の checkbox 記法 (文中の言及やコードスパン内の記入例) は数えない。後者を数えると、この checker 自身を説明する PR 本文が誤って red になる
 
@@ -286,6 +288,8 @@ E1 (routing がアドバイザリで skill / hook に 0 件) / E5 (見出し日�
 2. 誤りの向きが **false-red** = 失敗メッセージが見えて自己修正できる。黙って通す false-green より安全
 3. 推奨どおりインデントを 0-3 space に制限すると **4 space 以上の入れ子 checkbox が数から漏れる** (false-green 化)。行文脈を見る heuristic も「親項目 → 継続段落 → 入れ子」の形で逆向きの穴を作る
 
+> **訂正 (#967)**: 上記根拠 3 のうち「4 space インデント = indented code block」という前提は **ドキュメント直下でのみ真**で、list item 配下では通常の入れ子・継続なので誤りだった (GitHub の renderer で確認: 直前が list なら 4 space インデントの `#### 見出し` は `<h4>`、そうでなければ code block)。結論 (0-3 space 制限は採らない) は変わらないが、根拠は「文脈依存だから単純な閾値では決められない」が正しい。#967 で **list 文脈を追跡する 1 パスの行スキャナ**に置き換え、両方向 (list 配下 4 space の fence は数えない / root の indented code block も数えない / list 配下 4 space の入れ子 checkbox は数える) を renderer 突合で pin した。
+
 したがって gate は「レンダリング完全一致」ではなく「**false-green を避け、false-red 側に倒す近似**」と定義する。近似が見ていない集合は実装 PR 本文に列挙し、必要になった時点で parser 化 (別 issue) を検討する。
 
 **blast radius (D9)**: テンプレートの `- [ ]` は実測で計 22 box ある (受け入れ条件 2 / Iron Law 1 が 2 / Iron Law 3 が 2 / Iron Law 4 が 1 / Self-Test Report 10 / 関連ドキュメント 5)。heading filter は受け入れ条件側が完全一致のままなので、**Iron Law 1 / 3 / 4 と関連ドキュメントの 4 群・10 box はカウント対象にならない** (`### Iron Law 1: 受け入れ条件検証` は prefix/suffix 付きのため完全一致で弾かれる)。新規に required になるのは **Self-Test Report の 10 box のみ**である。テンプレート本文を通した実測でも 22 box 中 **12 box** (受け入れ条件 2 + Self-Test 10) のみが gate 対象で、この数値は test で固定した。
@@ -293,6 +297,13 @@ E1 (routing がアドバイザリで skill / hook に 0 件) / E5 (見出し日�
 **false-green の明示**: **split だけ直しても no-op である。** 1 行直して緑になるので、実装者がそこで止まらないよう本 spec と issue に 3 点セットを明記する。さらに上記の訂正のとおり、**テンプレート本文だけで発火実証を済ませると「実在本文には届かない gate」を出荷しうる** (7/25 が無発火だった)。発火実証は実在 PR 本文の形でも行うこと。
 
 **文書側 (10 箇所)**: `docs/l2-workflow.md` L140 / L287 / L345 / L349 / L353 / L359 / L362 と `.github/pull_request_template.md` L72 / L77 / L78 が「CI 強制」を主張している。(a) を採るのでこれらは**正しくなる**ため書き換え不要。ただし正しい記述 (`template` L58 / L103 / L106、`l2-workflow.md:208` の「plain bullet は無視される」) は事実なので触らない。
+
+> **訂正 (#967)**: 上記の「すべて正しくなる」は **L349 について誤りだった**。マージ後の実測再検証で L349 の 2 主張がいずれも偽であることが判明した。
+>
+> - 「PR 本文の checkbox は counting している」 → 対象は受け入れ条件節と Self-Test Report 節のみ。テンプレート 22 box 中 10 box は非 gate
+> - 「マージ前ゲートで unchecked 項目があるとブロックされる」 → repo に required status check が無く (`main` の `required_status_checks` 未設定 / `develop-*` 無保護 / ruleset 0)、red でもマージは構造的に止まらない。**#947 を完遂しても直らない** (#947 の required 5 件に `validate-checklist` が含まれず、対象も `main` + `release/*`)
+>
+> つまり本 spec は #936 が指摘した「機構と説明が同時に触られてなお乖離した」現象を、L349 を「正しい」と再認定する形で一度再発させた。L349 の訂正は #967 で実施する。**gate の scope を変えたときは「正しくなる」と判定した doc も 1 行ずつ実測で確認する**こと (判定の根拠を「(a) を採ったから」に置くと同じ誤りが再生産される)。
 
 **#935 との相互作用**: (a) を採ると `docs/l2-workflow.md:287` の「(C) 強制 skip (Self-Test Report の `[ ]` を残し validate-checklist で fail させる)」が**初めて実際に CI red を生む経路**になる。#935 P2-3 の「説明がつくまで pass と記録しない」規約と作用が重なるため、両者は同一 Track で整合を取る。
 
