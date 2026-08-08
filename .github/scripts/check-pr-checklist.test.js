@@ -198,6 +198,32 @@ test('#967: list 配下 4 space インデントの入れ子 checkbox は数え�
   assert.equal(result.unchecked, 1);
 });
 
+test('#967 false-green: backtick fence の info string に backtick があると fence は開かない', () => {
+  // CommonMark §4.5: backtick fence の info string は backtick を含めない。含む場合 fence は
+  // 開かないため後続行は通常の markdown として描画される (renderer 実測: Incomplete task 1)。
+  // Codex adversarial-review [high]。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n\`\`\` \`pytest\`\n- [ ] pytest\n\`\`\`\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967: tilde fence の info string は backtick を含んでよい (対照)', () => {
+  // tilde fence には backtick 制約がないため fence は開き、中身は code になる
+  // (renderer 実測: Incomplete task 0)。上の修正でこちらを壊さないことを固定する。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n~~~ \`pytest\`\n- [ ] inside tilde code\n~~~\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967 false-red: 閉じ fence の後ろに文字がある行は fence を閉じない', () => {
+  // CommonMark §4.5: 閉じ fence は空白 / tab のみを後続に許す。`\`\`\` still code` は
+  // code 内容であり fence を閉じない (renderer 実測: Incomplete task 0)。
+  // Codex adversarial-review [medium]。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n\`\`\`markdown\n\`\`\` still code\n- [ ] not visible\n\`\`\`\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
 test('#967 false-green: HTML コメント内の孤立 fence が節を消さない', () => {
   // 2 段 replace (fence 除去 → コメント除去) では、コメント内の ``` が後続の実 code block と
   // ペアリングして間の節を丸ごと削除していた (lexer desync)。

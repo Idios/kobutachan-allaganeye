@@ -57,8 +57,38 @@ const ATX_CLOSING_HASHES_RE = /[ \t]+#+$/;
 /** setext heading の下線。直前が段落行のときだけ heading になる。 */
 const SETEXT_UNDERLINE_RE = /^(=+|-+)[ \t]*$/;
 
-/** fenced code block の開始 / 終了。インデントは list 文脈判定側で扱うためここでは見ない。 */
-const FENCE_RE = /^(`{3,}|~{3,})/;
+/**
+ * fenced code block の開始 (CommonMark §4.5)。インデントは list 文脈判定側で扱う。
+ *
+ * **backtick fence の info string は backtick を含められない** — 含む場合 fence は開かず、
+ * 後続行は通常の markdown として描画される。`^```` だけを見て fence 開始とみなすと、
+ * ` ``` ` + backtick 入り info string の直後にある**可視の** checkbox を読み飛ばす
+ * false-green になる (Codex adversarial-review [high]、renderer 実測で確認)。
+ * tilde fence にはこの制約がない。
+ */
+const FENCE_OPEN_BACKTICK_RE = /^(`{3,})([^`]*)$/;
+const FENCE_OPEN_TILDE_RE = /^(~{3,})(.*)$/;
+
+/**
+ * fenced code block の終了 (CommonMark §4.5)。
+ *
+ * **閉じ fence は後続に空白 / tab のみ許す。** `` ``` still code `` のような行は code 内容であって
+ * fence を閉じないため、marker prefix だけで閉じると code block を早期に抜けて中の checkbox を
+ * 数える false-red になる (Codex adversarial-review [medium]、renderer 実測で確認)。
+ */
+function isFenceClose(content, marker) {
+  const re = new RegExp('^' + marker[0].replace(/[`~]/, '\\$&') + '{' + marker.length + ',}[ \\t]*$');
+  return re.test(content);
+}
+
+/** fence 開始なら marker 文字列を返す。開始でなければ null。 */
+function matchFenceOpen(content) {
+  const backtick = FENCE_OPEN_BACKTICK_RE.exec(content);
+  if (backtick) return backtick[1];
+  const tilde = FENCE_OPEN_TILDE_RE.exec(content);
+  if (tilde) return tilde[1];
+  return null;
+}
 
 /** list item (task list でないものも含む)。list 文脈の追跡に使う。 */
 const LIST_ITEM_RE = /^(?:[-*+]|\d+[.)])(?:[ \t]+|$)/;
@@ -137,10 +167,7 @@ function scanRequiredSections(body) {
 
     // 1. fence 内は何も解釈しない (コメントも heading も code として描画される)
     if (fenceMarker !== null) {
-      const close = FENCE_RE.exec(content);
-      if (close && close[1][0] === fenceMarker[0] && close[1].length >= fenceMarker.length) {
-        fenceMarker = null;
-      }
+      if (isFenceClose(content, fenceMarker)) fenceMarker = null;
       continue;
     }
 
@@ -179,9 +206,9 @@ function scanRequiredSections(body) {
     }
 
     // 6. fence 開始
-    const fence = FENCE_RE.exec(content);
-    if (fence) {
-      fenceMarker = fence[1];
+    const fenceOpen = matchFenceOpen(content);
+    if (fenceOpen !== null) {
+      fenceMarker = fenceOpen;
       paragraphCandidate = null;
       continue;
     }
