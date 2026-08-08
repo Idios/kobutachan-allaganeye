@@ -69,7 +69,13 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 - リリース判断後、`/release` skill が `develop-x.x.0` から `release/v<新バージョン>` を切り、`release/v<新バージョン> → main` の PR を作成・マージする (実例: v0.3.0 = PR [#924](https://github.com/Idios/kobutachan-allaganeye/pull/924))
 - `main` の HEAD にタグを打つ
 - タグ形式: `v<major>.<minor>.<patch>`
-- コマンド: `git tag -a v0.x.0 -m "Release v0.x.0: <レイヤー名>"`
+- **CHANGELOG 見出し日付 = タグを打つ日 (JST)** — `CHANGELOG.md` の `## [x.y.z] - YYYY-MM-DD` の日付は、そのバージョンの**タグを打つ日**を `Asia/Tokyo` で表した値とする (裁定 D6、#948)
+  - 基準タイムゾーンは `Asia/Tokyo` に**ハードコードする**。GitHub Actions runner は既定 UTC なので、明示変換しない実装は JST 深夜のタグ打ちで 1 日ずれた日付を「正」として比較してしまう。過去 4 タグ中 2 件が該当する (v0.1.1 = 2026-04-20 02:55 JST / v0.2.1 = 2026-05-17 08:43 JST の 2 件は UTC 日付が前日になる)
+  - **00:00-09:00 JST のタグ打ちは許容する** (spec §8.2 O-5 の決着)。運用側で時間帯を縛らず、検査側の `Asia/Tokyo` 変換で吸収する
+  - タグを打つ直前に見出し日付を当日へ更新し、**リリース PR の head (`release/vX.Y.Z`) へ commit する** (`main` は保護ブランチなのでマージ後には直せない)。手順は [`.claude/skills/release/SKILL.md`](../.claude/skills/release/SKILL.md) §Step 4
+  - 機械検査は [`scripts/check_version_consistency.py`](../scripts/check_version_consistency.py) の `--tag` 指定時のみ発火する。基準日は **annotated tag の `taggerdate` のみ**を `--changelog-date-from` で渡す。`head_commit.timestamp` へ fallback しない — あれは「タグが指す commit の日時」であってタグを打った日時ではなく、commit とタグ push が日を跨ぐと規約とズレた値を「正」として通してしまうため。`taggerdate` が取れない場合 (lightweight tag) は fail させ、`git tag -a` で打ち直す
+  - **検査対象外の集合**は同スクリプトの `check_changelog_heading()` docstring に列挙してある
+- コマンド: `git tag -a v0.x.0 -m "Release v0.x.0: <レイヤー名>"` (**annotated tag**。`taggerdate` が日付検査の第一基準になるため lightweight tag は使わない)
 - `git push origin v0.x.0` すると [`.github/workflows/release.yml`](../.github/workflows/release.yml) が発火し、Windows Portable ZIP (`allaganeye-v<version>-windows.zip`) のビルドと GitHub Release への成果物自動添付を実行する (#461)
   - ビルドは [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) で PyInstaller `--onedir` により Python interpreter + 全依存 (numpy / scipy / opencv-python-headless / typer / allaganeye 本体) を frozen application 化 (`scripts/installer/requirements-pyinstaller.txt` で pyinstaller / hooks-contrib version pin、CI `actions/setup-python@v5` で Python 3.11.9 pin) し、FFmpeg LGPLv3 shared (BtbN FFmpeg-Builds win64-lgpl-shared、libdav1d 入り) を同梱する (#752)
     - ダウンロードする外部バイナリ (FFmpeg) はスクリプト内に **SHA256 ダイジェストをハードコードして検証** する。ダイジェスト不一致時はビルドを fail。FFmpeg は BtbN の **monthly snapshot タグ** (`autobuild-YYYY-MM-{28,29,30,31}-*`、~24 ヶ月 retention) と特定アセット名を URL にピン留めして再現性を確保する (`latest` タグは日次更新の可動ポインタなので不可、daily 中間タグは ~14 日で GC されるため不可。詳細 #705)
@@ -77,19 +83,22 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
     - 外部バイナリを更新する場合はスクリプト先頭の `$FFmpegBuildTag` / `$FFmpegAssetName` / `$*Sha256` 定数を更新する
   - Release 本文は [`scripts/extract_release_notes.py`](../scripts/extract_release_notes.py) が CHANGELOG.md から該当バージョンのセクションを抽出する
   - タグ名と[バージョン保持箇所](versioning.md#バージョン管理場所)が 1 つでも一致しない場合、workflow の `version-check` job は fail する (#911)。突合対象の正は [`scripts/check_version_consistency.py`](../scripts/check_version_consistency.py) の `VERSION_LOCATIONS`
+  - 同 job は tag push 時に **CHANGELOG 見出し日付**と**バンプ方向** (直前のリリースより新しいこと) も検査する (#948 / #918)。いずれも `--tag` 指定時のみ発火するため、**PR / `workflow_dispatch` / branch push では 1 度も走らない**
 - 手動で dry-run ビルドを確認したい場合は、Actions タブから `Release` workflow を `workflow_dispatch` で起動する (Release は作成されず ZIP artifact のみ)
 - `/release` スキルは develop → main PR 作成・CHANGELOG 更新の支援に使う (Release 作成自体は上記 workflow が担う)
 
 ## レイヤーリリース受け入れゲート
 
-各 minor リリース (`release/vX.Y.Z → main`) の実行前に、本節のチェックリストを全件達成する。共通項目はすべての minor リリースに適用、レイヤー固有項目は対応するバージョンで適用する。`/release` skill の Step 0 で本節を参照する (`.claude/skills/release/SKILL.md`)。
+各リリース (minor / patch) (`release/vX.Y.Z → main`) の実行前に、本節のチェックリストを全件達成する。共通項目はすべてのリリース (minor / patch) に適用、レイヤー固有項目は対応するバージョンで適用する。`/release` skill の Step 0 で本節を参照する (`.claude/skills/release/SKILL.md`)。
 
-### 共通項目 (全 minor リリース)
+> **patch release にも適用する** (裁定 D5)。本節は当初「minor リリース」限定の文面だったため、patch release (v0.M.N → v0.M.(N+1)) では §共通項目 が 1 度も読まれない状態だった。§Patch release の Track 構造 で patch を正式運用に組み込んだ以上、共通項目は minor / patch の双方で達成する。
+
+### 共通項目 (全リリース: minor / patch)
 
 - [ ] `develop-x.x.0` 上で対象スコープの全 PR がマージ済み
 - [ ] CI 全ジョブ (Python / GUI frontend / GUI Rust / Pester) が**リリース PR の HEAD** (`release/vX.Y.Z` tip) で緑 — develop tip は release ブランチに載せた出荷直前 commit を含まないため基準にしない
 - [ ] [バージョン保持箇所](versioning.md#バージョン管理場所)が**全箇所**`x.y.0` に更新されている (`python scripts/check_version_consistency.py` が exit 0)
-- [ ] `CHANGELOG.md` に対象バージョンセクションが存在 (日付 / 主要変更点 / breaking changes)
+- [ ] `CHANGELOG.md` に対象バージョンセクションが存在 (**日付 = タグ打ち日 JST** (§タグ運用) / 主要変更点 / breaking changes)
 - [ ] `deferred` ラベル付き issue を全件レビュー済 (close、または次バージョン `deferred` 維持判断、または当該バージョンに引き取り)
 - [ ] 対象レイヤースコープの `P1-high` issue 全 close + `P2-medium` issue 全 close または `deferred` ラベル付与
 

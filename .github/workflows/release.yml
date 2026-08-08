@@ -100,15 +100,45 @@ jobs:
       # 箇所リストの正は scripts/check_version_consistency.py の VERSION_LOCATIONS。
       # tag push 時は tag とも突合し、それ以外の起動 (PR / workflow_dispatch /
       # branch push) では箇所間の相互一致だけを検証する。
+      # #948 / #918 -- tag push 時は CHANGELOG 見出し日付 (= タグを打つ日、JST) と
+      # バンプ方向も検査する。
+      #
+      # 基準日は annotated tag の taggerdate **のみ**を使う。規約
+      # (docs/release-process.md §タグ運用) が定義する「タグを打つ日」そのもので
+      # あり、actions/checkout@v4 の既定 fetch-depth: 1 でも読める
+      # (init + fetch --depth=1 +refs/tags/<tag>*:refs/tags/<tag>* で tag object
+      # ごと取得されることを実測。spec §8.2 O-6 の決着)。
+      #
+      # **github.event.head_commit.timestamp へ fallback しない** (Codex
+      # adversarial-review high finding)。あれは「タグが指す commit の日時」で
+      # あってタグを打った日時ではないので、commit とタグ push が日を跨ぐと
+      # 規約とズレた日付を「正」として通してしまう。しかもそれが起きるのは
+      # lightweight tag を打った時 = 規約 (`git tag -a`) 違反時だけなので、
+      # 弱い基準で通すより落として打ち直させる方が正しい。
       - name: Verify version consistency across all locations
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            python scripts/check_version_consistency.py --tag "${GITHUB_REF#refs/tags/}"
-          else
+          if [[ "${GITHUB_REF}" != refs/tags/v* ]]; then
             python scripts/check_version_consistency.py
+            exit 0
           fi
+
+          TAG="${GITHUB_REF#refs/tags/}"
+          # lightweight tag / ref 欠落では空文字が返る (exit 0)。
+          REFERENCE_DATE="$(git for-each-ref --format='%(taggerdate:iso-strict)' "refs/tags/${TAG}")"
+          if [[ -z "${REFERENCE_DATE}" ]]; then
+            echo "--- diagnostics ---"
+            echo "ref object type: $(git cat-file -t "${TAG}" 2>&1 || true)"
+            git for-each-ref --format='%(refname) %(objecttype)' 'refs/tags/*' || true
+            echo "::error::${TAG} から taggerdate を取得できません。annotated tag で打ち直してください (git tag -a ${TAG} -m '...')。CHANGELOG 見出し日付の基準日はタグ作成時刻であり、commit 日時で代用しません (docs/release-process.md §タグ運用)"
+            exit 1
+          fi
+          echo "基準日: annotated tag ${TAG} の taggerdate = ${REFERENCE_DATE}"
+
+          python scripts/check_version_consistency.py \
+            --tag "${TAG}" \
+            --changelog-date-from "${REFERENCE_DATE}"
 
       - name: Resolve version
         id: parse
