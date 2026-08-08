@@ -19,21 +19,119 @@ function stripFencedBlocks(body) {
     .replace(/^[ ]{0,3}~~~[\s\S]*?^[ ]{0,3}~~~/gm, '');  // tilde fence (0-3 space indent)
 }
 
+/**
+ * `[x]` を CI で要求する section の heading (#936)。
+ *
+ * - 受け入れ条件 / Acceptance criteria: **完全一致**。suffix 付き (`## 受け入れ条件 (追加)`) は
+ *   対象外として凍結済み (spec 2026-05-08-lane-iv-b-group-g-design.md Q5 (A))
+ * - Self-Test Report: **prefix match**。実物の heading は
+ *   `#### Self-Test Report (machine-verified — 全件 [x] で validate-checklist 通過)` と
+ *   括弧書きが付くため、完全一致では拾えない
+ *
+ * `### Iron Law 1: 受け入れ条件検証` のような prefix/suffix 付き heading は完全一致側で弾かれる
+ * (D9 の blast radius: Iron Law 1/3/4 群と関連ドキュメント群は gate 対象外のまま)。
+ */
+const REQUIRED_SECTION_HEADINGS = [
+  /^(受け入れ条件|acceptance\s+criteria)\s*$/i,
+  /^self[-\s]?test\s+report\b/i,
+];
+
+/** section 開始として認識する heading level。h1 と h5 以下は開始とみなさない (実在 PR 本文は h2-h4 のみ)。 */
+const MIN_SECTION_LEVEL = 2;
+const MAX_SECTION_LEVEL = 4;
+
+const HEADING_RE = /^(#{1,6})\s+(.*)$/;
+
+/**
+ * 対象 section の本文を heading level 準拠で抽出する (#936)。
+ *
+ * section は「自分と同じか浅いレベルの次 heading」で終わる。したがって
+ * - `## 受け入れ条件` は配下の `### 小見出し` を本文として吸収する (実在 PR #956 の形。
+ *   heading level を見ずに h2-h4 で素朴に split すると、この形で既存 gate が丸ごと無効化される)
+ * - `#### Self-Test Report` は兄弟の `#### 関連ドキュメント` で終わる (D9 の 10 box に収まる)
+ * - `## Self-Test Report` + `### machine-verified` の形 (実在 PR #909 / #924 / #927) も拾える
+ *
+ * heading 行自体は本文に含めない。
+ */
+function extractRequiredSections(body) {
+  const lines = stripHtmlComments(stripFencedBlocks(body)).split(/\r?\n/);
+  const collected = [];
+  let activeLevel = 0; // 0 = 収集していない / >0 = 収集中の section の heading level
+  let found = false;
+
+  for (const line of lines) {
+    const match = HEADING_RE.exec(line);
+    if (!match) {
+      if (activeLevel) collected.push(line);
+      continue;
+    }
+    const level = match[1].length;
+    const heading = match[2].trim();
+
+    // 同レベル以下の heading に到達したら現在の section は終わり
+    if (activeLevel && level <= activeLevel) activeLevel = 0;
+
+    const isSectionStart =
+      !activeLevel &&
+      level >= MIN_SECTION_LEVEL &&
+      level <= MAX_SECTION_LEVEL &&
+      REQUIRED_SECTION_HEADINGS.some((re) => re.test(heading));
+    if (isSectionStart) {
+      activeLevel = level;
+      found = true;
+      continue;
+    }
+    // section 配下の深い heading は本文として吸収する
+    if (activeLevel) collected.push(line);
+  }
+  return { text: collected.join('\n'), found };
+}
+
+/**
+ * 対象 section (受け入れ条件 / Acceptance criteria / Self-Test Report) 内の checkbox を数える。
+ * 関数名は既存 doc (docs/superpowers/plans/2026-05-08-lane-iv-b-group-g-implementation.md 等) からの
+ * 参照があるため #936 の scope 拡大後も維持している。
+ */
+/**
+ * HTML コメント (`<!-- ... -->`) を除去する (#936 Codex adversarial-review round 1 [high])。
+ *
+ * GitHub 上でレンダリングされないコメント行が heading とみなされて section を打ち切り、
+ * その後ろにある**可視の** `- [ ]` が数えられない false-green があった (base 実装からの既存穴。
+ * `## 受け入れ条件` 節でも同じ入力で再現する)。テンプレート抜粋をコメントで貼る本文で実際に起きる。
+ *
+ * 逆向きに、コメント内の `- [ ]` (記入例など) も数えなくなる。不可視の項目で CI を red に
+ * するほうが不当なので、これは意図した挙動である。
+ *
+ * fence 内に `<!--` が現れる場合を避けるため fence 除去の後に適用する。
+ * 閉じていない `<!--` は除去しない (閉じフェンスのみ除去する `stripFencedBlocks` の方針に合わせる)。
+ */
+function stripHtmlComments(text) {
+  return text.replace(/<!--[\s\S]*?-->/g, '');
+}
+
+/**
+ * GFM の task list item にマッチする regex (#936 Codex adversarial-review round 2 [medium])。
+ *
+ * 行頭 (インデントと blockquote prefix を許容) + list marker + `[ ]` / `[x]` の形だけを数える。
+ *
+ * - `-` 以外の marker (`*` / `+` / `1.` / `1)`) も GitHub は checkbox としてレンダリングするため
+ *   数える。`- ` 固定だと `* [ ] pytest` のような**可視の未消化**を見逃す (false-green)
+ * - 逆に**行中**の `- [ ]` (文中の言及やコードスパン内の記入例) は GitHub が checkbox として
+ *   レンダリングしないので数えない。checker 自身を説明する PR 本文が誤って red になるのを防ぐ
+ *   (false-red)
+ *
+ * 実測: 直近 merged 25 本 + `.github/pull_request_template.md` では、substring 版 (`- \[ \]`) と
+ * 本 regex のカウントは全ファイルで一致する (挙動中立な硬化)。
+ */
+const TASK_ITEM_PREFIX = '^[ \\t]*(?:>[ \\t]*)*(?:[-*+]|\\d+[.)])[ \\t]+';
+const UNCHECKED_ITEM_RE = new RegExp(TASK_ITEM_PREFIX + '\\[ \\]', 'gm');
+const CHECKED_ITEM_RE = new RegExp(TASK_ITEM_PREFIX + '\\[x\\]', 'gim');
+
 function countAcceptanceCriteriaCheckboxes(body) {
-  // fenced code blocks を除去してから heading 分割
-  const stripped = stripFencedBlocks(body);
-  // `## ` heading で section 分割。最初の heading 前は捨てる
-  const sections = stripped.split(/^##\s+/m).slice(1);
-  // 受け入れ条件 / Acceptance criteria heading に該当する section のみ抽出
-  const acceptanceText = sections
-    .filter((s) => {
-      const heading = (s.split(/\r?\n/)[0] || '').trim();
-      return /^(受け入れ条件|acceptance\s+criteria)\s*$/i.test(heading);
-    })
-    .join('\n');
-  const unchecked = (acceptanceText.match(/- \[ \]/g) || []).length;
-  const checked = (acceptanceText.match(/- \[x\]/gi) || []).length;
-  return { unchecked, checked, hasAnySection: acceptanceText.length > 0 };
+  const { text, found } = extractRequiredSections(body);
+  const unchecked = (text.match(UNCHECKED_ITEM_RE) || []).length;
+  const checked = (text.match(CHECKED_ITEM_RE) || []).length;
+  return { unchecked, checked, hasAnySection: found };
 }
 
 // async は actions/github-script@v7 caller (`await checker({github, context, core})`) との
@@ -42,16 +140,20 @@ async function checkPrChecklist({ github, context, core }) {
   const body = context.payload.pull_request.body || '';
   const { unchecked, checked, hasAnySection } = countAcceptanceCriteriaCheckboxes(body);
   if (!hasAnySection) {
-    core.info('No `## 受け入れ条件` / `## Acceptance criteria` section found, skipping.');
+    core.info(
+      'No `受け入れ条件` / `Acceptance criteria` / `Self-Test Report` section found, skipping.'
+    );
     return;
   }
   if (unchecked > 0) {
     core.setFailed(
-      `PR has ${unchecked} unchecked acceptance criteria item(s) in \`## 受け入れ条件\` / \`## Acceptance criteria\` section. Please complete all items before merging.`
+      `PR has ${unchecked} unchecked item(s) in \`受け入れ条件\` / \`Acceptance criteria\` / \`Self-Test Report\` section(s). ` +
+        'Please complete all items before merging. ' +
+        'machine-unverifiable な項目は checkbox ではなく plain bullet `-` で書くこと (docs/l2-workflow.md §Self-Test Report 規約)。'
     );
     return;
   }
-  core.info(`All ${checked} acceptance criteria item(s) are checked.`);
+  core.info(`All ${checked} required checklist item(s) are checked.`);
 }
 
 module.exports = checkPrChecklist;
