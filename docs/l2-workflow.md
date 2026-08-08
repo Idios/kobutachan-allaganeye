@@ -439,6 +439,11 @@ checker (`.github/scripts/check-pr-checklist.js`) は GitHub のレンダリン�
 - 受け入れ条件節の heading は**完全一致**のため `## 受け入れ条件 (追加)` のような suffix 付きは対象外 (凍結済み仕様)
 
 - heading を link 化した形 (`## [受け入れ条件](#ac)`) は heading text が完全一致に落ちるため対象外
+- **setext heading (`見出し` + `---` / `===`) は認識しない**。GitHub は heading にするが、実測で「setext を使う本文は 31 本中 0 件 / `---` 区切りを含む本文は 3 件」で、段落直後の `---` を setext と解釈すると偽の heading が対象節を打ち切る false-green が出る (実在 PR #943 の本文に `---` を 1 行足すと exit 1 → exit 0 に反転)。得るもの 0 / 害 3 なので認識しない側に倒した
+- **以下は既知の false-green として残っている** (#967 で計測済み、いずれも「GitHub 上には未消化 checkbox が見えるのに gate は通る」形):
+  - 折り返し行 (lazy continuation) の直後に 4 space 入れ子の項目を置く形
+  - heading text の先頭に絵文字などが付く形 (`#### ✅ Self-Test Report`) — prefix 一致に落ちる
+  - list marker の直後で改行し box を次行に置く形 (`-` 改行 `  [ ] ...`)
 
 同じ集合を `.github/scripts/check-pr-checklist.js` 冒頭のコメントにも記録している (doc だけに置くと次の実装者に届かないため)。期待値の決め方と再現材料は #967 / PR #970 の renderer 突合表 (`gh api markdown` の `aria-label="Incomplete task"` 個数と checker の counting を突き合わせたもの) を参照。**新しい角を見つけたら推測で直さず、まず renderer に通して期待値を決めること。**
 

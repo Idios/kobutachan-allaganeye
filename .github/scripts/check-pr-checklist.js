@@ -8,7 +8,7 @@
 // 実レンダリングと乖離していた (すべて `gh api markdown` の出力で可視性を確認済み):
 //
 // - false-green (可視の未消化があるのに数えない): 0-3 space インデント heading / h1 / h5 / h6 /
-//   blockquote 内 heading / U+2011 ハイフンを含む heading text / setext heading /
+//   blockquote 内 heading / U+2011 ハイフンを含む heading text /
 //   U+3000 区切りの兄弟行が節を打ち切る / HTML コメント内の孤立 fence が節を丸ごと消す
 // - false-red (GitHub 上に未消化が無いのに数える): blockquote 内の fence / list 配下 4 space
 //   インデントの fence / root の indented code block / U+3000 区切り行を heading と誤認
@@ -38,6 +38,11 @@
 // - heading text は Unicode ハイフン類と NBSP 類のみ ASCII に畳む。link 化した heading
 //   (`## [受け入れ条件](#ac)`) は完全一致に落ちるため対象外
 // - 受け入れ条件節の heading は完全一致のため suffix 付きは対象外 (#936 Q5 (A) で凍結)
+// - **setext heading (`見出し` + `---` / `===`) は認識しない。** GitHub は setext を heading に
+//   するが、実測で「setext を使う本文は 31 本中 0 件 / `---` 区切りを含む本文は 3 件」であり、
+//   段落直後の `---` を setext と解釈すると**偽の heading が対象節を打ち切る false-green** が出る
+//   (実在 PR #943 の本文に `---` を 1 行足すと exit 1 → exit 0 に反転した)。得るもの 0 / 害 3 なので
+//   認識しない側に倒した。代償として setext 形の対象節は gate 対象外になる
 
 /**
  * `[x]` を CI で要求する section の heading (#936)。
@@ -69,9 +74,6 @@ const ATX_HEADING_RE = /^(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
 
 /** ATX heading の閉じ側 hashes (`#### 見出し ####`)。GitHub は heading text から落とす。 */
 const ATX_CLOSING_HASHES_RE = /[ \t]+#+$/;
-
-/** setext heading の下線。直前が段落行のときだけ heading になる。 */
-const SETEXT_UNDERLINE_RE = /^(=+|-+)[ \t]*$/;
 
 /**
  * fenced code block の開始 (CommonMark §4.5)。インデントは list 文脈判定側で扱う。
@@ -112,11 +114,15 @@ const LIST_ITEM_RE = /^(?:[-*+]|\d+[.)])(?:[ \t]+|$)/;
 /**
  * GFM task list item。marker は `-` / `*` / `+` / `1.` / `1)` を許容する。
  *
+ * box の中身は **1 文字の空白 (ASCII space / tab / 全角空白 / NBSP など) または `x` / `X`**。
+ * GFM は Unicode 空白 1 文字でも未消化として描画するので、ASCII space 固定にすると日本語 IME の
+ * 全角空白や copy-paste の NBSP で**可視の未消化が素通り**する (renderer 実測)。
+ *
  * `[ ]` の**直後に空白 (または行末) を要求する** — GFM の task list item はそう定義されており、
  * `- [ ]項目` は通常の list item として描画される。空白を要求しないと GitHub 上に checkbox が
  * 無いのに数える false-red になる (renderer 実測で確認)。
  */
-const TASK_ITEM_RE = /^(?:[-*+]|\d+[.)])[ \t]+\[([ xX])\](?=[ \t]|$)/;
+const TASK_ITEM_RE = /^(?:[-*+]|\d+[.)])[ \t]+\[([xX]|\s)\](?=[ \t]|$)/;
 
 /**
  * HTML block (CommonMark §4.6 type 6) の開始タグ。空行まで続き、中身は markdown として
@@ -227,7 +233,6 @@ function scanRequiredSections(body) {
   let inHtmlBlock = false; // HTML block (type 6) 内。空行まで markdown として解釈しない
   let htmlType1Tag = null; // HTML block (type 1) 内なら tag 名。閉じタグまで解釈しない
   let lastListIndent = null; // 直近の list item のインデント (list 文脈の追跡)
-  let paragraphCandidate = null; // 直前の段落行 (setext heading の text 候補)
 
   for (const raw of lines) {
     const quotePrefix = BLOCKQUOTE_PREFIX_RE.exec(raw);
@@ -277,7 +282,6 @@ function scanRequiredSections(body) {
     // 4. 行頭が `<!--` の行は HTML block。閉じるまで読み飛ばす
     if (content.startsWith('<!--')) {
       if (content.indexOf('-->', 4) === -1) inComment = true;
-      paragraphCandidate = null;
       continue;
     }
 
@@ -292,7 +296,6 @@ function scanRequiredSections(body) {
     if (ASCII_BLANK_LINE_RE.test(content)) {
       // 空行は HTML block を終わらせる
       inHtmlBlock = false;
-      paragraphCandidate = null;
       continue;
     }
 
@@ -300,7 +303,6 @@ function scanRequiredSections(body) {
     const type1 = HTML_TYPE1_START_RE.exec(content);
     if (type1) {
       if (!hasType1CloseTag(content, type1[1])) htmlType1Tag = type1[1];
-      paragraphCandidate = null;
       continue;
     }
 
@@ -308,7 +310,6 @@ function scanRequiredSections(body) {
     if (inHtmlBlock) continue;
     if (HTML_BLOCK_START_RE.test(content)) {
       inHtmlBlock = true;
-      paragraphCandidate = null;
       continue;
     }
 
@@ -316,7 +317,6 @@ function scanRequiredSections(body) {
     const inListContext = lastListIndent !== null && indent >= lastListIndent + 2;
     if (indent >= INDENTED_CODE_WIDTH && !inListContext) {
       lastListIndent = null;
-      paragraphCandidate = null;
       continue;
     }
 
@@ -327,49 +327,34 @@ function scanRequiredSections(body) {
       fenceQuoteDepth = quoteDepth;
       fenceIndent = indent;
       fenceInList = inListContext;
-      paragraphCandidate = null;
       continue;
     }
 
-    // 10. setext heading (直前が段落行のときのみ)
-    const setext = SETEXT_UNDERLINE_RE.exec(content);
-    if (setext && paragraphCandidate !== null) {
-      const level = setext[1][0] === '=' ? 1 : 2;
-      ({ activeLevel, found } = enterHeading(paragraphCandidate, level, activeLevel, found));
-      // list 継続内の heading なら list はまだ閉じていない (後続の入れ子項目を code と誤認しないため)
-      if (!inListContext) lastListIndent = null;
-      paragraphCandidate = null;
-      continue;
-    }
-
-    // 11. ATX heading
+    // 10. ATX heading
     const atx = ATX_HEADING_RE.exec(content);
     if (atx) {
       const text = normalizeHeadingText((atx[2] || '').replace(ATX_CLOSING_HASHES_RE, ''));
       ({ activeLevel, found } = enterHeading(text, atx[1].length, activeLevel, found));
       if (!inListContext) lastListIndent = null;
-      paragraphCandidate = null;
       continue;
     }
 
-    // 12. list item / task list item
+    // 11. list item / task list item
     if (LIST_ITEM_RE.test(content)) {
       // **最も浅い** list インデントを保持する。入れ子項目で値を上げてしまうと、直後の
       // 同じインデントの**兄弟**が `indent >= lastListIndent + 2` を満たさず indented code
       // 扱いで落ちる (GitHub 上に見える未消化項目を落とす実測 regression)。
       lastListIndent = lastListIndent === null ? indent : Math.min(lastListIndent, indent);
-      paragraphCandidate = null;
       const task = TASK_ITEM_RE.exec(content);
       if (task && activeLevel) {
-        if (task[1] === ' ') unchecked += 1;
-        else checked += 1;
+        if (/[xX]/.test(task[1])) checked += 1;
+        else unchecked += 1;
       }
       continue;
     }
 
-    // 13. 段落行
+    // 12. 段落行
     if (!inListContext) lastListIndent = null;
-    paragraphCandidate = content;
   }
 
   return { unchecked, checked, found };

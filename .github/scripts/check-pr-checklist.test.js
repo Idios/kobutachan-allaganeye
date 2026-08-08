@@ -140,7 +140,7 @@ const RENDER_ORACLE_CASES = [
   ['閉じ ATX (trailing hashes)', stBody(`#### ${ST_TITLE} ####`), 1],
   ['U+2011 ハイフンの heading text', stBody('#### Self‑Test Report (machine-verified)'), 1],
   ['blockquote 内 heading', `${TPL_PREFIX}> #### ${ST_TITLE}\n>\n> - [ ] pytest\n`, 1],
-  ['setext h2 (テンプレート構造では heading になる)', `${TPL_PREFIX}${ST_TITLE}\n---\n\n- [ ] pytest\n`, 1],
+  ['setext は heading として認識しない (下記のトレードオフ参照)', `${TPL_PREFIX}${ST_TITLE}\n---\n\n- [ ] pytest\n`, 0],
 
   // GitHub が heading として描画しない = 節が存在しない (unchecked 0)
   ['U+3000 区切りは heading でない', stBody(`####　${ST_TITLE}`), 0],
@@ -162,6 +162,45 @@ test('#967: 4 space インデント heading は list 文脈なら heading (rende
   const result = countAcceptanceCriteriaCheckboxes(body);
   assert.equal(result.unchecked, 1);
 });
+
+// --- setext を認識しないトレードオフ (実測で決めた) ---------------------------
+//
+// GitHub は「段落 + `---`」を setext h2 として描画するので、素直に実装すると Self-Test 節を
+// setext で書いた本文も拾える。しかし実測すると:
+//   - 実在 31 本で setext 見出しを使った本文は **0 件**
+//   - `---` 区切りを含む本文は **3 件** (表や引用の直後に置く形はこの repo の PR 本文で頻出)
+// 後者では直前行が段落扱いになり、**偽の setext heading が対象節を打ち切る false-green** が出る
+// (renderer 実測で確認。実在 PR #943 の本文に `---` を 1 行足すと exit 1 → exit 0 に反転した)。
+// 得るものが 0 件で害が 3 件なので、setext は認識しない側に倒す。
+// 代償として setext 形の Self-Test 節は gate 対象外になる (宣言済みの近似)。
+
+test('#967: 表の直後の `---` は偽の heading を作らない (節を打ち切らない)', () => {
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n| 項目 | 結果 |\n| --- | --- |\n| pytest | pass |\n---\n\n- [ ] ruff\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967: 引用の直後の `---` も偽の heading を作らない', () => {
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n> 注記: GPU 実機は未検証\n---\n\n- [ ] pytest\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+// --- checkbox の box に入る Unicode 空白 --------------------------------------
+
+for (const [label, ch] of [
+  ['全角空白 (日本語 IME)', '\u3000'],
+  ['NBSP (copy-paste)', '\u00a0'],
+  ['tab', '\t'],
+]) {
+  test(`#967 false-green: box が ${label} でも未消化として数える`, () => {
+    // GFM は box の中身が 1 文字の空白なら未消化 task item として描画する
+    // (renderer 実測: Incomplete task 1 個)。ASCII space 固定だと日本語環境で素通りする。
+    const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n- [x] ruff\n- [${ch}] pytest 未実施\n`;
+    const result = countAcceptanceCriteriaCheckboxes(body);
+    assert.equal(result.unchecked, 1);
+  });
+}
 
 test('#967 false-green: U+3000 区切りの兄弟行は節を打ち切らない', () => {
   // GitHub は `####　関連ドキュメント` を heading にしないので Self-Test 節は続いており、
