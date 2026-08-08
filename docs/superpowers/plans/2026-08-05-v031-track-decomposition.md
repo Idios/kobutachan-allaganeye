@@ -437,11 +437,15 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 
 **実測で再現確認済み:** 受け入れ条件を `[x]` で埋め `#### Self-Test Report` に `- [ ]` を 3 件置いた本文を `countAcceptanceCriteriaCheckboxes` に渡すと `{"unchecked":0,"checked":1,"hasAnySection":true}` を返し **CI pass** する。
 
+> **再現時の注意 (#967 で判明)**: 上記レシピは **受け入れ条件節と Self-Test 節の間に `## PR チェックリスト` のような h2 が介在すること**が load-bearing である (テンプレートはそうなっている)。介在 h2 なしで literal に再現すると、修正前実装でも `unchecked=3` (= CI red) を返す — h4 が section 分割点にならないため Self-Test 節の box が受け入れ条件節に吸収されて数えられるからで、上記の数値と逆になる。テストや検証 fixture を書くときも同じ罠がある (介在 h2 が無いと「heading を認識できない」ことが gate の差として現れず、テスト自体が false-green になる)。
+
 **実装時の訂正 (Idios 裁定、実測根拠):** 当初案の素朴な `split(/^#{2,4}\s+/m)` は**テンプレート本文でしか動かない**。直近 merged 25 本で実測したところ、7 本 (#909 #914 #915 #917 #924 #926 #927 = `## Self-Test Report` + `### machine-verified` 形) で counted 0 box = 新 gate が無発火のままで、さらに #956 形 (`## 受け入れ条件` の中に `###` 小見出し) では既存 AC gate が 13 box → 0 box に縮小した。そのため section の終端を「自分と同じか浅いレベルの次 heading」とする heading level 準拠の抽出に変更した。テンプレート本文での結果は当初案と完全一致 (12 box)。
 
 **blast radius (D9):** テンプレートの `- [ ]` は実測で計 22 box (受け入れ条件 2 / Iron Law 1 が 2 / Iron Law 3 が 2 / Iron Law 4 が 1 / Self-Test Report 10 / 関連ドキュメント 5)。受け入れ条件側の heading filter が完全一致のままなので、**Iron Law 1/3/4 と関連ドキュメントの 4 群・10 box はカウント対象にならない**。新規に required になるのは **Self-Test Report の 10 box のみ** (テンプレート実測で 22 box 中 12 box が gate 対象、test で固定)。heading level 準拠なので `## 受け入れ条件` 節が配下に h3/h4 を持つ本文でも既存 gate の縮小は起きない。
 
 **文書側:** (a) を採るので `docs/l2-workflow.md` L140 / L287 / L345 / L349 / L353 / L359 / L362 と `.github/pull_request_template.md` L72 / L77 / L78 の主張は**正しくなる**ため書き換え不要。正しい記述 (`template` L58 / L103 / L106、`l2-workflow.md:208`) は事実なので触らない。
+
+> **訂正 (#967)**: このうち **L349 だけは正しくならなかった** (counting 対象は 22 box 中 12 box のみ / required status check 未設定のため red でもマージは止まらない)。#967 で訂正済み。詳細は spec §5.1 G1-4 の訂正 block を参照。
 
 **#935 との相互作用:** (a) を採ると `docs/l2-workflow.md:287` の「(C) 強制 skip (Self-Test Report の `[ ]` を残し validate-checklist で fail させる)」が**初めて実際に CI red を生む経路**になる。PR-B3 の #935 P2-3 と作用が重なるので、両 PR の内容を相互参照する。
 

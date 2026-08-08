@@ -83,6 +83,255 @@ ${selfTestItems}
 `;
 }
 
+// --- #967: GitHub のレンダリングとの整合 -------------------------------------
+//
+// 期待値は推測ではなく **GitHub 自身の GFM renderer** (`gh api markdown`) の出力から決めた。
+// 各ケースは「未消化 checkbox が GitHub 上で何個見えるか」を測り、それと counter を一致させる。
+// renderer の実測結果 (2026-08-08、`aria-label="Incomplete task"` の個数と heading tag):
+//
+//   ケース                          GitHub の描画                       期待 unchecked
+//   ------------------------------- ----------------------------------- --------------
+//   h4 (対照)                       <h4> + 未消化 1                     1
+//   1 / 3 / 4 space インデント h4   <h4> + 未消化 1 (list 直後は h4)    1
+//   h1 / h5 / h6                    <h1>/<h5>/<h6> + 未消化 1           1
+//   blockquote 内 heading           <h4> + 未消化 1                     1
+//   `####` + tab 区切り             <h4> + 未消化 1                     1
+//   閉じ ATX (`#### ... ####`)      <h4> + 未消化 1                     1
+//   U+2011 ハイフンの heading text  <h4> + 未消化 1                     1
+//   `####` + U+3000 区切り          heading にならない (段落)           0
+//   setext (`---` 下線)             <hr> になり heading にならない      0
+//   `**bold**` 疑似見出し           heading にならない                  0
+//   blockquote 内 fence             未消化 0 (code)                     0
+//   list 配下 4 space の fence      未消化 0 (code)                     0
+//   root の 4 space インデント行    未消化 0 (indented code block)      0
+//   コメント内の孤立 fence          未消化 1 (節も普通に描画される)     1
+//
+// 「heading にならない」ケースで 0 なのは、GitHub 上にも Self-Test Report 節が存在しないため。
+// 節と項目の存在自体を要求するか (自己申告 gate をやめるか) は #967 修正方針 6 で別途判断する。
+
+// 実テンプレートと同じ「受け入れ条件節 → 介在 h2 → Self-Test 節」構造。
+// **介在 h2 は load-bearing**: これが無いと Self-Test heading を認識できなくても項目が
+// 受け入れ条件節に吸収されて数えられてしまい、gate としての差が出ない (テスト自体が false-green)。
+const TPL_PREFIX = [
+  '## 受け入れ条件',
+  '',
+  '- [x] 条件 1',
+  '',
+  '## PR チェックリスト (Iron Law 遵守確認)',
+  '',
+].join('\n');
+const ST_TITLE = 'Self-Test Report (machine-verified)';
+
+/** テンプレート構造 + Self-Test 節 (heading の形を差し替え) + 未消化 1 件 */
+function stBody(headingLine, item = '- [ ] pytest') {
+  return `${TPL_PREFIX}${headingLine}\n\n${item}\n`;
+}
+
+// [label, body, 期待 unchecked] — 期待値は上記 renderer 実測から導出
+const RENDER_ORACLE_CASES = [
+  // GitHub が Self-Test heading として描画する = 節として認識すべき (unchecked 1)
+  ['h4 対照', stBody(`#### ${ST_TITLE}`), 1],
+  ['1 space インデント h4', stBody(` #### ${ST_TITLE}`), 1],
+  ['3 space インデント h4', stBody(`   #### ${ST_TITLE}`), 1],
+  ['h1', stBody(`# ${ST_TITLE}`), 1],
+  ['h5', stBody(`##### ${ST_TITLE}`), 1],
+  ['h6', stBody(`###### ${ST_TITLE}`), 1],
+  ['tab 区切り', stBody(`####\t${ST_TITLE}`), 1],
+  ['閉じ ATX (trailing hashes)', stBody(`#### ${ST_TITLE} ####`), 1],
+  ['U+2011 ハイフンの heading text', stBody('#### Self‑Test Report (machine-verified)'), 1],
+  ['blockquote 内 heading', `${TPL_PREFIX}> #### ${ST_TITLE}\n>\n> - [ ] pytest\n`, 1],
+  ['setext h2 (テンプレート構造では heading になる)', `${TPL_PREFIX}${ST_TITLE}\n---\n\n- [ ] pytest\n`, 1],
+
+  // GitHub が heading として描画しない = 節が存在しない (unchecked 0)
+  ['U+3000 区切りは heading でない', stBody(`####　${ST_TITLE}`), 0],
+  ['bold 疑似見出しは heading でない', stBody(`**${ST_TITLE}**`), 0],
+  ['4 space インデントは list 文脈が無ければ indented code block', stBody(`    #### ${ST_TITLE}`), 0],
+];
+
+for (const [label, body, expected] of RENDER_ORACLE_CASES) {
+  test(`#967 heading 認識が GitHub の描画と一致する: ${label}`, () => {
+    const result = countAcceptanceCriteriaCheckboxes(body);
+    assert.equal(result.unchecked, expected, `body:\n${body}`);
+  });
+}
+
+test('#967: 4 space インデント heading は list 文脈なら heading (renderer 実測)', () => {
+  // 直前が list の場合、GitHub は 4 space インデントの `#### ...` を <h4> として描画する
+  // (list item の継続扱い)。同じ 4 space でも文脈で意味が変わる。
+  const body = `## 受け入れ条件\n\n- [x] 条件 1\n\n    #### ${ST_TITLE}\n\n    - [ ] pytest\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967 false-green: U+3000 区切りの兄弟行は節を打ち切らない', () => {
+  // GitHub は `####　関連ドキュメント` を heading にしないので Self-Test 節は続いており、
+  // 未消化 1 件が描画される (renderer 実測: <h4> Self-Test + Incomplete task 1)。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n####　関連ドキュメント\n\n- [ ] pytest\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967 false-red: blockquote 内の fenced code block は数えない', () => {
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n- [x] pytest\n\n> \`\`\`markdown\n> - [ ] 引用された未消化\n> \`\`\`\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+  assert.equal(result.checked, 2);
+});
+
+test('#967 false-red: list 配下 4 space インデントの fence は数えない', () => {
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n- [x] pytest\n\n    抜粋:\n\n    \`\`\`markdown\n    - [ ] ruff check\n    \`\`\`\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967 false-red: root の 4 space インデント行は indented code block として数えない', () => {
+  // renderer 実測: <pre> になり Incomplete task は 0 個。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n- [x] pytest\n\n段落:\n\n    - [ ] インデントコードブロック内\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967: list 配下 4 space インデントの入れ子 checkbox は数える', () => {
+  // 上記の裏。同じ 4 space でも親 list があれば GitHub は task item として描画する。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n- [x] 親\n    - [ ] 4 space の入れ子\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967 false-green: backtick fence の info string に backtick があると fence は開かない', () => {
+  // CommonMark §4.5: backtick fence の info string は backtick を含めない。含む場合 fence は
+  // 開かないため後続行は通常の markdown として描画される (renderer 実測: Incomplete task 1)。
+  // Codex adversarial-review [high]。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n\`\`\` \`pytest\`\n- [ ] pytest\n\`\`\`\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967: tilde fence の info string は backtick を含んでよい (対照)', () => {
+  // tilde fence には backtick 制約がないため fence は開き、中身は code になる
+  // (renderer 実測: Incomplete task 0)。上の修正でこちらを壊さないことを固定する。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n~~~ \`pytest\`\n- [ ] inside tilde code\n~~~\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967 false-red: 閉じ fence の後ろに文字がある行は fence を閉じない', () => {
+  // CommonMark §4.5: 閉じ fence は空白 / tab のみを後続に許す。`\`\`\` still code` は
+  // code 内容であり fence を閉じない (renderer 実測: Incomplete task 0)。
+  // Codex adversarial-review [medium]。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n\`\`\`markdown\n\`\`\` still code\n- [ ] not visible\n\`\`\`\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967 false-green: 行中で開いた HTML コメントは後続行を飲み込まない', () => {
+  // 行頭の `<!--` は HTML block を開始するが、**行中**の `<!--` は inline HTML であり
+  // 後続行のブロック構造 (list item) を飲み込まない。GitHub は 2 行目を
+  // Incomplete task として描画する (renderer 実測: Completed 2 / Incomplete 1)。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n- [x] 済み <!-- note\n- [ ] コメント継続中に見える項目\n-->\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+  assert.equal(result.checked, 2);
+});
+
+// CommonMark のインデントは ASCII の space / tab のみ。JS の `trimStart()` / `trim()` は
+// NBSP や全角空白まで落とすため、GitHub 上では段落テキストの行が heading / task item に
+// 化けて gate の判定を狂わせる (Codex adversarial-review round 3 [high] + 自前 sweep)。
+const NBSP = ' ';
+const IDEOGRAPHIC_SPACE = '　';
+
+test('#967 false-red: checkbox の直後に空白が無い行は task item でない', () => {
+  // GFM の task list item は `[ ]` の後に空白を要求する。`- [ ]項目` は通常の list item
+  // として描画される (renderer 実測: Incomplete task 0 個)。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n- [ ]項目 (box の後に空白なし)\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967 false-red: HTML ブロック内の行は markdown として解釈されない', () => {
+  // `<div>` / `<details>` 等の HTML ブロックは空行まで続き、中身は markdown として
+  // 解釈されない (renderer 実測: Incomplete task 0 個)。`<details>` を使う PR 本文で
+  // 現実に起こる誤爆。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n<div>\n- [ ] div 内\n</div>\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967: HTML ブロックは空行で終わるので、その後の checkbox は数える', () => {
+  // `<details>` の後に空行を入れた形は markdown として解釈され、checkbox が描画される。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n<details>\n\n- [ ] details 内 (空行あり)\n\n</details>\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967 false-green: NBSP 始まりの行は heading でないので節を打ち切らない', () => {
+  // renderer 実測: NBSP 行は段落。直近の heading は Self-Test の h4 なので節は継続し、
+  // 未消化 1 件が節内に見える。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n${NBSP}#### 関連ドキュメント\n\n- [ ] pytest\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967 false-green: 全角空白始まりの行も heading でない', () => {
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n${IDEOGRAPHIC_SPACE}#### 関連ドキュメント\n\n- [ ] pytest\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967 false-red: NBSP 始まりの行は task item でない', () => {
+  // renderer 実測: Incomplete task 0 個 (段落テキストとして描画される)。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n${NBSP}- [ ] NBSP インデント項目\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967: NBSP 始まりの required heading は節を開始しない', () => {
+  // renderer 実測: heading にならないため Self-Test 節が存在せず、後続項目は gate 対象外。
+  const body = `## 受け入れ条件\n\n- [x] 条件 1\n\n## PR チェックリスト\n\n${NBSP}#### ${ST_TITLE}\n\n- [ ] pytest\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967 false-green: blockquote 内で開いた fence は引用の外まで続かない', () => {
+  // 引用が終われば中の fenced block も終わる。GitHub は引用の外の `- [ ]` を
+  // Incomplete task として描画する (renderer 実測: Incomplete 1)。
+  // blockquote prefix を一律に剥がすだけだと fence が引用境界を越えて残り、
+  // 可視の未消化項目を読み飛ばす false-green になる。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n> \`\`\`markdown\n- [ ] 引用の外\n\`\`\`\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967: fence の外側で開いた fence 内の引用行は code のまま (逆方向の対照)', () => {
+  // 逆向き: top level で開いた fence の中に `>` 行があっても、それは code 内容。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n\`\`\`markdown\n> - [ ] code 内の引用\n\`\`\`\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967: hash のみの兄弟見出しは節を閉じる', () => {
+  // `####` 単独も CommonMark では heading (GitHub 実測: 空の <h4>)。同レベルなので
+  // Self-Test 節を閉じ、後続の未消化項目は gate 対象外になる。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n####\n\n- [ ] 節の外の項目\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967 false-green: HTML コメント内の孤立 fence が節を消さない', () => {
+  // 2 段 replace (fence 除去 → コメント除去) では、コメント内の ``` が後続の実 code block と
+  // ペアリングして間の節を丸ごと削除していた (lexer desync)。
+  const body = `${TPL_PREFIX}<!--\n\`\`\`\n-->\n\n#### ${ST_TITLE}\n\n- [ ] pytest\n\n\`\`\`text\nsample\n\`\`\`\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967: 閉じ ATX heading の受け入れ条件節も認識する', () => {
+  // GitHub は `## 受け入れ条件 ##` の trailing hashes を落として heading text にする。
+  const result = countAcceptanceCriteriaCheckboxes('## 受け入れ条件 ##\n\n- [ ] 条件\n');
+  assert.equal(result.unchecked, 1);
+  assert.equal(result.hasAnySection, true);
+});
+
 test('counts unchecked items only inside ## 受け入れ条件 section', () => {
   const body = `
 ## 概要
