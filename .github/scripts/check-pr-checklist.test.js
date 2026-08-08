@@ -240,6 +240,105 @@ test('#967 false-green: 行中で開いた HTML コメントは後続行を飲�
 const NBSP = ' ';
 const IDEOGRAPHIC_SPACE = '　';
 
+for (const tag of ['pre', 'script', 'textarea']) {
+  test(`#967 false-red: <${tag}> ブロック (CommonMark type 1) 内の行は数えない`, () => {
+    // type 1 HTML block は**閉じタグまで**続き空行では終わらない。ログ貼り付けで
+    // `<pre>` を使うと中の checkbox 記法を数えてしまう誤爆があった (renderer 実測: 0 個)。
+    const body = `#### ${ST_TITLE}\n\n- [x] done\n\n<${tag}>\n- [ ] ${tag} 内\n</${tag}>\n`;
+    const result = countAcceptanceCriteriaCheckboxes(body);
+    assert.equal(result.unchecked, 0);
+  });
+}
+
+test('#967: type 1 の終了条件は `</tag>` の完全一致 (`</pre >` では閉じない)', () => {
+  // CommonMark §4.6 type 1 の終了条件は `</pre>` / `</script>` / `</style>` / `</textarea>` の
+  // **文字列一致**で、空白を挟んだ `</pre >` では閉じない (renderer 実測: Incomplete task 0 個。
+  // Codex は「閉じる」と予測したが GitHub は閉じなかった)。
+  const body = `#### ${ST_TITLE}\n\n<pre>\nlog\n</pre >\n\n- [ ] pytest\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967 false-red: `</pres>` のような near-miss で type 1 を閉じない', () => {
+  // 閉じタグ判定を緩めると (regex の `\\s` エスケープ落ちで `s*` になっていた) `</pres>` が
+  // 終了扱いになり、GitHub では code 内のままの checkbox を数える誤爆になる
+  // (renderer 実測: Incomplete task 0 個)。
+  const body = `#### ${ST_TITLE}\n\n<pre>\nlog\n</pres>\n\n- [ ] pytest\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967: type 1 の閉じタグは大文字でも閉じる', () => {
+  const body = `#### ${ST_TITLE}\n\n<pre>\nlog\n</PRE>\n\n- [ ] pytest\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967: type 1 ブロックが閉じた後の checkbox は数える (対照)', () => {
+  const body = `#### ${ST_TITLE}\n\n<pre>\nlog\n</pre>\n\n- [ ] pre の後の項目\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967 regression: 4 space 入れ子 list の 2 件目以降の兄弟も数える', () => {
+  // PR #970 の list 文脈判定 (`indent >= lastListIndent + 2`) は、入れ子項目が
+  // lastListIndent を 4 に上げた直後の**同じインデントの兄弟**を弾いてしまい、
+  // GitHub 上に見える未消化項目を落としていた (pre-#970 は正しく数えていた regression)。
+  // renderer 実測: Incomplete task 1 個。
+  const body = '## 受け入れ条件\n\n- [x] A\n    - [x] B1\n    - [ ] B2\n';
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967 regression: 閉じ忘れ fence が list container を抜けたら閉じる', () => {
+  // list 配下 (indent 4) で開いた fence を閉じ忘れると、fence が EOF まで残って
+  // 後続の対象節ごと読み飛ばし、`hasAnySection=false` で gate が丸ごと skip されていた。
+  // GitHub は list container の終端 (列 0 の heading) で code block を閉じるため、
+  // 受け入れ条件と Self-Test Report の未消化項目は普通に描画される (renderer 実測: 2 個)。
+  const body =
+    '## 修正内容\n\n- 変更点:\n\n    ```diff\n    -old\n    +new\n\n## 受け入れ条件\n\n- [ ] 条件 1\n\n' +
+    '## PR チェックリスト\n\n#### Self-Test Report (machine-verified)\n\n- [ ] pytest\n';
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.hasAnySection, true);
+  assert.equal(result.unchecked, 2);
+});
+
+test('#967 近似境界: list item の content indent を超える深い入れ子は数える (false-red、既知)', () => {
+  // GitHub は list item 内の 6 space (content indent + 4) を indented code block として描画する
+  // (renderer 実測: Incomplete task 0 個) が、checker は list 文脈と見て数える。
+  // 誤りの向きが false-red なので許容し、docs/l2-workflow.md §「この gate が見ていない集合」
+  // に記載済み。**これは未知の穴ではなく宣言済みの近似**であることを固定する。
+  const body = `#### ${ST_TITLE}\n\n- 親\n\n      - [ ] 6 space インデント\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967: top level の 0-3 space インデント fence は列 0 行で閉じない (GitHub と同じ)', () => {
+  // list の外で開いた fence は CommonMark の「0-3 space インデント fence」であり、
+  // 中の列 0 行も code 内容 (renderer 実測: Incomplete task 0 個)。container 終端で
+  // 閉じる規則は **list 内で開いた fence にのみ** 適用しないと誤爆する。
+  const body = `#### ${ST_TITLE}\n\n- [x] done\n\n段落\n\n  \`\`\`text\n- [ ] 列 0 の行\n  \`\`\`\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
+test('#967: list 配下 fence 内の列 0 行は fence を抜ける (GitHub と同じ)', () => {
+  // CommonMark では列 0 の行で list item が終わり code block も閉じるため、その行は
+  // 新しい task item として描画される (renderer 実測: Incomplete task 1 個)。
+  const body =
+    '## 受け入れ条件\n\n- [x] 条件 1\n  ```diff\n- [ ] 列 0 の行\n  ```\n\n## PR チェックリスト\n\n- [x] 関係ない box\n';
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967: 列 0 で開いた fence は閉じ忘れても最後まで code (GitHub と同じ)', () => {
+  // 逆方向の対照。top level の未閉鎖 fence は文書末まで code なので、以降の項目は
+  // 数えない (GitHub もそう描画する)。indent scoping が過剰に働かないことを固定する。
+  const body = '## 受け入れ条件\n\n- [x] 条件 1\n\n```diff\n- [ ] code のまま\n';
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
 test('#967 false-red: checkbox の直後に空白が無い行は task item でない', () => {
   // GFM の task list item は `[ ]` の後に空白を要求する。`- [ ]項目` は通常の list item
   // として描画される (renderer 実測: Incomplete task 0 個)。

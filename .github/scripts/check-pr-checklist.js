@@ -19,9 +19,25 @@
 // 共有する形に統合した。
 //
 // **これは Markdown parser ではなく近似である。** 依存は追加しない (`actions/github-script` から
-// require するだけの stdlib-only)。近似が見ていない集合は docs/l2-workflow.md
-// §「Self-Test Report 規約」 に列挙する。誤りの向きは **false-red 側に倒す** (黙って通す
-// false-green より、メッセージが見えて自己修正できる false-red のほうが安全)。
+// require するだけの stdlib-only)。誤りの向きは **false-red 側に倒す** (黙って通す false-green より、
+// メッセージが見えて自己修正できる false-red のほうが安全)。
+//
+// この gate が見ていない / 近似している集合 (docs/l2-workflow.md §「Self-Test Report 規約」と同内容。
+// doc だけに置くと次の実装者に届かないため両方に記録する):
+//
+// - **節と項目の存在自体は強制しない**。対象節を書かない / 改名する / 項目を plain bullet に落とすと
+//   job は通る。つまりこれは**自己申告 gate**であり、証跡ゼロでも green になる
+// - bold 疑似見出しや全角空白区切りの見出しは GitHub 側でも heading にならないため上記と同じ扱い
+// - インデント 4 以上の解釈は「開いている list の最も浅いインデント」で近似する。list item の
+//   content indent を超える深い入れ子 (6-8 space 等) は GitHub が code とするのに数える (false-red)
+// - 未閉鎖の fence / 行頭 `<!--` は **開いた container の終端まで** 読み飛ばす。root で開いた場合は
+//   文書末まで (GitHub と一致)、list / blockquote 内で開いた場合はその container の終端で閉じる
+// - HTML block は type 1 (`pre` / `script` / `style` / `textarea`、閉じタグまで) と type 6
+//   (ブロック要素タグ、空行まで) のみ扱う。type 7 (任意タグ単独行) は近似していない (false-red)
+// - raw HTML の `<h2>` 等は heading として節を閉じない (HTML block として読み飛ばすだけ)
+// - heading text は Unicode ハイフン類と NBSP 類のみ ASCII に畳む。link 化した heading
+//   (`## [受け入れ条件](#ac)`) は完全一致に落ちるため対象外
+// - 受け入れ条件節の heading は完全一致のため suffix 付きは対象外 (#936 Q5 (A) で凍結)
 
 /**
  * `[x]` を CI で要求する section の heading (#936)。
@@ -117,6 +133,22 @@ const HTML_BLOCK_TAGS =
   'search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul';
 const HTML_BLOCK_START_RE = new RegExp('^</?(?:' + HTML_BLOCK_TAGS + ')(?:[ \\t>/]|$)', 'i');
 
+/**
+ * HTML block (CommonMark §4.6 type 1)。`<pre>` / `<script>` / `<style>` / `<textarea>` は
+ * **閉じタグまで**続き、空行では終わらない。Self-Test Report にログを貼るとき `<pre>` を使うと、
+ * 中の checkbox 記法を数える false-red になる (renderer 実測で確認)。
+ */
+const HTML_TYPE1_START_RE = /^<(pre|script|style|textarea)(?:[ 	>]|$)/i;
+
+/**
+ * type 1 HTML block の終了条件 (CommonMark §4.6): 行が `</pre>` / `</script>` / `</style>` /
+ * `</textarea>` を**文字列として含む**こと。空白を挟んだ `</pre >` では閉じず、`</pres>` のような
+ * near-miss でも閉じない (どちらも renderer で GitHub の挙動を確認済み)。
+ */
+function hasType1CloseTag(content, tag) {
+  return content.toLowerCase().includes('</' + tag.toLowerCase() + '>');
+}
+
 /** インデントがこの値以上で、かつ list 文脈でなければ indented code block とみなす。 */
 const INDENTED_CODE_WIDTH = 4;
 
@@ -189,8 +221,11 @@ function scanRequiredSections(body) {
 
   let fenceMarker = null; // fence 内なら開始マーカー文字列
   let fenceQuoteDepth = 0; // fence を開いた行の blockquote 深さ (引用境界で fence を閉じるため)
+  let fenceIndent = 0; // fence を開いた行のインデント (container 終端で fence を閉じるため)
+  let fenceInList = false; // fence を list container 内で開いたか (top level の indent 付き fence と区別)
   let inComment = false;
   let inHtmlBlock = false; // HTML block (type 6) 内。空行まで markdown として解釈しない
+  let htmlType1Tag = null; // HTML block (type 1) 内なら tag 名。閉じタグまで解釈しない
   let lastListIndent = null; // 直近の list item のインデント (list 文脈の追跡)
   let paragraphCandidate = null; // 直前の段落行 (setext heading の text 候補)
 
@@ -208,13 +243,29 @@ function scanRequiredSections(body) {
       // false-green になる (renderer 実測で確認)。この行は通常処理へ落とす。
       if (quoteDepth < fenceQuoteDepth) {
         fenceMarker = null;
+      } else if (isFenceClose(content, fenceMarker)) {
+        fenceMarker = null;
+        continue;
+      } else if (fenceInList && !ASCII_BLANK_LINE_RE.test(content) && indent < fenceIndent) {
+        // fence を開いた list container が終わればその中の code block も終わる。
+        // **list 内で開いた fence にのみ適用する** — top level の 0-3 space インデント fence は
+        // 中の列 0 行も code 内容なので、ここで閉じると誤爆する (renderer 実測で確認)。
+        // 閉じ忘れた fence が EOF まで残ると、後続の対象節ごと読み飛ばして
+        // `hasAnySection=false` で gate が丸ごと skip される (実測した regression)。
+        // GitHub は列が浅くなった行で container と code block を閉じる。この行は通常処理へ落とす。
+        fenceMarker = null;
       } else {
-        if (isFenceClose(content, fenceMarker)) fenceMarker = null;
         continue;
       }
     }
 
-    // 2. HTML コメントブロックの継続
+    // 2. HTML block (type 1) の継続。閉じタグまで markdown として解釈しない (空行では終わらない)
+    if (htmlType1Tag !== null) {
+      if (hasType1CloseTag(content, htmlType1Tag)) htmlType1Tag = null;
+      continue;
+    }
+
+    // 3. HTML コメントブロックの継続
     if (inComment) {
       const end = content.indexOf('-->');
       if (end === -1) continue;
@@ -223,14 +274,14 @@ function scanRequiredSections(body) {
       continue;
     }
 
-    // 3. 行頭が `<!--` の行は HTML block。閉じるまで読み飛ばす
+    // 4. 行頭が `<!--` の行は HTML block。閉じるまで読み飛ばす
     if (content.startsWith('<!--')) {
       if (content.indexOf('-->', 4) === -1) inComment = true;
       paragraphCandidate = null;
       continue;
     }
 
-    // 4. 行中の閉じたコメントは除去 (`- [x] item <!-- note -->` 等)。
+    // 5. 行中の閉じたコメントは除去 (`- [x] item <!-- note -->` 等)。
     //    **行中で開いたまま閉じないコメントは後続行を飲み込まない** — 行頭 `<!--` は HTML block を
     //    開始するが、行中の `<!--` は inline HTML なので次行の list item 等のブロック構造は
     //    そのまま描画される (renderer 実測: `- [x] a <!-- note` の次行の `- [ ] b` は
@@ -245,7 +296,15 @@ function scanRequiredSections(body) {
       continue;
     }
 
-    // 5. HTML block (type 6) は空行まで markdown として解釈されない
+    // 6. HTML block (type 1) の開始
+    const type1 = HTML_TYPE1_START_RE.exec(content);
+    if (type1) {
+      if (!hasType1CloseTag(content, type1[1])) htmlType1Tag = type1[1];
+      paragraphCandidate = null;
+      continue;
+    }
+
+    // 7. HTML block (type 6) は空行まで markdown として解釈されない
     if (inHtmlBlock) continue;
     if (HTML_BLOCK_START_RE.test(content)) {
       inHtmlBlock = true;
@@ -253,7 +312,7 @@ function scanRequiredSections(body) {
       continue;
     }
 
-    // 6. インデント 4 以上は list 文脈でなければ indented code block
+    // 8. インデント 4 以上は list 文脈でなければ indented code block
     const inListContext = lastListIndent !== null && indent >= lastListIndent + 2;
     if (indent >= INDENTED_CODE_WIDTH && !inListContext) {
       lastListIndent = null;
@@ -261,16 +320,18 @@ function scanRequiredSections(body) {
       continue;
     }
 
-    // 7. fence 開始
+    // 9. fence 開始
     const fenceOpen = matchFenceOpen(content);
     if (fenceOpen !== null) {
       fenceMarker = fenceOpen;
       fenceQuoteDepth = quoteDepth;
+      fenceIndent = indent;
+      fenceInList = inListContext;
       paragraphCandidate = null;
       continue;
     }
 
-    // 8. setext heading (直前が段落行のときのみ)
+    // 10. setext heading (直前が段落行のときのみ)
     const setext = SETEXT_UNDERLINE_RE.exec(content);
     if (setext && paragraphCandidate !== null) {
       const level = setext[1][0] === '=' ? 1 : 2;
@@ -281,7 +342,7 @@ function scanRequiredSections(body) {
       continue;
     }
 
-    // 9. ATX heading
+    // 11. ATX heading
     const atx = ATX_HEADING_RE.exec(content);
     if (atx) {
       const text = normalizeHeadingText((atx[2] || '').replace(ATX_CLOSING_HASHES_RE, ''));
@@ -291,9 +352,12 @@ function scanRequiredSections(body) {
       continue;
     }
 
-    // 10. list item / task list item
+    // 12. list item / task list item
     if (LIST_ITEM_RE.test(content)) {
-      lastListIndent = indent;
+      // **最も浅い** list インデントを保持する。入れ子項目で値を上げてしまうと、直後の
+      // 同じインデントの**兄弟**が `indent >= lastListIndent + 2` を満たさず indented code
+      // 扱いで落ちる (GitHub 上に見える未消化項目を落とす実測 regression)。
+      lastListIndent = lastListIndent === null ? indent : Math.min(lastListIndent, indent);
       paragraphCandidate = null;
       const task = TASK_ITEM_RE.exec(content);
       if (task && activeLevel) {
@@ -303,7 +367,7 @@ function scanRequiredSections(body) {
       continue;
     }
 
-    // 11. 段落行
+    // 13. 段落行
     if (!inListContext) lastListIndent = null;
     paragraphCandidate = content;
   }

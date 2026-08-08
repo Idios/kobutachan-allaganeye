@@ -432,13 +432,15 @@ checker (`.github/scripts/check-pr-checklist.js`) は GitHub のレンダリン�
 
 - **節と項目の存在自体は強制しない**。`Self-Test Report` 節を書かなければ (削除 / 改名 / 項目を plain bullet に落とす) job は通る。証跡ゼロでも green になるため、これは**自己申告 gate**である
 - `**Self-Test Report**` のような bold 疑似見出しや、`####` の直後を全角空白で区切った見出しは GitHub 側でも heading にならないため節として成立しない = 上記と同じ扱いになる
-- インデント 4 以上の行の解釈は「直前に list があるか」で近似している (list 継続なら task item / そうでなければ indented code block)。深い入れ子や list 内の段落を挟む形では GitHub と食い違いうる
-- 閉じていない fence / 閉じていない `<!--` は「そこから先すべて」を code / コメントとして扱わない (行単位の近似)
-- HTML block は `<div>` / `<details>` 等の**ブロック要素タグで始まり空行で終わる形** (CommonMark type 6) のみ扱う。`<!-- -->` 以外の他 type (script / pre / 任意タグ単独行など) は近似していない
+- インデント 4 以上の行の解釈は「**開いている list の最も浅いインデント**」で近似している (list 継続なら task item / list が無ければ indented code block)。list item の content indent を超える深い入れ子 (6-8 space 等) は GitHub が code とするのに数える (false-red)
+- 未閉鎖の fence / 行頭 `<!--` は「**開いた container の終端まで**」読み飛ばす。root で開いた場合は文書末まで (GitHub と一致)、list / blockquote 内で開いた場合はその container の終端で閉じる
+- HTML block は **type 1** (`pre` / `script` / `style` / `textarea`、閉じタグまで) と **type 6** (ブロック要素タグ、空行まで) のみ扱う。type 7 (任意タグ単独行) は近似していない (false-red)。raw HTML の `<h2>` 等は読み飛ばすだけで heading としての節閉じ効果は持たない
 - heading text は Unicode ハイフン類と NBSP 類を ASCII に畳んでから照合する。それ以外の異体字 (全角英字など) は畳まない
 - 受け入れ条件節の heading は**完全一致**のため `## 受け入れ条件 (追加)` のような suffix 付きは対象外 (凍結済み仕様)
 
-再現材料は #967 に置いた renderer 突合表 (`gh api markdown` の `aria-label="Incomplete task"` 個数と checker の counting を 22 ケースで突き合わせたもの) を参照。
+- heading を link 化した形 (`## [受け入れ条件](#ac)`) は heading text が完全一致に落ちるため対象外
+
+同じ集合を `.github/scripts/check-pr-checklist.js` 冒頭のコメントにも記録している (doc だけに置くと次の実装者に届かないため)。期待値の決め方と再現材料は #967 / PR #970 の renderer 突合表 (`gh api markdown` の `aria-label="Incomplete task"` 個数と checker の counting を突き合わせたもの) を参照。**新しい角を見つけたら推測で直さず、まず renderer に通して期待値を決めること。**
 
 ## PR body 規約 (期待値 / 現状 / 修正内容)
 
