@@ -234,6 +234,23 @@ test('#967 false-green: 行中で開いた HTML コメントは後続行を飲�
   assert.equal(result.checked, 2);
 });
 
+test('#967 false-green: blockquote 内で開いた fence は引用の外まで続かない', () => {
+  // 引用が終われば中の fenced block も終わる。GitHub は引用の外の `- [ ]` を
+  // Incomplete task として描画する (renderer 実測: Incomplete 1)。
+  // blockquote prefix を一律に剥がすだけだと fence が引用境界を越えて残り、
+  // 可視の未消化項目を読み飛ばす false-green になる。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n> \`\`\`markdown\n- [ ] 引用の外\n\`\`\`\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+});
+
+test('#967: fence の外側で開いた fence 内の引用行は code のまま (逆方向の対照)', () => {
+  // 逆向き: top level で開いた fence の中に `>` 行があっても、それは code 内容。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n\`\`\`markdown\n> - [ ] code 内の引用\n\`\`\`\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
 test('#967: hash のみの兄弟見出しは節を閉じる', () => {
   // `####` 単独も CommonMark では heading (GitHub 実測: 空の <h4>)。同レベルなので
   // Self-Test 節を閉じ、後続の未消化項目は gate 対象外になる。

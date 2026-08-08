@@ -156,19 +156,29 @@ function scanRequiredSections(body) {
   let checked = 0;
 
   let fenceMarker = null; // fence 内なら開始マーカー文字列
+  let fenceQuoteDepth = 0; // fence を開いた行の blockquote 深さ (引用境界で fence を閉じるため)
   let inComment = false;
   let lastListIndent = null; // 直近の list item のインデント (list 文脈の追跡)
   let paragraphCandidate = null; // 直前の段落行 (setext heading の text 候補)
 
   for (const raw of lines) {
+    const quotePrefix = BLOCKQUOTE_PREFIX_RE.exec(raw);
+    const quoteDepth = quotePrefix ? (quotePrefix[0].match(/>/g) || []).length : 0;
     const line = raw.replace(BLOCKQUOTE_PREFIX_RE, '');
     const indent = measureIndent(line);
     let content = line.slice(line.length - line.trimStart().length);
 
     // 1. fence 内は何も解釈しない (コメントも heading も code として描画される)
     if (fenceMarker !== null) {
-      if (isFenceClose(content, fenceMarker)) fenceMarker = null;
-      continue;
+      // 引用が終われば中の fenced block も終わる。blockquote prefix を一律に剥がすだけだと
+      // fence が引用境界を越えて残り、引用の外にある**可視の** checkbox を読み飛ばす
+      // false-green になる (renderer 実測で確認)。この行は通常処理へ落とす。
+      if (quoteDepth < fenceQuoteDepth) {
+        fenceMarker = null;
+      } else {
+        if (isFenceClose(content, fenceMarker)) fenceMarker = null;
+        continue;
+      }
     }
 
     // 2. HTML コメントブロックの継続
@@ -212,6 +222,7 @@ function scanRequiredSections(body) {
     const fenceOpen = matchFenceOpen(content);
     if (fenceOpen !== null) {
       fenceMarker = fenceOpen;
+      fenceQuoteDepth = quoteDepth;
       paragraphCandidate = null;
       continue;
     }
