@@ -824,6 +824,39 @@ test('#967 fail-closed: 実テンプレートを全件 [x] にした本文は pa
   assert.equal(status, 0, `exit code が 0 でない (stdout: ${stdout})`);
 });
 
+// --- Codex adversarial-review [high] / [medium] の消化 -------------------------
+
+test('#967 fail-closed: bot でも節が認識できて checkbox 0 件なら red', () => {
+  // bot 例外は「節の存在要求」だけを免除する。節が認識できているのに項目ゼロなら落とす
+  // (Codex [high]: 2 条件を 1 つの分岐にまとめていたため bot が両方すり抜けていた)。
+  const body = `#### ${ST_TITLE}\n\n- pytest not run\n`;
+  const { status } = runCheckerProcess(body, 'Bot');
+  assert.equal(status, 1);
+});
+
+test('#967: 対象節の入れ子 (AC 配下の Self-Test) を own kind として認識する', () => {
+  // GitHub は両方 heading として描画する。入れ子を親の節に吸収すると selfTestFound が立たず
+  // 「節が無い」と誤判定して false-red になる (Codex [medium])。
+  const body = '## Acceptance criteria\n\n- [x] criterion\n\n### Self-Test Report\n\n- [x] pytest\n';
+  const { status, stdout } = runCheckerProcess(body);
+  assert.equal(status, 0, `exit code が 0 でない (stdout: ${stdout})`);
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.hasSelfTestSection, true);
+  assert.equal(result.selfTestItems, 1);
+  assert.equal(result.checked, 2);
+});
+
+test('#967: 入れ子の対象節が閉じたら外側の節が復帰する (数え落ちしない)', () => {
+  // 入れ子節を own kind にするだけでは、閉じた後に外側の節へ戻れず後続項目を数え落とす。
+  // section stack で外側へ復帰することを固定する。
+  const body =
+    '## 受け入れ条件\n\n- [x] a\n\n### Self-Test Report\n\n- [x] b\n\n### その他の条件\n\n- [ ] c\n';
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1, '外側の受け入れ条件節に戻って c を数える');
+  assert.equal(result.checked, 2);
+  assert.equal(result.selfTestItems, 1, 'b だけが Self-Test 節の項目');
+});
+
 // --- #936: 発火実証 (生の exit code) ----------------------------------------
 
 test('#936 発火実証: Self-Test Report に - [ ] が 1 件残ると非ゼロ exit', () => {

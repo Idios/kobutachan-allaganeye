@@ -223,8 +223,7 @@ function stripInlineComments(content) {
 function scanRequiredSections(body) {
   const lines = String(body).split(/\r?\n/);
 
-  let activeLevel = 0; // 0 = 対象 section の外 / >0 = 収集中の section の heading level
-  let activeKind = null; // 収集中の section の種類 (acceptance | selfTest)
+  const sectionStack = []; // 対象節の入れ子を保持する ({ level, kind })。入れ子が閉じたら外側へ復帰する
   let found = false;
   let selfTestFound = false; // Self-Test Report 節が存在したか (fail-closed の判定に使う)
   let selfTestItems = 0; // Self-Test Report 節内の checkbox 件数 (0 件も red にする)
@@ -340,14 +339,18 @@ function scanRequiredSections(body) {
     const atx = ATX_HEADING_RE.exec(content);
     if (atx) {
       const text = normalizeHeadingText((atx[2] || '').replace(ATX_CLOSING_HASHES_RE, ''));
-      {
-        const r = enterHeading(text, atx[1].length, activeLevel, activeKind);
-        activeLevel = r.activeLevel;
-        activeKind = r.activeKind;
-        if (r.started) {
-          found = true;
-          if (r.started === 'selfTest') selfTestFound = true;
-        }
+      const level = atx[1].length;
+      // 同レベル以下の heading に到達した節は閉じる。stack なので**入れ子が閉じたら外側へ復帰**する
+      // (入れ子の対象節を親に吸収すると selfTestFound が立たず false-red になり、逆に単純に
+      //  置き換えると入れ子の後で外側の節に戻れず数え落ちる。Codex adversarial-review [medium])
+      while (sectionStack.length && level <= sectionStack[sectionStack.length - 1].level) {
+        sectionStack.pop();
+      }
+      const hit = REQUIRED_SECTION_PATTERNS.find((pattern) => pattern.re.test(text));
+      if (hit) {
+        sectionStack.push({ level, kind: hit.kind });
+        found = true;
+        if (hit.kind === 'selfTest') selfTestFound = true;
       }
       if (!inListContext) lastListIndent = null;
       continue;
@@ -360,10 +363,11 @@ function scanRequiredSections(body) {
       // 扱いで落ちる (GitHub 上に見える未消化項目を落とす実測 regression)。
       lastListIndent = lastListIndent === null ? indent : Math.min(lastListIndent, indent);
       const task = TASK_ITEM_RE.exec(content);
-      if (task && activeLevel) {
+      const section = sectionStack[sectionStack.length - 1];
+      if (task && section) {
         if (/[xX]/.test(task[1])) checked += 1;
         else unchecked += 1;
-        if (activeKind === 'selfTest') selfTestItems += 1;
+        if (section.kind === 'selfTest') selfTestItems += 1;
       }
       continue;
     }
@@ -373,20 +377,6 @@ function scanRequiredSections(body) {
   }
 
   return { unchecked, checked, found, selfTestFound, selfTestItems };
-}
-
-/** heading に到達したときの section 状態遷移。開始した節の kind も返す。 */
-function enterHeading(text, level, activeLevel, activeKind) {
-  // 同レベル以下の heading に到達したら現在の section は終わり
-  if (activeLevel && level <= activeLevel) {
-    activeLevel = 0;
-    activeKind = null;
-  }
-  if (!activeLevel) {
-    const hit = REQUIRED_SECTION_PATTERNS.find((pattern) => pattern.re.test(text));
-    if (hit) return { activeLevel: level, activeKind: hit.kind, started: hit.kind };
-  }
-  return { activeLevel, activeKind, started: null };
 }
 
 /**
@@ -427,13 +417,16 @@ async function checkPrChecklist({ github, context, core }) {
   // fail-closed (#967 修正方針 6): 節が認識できない / 項目が 1 件も無い場合は skip せず落とす。
   // heading 形式の認識漏れ (絵文字前置 / bold 疑似見出し / 全角空白区切り / setext / 改名) は
   // 従来ここで silent pass になっており、gate が黙って無効化される false-green の温床だった。
+  //
+  // **bot 例外は「節が存在しない」場合だけに限る。** 2 条件を 1 つの分岐にまとめると、節が
+  // 認識できているのに項目ゼロという状態まで bot がすり抜ける (Codex adversarial-review [high])。
+  if (!hasSelfTestSection && isBot) {
+    // bot 作成 PR (dependabot 等) に template 遵守は求められない。未消化 checkbox があれば
+    // 上の分岐で既に落ちているので、ここで skip しても gate は弱くならない。
+    core.info(`Bot-authored PR (${pr.user.login}): skipping Self-Test Report presence check.`);
+    return;
+  }
   if (!hasSelfTestSection || selfTestItems === 0) {
-    if (isBot) {
-      // bot 作成 PR (dependabot 等) に template 遵守は求められない。未消化 checkbox があれば
-      // 上の分岐で既に落ちているので、ここで skip しても gate は弱くならない。
-      core.info(`Bot-authored PR (${pr.user.login}): skipping Self-Test Report presence check.`);
-      return;
-    }
     const detail = !hasSelfTestSection
       ? 'No `Self-Test Report` section was recognized in the PR body.'
       : 'The `Self-Test Report` section contains no checkbox items.';
