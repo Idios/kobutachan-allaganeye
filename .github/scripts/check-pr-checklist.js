@@ -363,11 +363,14 @@ function scanRequiredSections(body) {
       // 扱いで落ちる (GitHub 上に見える未消化項目を落とす実測 regression)。
       lastListIndent = lastListIndent === null ? indent : Math.min(lastListIndent, indent);
       const task = TASK_ITEM_RE.exec(content);
-      const section = sectionStack[sectionStack.length - 1];
-      if (task && section) {
+      if (task && sectionStack.length) {
         if (/[xX]/.test(task[1])) checked += 1;
         else unchecked += 1;
-        if (section.kind === 'selfTest') selfTestItems += 1;
+        // Self-Test 節の**子孫**にある項目も Self-Test の項目として数える。先頭フレームだけで
+        // 判定すると、`## Self-Test Report` 配下に `### Acceptance criteria` を入れ子にした本文で
+        // 件数が 0 になり、全部 [x] なのに fail-closed が red にする false-red が出る
+        // (Codex adversarial-review round 2 [medium]、renderer 実測で確認)。
+        if (sectionStack.some((frame) => frame.kind === 'selfTest')) selfTestItems += 1;
       }
       continue;
     }

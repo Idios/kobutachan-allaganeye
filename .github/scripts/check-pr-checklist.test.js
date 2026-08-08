@@ -857,6 +857,18 @@ test('#967: 入れ子の対象節が閉じたら外側の節が復帰する (数
   assert.equal(result.selfTestItems, 1, 'b だけが Self-Test 節の項目');
 });
 
+test('#967 fail-closed: ST 配下に対象節が入れ子でも「項目ゼロ」にならない', () => {
+  // `## Self-Test Report` の中に `### Acceptance criteria` を入れ子にすると、stack の先頭が
+  // AC になるため「Self-Test 節の項目」を先頭フレームだけで数えると 0 になり、全部 [x] なのに
+  // fail-closed で red になる false-red (Codex adversarial-review round 2 [medium])。
+  // renderer 実測: Completed 1 / Incomplete 0 = 直すべきものは何も無い本文。
+  const body = '## Self-Test Report\n\n### Acceptance criteria\n\n- [x] pytest\n';
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.selfTestItems, 1, 'Self-Test 節の子孫にある項目も Self-Test の項目として数える');
+  const { status, stdout } = runCheckerProcess(body);
+  assert.equal(status, 0, `exit code が 0 でない (stdout: ${stdout})`);
+});
+
 // --- #936: 発火実証 (生の exit code) ----------------------------------------
 
 test('#936 発火実証: Self-Test Report に - [ ] が 1 件残ると非ゼロ exit', () => {
