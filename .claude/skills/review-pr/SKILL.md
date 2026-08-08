@@ -198,7 +198,9 @@ PR の変更種別に応じて以下を確認する。**code quality (logic / ar
 - コード変更がドキュメント記述と矛盾していないか
 - 出力形式変更の場合、`docs/cli-spec.md` の出力例も更新されているか (#343 系の再発防止)
 
-**installer / workflow 系 PR の場合 (#L-γ M2、F2 教訓)**:
+**installer / workflow 系 PR の場合 (#L-γ M2、F2 教訓)**
+
+> **該当判定**: 本ブロックの trigger は「**外部依存の DL / 取得を追加・変更している**」ことであって、`.github/workflows/**` や `scripts/**` を touch したこと自体ではない。workflow ファイルを触っていても外部依存の取得が無ければ**非該当**。非該当と判定したら Step 6 に `外部依存規約: 非該当 (理由: 本 PR に外部依存の DL / 取得なし)` を 1 行記録する (§「規約・ガード導入の 3 点セット」②)。
 
 - 外部依存 (Python / npm / cargo / OS binary tarball 等) の DL URL が **immutable** か (`master` / `main` / `latest` / `raw HEAD` を含まない)
 - [`docs/l2-workflow.md` §外部依存規約](../../../docs/l2-workflow.md#外部依存規約-649651703721-教訓) §受け入れ可能なソース / §禁止パターン に沿うか
