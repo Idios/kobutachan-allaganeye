@@ -443,7 +443,7 @@ checker (`.github/scripts/check-pr-checklist.js`) は GitHub のレンダリン�
 - **以下は既知の false-green として残っている** (#967 で計測済み、いずれも「GitHub 上には未消化 checkbox が見えるのに gate は通る」形):
   - 折り返し行 (lazy continuation) の直後に 4 space 入れ子の項目を置く形
   - heading text の先頭に絵文字などが付く形 (`#### ✅ Self-Test Report`) — prefix 一致に落ちる
-  - list marker の直後で改行し box を次行に置く形 (`-` 改行 `  [ ] ...`)
+  - list marker の直後で改行し box を次行の先頭 (インデント付き) に置く形
 
 同じ集合を `.github/scripts/check-pr-checklist.js` 冒頭のコメントにも記録している (doc だけに置くと次の実装者に届かないため)。期待値の決め方と再現材料は #967 / PR #970 の renderer 突合表 (`gh api markdown` の `aria-label="Incomplete task"` 個数と checker の counting を突き合わせたもの) を参照。**新しい角を見つけたら推測で直さず、まず renderer に通して期待値を決めること。**
 
