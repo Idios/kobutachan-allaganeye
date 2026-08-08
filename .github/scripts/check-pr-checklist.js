@@ -25,8 +25,11 @@
 // この gate が見ていない / 近似している集合 (docs/l2-workflow.md §「Self-Test Report 規約」と同内容。
 // doc だけに置くと次の実装者に届かないため両方に記録する):
 //
-// - **節と項目の存在自体は強制しない**。対象節を書かない / 改名する / 項目を plain bullet に落とすと
-//   job は通る。つまりこれは**自己申告 gate**であり、証跡ゼロでも green になる
+// - **節と項目の存在は強制される (fail-closed、#967 修正方針 6)**。`Self-Test Report` 節が認識できない、
+//   または節内に checkbox が 1 件も無い場合は skip せず `core.setFailed` で落とす。heading 形式の
+//   認識漏れ (bold 疑似見出し / 全角空白区切り / setext / 絵文字前置 / 改名 / plain bullet 化) は
+//   すべて red 側に倒れる。bot 作成 PR (`user.type === "Bot"`) だけは存在要求を skip する。
+//   `受け入れ条件` 節は実在本文の 22/31 が完全一致 heading を持たないため**必須にしていない**
 // - bold 疑似見出しや全角空白区切りの見出しは GitHub 側でも heading にならないため上記と同じ扱い
 // - インデント 4 以上の解釈は「開いている list の最も浅いインデント」で近似する。list item の
 //   content indent を超える深い入れ子 (6-8 space 等) は GitHub が code とするのに数える (false-red)
@@ -56,9 +59,9 @@
  * `### Iron Law 1: 受け入れ条件検証` のような prefix/suffix 付き heading は完全一致側で弾かれる
  * (D9 の blast radius: Iron Law 1/3/4 群と関連ドキュメント群は gate 対象外のまま)。
  */
-const REQUIRED_SECTION_HEADINGS = [
-  /^(受け入れ条件|acceptance\s+criteria)\s*$/i,
-  /^self[-\s]?test\s+report\b/i,
+const REQUIRED_SECTION_PATTERNS = [
+  { kind: 'acceptance', re: /^(受け入れ条件|acceptance\s+criteria)\s*$/i },
+  { kind: 'selfTest', re: /^self[-\s]?test\s+report\b/i },
 ];
 
 /** blockquote prefix (`> ` の連なり)。GitHub は引用内の heading / task item も普通に描画する。 */
@@ -220,8 +223,10 @@ function stripInlineComments(content) {
 function scanRequiredSections(body) {
   const lines = String(body).split(/\r?\n/);
 
-  let activeLevel = 0; // 0 = 対象 section の外 / >0 = 収集中の section の heading level
+  const sectionStack = []; // 対象節の入れ子を保持する ({ level, kind })。入れ子が閉じたら外側へ復帰する
   let found = false;
+  let selfTestFound = false; // Self-Test Report 節が存在したか (fail-closed の判定に使う)
+  let selfTestItems = 0; // Self-Test Report 節内の checkbox 件数 (0 件も red にする)
   let unchecked = 0;
   let checked = 0;
 
@@ -334,7 +339,19 @@ function scanRequiredSections(body) {
     const atx = ATX_HEADING_RE.exec(content);
     if (atx) {
       const text = normalizeHeadingText((atx[2] || '').replace(ATX_CLOSING_HASHES_RE, ''));
-      ({ activeLevel, found } = enterHeading(text, atx[1].length, activeLevel, found));
+      const level = atx[1].length;
+      // 同レベル以下の heading に到達した節は閉じる。stack なので**入れ子が閉じたら外側へ復帰**する
+      // (入れ子の対象節を親に吸収すると selfTestFound が立たず false-red になり、逆に単純に
+      //  置き換えると入れ子の後で外側の節に戻れず数え落ちる。Codex adversarial-review [medium])
+      while (sectionStack.length && level <= sectionStack[sectionStack.length - 1].level) {
+        sectionStack.pop();
+      }
+      const hit = REQUIRED_SECTION_PATTERNS.find((pattern) => pattern.re.test(text));
+      if (hit) {
+        sectionStack.push({ level, kind: hit.kind });
+        found = true;
+        if (hit.kind === 'selfTest') selfTestFound = true;
+      }
       if (!inListContext) lastListIndent = null;
       continue;
     }
@@ -346,9 +363,14 @@ function scanRequiredSections(body) {
       // 扱いで落ちる (GitHub 上に見える未消化項目を落とす実測 regression)。
       lastListIndent = lastListIndent === null ? indent : Math.min(lastListIndent, indent);
       const task = TASK_ITEM_RE.exec(content);
-      if (task && activeLevel) {
+      if (task && sectionStack.length) {
         if (/[xX]/.test(task[1])) checked += 1;
         else unchecked += 1;
+        // Self-Test 節の**子孫**にある項目も Self-Test の項目として数える。先頭フレームだけで
+        // 判定すると、`## Self-Test Report` 配下に `### Acceptance criteria` を入れ子にした本文で
+        // 件数が 0 になり、全部 [x] なのに fail-closed が red にする false-red が出る
+        // (Codex adversarial-review round 2 [medium]、renderer 実測で確認)。
+        if (sectionStack.some((frame) => frame.kind === 'selfTest')) selfTestItems += 1;
       }
       continue;
     }
@@ -357,19 +379,7 @@ function scanRequiredSections(body) {
     if (!inListContext) lastListIndent = null;
   }
 
-  return { unchecked, checked, found };
-}
-
-/** heading に到達したときの section 状態遷移。 */
-function enterHeading(text, level, activeLevel, found) {
-  // 同レベル以下の heading に到達したら現在の section は終わり
-  let nextActive = activeLevel && level <= activeLevel ? 0 : activeLevel;
-  let nextFound = found;
-  if (!nextActive && REQUIRED_SECTION_HEADINGS.some((re) => re.test(text))) {
-    nextActive = level;
-    nextFound = true;
-  }
-  return { activeLevel: nextActive, found: nextFound };
+  return { unchecked, checked, found, selfTestFound, selfTestItems };
 }
 
 /**
@@ -378,21 +388,26 @@ function enterHeading(text, level, activeLevel, found) {
  * 参照があるため #936 の scope 拡大後も維持している。
  */
 function countAcceptanceCriteriaCheckboxes(body) {
-  const { unchecked, checked, found } = scanRequiredSections(body);
-  return { unchecked, checked, hasAnySection: found };
+  const { unchecked, checked, found, selfTestFound, selfTestItems } =
+    scanRequiredSections(body);
+  return {
+    unchecked,
+    checked,
+    hasAnySection: found,
+    hasSelfTestSection: selfTestFound,
+    selfTestItems,
+  };
 }
 
 // async は actions/github-script@v7 caller (`await checker({github, context, core})`) との
 // 互換のため維持。内部に await はないが、yml 側 `await` を可能にするため Promise 返却が必要。
 async function checkPrChecklist({ github, context, core }) {
-  const body = context.payload.pull_request.body || '';
-  const { unchecked, checked, hasAnySection } = countAcceptanceCriteriaCheckboxes(body);
-  if (!hasAnySection) {
-    core.info(
-      'No `受け入れ条件` / `Acceptance criteria` / `Self-Test Report` section found, skipping.'
-    );
-    return;
-  }
+  const pr = context.payload.pull_request;
+  const body = pr.body || '';
+  const isBot = Boolean(pr.user && pr.user.type === 'Bot');
+  const { unchecked, checked, hasSelfTestSection, selfTestItems } =
+    countAcceptanceCriteriaCheckboxes(body);
+
   if (unchecked > 0) {
     core.setFailed(
       `PR has ${unchecked} unchecked item(s) in \`受け入れ条件\` / \`Acceptance criteria\` / \`Self-Test Report\` section(s). ` +
@@ -401,6 +416,33 @@ async function checkPrChecklist({ github, context, core }) {
     );
     return;
   }
+
+  // fail-closed (#967 修正方針 6): 節が認識できない / 項目が 1 件も無い場合は skip せず落とす。
+  // heading 形式の認識漏れ (絵文字前置 / bold 疑似見出し / 全角空白区切り / setext / 改名) は
+  // 従来ここで silent pass になっており、gate が黙って無効化される false-green の温床だった。
+  //
+  // **bot 例外は「節が存在しない」場合だけに限る。** 2 条件を 1 つの分岐にまとめると、節が
+  // 認識できているのに項目ゼロという状態まで bot がすり抜ける (Codex adversarial-review [high])。
+  if (!hasSelfTestSection && isBot) {
+    // bot 作成 PR (dependabot 等) に template 遵守は求められない。未消化 checkbox があれば
+    // 上の分岐で既に落ちているので、ここで skip しても gate は弱くならない。
+    core.info(`Bot-authored PR (${pr.user.login}): skipping Self-Test Report presence check.`);
+    return;
+  }
+  if (!hasSelfTestSection || selfTestItems === 0) {
+    const detail = !hasSelfTestSection
+      ? 'No `Self-Test Report` section was recognized in the PR body.'
+      : 'The `Self-Test Report` section contains no checkbox items.';
+    core.setFailed(
+      `${detail} ` +
+        'PR 本文に `#### Self-Test Report ...` 節を置き、実行した自動チェックを `- [x] ...` で列挙してください。 ' +
+        '認識される形: ATX heading (`#` 1-6 個 + ASCII space/tab)、0-3 space インデント、blockquote 内、閉じ ATX。 ' +
+        '認識されない形: bold 疑似見出し (`**Self-Test Report**`)、`#` の直後が全角空白、setext (下線 `---`)、heading 先頭に絵文字などの前置文字。 ' +
+        '詳細は docs/l2-workflow.md §「Self-Test Report 規約」を参照。'
+    );
+    return;
+  }
+
   core.info(`All ${checked} required checklist item(s) are checked.`);
 }
 
