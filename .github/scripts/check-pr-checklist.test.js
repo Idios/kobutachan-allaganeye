@@ -224,6 +224,24 @@ test('#967 false-red: 閉じ fence の後ろに文字がある行は fence を�
   assert.equal(result.unchecked, 0);
 });
 
+test('#967 false-green: 行中で開いた HTML コメントは後続行を飲み込まない', () => {
+  // 行頭の `<!--` は HTML block を開始するが、**行中**の `<!--` は inline HTML であり
+  // 後続行のブロック構造 (list item) を飲み込まない。GitHub は 2 行目を
+  // Incomplete task として描画する (renderer 実測: Completed 2 / Incomplete 1)。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n- [x] 済み <!-- note\n- [ ] コメント継続中に見える項目\n-->\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 1);
+  assert.equal(result.checked, 2);
+});
+
+test('#967: hash のみの兄弟見出しは節を閉じる', () => {
+  // `####` 単独も CommonMark では heading (GitHub 実測: 空の <h4>)。同レベルなので
+  // Self-Test 節を閉じ、後続の未消化項目は gate 対象外になる。
+  const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n####\n\n- [ ] 節の外の項目\n`;
+  const result = countAcceptanceCriteriaCheckboxes(body);
+  assert.equal(result.unchecked, 0);
+});
+
 test('#967 false-green: HTML コメント内の孤立 fence が節を消さない', () => {
   // 2 段 replace (fence 除去 → コメント除去) では、コメント内の ``` が後続の実 code block と
   // ペアリングして間の節を丸ごと削除していた (lexer desync)。

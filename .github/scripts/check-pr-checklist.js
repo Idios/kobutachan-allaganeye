@@ -187,10 +187,13 @@ function scanRequiredSections(body) {
       continue;
     }
 
-    // 4. 行中の閉じたコメントは除去 (`- [x] item <!-- note -->` 等)
-    const stripped = stripInlineComments(content);
-    content = stripped.content;
-    if (stripped.openComment) inComment = true;
+    // 4. 行中の閉じたコメントは除去 (`- [x] item <!-- note -->` 等)。
+    //    **行中で開いたまま閉じないコメントは後続行を飲み込まない** — 行頭 `<!--` は HTML block を
+    //    開始するが、行中の `<!--` は inline HTML なので次行の list item 等のブロック構造は
+    //    そのまま描画される (renderer 実測: `- [x] a <!-- note` の次行の `- [ ] b` は
+    //    Incomplete task として見える)。ここで inComment を立てると可視の項目を読み飛ばす
+    //    false-green になる。
+    content = stripInlineComments(content).content;
 
     if (content.trim() === '') {
       paragraphCandidate = null;
