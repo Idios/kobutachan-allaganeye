@@ -307,6 +307,8 @@ fix: total_assets=0 のとき誤フォールバックする不具合を修正 (#
 
 Issue のスコープラベル (`l2a-gui`, `l2b-installer` 等) と優先度で作業対象を特定する。
 
+> **triage / roadmap 策定の入力は open issue だけではない (Refs #870)**: release triage や roadmap 更新で作業対象を洗い出すときは、**open issue に加えて (2) 監査 spec の未起票表・棚卸し表 (3) 直近 close issue の後継 issue 実在確認 (4) docs の「別 issue」「follow-up」「削除予定」宣言のうち実在 issue 番号を伴わないもの** の計 4 系統を入力に含める。実行コマンドと根拠は [`docs/l2-workflow.md` §「triage / roadmap 策定時の入力 4 系統」](l2-workflow.md) を参照。**本節 (ライフサイクル = 1 件ごとの状態遷移) と 4 系統 (台帳全体の総点検) は別軸**であり、本節の運用を守っていても台帳外の残タスクは漏れる (2026-07-06 sweep で 13 件を実証)。
+
 ### コメント確認原則
 
 issue の状態を判断する前に、**必ずコメント全文を確認する**（`gh issue view <番号> --comments`）。ボディだけで状態を判断してはならない。コメントには着手宣言、完了報告、テスト結果など、ボディに反映されていない最新情報が含まれる。

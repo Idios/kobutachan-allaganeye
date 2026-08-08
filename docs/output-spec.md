@@ -198,6 +198,28 @@ Metadata: <metadata.json path>
 
 出力例を変更する PR は本マトリクスのセルに変化が無くても、該当 docs 節の整合性を必ず目視確認する (再発防止: PR #343 系での「docs 出力例なし → 整合性検証が走らない」問題への対応)。
 
+## ユーザーに提示するパスの契約 (Refs #935 P2-4)
+
+**ユーザーに提示するパス (完了行 / `--json` / GUI) は絶対パスで出す。** `-o` に渡された相対パス・ドライブ相対パスをそのまま提示してはならない。
+
+| 提示先 | 形式 | 実装 |
+| --- | --- | --- |
+| `--json` の `output_path` | **絶対パス + POSIX 区切り** (`/`) | `Path(os.path.abspath(output_path)).as_posix()` (`allaganeye/export/schema.py` の `ProgressEvent.result`) |
+| 完了行 `[OK] match NNN -> <path>` | **絶対パス + プラットフォーム固有の区切り** (Windows は `\`) | 上記 payload を `Path(str(...))` で再構成 (`allaganeye/commands/export.py` / `allaganeye/commands/minimap.py`) |
+| GUI | 上記 `--json` payload をそのまま受け取る | Rust 側は `String` として透過 |
+
+**規約の要点**:
+
+- **絶対化には `os.path.abspath` を使い、`Path.resolve()` は使わない。** `abspath` は正規化のみを行い **symlink を解決しない**ため、報告されるパスが「ffmpeg が実際に書いた場所」と一致する。`resolve()` は symlink 先を返すので、ユーザーが指定した場所と表示が食い違う
+- `--json` が POSIX 区切りなのは GUI (wire protocol) 互換のため。人間向けの完了行は**シェル / エクスプローラへそのまま貼れる形**にするため OS ネイティブ区切りにする。**この 2 つが異なるのは意図的**である
+- ドライブ相対パス (`E:out` のような Windows 固有形。シェルの quote 落ちで発生する) は、絶対化によって実際の解決先が可視化される。**これが本規約の主目的**である
+
+> **根拠 (#930)**: `-o` に渡された相対パスをそのまま表示していたため、shell の quote 落ちで `E:\royalstraightflesh\videos\20260127` が `E:royalstraightfleshvideos20260127` (ドライブ相対) に化けた際、**実際の書き出し先が読み取れなかった**。quote 落ち自体はユーザーの入力ミスだが、表示がそれを可視化できていなかったことが欠陥である。
+
+**GUI プレビューとの非対称 (既知・未解消)**: GUI の name-pattern プレビュー (`gui/src/utils/filename.ts` の `formatMatchFilename`) は pattern を展開するだけで、CLI 側 (`allaganeye/export/pool.py`) が持つ 4 つの sandbox 検証 (出力先外への脱出 / source 上書き / Windows 不正名 / 出力衝突) を**持たない**。そのため GUI 上では「書き出し時に exit 5 で拒否される名前」がプレビューとして正常に見える。**本節の契約は CLI 出力に対するものであり、GUI プレビューの検証欠落は #964 で追跡する** (CLI 側が exit 5 で拒否するためデータ損失は起きず、失敗を早く知れない UX の問題)。
+
+**機械検査**: 本契約が実装から乖離していないことの自動確認は #934 で導入する。**本節は契約の記述のみを持つ。**
+
 ## export コマンド出力
 
 関連: `export` コマンドの構文・オプション・wire protocol の詳細は [`docs/cli-spec.md` §「export コマンド」](cli-spec.md) を参照。

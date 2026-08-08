@@ -172,17 +172,64 @@ gh pr list --search "<元issue#>" --state all \
 # Step 0-4 通過後、PR 作成直前に Codex GPT-5.4 で adversarial pass。
 # invocation path は 3-tier (#795、下記 §Step 5 の invocation path 参照)。
 # default (tier 1) は companion script 直接呼び出し:
-#   CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<version>" \
+#   # <version> は placeholder。実行直前に ls で実パスを解決してから代入する (#856)
+#   ls "$HOME/.claude/plugins/cache/openai-codex/codex/"
+#   # 代入は必ず「独立した文」で行う。`VAR=... node "$VAR/..."` の 1 行結合形は
+#   # $VAR が代入前に展開されて空になり、MSYS が裸の /scripts/... を
+#   # C:\Program Files\Git\scripts\... へ書き換えて MODULE_NOT_FOUND になる (実測)
+#   export CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<解決した version>"
 #   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review \
 #     [--wait|--background] --base <base> "<focus 文字列 (ASCII)>"
-# focus 文字列に project 固有焦点を渡す:
-#   - Iron Law 3 (scope creep) を疑え。touched files が元 issue の宣言 scope と整合するか
-#   - ffmpeg / GPU fallback / encoding boundary を疑え (F1 / F4 再発を阻止)
-#   - 同 issue 過去 PR の root cause が今回も残っていないか (M5 と協調)
+#   # 注意: `... | tee log` で受けると tee の exit code が返るため Codex の失敗を
+#   #       見逃す。rc は ${PIPESTATUS[0]} で確認する (本 PR で実際に見逃した)
+# focus 文字列は固定の例示から選ぶのではなく本 PR の diff から導出する。
+# 手順は下記 §「Step 5 の focus 導出手順」 に従う (省略不可)。
 # 出力の finding は Claude が triage し (A) PR 内修正 / (B)(C) handoff のいずれかへ振り分け。
 # Codex 自身に commit させない (M3 整合)。Codex CLI が fail した場合は
 # `docs/l2-workflow.md` §Codex fallback (L-β β-5 で追加) に従う (tier 2)。
 ```
+
+#### Step 5 の focus 導出手順 (Refs #935 P2-1)
+
+focus は**固定の例示リストから選ぶのではなく、本 PR の diff から導出する**。過去の失敗例を並べた固定リストは「その数種類だけを見る」検出器になり、新しい欠陥クラスに対しては検出力を持たない。PR #930 の要因分析がこの点を実証している — 「security」「入力境界」という抽象語の観点は既に skill に存在したうえで、`/iterate-review` 6 ラウンド (30 findings) を含む 5 層のレビューが不可逆データ損失を 1 件も検出できなかった。**検出力は具体列挙にのみ宿る。**
+
+**focus に必ず含める 1 項目**: 本 PR が新設・変更した**外部入力境界**と、そこから到達する**不可逆操作**の対応ペア。
+
+以下のコマンドは **`CODE` に code path だけを入れて実行する** (doc を含めると、本節が grep パターン自身を含むため self-hit する):
+
+```bash
+CODE="allaganeye/** gui/src/** gui/src-tauri/** scripts/** .github/scripts/**"
+```
+
+1. **外部入力境界を列挙する** (CLI option / metadata field / GUI 自由入力 / 環境変数):
+
+   ```bash
+   git diff origin/<base>...HEAD -U0 -- $CODE \
+     | grep -nE '^\+.*(typer\.Option|Annotated\[|os\.environ|std::env::|process\.env|invoke\()'
+   git diff --name-only origin/<base>...HEAD \
+     | grep -E 'schemas/.*\.json|metadata_types\.py|gui/src/screens/.*\.tsx'
+   ```
+
+2. **各境界から到達する不可逆操作を列挙する** (上書き / 削除 / truncate)。**2a と 2b の両方を実行する**:
+
+   ```bash
+   # 2a. 直接の不可逆書込 (Python / Rust の write API)
+   git diff origin/<base>...HEAD -U0 -- $CODE \
+     | grep -nE '^\+.*(open\([^)]*["'"'"']w|write_text|write_bytes|unlink|rmtree|os\.remove|truncate|os\.replace|Remove-Item|fs::remove|fs::write)'
+
+   # 2b. subprocess 経由の書込 (出力先パスの決定 + プロセス起動)
+   git diff origin/<base>...HEAD -U0 -- $CODE \
+     | grep -nE '^\+.*(subprocess\.(run|Popen)|Command::new|output_path|output_dir|out_path|_output_path|-y\b)'
+   ```
+
+   > **2b を省略すると本規約は機能しない (実測)**: 本 codebase の不可逆書込の**大半は ffmpeg subprocess が行う**ため、Python/Rust の write API を見る 2a だけでは捕まらない。#930 の diff に対する実測値は **2a = 0 hit (production code。hit するのはコメント 2 行のみ) / 2b = 30 hit**。つまり 2a だけでは、本規約が防ごうとしている当の欠陥 (`--name-pattern` が決めた出力先へ ffmpeg が書く) を**検出できない**。
+
+3. **(1) × (2) の到達ペアを ASCII 1 文ずつで focus に書く。** 「どの入力の値が、どの書込先の決定に使われるか」の形にする (例: `--name-pattern value decides the export output path; verify it cannot escape -o`)。
+4. **ペアがゼロなら、ゼロであることを focus に明記する** (`no new external input boundary reaches an irreversible write in this diff`)。無言の省略は「導出してゼロだった」と「導出しなかった」を事後に区別できなくする (§「規約・ガード導入の 3 点セット」②)。
+
+> **なぜ例示リストを残さないか**: 固定 3 項目 (Iron Law 3 / encoding / GPU fallback) を残したまま 4 つ目として本手順を足すと、実行者は列挙が容易な固定項目だけを埋めて終わり、「過去の失敗リストへの最適化」がそのまま残る。#935 P2-1 が要求するのは**置換**であって追加ではない。本手順で導出した結果として encoding / GPU fallback が挙がるのは正しい (導出の産物であり、事前の固定リストではない)。
+
+同じトリガー語 (「本 PR が新設した外部入力境界と、それが到達する不可逆操作」) で `CLAUDE.md` §「destructive write boundary audit checklist」 が発火する。Step 5 の focus 導出と CLAUDE.md の audit 4 問は**対**であり、片方だけを実施したら他方も実施する。
 
 #### Step 5 の invocation path (3-tier、#795)
 
@@ -336,6 +383,20 @@ options:
 - **A の場合**: ユーザー (Idios) がコマンド実行 → 結果サマリ (PASS/FAIL + 末尾 30 行) を AskUserQuestion 回答に貼る → Self-Test Report の `### 実機検証 (machine-unverifiable)` 節に plain bullet で「PR 提出時点で実施済 (環境情報 + 結果概要)」と書く
 - **B の場合**: Self-Test Report の `### 実機検証 (machine-unverifiable)` 節に plain bullet で「PR 提出時点では未実施 / レビュー時に実機確認」と明記。`Self-Test Report 規約` (本 doc §) により plain bullet は CI ゲートで block されない
 - **C の場合**: PR 作成自体を中止 (Iron Law 6 違反を避ける)
+
+### 実施中に観測した想定外の挙動 (Refs #935 P2-3)
+
+**手動ゲート実施中に観測した想定外の挙動は、そのゲートの pass / fail 判定と独立に必ず記録する。説明がつくまで当該ゲートを `pass` と記録しない。**
+
+- **記録先**: Self-Test Report の `### 実機検証 (machine-unverifiable)` 節。plain bullet で `- 観測: <挙動> / 説明: <ついた説明 または 未説明>` の形で書く
+- **「主目的は達成した」は pass の根拠にならない。** 観測された異常は主目的の成否とは**別の軸**である。両方を書く
+- 異常を別 issue へ切り離す判断自体は可 (Iron Law 3)。ただし**切り離した事実と切り離し先を同じ 1 行に残す**。記録のない切り離しは握り潰しと事後に区別できない
+- 未説明のまま PR を出す場合、当該ゲートは `pass` ではなく **`観測あり・未説明`** と記録する
+- **観測ゼロだったなら「観測ゼロ」と 1 行書く** (§「規約・ガード導入の 3 点セット」②)。無記載は「異常がなかった」と「記録しなかった」を区別できない
+
+**レビュー側の発火点**: [`/review-pr`](../.claude/skills/review-pr/SKILL.md) Step 5a の long-running / integration 検証観点が、実機検証の記録に `観測:` 行または「観測ゼロ」の記載があるかを確認する。未記載なら Step 5b トリアージ表へ計上する。
+
+> **なぜこの規約が要るか (PR #930 の経緯)**: 手動ゲート M1 (export 実機確認) で「出力パスの表示がおかしい」という異常は**実際に観測されていた**。しかし「export 自体は正常 (3/3 が NVENC で完走)」を根拠にゲートは pass と記録され、パス表示の件は別件として切り離された。後にパス処理を全経路 audit したところ、その表示異常と同じ根 (入力パスの解決規則) からデータ損失を含む blocker が 3 件見つかった。**異常は観測されていた — 記録されなかっただけである。** なお本件は v0.3.0 タグ打ち**前**に `release/v0.3.0` へ merge されており、公開リリースには載っていない。「観測されたが pass と記録された」という事実こそが本規約の根拠である。
 
 ### 注意
 
@@ -531,6 +592,48 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 
 ユーザーが「次に何する?」と聞いた場合、Claude は上記を実施し `AskUserQuestion` で候補提示する。
 
+### triage / roadmap 策定時の入力 4 系統 (Refs #870)
+
+**上記 1-3 は「次の 1 件を選ぶ」手順であって、triage / roadmap 策定の入力ではない。** release triage や roadmap 更新で作業対象を洗い出すときは、以下の **4 系統すべて**を入力に含める。
+
+> **なぜ open issue だけでは足りないか**: 2026-06-29 の v0.3.0 roadmap triage は「open 48 件を triage」= 入力が open issue のみだった。この方式では**台帳に載っていない残タスクが構造的に漏れる**。2026-07-06 の sweep で実際に 13 件が漏れており #860-#869 ほかとして起票された。漏れた記録場所が下表 (2)-(4) の 3 系統である。
+
+| 系統 | 入力 | 漏れた実例 (2026-07-06 sweep) |
+| --- | --- | --- |
+| (1) | open issues | — (現行どおり) |
+| (2) | 直近監査 spec の未起票表・棚卸し表の**未決着行** | `2026-06-10-audit-remediation-design.md` Wave 3 表 (wmic / hwaccel / typer pin がいずれも未起票だった) |
+| (3) | 直近 close issue (NOT_PLANNED / 残タスク宣言付き COMPLETED) の**後継 issue 実在確認** | #327 (AUDIO_FROZEN 解凍条件) / #762 (decode hwaccel 後継) |
+| (4) | docs の「別 issue」「follow-up」「削除予定」宣言のうち**実在 issue 番号を伴わないもの** | `docs/detection-map.md` の「legacy fps filter path 別 issue で撤去」(当時は行き先 issue が不在。現 #864) |
+
+**実行コマンド** (4 系統とも実行し、hit を triage 表へ転記する):
+
+```bash
+# (1) open issues
+gh issue list --state open --limit 200 --json number,title,labels
+
+# (2) 監査 spec の未起票表・棚卸し表 -- hit 行の「対応」列が未決着なら triage 入力
+grep -rniE '未起票|棚卸し|未決着' docs/superpowers/specs/*.md
+
+# (3a) NOT_PLANNED で閉じた issue -- 後継が要るのに不在でないか
+gh issue list --state closed --limit 60 --json number,title,stateReason \
+  --jq '.[] | select(.stateReason=="NOT_PLANNED") | "\(.number)\t\(.title)"'
+
+# (3b) COMPLETED だが本文に残タスク宣言がある issue -- 宣言先の実在を確認
+gh issue list --state closed --limit 60 --json number,title,body \
+  --jq '.[] | select(.body | test("別 issue|follow-?up|後継|残タスク")) | "\(.number)\t\(.title)"'
+
+# (4) docs の先送り宣言のうち、同一行に実在 issue 番号 (#NNN) を伴わないもの
+#     末尾の grep -v は本コマンド自身が本節にマッチする self-hit を落とすため
+grep -rnE '(別 ?issue|別途 ?issue|後続 ?issue|follow-?up issue)[^#]*(で|にて)(撤去|削除|対応|追跡|実装|検討|移行)|(削除|撤去|廃止)予定|(今後|将来)実装|追加予定' \
+  docs/*.md CLAUDE.md README.md | grep -vE '#[0-9]{3,}' | grep -v 'grep -rnE'
+```
+
+**hit の扱い**: (2)-(4) の hit は**違反ではなく triage 候補**である。各 hit を「実在 issue を伴う宣言か / 単なる process 記述か / 起票漏れか」で仕分け、起票漏れのみ [`/create-task`](../.claude/skills/create-task/SKILL.md) へ回す。特に (4) は process を説明する散文 (「(B) 別 issue 起票」等) も拾うため、**仕分け前提の粗い網**であることを承知して使う。網を細くして取りこぼすより、粗く拾って仕分ける方を選んでいる。
+
+**非実施時の記録義務**: 4 系統のうち実施しなかったものがあれば、triage 結果に `triage 入力 (N): 未実施 (理由: <1 行>)` を残す (§「規約・ガード導入の 3 点セット」②)。無記載は「実施して 0 件」と「実施しなかった」を区別できない。
+
+**close 時の点検との関係**: #817 で `/close-issue` と `/release` に入れた追跡切れ防止チェックは **close 時点の点検**、本節は **triage 時点の総点検**であり相補関係にある。片方があれば他方が不要になるものではない (close 時に見落とした宣言を triage が拾い、triage の後に閉じた issue を close 時チェックが拾う)。
+
 ## 計画フェーズの運用
 
 実装着手前の曖昧点洗い出しを標準化する。Claude Code の plan モード (ExitPlanMode ツール) を活用し、以下を必ず出力する:
@@ -615,6 +718,48 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 - [`scripts/codegen/generate.py`](../scripts/codegen/generate.py) — orchestrator
 - [`scripts/codegen/README.md`](../scripts/codegen/README.md) — 詳細手順とトラブルシューティング
 - [`gui/scripts/generate-ts.mjs`](../gui/scripts/generate-ts.mjs) — Node generator (TS)
+
+## 規約・ガード導入の 3 点セット (G1-1)
+
+規約 / ガード / チェックを**新設**するときは次の 3 点を必ず揃える。1 つでも欠けると「導入したが 1 度も赤を出していない機構」になり、規約だけが増えて風化する。
+
+> **なぜ 1 本の条文にするか**: #918 item3 / #912 / #910 / #658 / #876 / #934 の **6 件が同じ要求を別々に書いていた**。「新ガードは発火実証まで」という同一の規律が issue ごとに書き直されていたため本節へ集約する。以降の PR / issue は個別に書き直さず**本節を参照する**。
+
+1. **発火点をファイルと行で指定する** — skill step / CI job / hook のいずれかを、**ファイル名と行番号**で書く。**「doc に書いた」だけでは発火点にならない。** doc は読まれるかもしれない散文であって、実行される機構ではない
+2. **非実施時の 1 行記録義務** — 実施しなかった場合に理由を 1 行残す義務を課す。これがないと「意図的に skip したのか / 忘れたのか」が事後追跡できない (Iron Law 5 整合)。既存 reference は [`.claude/skills/review-pr/SKILL.md`](../.claude/skills/review-pr/SKILL.md) §「起動条件不該当時の明示記録」 の `Codex review 起動: 非対象 (理由: ...)` 形式
+3. **発火側の red 実証** — 違反を**一時注入**して **exit code の生値**で発火を観測し、その観測を pin test として同梱する。「テストが green」は機構が動いた証拠にならない (no-op でも green になる)
+
+### なぜ ③ が最も落ちやすいか
+
+保護機構は**不発でも green のまま**なので、CI が no-op を mask する。実例: `pytest` 9 では `addopts` 内の `--strict-markers` が silent no-op になり、ini option `strict_markers = true` が正だった (PR #819 R4→R5 で発覚)。「追加した」だけでは動作証拠にならない。
+
+**red 実証の最小手順**:
+
+```bash
+# 1. 違反を一時注入する (checkbox を 1 件 unchecked に戻す / 偽の日付を入れる / 宣言を 1 件抜く 等)
+# 2. ゲートを直接起動し exit code を生値で観測する (|| true や -q で握り潰さない)
+node .github/scripts/<gate>.js <fixture>; echo "exit=$?"   # 非ゼロを期待
+# 3. 注入を戻して exit 0 に復帰することを確認する (false-red でないことの確認)
+# 4. 1-3 を pin test 化して同梱する (次の改修で silent に no-op へ戻るのを防ぐ)
+```
+
+### 参照契機 (誰がいつ引くか)
+
+| 契機 | 何をするか |
+| --- | --- |
+| [`/review-pr`](../.claude/skills/review-pr/SKILL.md) Step 5 | PR が CI job / hook / skill step を**新設**している場合、本節の 3 点に照らして逐条検証し、欠けていれば Step 5b トリアージ表に計上する |
+| [`/create-task`](../.claude/skills/create-task/SKILL.md) §ガード / 規約 / チェックを追加する issue の受け入れ条件 | 「ガードを追加する」issue を起票する際、`## 受け入れ条件` に 3 点セットを反映する |
+| [`CLAUDE.md`](../CLAUDE.md) §開発ワークフロー | 発見可能性の確保のため 1 行リンクを置く |
+| `superpowers:brainstorming` | **規律のみ (コード上の発火点ではない)。** plugin skill は本 repo に存在せず編集できないため、再発防止機構を設計する creative work で本節を引くのは実行者の規律に依存する。**この行を「実装済みの発火点」と数えない** |
+
+### Red Flags
+
+| 浮かんだ思考 | 実態 |
+| --- | --- |
+| 「doc に規約を書いたから導入完了」 | ①未達。doc は発火点ではない。skill step / CI job / hook のどれに載るかを行で示す |
+| 「テストが green だから機構は動いている」 | ③未達。no-op でも green になる。違反を注入して非ゼロ exit を観測するまで動作証拠はない |
+| 「実施しなかったが自明なので記録は不要」 | ②未達。意図的な skip と失念が事後に区別できなくなる |
+| 「文章だけ足しておいて機械検査は次の PR で」 | 3 点セットは分割不可。①だけ先行させた規約は次の PR まで no-op で、その間に風化する |
 
 ## ルールと強制メカニズム
 
@@ -908,7 +1053,7 @@ if fallback_invoked:
 
 ### Fallback 実行時の必須記載 (Iron Law 5 整合)
 
-skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` Round summary comment) に以下を**必ず明示**:
+skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` **Final summary comment (Step 4)**) に以下を**必ず明示**:
 
 ```text
 > **Codex fallback notice**: 本 review は Codex CLI が <検出条件> で fail したため、
