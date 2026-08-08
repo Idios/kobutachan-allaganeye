@@ -78,6 +78,8 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 
 **内訳の確認 (割り付け漏れゼロの根拠):** v0.3.1 で作業する issue は **32 件**で、すべて PR-A1〜PR-D1 のいずれかに属する。残る 4 件の内訳は上記のとおり — close のみ 1 (#923) / 別 repo 転記 1 (#326) / deferred 2 (#951 #953)。合計 36 件。**「判断待ち」の未割り当ては 0 件。**
 
+> **PR-B3 マージ後の訂正 (2026-08-08、PR #966 実施後)**: 上記 36 件は Track 0 起票時点の母集団である。以降、実施の過程で **2 件が追加**された — **#964** (#935 P2-4 の GUI プレビュー sandbox 検証欠落を切り出し) / **#968** (パス契約が GUI では未達である事実を切り出し)。いずれも `deferred` (v0.3.1 範囲外) で本 release では作業しない。**v0.3.1 で作業する 32 件は変わらない。** 新規 issue が deferred で足された場合は本注記に追記し、母集団の数字は Track 0 時点の値として保持する (遡及書き換えをしない方針)。
+
 ---
 
 ## 同一ファイルを触る組 (同一 PR か直列化が必須)
@@ -242,6 +244,14 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 - Modify: `.claude/skills/review-pr/SKILL.md:266` / `eval/requirements.md:158` (I-2) — 「(Codex 用 focus 文字列を流用)」が tier 1 `codex-companion.mjs review` (focus positional を reject) と矛盾する点を解消 (#856 item4)
 - Modify: `docs/l2-workflow.md:524-532` §タスク発見 — triage 入力 **4 系統** を実行可能なコマンド付きで明文化 (#870)
 - Modify: `docs/issue-policy.md:306-` §7 — #870 の節へ相互参照
+
+> **実施後の訂正 (2026-08-08、PR #966 マージ後)**: 上記 Files に加えて次の 3 ファイルを Idios 承認のうえ touch した。
+>
+> - **`.claude/hooks/session-start.sh`** — #935 P2-1 が削除を求める固定 3 項目が**ここにも複製されていた** (毎セッション注入される最高頻度の発火点)。片方だけ直すと P2-1 が実質 no-op になる。かつ受け入れゲートの P-2 は**この hook 文言を評価するシナリオ P の条文**なので、P-2 だけ更新すると EPT が構造的に失敗する
+> - **`.claude/skills/create-task/SKILL.md`** — 下記 G1-1 の発火点を実在化するため (Codex adversarial-review の [high] 指摘)
+> - **`.claude/skills/review-pr/eval/reports/iter_935_review_gate_derivation.md`** (新規) — EPT report
+>
+> **spec §5.1 G1-1 の新節「規約・ガード導入の 3 点セット」も本 PR で消化した。** 本計画は当該節をどの PR にも割り付けていなかった (言及は上記「共通の約束事」と PR-C1 の説明のみで、節を作る担当が不在だった)。`docs/l2-workflow.md` を Wave 1 で PR-B3 が独占していたため、ここで新設するのが構造的に最も安全と判断した。発火点は `/review-pr` Step 5 / `/create-task` / `CLAUDE.md` の 3 経路を実在化している (`superpowers:brainstorming` は plugin skill で本 repo に存在せず編集できないため、発火点には数えない)。
 
 **#935 本文の事実誤認 2 件 (実装時に読み替える):**
 

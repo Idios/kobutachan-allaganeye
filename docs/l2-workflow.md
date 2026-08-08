@@ -229,7 +229,7 @@ CODE="allaganeye/** gui/src/** gui/src-tauri/** scripts/** .github/scripts/**"
 
 > **なぜ例示リストを残さないか**: 固定 3 項目 (Iron Law 3 / encoding / GPU fallback) を残したまま 4 つ目として本手順を足すと、実行者は列挙が容易な固定項目だけを埋めて終わり、「過去の失敗リストへの最適化」がそのまま残る。#935 P2-1 が要求するのは**置換**であって追加ではない。本手順で導出した結果として encoding / GPU fallback が挙がるのは正しい (導出の産物であり、事前の固定リストではない)。
 
-同じトリガー語 (「本 PR が新設した外部入力境界と、それが到達する不可逆操作」) で `CLAUDE.md` §「destructive write boundary audit checklist」 が発火する。Step 5 の focus 導出と CLAUDE.md の audit 4 問は**対**であり、片方だけを実施したら他方も実施する。
+同じトリガー語 (「本 PR が**新設・変更した**外部入力境界と、**そこから**到達する不可逆操作」) で `CLAUDE.md` §「destructive write boundary audit checklist」 が発火する。Step 5 の focus 導出と CLAUDE.md の audit 4 問は**対**であり、片方だけを実施したら他方も実施する。
 
 #### Step 5 の invocation path (3-tier、#795)
 
@@ -615,18 +615,23 @@ gh issue list --state open --limit 200 --json number,title,labels
 grep -rniE '未起票|棚卸し|未決着' docs/superpowers/specs/*.md
 
 # (3a) NOT_PLANNED で閉じた issue -- 後継が要るのに不在でないか
-gh issue list --state closed --limit 60 --json number,title,stateReason \
+#      --limit は必ず全 closed issue を覆う値にする。gh の並びは createdAt DESC で
+#      closedAt 順ではないため、窓を絞ると「古く作られて最近閉じた」issue が落ちる
+gh issue list --state closed --limit 400 --json number,title,stateReason \
   --jq '.[] | select(.stateReason=="NOT_PLANNED") | "\(.number)\t\(.title)"'
 
 # (3b) COMPLETED だが本文に残タスク宣言がある issue -- 宣言先の実在を確認
-gh issue list --state closed --limit 60 --json number,title,body \
-  --jq '.[] | select(.body | test("別 issue|follow-?up|後継|残タスク")) | "\(.number)\t\(.title)"'
+#      (3a) と二重計上しないよう COMPLETED に絞る
+gh issue list --state closed --limit 400 --json number,title,body,stateReason \
+  --jq '.[] | select(.stateReason=="COMPLETED") | select(.body | test("別 issue|follow-?up|後継|残タスク")) | "\(.number)\t\(.title)"'
 
-# (4) docs の先送り宣言のうち、同一行に実在 issue 番号 (#NNN) を伴わないもの
-#     末尾の grep -v は本コマンド自身が本節にマッチする self-hit を落とすため
+# (4) docs の先送り宣言を全件出す。末尾の grep -v は本コマンド自身が本節に
+#     マッチする self-hit を落とすためだけのもの
 grep -rnE '(別 ?issue|別途 ?issue|後続 ?issue|follow-?up issue)[^#]*(で|にて)(撤去|削除|対応|追跡|実装|検討|移行)|(削除|撤去|廃止)予定|(今後|将来)実装|追加予定' \
-  docs/*.md CLAUDE.md README.md | grep -vE '#[0-9]{3,}' | grep -v 'grep -rnE'
+  docs/*.md CLAUDE.md README.md | grep -v 'grep -rnE'
 ```
+
+> **(4) で `| grep -vE '#[0-9]{3,}'` による自動免除を使わないこと (Refs #966 の実測)**。「同一行に 3 桁の `#` があれば追跡済み」という判定は、**その `#` が当の先送りの追跡先とは限らない**ため leak を素通りさせる。実例: `docs/detection-map.md:61` は「#576 で新 path を default 化 … v0.3.x で**削除予定**」で、撤去の追跡先は #576 ではなく **#864**。無関係な #576 のせいで行ごと免除され、#870 が対象とする当の leak クラスを落としていた。**免除ありで 7 hit / 免除なしで 13 hit** — 差の 6 件を人が仕分ける方が、leak を見逃すより安い。各 hit は「行内の `#NNN` が本当にこの先送りを追跡しているか」を 1 件ずつ確認する。
 
 **hit の扱い**: (2)-(4) の hit は**違反ではなく triage 候補**である。各 hit を「実在 issue を伴う宣言か / 単なる process 記述か / 起票漏れか」で仕分け、起票漏れのみ [`/create-task`](../.claude/skills/create-task/SKILL.md) へ回す。特に (4) は process を説明する散文 (「(B) 別 issue 起票」等) も拾うため、**仕分け前提の粗い網**であることを承知して使う。網を細くして取りこぼすより、粗く拾って仕分ける方を選んでいる。
 
