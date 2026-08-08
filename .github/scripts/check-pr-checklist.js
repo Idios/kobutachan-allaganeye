@@ -22,14 +22,17 @@
 // require するだけの stdlib-only)。誤りの向きは **false-red 側に倒す** (黙って通す false-green より、
 // メッセージが見えて自己修正できる false-red のほうが安全)。
 //
-// この gate が見ていない / 近似している集合 (docs/l2-workflow.md §「Self-Test Report 規約」と同内容。
-// doc だけに置くと次の実装者に届かないため両方に記録する):
+// この gate が見ていない / 近似している集合の**要約**。
+// **完全な一覧と根拠数値は docs/l2-workflow.md §「Self-Test Report 規約」が SSoT** で、ここはその要約 +
+// ポインタである (doc だけに置くと次の実装者に届かないため要約を置くが、「同内容」と書くと片方だけ
+// 更新されたときに嘘になるので同一性は主張しない):
 //
 // - **節と項目の存在は強制される (fail-closed、#967 修正方針 6)**。`Self-Test Report` 節が認識できない、
 //   または節内に checkbox が 1 件も無い場合は skip せず `core.setFailed` で落とす。heading 形式の
 //   認識漏れ (bold 疑似見出し / 全角空白区切り / setext / 絵文字前置 / 改名 / plain bullet 化) は
 //   すべて red 側に倒れる。bot 作成 PR (`user.type === "Bot"`) だけは存在要求を skip する。
-//   `受け入れ条件` 節は実在本文の 22/31 が完全一致 heading を持たないため**必須にしていない**
+//   `受け入れ条件` 節は**必須にしていない** (直近 merged PR 200 本のうち完全一致 heading を持つのは
+//   16 本だけ = 184 本が suffix 形。必須化すると大量に red になる)
 // - bold 疑似見出しや全角空白区切りの見出しは GitHub 側でも heading にならないため上記と同じ扱い
 // - インデント 4 以上の解釈は「開いている list の最も浅いインデント」で近似する。list item の
 //   content indent を超える深い入れ子 (6-8 space 等) は GitHub が code とするのに数える (false-red)
@@ -41,6 +44,10 @@
 // - heading text は Unicode ハイフン類と NBSP 類のみ ASCII に畳む。link 化した heading
 //   (`## [受け入れ条件](#ac)`) は完全一致に落ちるため対象外
 // - 受け入れ条件節の heading は完全一致のため suffix 付きは対象外 (#936 Q5 (A) で凍結)
+// - **既知の false-green (節は認識されるので fail-closed では拾えない形)**: 折り返し行 (lazy
+//   continuation) の直後に 4 space 入れ子の項目を置く形 / 継続行を左端に流した形 / list item 配下に
+//   字下げした小見出しを置く形 / Self-Test 節を blockquote で引用しただけの本文。realism と
+//   既知の false-red も含めた完全な一覧は doc 側を参照
 // - **setext heading (`見出し` + `---` / `===`) は認識しない。** GitHub は setext を heading に
 //   するが、実測で「setext を使う本文は 31 本中 0 件 / `---` 区切りを含む本文は 3 件」であり、
 //   段落直後の `---` を setext と解釈すると**偽の heading が対象節を打ち切る false-green** が出る
