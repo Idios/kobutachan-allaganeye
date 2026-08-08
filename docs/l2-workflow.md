@@ -174,9 +174,14 @@ gh pr list --search "<元issue#>" --state all \
 # default (tier 1) は companion script 直接呼び出し:
 #   # <version> は placeholder。実行直前に ls で実パスを解決してから代入する (#856)
 #   ls "$HOME/.claude/plugins/cache/openai-codex/codex/"
-#   CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<解決した version>" \
+#   # 代入は必ず「独立した文」で行う。`VAR=... node "$VAR/..."` の 1 行結合形は
+#   # $VAR が代入前に展開されて空になり、MSYS が裸の /scripts/... を
+#   # C:\Program Files\Git\scripts\... へ書き換えて MODULE_NOT_FOUND になる (実測)
+#   export CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<解決した version>"
 #   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review \
 #     [--wait|--background] --base <base> "<focus 文字列 (ASCII)>"
+#   # 注意: `... | tee log` で受けると tee の exit code が返るため Codex の失敗を
+#   #       見逃す。rc は ${PIPESTATUS[0]} で確認する (本 PR で実際に見逃した)
 # focus 文字列は固定の例示から選ぶのではなく本 PR の diff から導出する。
 # 手順は下記 §「Step 5 の focus 導出手順」 に従う (省略不可)。
 # 出力の finding は Claude が triage し (A) PR 内修正 / (B)(C) handoff のいずれかへ振り分け。
@@ -190,21 +195,34 @@ focus は**固定の例示リストから選ぶのではなく、本 PR の diff
 
 **focus に必ず含める 1 項目**: 本 PR が新設・変更した**外部入力境界**と、そこから到達する**不可逆操作**の対応ペア。
 
+以下のコマンドは **`CODE` に code path だけを入れて実行する** (doc を含めると、本節が grep パターン自身を含むため self-hit する):
+
+```bash
+CODE="allaganeye/** gui/src/** gui/src-tauri/** scripts/** .github/scripts/**"
+```
+
 1. **外部入力境界を列挙する** (CLI option / metadata field / GUI 自由入力 / 環境変数):
 
    ```bash
-   git diff origin/<base>...HEAD -U0 \
+   git diff origin/<base>...HEAD -U0 -- $CODE \
      | grep -nE '^\+.*(typer\.Option|Annotated\[|os\.environ|std::env::|process\.env|invoke\()'
    git diff --name-only origin/<base>...HEAD \
      | grep -E 'schemas/.*\.json|metadata_types\.py|gui/src/screens/.*\.tsx'
    ```
 
-2. **各境界から到達する不可逆操作を列挙する** (上書き / 削除 / truncate):
+2. **各境界から到達する不可逆操作を列挙する** (上書き / 削除 / truncate)。**2a と 2b の両方を実行する**:
 
    ```bash
-   git diff origin/<base>...HEAD -U0 \
+   # 2a. 直接の不可逆書込 (Python / Rust の write API)
+   git diff origin/<base>...HEAD -U0 -- $CODE \
      | grep -nE '^\+.*(open\([^)]*["'"'"']w|write_text|write_bytes|unlink|rmtree|os\.remove|truncate|os\.replace|Remove-Item|fs::remove|fs::write)'
+
+   # 2b. subprocess 経由の書込 (出力先パスの決定 + プロセス起動)
+   git diff origin/<base>...HEAD -U0 -- $CODE \
+     | grep -nE '^\+.*(subprocess\.(run|Popen)|Command::new|output_path|output_dir|out_path|_output_path|-y\b)'
    ```
+
+   > **2b を省略すると本規約は機能しない (実測)**: 本 codebase の不可逆書込の**大半は ffmpeg subprocess が行う**ため、Python/Rust の write API を見る 2a だけでは捕まらない。#930 の diff に対する実測値は **2a = 0 hit (production code。hit するのはコメント 2 行のみ) / 2b = 30 hit**。つまり 2a だけでは、本規約が防ごうとしている当の欠陥 (`--name-pattern` が決めた出力先へ ffmpeg が書く) を**検出できない**。
 
 3. **(1) × (2) の到達ペアを ASCII 1 文ずつで focus に書く。** 「どの入力の値が、どの書込先の決定に使われるか」の形にする (例: `--name-pattern value decides the export output path; verify it cannot escape -o`)。
 4. **ペアがゼロなら、ゼロであることを focus に明記する** (`no new external input boundary reaches an irreversible write in this diff`)。無言の省略は「導出してゼロだった」と「導出しなかった」を事後に区別できなくする (§「規約・ガード導入の 3 点セット」②)。
@@ -730,9 +748,9 @@ node .github/scripts/<gate>.js <fixture>; echo "exit=$?"   # 非ゼロを期待
 | 契機 | 何をするか |
 | --- | --- |
 | [`/review-pr`](../.claude/skills/review-pr/SKILL.md) Step 5 | PR が CI job / hook / skill step を**新設**している場合、本節の 3 点に照らして逐条検証し、欠けていれば Step 5b トリアージ表に計上する |
-| `superpowers:brainstorming` | 再発防止機構を設計する creative work で本節を引き、3 点セットを設計に織り込む |
-| [`/create-task`](../.claude/skills/create-task/SKILL.md) | `[task]` / `[refactor]` prefix で「ガードを追加する」issue を起票する際、受け入れ条件に 3 点セットを反映する |
+| [`/create-task`](../.claude/skills/create-task/SKILL.md) §ガード / 規約 / チェックを追加する issue の受け入れ条件 | 「ガードを追加する」issue を起票する際、`## 受け入れ条件` に 3 点セットを反映する |
 | [`CLAUDE.md`](../CLAUDE.md) §開発ワークフロー | 発見可能性の確保のため 1 行リンクを置く |
+| `superpowers:brainstorming` | **規律のみ (コード上の発火点ではない)。** plugin skill は本 repo に存在せず編集できないため、再発防止機構を設計する creative work で本節を引くのは実行者の規律に依存する。**この行を「実装済みの発火点」と数えない** |
 
 ### Red Flags
 

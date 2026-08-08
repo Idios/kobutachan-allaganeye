@@ -378,10 +378,15 @@ Step 5 / 5a / 5b で root cause (literal mismatch / 古い API 残存 / DCE 誇�
 1. **能力の呼び出し箇所を全列挙する。** パターンは「欠陥の形」ではなく**「能力の形」**で書く:
 
    ```bash
-   # 例: 不可逆書込の全呼び出し (欠陥ではなく能力を拾う)
+   # 例: 不可逆書込の全呼び出し (欠陥ではなく能力を拾う)。2 層とも実行する
+   # 層 1: 直接の write API (実測 103 hit)
    grep -rnE '(open\([^)]*["'"'"']w|write_text|write_bytes|unlink|rmtree|os\.remove|truncate|os\.replace|fs::remove|fs::write)' \
      allaganeye/ gui/src-tauri/src/
+   # 層 2: subprocess 経由の書込 -- 本 codebase では実書込の大半が ffmpeg (実測 31 hit)
+   grep -rnE '(subprocess\.(run|Popen)|Command::new)' allaganeye/ gui/src-tauri/src/
    ```
+
+   > **層 2 を省略すると sweep は無意味になる**: 本 codebase の不可逆書込の大半は **ffmpeg subprocess** が行うため、層 1 だけでは「出力先パスを決める箇所」が 1 件も挙がらない。#930 の diff に対する実測は 層 1 = 0 hit (production code) / subprocess・出力先パス系 = 30 hit だった。
 
 2. **各 hit に述語を 1 件ずつ当て、判定結果を Step 5b の表に転記する。** 「diff 内にあるか」ではなく「述語を満たすか」で分類する。**diff 外の hit も対象**である (root cause が横断クラスである以上、同じ欠陥が diff 外に既存で潜んでいる可能性がまさに論点)
 3. 述語を満たさない hit は、diff 内なら **(A)**、diff 外なら Step 5b の判定基準で **(A)** / **(B)** を決める。**「diff 外だから対象外」は理由にならない。** 対象外にするなら「別領域・別機能」trigger を満たすかで判定する
