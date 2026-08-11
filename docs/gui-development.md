@@ -71,14 +71,23 @@ GUI のスタイルは CSS 変数 + CSS Modules で統一。詳細は [`ui-archi
 - **セットアップ**: `src/test-setup.ts` で `@testing-library/jest-dom` matcher と `afterEach(cleanup)` を注入 (`vite.config.ts` の `test.setupFiles` で参照)
 - **watch モード**: `npm run test:watch`
 
-現時点で追加済みのテスト:
+**テストの所在**: 上記の配置規約どおり、テストはソースと同一ディレクトリに同居する。**file 単位の一覧はここに書かない** — 手書きの列挙は drift 源になるため (#933: 実態 53 file に対し 2 file しか載っていない状態が長く残った)。区分は以下のとおりで、現在数は下のコマンドで数える。
 
-- `src/lib/preventBrowserShortcuts.test.ts`: WebView のブラウザショートカット抑止ロジックの単体テスト (F5/Ctrl+R/F12/Ctrl+U/Ctrl+P 等の分類 + installer の preventDefault 呼び出し確認)
-- `src/App.test.tsx`: placeholder の smoke render テスト
+| 区分 | 対象 |
+| --- | --- |
+| `src/components/**` | 共通 UI コンポーネント (最大の区分) |
+| `src/screens/**` (`reducers/` 含む) | 6 画面と phase reducer |
+| `src/state/**` | Zustand store (`appStateStore` / `metadataStore` / `recentStore`) |
+| `src/utils/**` / `src/lib/**` / `src/hooks/**` | path 操作・WebView ショートカット抑止・カスタム hook 等 |
+| `src/types/**` / `src/styles/**` / `src/__tests__/**` | 生成型の契約検査・CSS token・横断 smoke |
+
+```bash
+cd gui && find src -name '*.test.ts' -o -name '*.test.tsx' | wc -l
+```
 
 ## CI 構成
 
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) に 8 ジョブが定義されている:
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) に 10 ジョブが定義されている:
 
 | ジョブ | OS | 役割 |
 | --- | --- | --- |
@@ -88,6 +97,8 @@ GUI のスタイルは CSS 変数 + CSS Modules で統一。詳細は [`ui-archi
 | `gui-rust` | windows-latest | `gui-frontend` のアーティファクトを取得して `cargo check` |
 | `doc-tauri-commands-drift` | ubuntu-latest | Tauri command 一覧と doc の drift 検出 |
 | `doc-error-hint-drift` | ubuntu-latest | エラーヒント文言と doc の drift 検出 |
+| `doc-code-refs` | ubuntu-latest | doc → code 参照 (link / symbol / spawn 網羅) の解決検査 (#912 / #910) |
+| `changelog-style` | ubuntu-latest | CHANGELOG entry の記述規約検査 (内部用語 / `### Internal` 節、#952) |
 | `shellcheck` | ubuntu-latest | シェルスクリプトの静的検査 |
 | `installer-pester` | windows-latest | `scripts/build-portable-zip.ps1` の Pester テスト |
 

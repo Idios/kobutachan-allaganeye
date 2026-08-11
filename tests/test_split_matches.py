@@ -1667,6 +1667,35 @@ def test_print_detection_stats_vtuber_timeline_section_obs_no_impact(capsys):
     assert "Timeline (vtuber)" not in out
 
 
+def test_print_detection_stats_vtuber_section_has_no_masked_l2_lines(capsys):
+    """vtuber 経路の stats に masked L2 行が混ざらない (#920 行 12b/12c の pin)。
+
+    `docs/output-spec.md` 行 12b / 12c は「vtuber path では出力されない」と書いて
+    いる。その根拠は `allaganeye/video/vtuber_timeline.py` の V4 検証が専用の
+    local stats を使って呼ばれ、main stats へ `masked_segments_dropped` を混入
+    させないことにある。V4 の drop 数は行 12e の `V4: N dropped` 側へ translate
+    される。ここでは helper 側の帰結 (vtuber key だけを持つ stats で masked 行が
+    出ないこと) を固定する。混入が起きれば verbose の二重表示になる。
+    """
+    from allaganeye.commands.split_matches import _print_detection_stats
+
+    _print_detection_stats(
+        {
+            "vtuber_timeline_probes": 1449,
+            "vtuber_anchor_confidence": 0.589,
+            "vtuber_gaps_tested": 8,
+            "vtuber_gaps_merged": 4,
+            "vtuber_v4_dropped": 3,
+            "vtuber_low_confidence_segments": 1,
+        }
+    )
+    out = capsys.readouterr().out
+    # V4 の drop は行 12e 側にだけ現れる
+    assert "V4: 3 dropped, 1 low-confidence" in out
+    assert "masked L2 validation" not in out
+    assert "masked L2 zero-gap merge" not in out
+
+
 class TestCaptureRegionsCache:
     """#810: capture_regions の cache 保存 / 引継 / legacy 合成。"""
 
@@ -2753,6 +2782,35 @@ class TestDiskSpaceCheck:
 
         stderr = capsys.readouterr().err
         assert "Warning" in stderr
+
+    def test_check_disk_space_tight_warning_suppressed_by_quiet(self, tmp_path, capsys):
+        """`show=False` (= `-q`) では warning を出さない。
+
+        `docs/output-spec.md` 行 15a の `-q` 列 (`×`) の pin。warning のガードは
+        `show` だけを見て `verbose` を見ないため、`-q` が唯一の抑制手段である。
+        """
+        from allaganeye.commands.split_matches import _check_disk_space
+
+        video = tmp_path / "test.mp4"
+        video.write_bytes(b"\x00" * 1_000_000)
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 900.0, "type": "unknown"},
+        ]
+        config = SplitConfig(output_dir=tmp_path / "output")
+
+        # test_check_disk_space_warns_on_tight と同じ「tight」条件を使う。
+        fake_usage = type(
+            "Usage", (), {"total": 2_000_000, "used": 900_000, "free": 1_100_000}
+        )
+        with patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=fake_usage,
+        ):
+            _check_disk_space(video, boundaries, 1000.0, config, show=False)
+
+        captured = capsys.readouterr()
+        assert "Warning" not in captured.err
+        assert "Warning" not in captured.out
 
     @patch(f"{MODULE}.split_video")
     @patch(f"{MODULE}.detect_match_boundaries")
