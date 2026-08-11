@@ -137,8 +137,15 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    いずれか失敗したら修正してから以下に進む
 2. [`docs/versioning.md`](../../../docs/versioning.md) §バージョン管理場所 に挙がっている**全フィールド**の version を新バージョンへ更新する（フィールド一覧の機械可読な正は [`scripts/check_version_consistency.py`](../../../scripts/check_version_consistency.py) の `VERSION_LOCATIONS`、#911）。1 ファイルが複数フィールドを持つことがある（ファイル数 < フィールド数）ので、ファイル単位で数えて満足しないこと。lockfile (`gui/package-lock.json` / `gui/src-tauri/Cargo.lock`) は **該当フィールドの直接編集を既定**とする（バンプでは version 以外を動かさないため。依存そのものを更新したい場合はパッケージマネージャを使い、バンプとは別コミットに分ける）。このとき**旧バージョン文字列の一括置換はしない** — lockfile には依存由来の部分一致（`0.3.0` に対する `30.3.0` 等）が多数あり誤爆する。該当フィールドの行だけをピンポイントで直す。更新できたら必ず検証する:
 
+   - **あわせて `CHANGELOG.md` の節見出しを改名する**（#952）。開発中の節は `## [Unreleased]` で、リリース時に `## [<新バージョン>] - YYYY-MM-DD` へ改名する。**日付はこの時点では暫定**でよく、タグを打つ当日に Step 4 で確定させる。**この改名を飛ばすと直後の検証コマンドが失敗する** — `check_version_consistency.py --tag` は「バージョン `<新バージョン>` の節がありません」を返す（`check_changelog_heading` は該当版の節の存在を必須にしている）。既にリリース済みのバージョン節は触らない（裁定 D7）
+   - **entry の内容**は [`docs/release-process.md`](../../../docs/release-process.md) §CHANGELOG entry の記述規約 に従う。利用者から見た振る舞いが変わらない変更（CI ガード / 開発 doc / skill / テスト / 版 pin）に entry は不要。節が空のままでも構わない
+
    ```bash
    python scripts/check_version_consistency.py --tag v<新バージョン>
+
+   # entry の書き方 (内部用語 / ### Internal 節) を検査する。CI の
+   # changelog-style job と同じ判定 (exit 1 = 規約違反 / exit 2 = 構造エラー)。
+   python scripts/check_changelog_style.py
    ```
 
    exit 0 でなければ先に進まない（exit 1 = フィールド間 or tag との不一致 / exit 2 = 検査自体の構造エラー）。`release.yml` の `version-check` job が tag push 時に同じスクリプトで同じ判定を行うため、ここを飛ばすとリリース当日に fail する。`--tag` は**期待値の文字列**を渡すだけで、git tag が既に存在する必要はない（タグ打ちは本スキル範囲外の後工程）

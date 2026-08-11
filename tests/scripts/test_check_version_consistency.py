@@ -921,19 +921,26 @@ def test_fenced_heading_is_not_counted_as_a_release(
 
 
 def test_mask_implementations_stay_in_sync() -> None:
-    """2 スクリプトの fence マスクが同じ結果を返すこと。
+    """**3** スクリプトの fence マスクが同じ結果を返すこと。
 
-    `scripts/extract_release_notes.py` は同じ処理を**意図的に複製**している
-    (CI の別 job から独立に呼ばれるので import で結合させない)。複製した以上、
-    片方だけ直して silent に挙動が割れるのを防ぐ必要がある。
+    `scripts/extract_release_notes.py` と `scripts/check_changelog_style.py` は
+    同じ処理を**意図的に複製**している (CI の別 job から独立に呼ばれるので import
+    で結合させない)。複製した以上、片方だけ直して silent に挙動が割れるのを防ぐ
+    必要がある。**複製を増やしたらこの比較に足すこと** (#952 で 3 者目を追加)。
     """
-    ern_spec = importlib.util.spec_from_file_location(
-        "extract_release_notes_for_sync_check", SCRIPTS_DIR / "extract_release_notes.py"
-    )
-    assert ern_spec is not None and ern_spec.loader is not None
-    ern = importlib.util.module_from_spec(ern_spec)
-    sys.modules[ern_spec.name] = ern
-    ern_spec.loader.exec_module(ern)
+
+    def _load(module_name: str, filename: str):
+        spec = importlib.util.spec_from_file_location(
+            module_name, SCRIPTS_DIR / filename
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    ern = _load("extract_release_notes_for_sync_check", "extract_release_notes.py")
+    ccs = _load("check_changelog_style_for_sync_check", "check_changelog_style.py")
 
     backtick = "`" * 3
     long_fence = "`" * 4
@@ -951,6 +958,7 @@ def test_mask_implementations_stay_in_sync() -> None:
     ]
     for sample in samples:
         assert cvc.mask_fenced_blocks(sample) == ern._mask_fenced_blocks(sample)
+        assert cvc.mask_fenced_blocks(sample) == ccs.mask_fenced_blocks(sample)
         assert len(cvc.mask_fenced_blocks(sample)) == len(sample)
 
 
