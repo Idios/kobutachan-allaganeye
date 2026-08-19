@@ -228,6 +228,10 @@ test('#967 false-red: list 配下 4 space インデントの fence は数えな�
   const body = `${TPL_PREFIX}#### ${ST_TITLE}\n\n- [x] pytest\n\n    抜粋:\n\n    \`\`\`markdown\n    - [ ] ruff check\n    \`\`\`\n`;
   const result = countAcceptanceCriteriaCheckboxes(body);
   assert.equal(result.unchecked, 0);
+  // `unchecked === 0` だけを見ると「何も数えない」退行実装でも通ってしまうので、
+  // 節内の可視項目が数えられていること (positive control) も同時に固定する。
+  assert.equal(result.checked, 2, 'fence 外の [x] は数える (受け入れ条件 1 + Self-Test 1)');
+  assert.equal(result.selfTestItems, 1);
 });
 
 test('#967 false-red: root の 4 space インデント行は indented code block として数えない', () => {
