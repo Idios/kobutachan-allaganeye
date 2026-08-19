@@ -137,10 +137,6 @@ flowchart LR
 
 ### GUI の 6 画面
 
-<p align="center">
-<sub>v0.3.0 で <b>⑥ ミニマップ切抜き</b> 画面が加わり、GUI は 6 画面構成になりました。<br/>下のギャラリーは分割ワークフローの 5 画面です。</sub>
-</p>
-
 <table align="center">
 <tr>
 <td width="50%" valign="top" align="center">
@@ -179,13 +175,21 @@ flowchart LR
 </td>
 </tr>
 <tr>
-<td colspan="2" valign="top" align="center">
+<td width="50%" valign="top" align="center">
   <a href="image/05-export.png">
-    <img src="image/05-export.png" alt="⑤ Export — 書き出し" width="70%"/>
+    <img src="image/05-export.png" alt="⑤ Export — 書き出し" width="100%"/>
   </a>
   <br/>
   <b>⑤ 書き出し&nbsp;&nbsp;·&nbsp;&nbsp;E X P O R T</b><br/>
   <sub>ffmpeg で試合動画を生成。無劣化 COPY / H.264 再エンコード・命名規則・出力先を選択可能。</sub>
+</td>
+<td width="50%" valign="top" align="center">
+  <a href="image/06-minimap.png">
+    <img src="image/06-minimap.png" alt="⑥ Minimap — ミニマップ切抜き" width="100%"/>
+  </a>
+  <br/>
+  <b>⑥ ミニマップ切抜き&nbsp;&nbsp;·&nbsp;&nbsp;M I N I M A P</b><br/>
+  <sub>エリアマップ部分だけを切り出して H.264 で保存。領域は自動検出 or 映像上をドラッグして指定。<sub>v0.3.0</sub></sub>
 </td>
 </tr>
 </table>

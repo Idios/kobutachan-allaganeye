@@ -207,6 +207,10 @@ try {
     export: async () => {
       await navigateTo(page, 'export', { withSample: true });
     },
+    // #944 §D で画面タイトルを入れたので README に載せられるようになった。
+    minimap: async () => {
+      await navigateTo(page, 'minimap', { withSample: true, selectMatch: 0 });
+    },
   };
 
   const unknown = manifest.screenshots.filter((s) => !(s.screen in SETUP));

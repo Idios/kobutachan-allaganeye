@@ -870,6 +870,16 @@ function DetectingErrorView({
           <InlineErrorHint hint={errorHint} />
         </div>
       )}
+      {/* #944 §D: 検知失敗時の案内が「詳細設定のしきい値」だけを指しており、
+          非対応の録画形式に実際に効く --masked / --vtuber に触れていなかった。
+          GUI からは指定できないので、CLI にあることを文言で示す。 */}
+      <div className={styles.errorAdvice} data-testid="detecting-error-advice">
+        試合が 1 つも見つからない場合、まず [詳細設定] の検知しきい値を調整して
+        ください。チャット欄を画像でマスクした録画や、ゲーム画面が画面全体でない
+        配信レイアウトの録画では、しきい値では直りません。その場合は CLI の{' '}
+        <code>--masked</code> / <code>--vtuber</code> を試してください（GUI から
+        は指定できません）。
+      </div>
       <div className={styles.actions}>
         <button
           type="button"

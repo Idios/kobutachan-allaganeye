@@ -10,7 +10,7 @@
     {
       "file": "01-drop.png",
       "screen": "drop",
-      "sha256": "8db3402de680a5423cca9da6b6bf6bb0f3ab87b1f92da1df6f3b98abe00bf63d"
+      "sha256": "d60de58c77044eeda44579577c6435be10cefcc7ef30695cb1170cd9f49e30b1"
     },
     {
       "file": "02-detecting.png",
@@ -31,6 +31,11 @@
       "file": "05-export.png",
       "screen": "export",
       "sha256": "d36937ead2cb1370ff3bb08e47880b92289c7bcc50f3dd1dc10f402d631ee4ce"
+    },
+    {
+      "file": "06-minimap.png",
+      "screen": "minimap",
+      "sha256": "9a71e9e2a640bc9cf408753680cbeaffb3f54702cfb6ead28117ba3825bbc691"
     }
   ],
   "sources": [
@@ -44,5 +49,5 @@
     "gui/src/**/*.test.ts",
     "gui/src/**/*.test.tsx"
   ],
-  "sources_sha256": "8de632fbec97563dfbc1b372018b0cac5ef07d0dfbbf2ea4e1af6bbc4b099d33"
+  "sources_sha256": "2bc6b616d5245434781074e7cbbdd2cb42f465deed43cf3e524da3aa7218c8f1"
 }

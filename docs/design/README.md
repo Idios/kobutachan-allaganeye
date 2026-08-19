@@ -6,6 +6,7 @@
 
 ```text
 drop → detecting → complete → preview → export
+                      └──────→ minimap
 ```
 
 - **drop**: 録画ファイルの受け取り (D&D / 参照 / 直近一覧)
@@ -13,6 +14,9 @@ drop → detecting → complete → preview → export
 - **complete**: 検知結果レビュー (輝度タイムライン + 試合一覧 + 選択プレビュー)
 - **preview**: **CLI 未サポートの新機能**。IN/OUT 2 画面プレビュー + 候補フレームストリップで境界微調整
 - **export**: 編集結果を入力に ffmpeg で試合動画生成 (copy | h264)
+- **minimap**: エリアマップ (ミニマップ) 領域の切抜き。complete から分岐する副系統で、export とは並列の枝 ([#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) で追加)
+
+**現在は 6 画面**。本 doc が handoff bundle 由来の 5 画面を前提に書かれていた時期があるため、画面数を数える記述は `gui/src/state/appStateStore.ts` の `AppScreen` を正とすること。
 
 ## ターゲット技術 (確定: Tauri + React + TypeScript)
 

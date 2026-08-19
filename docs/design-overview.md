@@ -18,7 +18,7 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 │  L2: 配布・統合（リリース済み v0.2.1）               │
 │  GUI サポート + ゼロ環境構築配布                     │
 ├─────────────────────────────────────────────────┤
-│  L3 (new): 配信形式対応 + 性能改善（v0.3.0 target）  │
+│  L3: 配信形式対応 + 性能改善（リリース済み v0.3.0）  │
 │  入力: L1/L2 で扱う OBS 録画 (チャット欄マスク含む)   │
 │  処理: minimap 切抜き / masked 品質改善             │
 │        export 並列化 / ZIP size / detect 高速化     │
@@ -111,11 +111,15 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 
 ### 出力形式
 
+抜粋 (必須フィールドと v0.3.0 で加わったものを示す)。**全フィールドの正は [`schemas/metadata.schema.json`](../schemas/metadata.schema.json)** で、`allaganeye/metadata_types.py` と `gui/src/types/metadata.generated.ts` はそこから自動生成される。
+
 ```json
 {
+  "schema_version": "1",
   "source": "2026-01-20 22-33-17.mkv",
   "source_duration": 7303.0,
   "source_duration_display": "2:01:43",
+  "source_fps": 60.0,
   "detected_at": "2026-04-19T12:34:56Z",
   "detection_params": {
     "sample_interval": 2.0,
@@ -124,7 +128,10 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
     "min_blackout_duration": 3.0,
     "no_audio": false,
     "use_gpu": null,
-    "workers": null
+    "workers": null,
+    "masked": false,
+    "masked_fallback_used": false,
+    "vtuber": false
   },
   "matches": [
     {
@@ -137,6 +144,17 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
       "duration_display": "14m02s",
       "type": "fl_match",
       "output_file": "output/match_001.mp4"
+    },
+    {
+      "index": 2,
+      "start_time": 6980.0,
+      "end_time": 7303.0,
+      "start_display": "1:56:20",
+      "end_display": "2:01:43",
+      "duration": 323.0,
+      "duration_display": "5m23s",
+      "type": "unknown",
+      "post_match": true
     }
   ],
   "gaps": [
@@ -151,6 +169,10 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
   ]
 }
 ```
+
+`matches[1]` は **試合終了後の trailing** (`post_match: true`) の例。既定の split / export では MP4 を生成しないため `output_file` を持たない ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805))。`--keep-trailing` を付けると通常の試合として扱われる。
+
+上記のほか `warnings` / `system_info` / `brightness_samples` / `capture_regions` / `minimap_regions` / `detection_started_at` / `detection_completed_at` が状況に応じて付く。
 
 ## 外部ツール依存
 
