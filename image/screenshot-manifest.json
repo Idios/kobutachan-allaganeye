@@ -1,0 +1,48 @@
+{
+  "_comment": [
+    "README のスクショ (image/NN-*.png) の鮮度を管理する SSoT (#944)。",
+    "scripts/capture-readme-screens.mjs が screenshots[] を読んで撮影し、",
+    "scripts/check_screenshot_freshness.py が sources の内容ハッシュを検査する。",
+    "git 履歴を使わない理由と、この gate が見ていない集合は checker の docstring を参照。",
+    "撮り直したら必ず `python scripts/check_screenshot_freshness.py --update` を実行すること。"
+  ],
+  "screenshots": [
+    {
+      "file": "01-drop.png",
+      "screen": "drop",
+      "sha256": "8db3402de680a5423cca9da6b6bf6bb0f3ab87b1f92da1df6f3b98abe00bf63d"
+    },
+    {
+      "file": "02-detecting.png",
+      "screen": "detecting",
+      "sha256": "6f4a21e2a2c6c130631907180b3c0931daf042ec846e3cb3eb6b2006f453eac5"
+    },
+    {
+      "file": "03-complete.png",
+      "screen": "complete",
+      "sha256": "234039a62217d40507070822932ff2098d7c2aa00ed7df40aa7fa284feee2980"
+    },
+    {
+      "file": "04-preview.png",
+      "screen": "preview",
+      "sha256": "93854c46fe52969bc9dcabab3198948fd21fb2780f59fd88a2859eb4c4f005f1"
+    },
+    {
+      "file": "05-export.png",
+      "screen": "export",
+      "sha256": "d36937ead2cb1370ff3bb08e47880b92289c7bcc50f3dd1dc10f402d631ee4ce"
+    }
+  ],
+  "sources": [
+    "gui/index.html",
+    "gui/vite.config.ts",
+    "gui/src/**/*.ts",
+    "gui/src/**/*.tsx",
+    "gui/src/**/*.css"
+  ],
+  "source_exclude": [
+    "gui/src/**/*.test.ts",
+    "gui/src/**/*.test.tsx"
+  ],
+  "sources_sha256": "8de632fbec97563dfbc1b372018b0cac5ef07d0dfbbf2ea4e1af6bbc4b099d33"
+}

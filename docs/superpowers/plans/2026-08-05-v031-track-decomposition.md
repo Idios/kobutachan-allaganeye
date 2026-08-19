@@ -171,7 +171,14 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 
 **#944 本文の読み替え (必須):** issue §5 は「コマンド一覧の正は `allaganeye/cli.py` の `@app.command` 登録とする」と書いているが、**この実装では今回漏れた 2 機能がちょうど検査対象外になる**。`cli.py` の `@app.command` は `:65` / `:292` / `:480` の 3 つ (`split` / `detect` / `debug-brightness`) のみで、`minimap` (`commands/minimap.py:46`) と `export` (`commands/export.py:69`) は `cli.py:650-656` の `register(app)` 経由である。**正は typer runtime registry (`typer.main.get_command(app).commands` を列挙し `hidden=True` を除外) を使う。**
 
-**スクショ陳腐化の実装制約 (必須):** 素朴な `git log -1 --format=%ct` 比較は **squash merge で全滅する**。実測で `image/03-complete.png` の blob は `9544ebe` (2026-05-18) と `aefcb8c` (2026-08-04) で同一 (`96d87e63980cca8caf17b411a1db654aadedcbca`) だが、commit timestamp 比較は 08-04 を返して緑になる。**blob hash の変化点を辿る実装が必須。**
+**スクショ陳腐化の実装制約 (2026-08-20 実装時に改訂):** 当初この欄は「blob hash の変化点を辿る実装が必須」としていたが、**その実装も CI では無条件 green になる**ことが実装時の実測で判明したため、**git 履歴を使わない内容ハッシュ方式へ変更した** (Idios 承認 2026-08-20)。根拠は 2 点。
+
+- **CI が shallow clone である。** `actions/checkout@v4` の既定は `fetch-depth: 1` で、本 repo のどの workflow も `fetch-depth` を設定していない。depth-1 で clone して実測すると、`git log -- image/03-complete.png` も `git log -- gui/src/screens/MinimapScreen.tsx` も **同じ 1 commit** を返す。全ファイルが同一日時になるため、commit 日時比較も blob 変化点の追跡も成立しない
+- **squash merge が blob 変化点を潰している。** 仮に `fetch-depth: 0` にしても、v0.3.0 の squash merge (`aefcb8c`) 以前は HEAD から到達できない (`9544ebe` は ancestor ではない)。その結果 `image/03-complete.png` と `MinimapScreen.tsx` の blob 最終変化点がどちらも `aefcb8c` に揃い、**スクショが実際に陳腐化していた当日でも** blob 追跡は緑を返した
+
+採用した実装は `image/screenshot-manifest.json` に GUI source 集合の SHA-256 を記録し、CI が再計算して突合する形 (`scripts/check_screenshot_freshness.py`)。shallow checkout でも squash merge でも壊れない。同 manifest は `scripts/capture-readme-screens.mjs` も読むため、撮影と検査が同じ表を見る。
+
+**未検証の残件は解消済み (2026-08-20):** `03-complete.png` に post_match バッジが写っていない理由は **sample metadata に `post_match: true` の match が 1 件も無いため** であった (`gui/src/data/sampleMetadata.ts` の `post_match` 出現数 = 0、match 数 = 9)。#805 Phase 2 の実装漏れではない (バッジは `gui/src/screens/CompleteScreen.tsx` に実在)。fixture 側の話なので本 PR では sample metadata を変更していない。
 
 **この gate が見ていない集合 (PR 本文と docstring に明記):**
 
@@ -186,10 +193,14 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 - [ ] 生成された `README.txt` に minimap / masked / vtuber / export 並列が列挙されている
 - [ ] `image/03-complete.png` に「⬦ ミニマップ切抜き」ボタンが写っている
 - [ ] SSoT から機能名を 1 件抜いて `check_feature_announcement.py` が **exit 1**、抽出を壊して **exit 2** (fail-closed) — exit code の生値で観測
-- [ ] blob 同一・commit 日時のみ新しいケースでスクショ検査が **赤になる** (squash merge の false-green を潰した証拠)
+- [ ] GUI source を変えて撮り直さないケースでスクショ検査が **赤になる** (exit 1)、glob を腐らせると **exit 2** (fail-closed)。あわせて「git 履歴ベースの実装は CI で無条件 green になる」ことを depth-1 clone の実測で示す (上記の実装制約を参照)
 - [ ] `npm run lint` / `typecheck` / `test` / `build` / `cargo check` (GUI を触るため)
 
-**実機検証: 要。** GUI スクショの撮り直し。memory `project_gui_verification_cache_seed` の detection cache seed 手法で短縮できる。
+**実機検証: 要。** GUI スクショの撮り直し。Playwright は `gui/package.json` に宣言せず `npm install --no-save playwright` + `npx playwright install chromium` で一時導入する (Idios 判断 2026-08-20。`playwright` パッケージは install 時にブラウザを落とすため、宣言すると CI の `npm ci` 毎回に乗る)。手順は `scripts/capture-readme-screens.mjs` の header を参照。
+
+**撮影は全画面が決定的ではない (2026-08-20 実測):** source を変えずに 2 回連続で撮ると `01` / `03` / `05` は byte 一致するが、`02-detecting` と `04-preview` は毎回変わる (進捗表示と video pane の描画タイミング依存)。**意味のある差分だけを commit すること。** 本 PR が commit したのは `03-complete.png` のみ。
+
+**#944 の §D (GUI 文言 7 項目) / §E (設計 doc 4 項目) は PR-B1b へ分割** (Idios 判断 2026-08-20)。本 Task の Files 一覧が A/B/C + CI しか含んでいなかったため、#944 の受け入れ条件のうち §D / §E が どの PR にも割り当たっていなかった。**#944 は PR-B1 + PR-B1b の 2 本で close する。** PR-B1b では MinimapScreen に画面タイトルを入れたうえで `06-minimap.png` を追加するかを判断する (タイトルの無い画面を README に載せないため、本 PR では 6 画面目のスクショを撮っていない)。
 
 **未検証の残件:** `03-complete.png` に post_match バッジが写っていないのが #805 Phase 2 未反映によるものか、sample metadata に `post_match: true` の match が含まれないだけかが切り分けられていない。撮り直し前に `capture-readme-screens.mjs` が読む sample metadata を 1 回 grep して決着させる。
 
