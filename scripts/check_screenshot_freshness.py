@@ -86,6 +86,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -97,6 +98,8 @@ EXIT_STRUCTURAL = 2
 
 MANIFEST_REL = "image/screenshot-manifest.json"
 SCREENSHOT_GLOB = "[0-9][0-9]-*.png"
+# SCREENSHOT_GLOB と同じ集合を名前側から縛る (書き込み先の検証に使う)。
+_SCREENSHOT_NAME_RE = re.compile(r"[0-9]{2}-[a-z0-9-]+\.png")
 
 # 鮮度の対象になる source の探索範囲。ここに入るファイルは `sources` か
 # `source_exclude` のどちらかに必ず拾われなければならない (fail-closed 5)。
@@ -134,12 +137,44 @@ def load_manifest(repo_root: Path) -> dict[str, Any]:
             raise GuardStructureError(
                 f"{MANIFEST_REL} の screenshots に `file` / `screen` を持たない要素がある: {entry!r}"
             )
+        # `file` は scripts/capture-readme-screens.mjs が
+        # `resolve(IMAGE_DIR, file)` に渡して PNG を **書き込む** 先になる。
+        # `../../x.png` や絶対パスは image/ の外を指し、既存ファイルを上書き
+        # しうる (node の path.resolve で実測)。書き込み経路へ届く前に落とす。
+        if not _SCREENSHOT_NAME_RE.fullmatch(entry["file"]):
+            raise GuardStructureError(
+                f"{MANIFEST_REL} の screenshots[].file `{entry['file']}` が"
+                " image/ 直下の連番 PNG 名 (NN-name.png) になっていない。"
+            )
     return manifest
+
+
+def _validate_pattern(pattern: str) -> None:
+    """repo 外へ出る glob を弾く。
+
+    走査範囲が repo 内に閉じているのは `compute_digest` の `relative_to`
+    が成り立つ前提である。絶対パスは `Path.glob` が `NotImplementedError`
+    を投げて exit code 1 でも 2 でもない形で落ちるため、先に構造エラーへ倒す。
+    """
+    normalized = pattern.replace("\\", "/")
+    head = normalized.split("/", 1)[0]
+    if normalized.startswith("/") or ":" in head:
+        raise GuardStructureError(
+            f"glob `{pattern}` が絶対パスになっている。走査範囲は repo 内に限る。"
+        )
+    if ".." in normalized.split("/"):
+        raise GuardStructureError(
+            f"glob `{pattern}` が `..` で repo の外を指している。走査範囲は repo 内に限る。"
+        )
 
 
 def _expand(repo_root: Path, patterns: Iterable[str]) -> list[set[Path]]:
     """各 glob をそれぞれ解決する (パターン単位の空判定を残すため)。"""
-    return [{p for p in repo_root.glob(pattern) if p.is_file()} for pattern in patterns]
+    resolved: list[set[Path]] = []
+    for pattern in patterns:
+        _validate_pattern(pattern)
+        resolved.append({p for p in repo_root.glob(pattern) if p.is_file()})
+    return resolved
 
 
 def resolve_sources(repo_root: Path, manifest: dict[str, Any]) -> list[Path]:

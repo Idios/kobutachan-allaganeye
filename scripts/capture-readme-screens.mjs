@@ -157,7 +157,18 @@ async function hideDevSwitcher(page) {
   });
 }
 
+// image/ 直下の連番 PNG 名だけを許す。`name` は manifest 由来で、そのまま
+// resolve(IMAGE_DIR, name) の書き込み先になる -- `../../x.png` や絶対パスは
+// image/ の外へ抜けて既存ファイルを上書きする (node の path.resolve で実測)。
+// scripts/check_screenshot_freshness.py の _SCREENSHOT_NAME_RE と同じ集合。
+const SCREENSHOT_NAME = /^[0-9]{2}-[a-z0-9-]+\.png$/;
+
 async function capture(page, name) {
+  if (!SCREENSHOT_NAME.test(name)) {
+    throw new Error(
+      `refusing to write screenshot outside image/: ${JSON.stringify(name)}`
+    );
+  }
   const file = resolve(IMAGE_DIR, name);
   await page.screenshot({ path: file, fullPage: false });
   console.log(`  wrote ${file}`);

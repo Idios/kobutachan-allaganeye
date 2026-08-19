@@ -208,6 +208,39 @@ def test_source_glob_matching_nothing_is_structural(tmp_path: Path) -> None:
     assert _run(root).returncode == 2
 
 
+def test_source_glob_escaping_repo_root_is_structural(tmp_path: Path) -> None:
+    """repo 外へ出る glob は落とす。
+
+    `compute_digest` は `relative_to(repo_root)` を呼ぶため、repo 外のパスが
+    混ざると素の ValueError で落ちる (exit code が 1 でも 2 でもない形)。
+    走査範囲は repo 内に閉じているという前提を明示的に検査する。
+    """
+    root = _build_repo(tmp_path, source_globs=["../**/*.tsx"], digest="deadbeef")
+    assert _run(root).returncode == 2
+
+
+def test_absolute_source_glob_is_structural(tmp_path: Path) -> None:
+    root = _build_repo(tmp_path, source_globs=["/etc/**/*.conf"], digest="deadbeef")
+    assert _run(root).returncode == 2
+
+
+def test_screenshot_filename_escaping_image_dir_is_structural(tmp_path: Path) -> None:
+    """manifest の `file` は image/ 直下のファイル名でなければならない。
+
+    この値は `scripts/capture-readme-screens.mjs` が
+    `resolve(IMAGE_DIR, file)` に渡して **PNG を書き込む** 先になる。
+    `../../x.png` は image/ の外を指し、既存ファイルを上書きしうる
+    (node の `path.resolve` で実測)。checker 側で先に落として、壊れた
+    manifest が撮影側の書き込み経路へ届かないようにする。
+    """
+    root = _build_repo(tmp_path, screenshots=["01-drop.png"], digest="deadbeef")
+    manifest_path = root / "image" / "screenshot-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["screenshots"] = [{"file": "../../evil.png", "screen": "drop"}]
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    assert _run(root).returncode == 2
+
+
 def test_declared_screenshot_missing_on_disk_is_structural(tmp_path: Path) -> None:
     root = _build_repo(
         tmp_path, screenshots=["01-drop.png"], declared=["01-drop.png", "09-ghost.png"]
