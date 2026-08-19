@@ -272,6 +272,10 @@ def collect_surfaces(repo_root: Path) -> list[Surface]:
             raise GuardStructureError(f"告知面 {rel} が見つからない ({path})。")
         surfaces.append(Surface(label=rel, text=path.read_text(encoding="utf-8")))
 
+    # どの PowerShell で描画したかは CI ログに残す。pwsh 不在で落ちたときに
+    # 「検査対象が 1 面消えた」のか「shell が違った」のかを即断できるようにする。
+    print(f"README.txt を描画する PowerShell: {_find_powershell()}")
+
     for include_gui in (True, False):
         variant = "GUI 同梱" if include_gui else "CLI のみ"
         surfaces.append(
