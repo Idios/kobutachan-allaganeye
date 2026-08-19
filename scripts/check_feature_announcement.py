@@ -171,17 +171,33 @@ def collect_shipped_commands() -> set[str]:
     return {name for name, cmd in commands.items() if not getattr(cmd, "hidden", False)}
 
 
+# HTML コメントはレンダリング後の読者に見えないので告知面から除く。
+# 閉じていない `<!--` は GitHub 上で以降を丸ごと飲み込むため、末尾まで除く
+# (false-red 側に倒す。false-green にはしない)。
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_UNCLOSED_HTML_COMMENT_RE = re.compile(r"<!--.*\Z", re.DOTALL)
+
+
+def strip_invisible(text: str) -> str:
+    """レンダリング後に読者へ見えない領域を落とす。"""
+    without_closed = _HTML_COMMENT_RE.sub(" ", text)
+    return _UNCLOSED_HTML_COMMENT_RE.sub(" ", without_closed)
+
+
 def is_announced(command: str, text: str) -> bool:
     """`text` に `command` の**呼び出し形**が現れるか。
 
     定義と、単なる名前出現を採らない理由は module docstring §告知の定義 を参照。
+    HTML コメント内の記述は告知として数えない (Codex adversarial-review
+    2026-08-20 の指摘。`README.md` は冒頭に markdownlint 設定用のコメント塊を
+    持つため、「コメントに書いただけ」で緑になる経路が実在した)。
     """
     pattern = re.compile(
         r"(?<![A-Za-z0-9_-])allaganeye(?:\.bat)?[ \t]+"
         + re.escape(command)
         + r"(?![A-Za-z0-9_-])"
     )
-    return pattern.search(text) is not None
+    return pattern.search(strip_invisible(text)) is not None
 
 
 def check_announcements(

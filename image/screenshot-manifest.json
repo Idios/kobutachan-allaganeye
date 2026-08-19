@@ -9,23 +9,28 @@
   "screenshots": [
     {
       "file": "01-drop.png",
-      "screen": "drop"
+      "screen": "drop",
+      "sha256": "8db3402de680a5423cca9da6b6bf6bb0f3ab87b1f92da1df6f3b98abe00bf63d"
     },
     {
       "file": "02-detecting.png",
-      "screen": "detecting"
+      "screen": "detecting",
+      "sha256": "6f4a21e2a2c6c130631907180b3c0931daf042ec846e3cb3eb6b2006f453eac5"
     },
     {
       "file": "03-complete.png",
-      "screen": "complete"
+      "screen": "complete",
+      "sha256": "234039a62217d40507070822932ff2098d7c2aa00ed7df40aa7fa284feee2980"
     },
     {
       "file": "04-preview.png",
-      "screen": "preview"
+      "screen": "preview",
+      "sha256": "93854c46fe52969bc9dcabab3198948fd21fb2780f59fd88a2859eb4c4f005f1"
     },
     {
       "file": "05-export.png",
-      "screen": "export"
+      "screen": "export",
+      "sha256": "d36937ead2cb1370ff3bb08e47880b92289c7bcc50f3dd1dc10f402d631ee4ce"
     }
   ],
   "sources": [

@@ -85,13 +85,9 @@ def _build_repo(
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
     if digest is None:
-        loaded = guard.load_manifest(root)
-        manifest["sources_sha256"] = guard.compute_digest(
-            root, guard.resolve_sources(root, loaded)
-        )
-        manifest_path.write_text(
-            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-        )
+        # 実際の `--update` 経路を通す (source hash と PNG hash の両方が入る)。
+        result = _run(root, "--update")
+        assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
     return root
 
 
@@ -169,6 +165,30 @@ def test_changing_a_gui_source_turns_the_guard_red(tmp_path: Path) -> None:
     assert result.returncode == 1, f"stdout={result.stdout}\nstderr={result.stderr}"
 
 
+def test_editing_a_committed_screenshot_without_update_turns_the_guard_red(
+    tmp_path: Path,
+) -> None:
+    """commit 済み PNG が後から差し替わったら赤にする (tamper-evidence)。
+
+    Codex adversarial-review 2026-08-20 の指摘への対応。source hash だけでは
+    「真っ黒な PNG を commit する」事故を検知できなかった。manifest が各 PNG の
+    sha256 も持つことで、**撮影後に画像が変わった**ことは検知できるようになる。
+
+    ただしこれは「その PNG が現在の GUI を写しているか」の証明ではない
+    (`--update` は人間の申告を信じる)。射程の限界は checker の docstring 参照。
+    """
+    root = _build_repo(tmp_path)
+    (root / "image" / "01-drop.png").write_bytes(b"\x89PNG\r\n\x1a\n TAMPERED")
+    result = _run(root)
+    assert result.returncode == 1, f"stdout={result.stdout}\nstderr={result.stderr}"
+
+
+def test_real_manifest_records_a_hash_for_every_screenshot() -> None:
+    manifest = guard.load_manifest(REPO_ROOT)
+    for entry in manifest["screenshots"]:
+        assert entry.get("sha256"), f"{entry['file']} に sha256 が無い"
+
+
 def test_update_flag_makes_a_red_manifest_green_again(tmp_path: Path) -> None:
     root = _build_repo(tmp_path)
     (root / "gui" / "src" / "App.tsx").write_text(
@@ -243,7 +263,10 @@ def test_screenshot_filename_escaping_image_dir_is_structural(tmp_path: Path) ->
 
 def test_declared_screenshot_missing_on_disk_is_structural(tmp_path: Path) -> None:
     root = _build_repo(
-        tmp_path, screenshots=["01-drop.png"], declared=["01-drop.png", "09-ghost.png"]
+        tmp_path,
+        screenshots=["01-drop.png"],
+        declared=["01-drop.png", "09-ghost.png"],
+        digest="deadbeef",
     )
     assert _run(root).returncode == 2
 
@@ -257,6 +280,7 @@ def test_undeclared_screenshot_on_disk_is_structural(tmp_path: Path) -> None:
         tmp_path,
         screenshots=["01-drop.png", "06-minimap.png"],
         declared=["01-drop.png"],
+        digest="deadbeef",
     )
     assert _run(root).returncode == 2
 

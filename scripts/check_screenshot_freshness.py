@@ -61,9 +61,16 @@ CI は `sources` を解決して内容ハッシュを再計算し、`sources_sha
 
 ## この gate が見ていない集合
 
-* **撮り直した画像が正しい画面・正しい状態を写しているかは検査しない。** 真っ黒な
-  PNG に差し替えても digest さえ更新すれば通る。`--update` は「撮り直した」と
-  いう人間の申告を信じる仕組みであって、撮影の事実を検証しない。
+* **撮り直した画像が正しい画面・正しい状態を写しているかは検査しない。**
+  `--update` は「撮り直した」という人間の申告を信じる仕組みであって、撮影の
+  事実を検証しない。真っ黒な PNG を置いて `--update` を撃てば通る。
+  これを CI 側で閉じるには GUI を CI で描画して突合するしかないが、撮影は
+  決定的ではない (下記) ため画像の突合自体が成立しない。
+  **ただし `--update` を撃たずに commit 済み PNG だけを差し替えた場合は
+  `screenshots[].sha256` との不一致で赤になる** (Codex adversarial-review
+  2026-08-20 で「真っ黒な PNG を commit する事故」が指摘されたため追加)。
+  検知できるのは「記録後に画像が変わった」ことまでで、「記録時の画像が正しい」
+  ことではない。
 * **画像の byte 同一性は検査しない。** そもそも撮影は決定的ではない。2026-08-20 の
   実測では、source を一切変えずに 2 回連続で撮影したとき
   `01-drop.png` / `03-complete.png` / `05-export.png` は byte 一致したが、
@@ -86,6 +93,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -237,6 +245,30 @@ def check_screenshot_declarations(repo_root: Path, manifest: dict[str, Any]) -> 
         )
 
 
+def check_screenshot_hashes(repo_root: Path, manifest: dict[str, Any]) -> list[str]:
+    """commit 済み PNG が manifest 記録時から変わっていないかを見る。
+
+    source hash だけでは「真っ黒な PNG を commit してしまった」事故を検知でき
+    ない (Codex adversarial-review 2026-08-20)。各 PNG の sha256 を持つことで、
+    **撮影後に画像が差し替わった**ことは検知できる。
+
+    これは「その PNG が現在の GUI を写している」証明ではない。射程の限界は
+    module docstring の「この gate が見ていない集合」を参照。
+    """
+    problems: list[str] = []
+    for entry in manifest["screenshots"]:
+        path = repo_root / "image" / entry["file"]
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        recorded = entry.get("sha256")
+        if not recorded:
+            problems.append(f"  - {entry['file']}: manifest に sha256 が無い")
+        elif recorded != actual:
+            problems.append(
+                f"  - {entry['file']}: 記録 {recorded[:12]}... / 実体 {actual[:12]}..."
+            )
+    return problems
+
+
 def check_coverage(
     repo_root: Path, manifest: dict[str, Any], resolved: Sequence[Path]
 ) -> None:
@@ -279,7 +311,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--update",
         action="store_true",
-        help="再撮影後に sources_sha256 を書き戻す (撮り直しとセットで使う)",
+        help="再撮影後に sources_sha256 と各 PNG の sha256 を書き戻す"
+        " (撮り直しとセットで使う)",
     )
     args = parser.parse_args(argv)
     repo_root: Path = args.repo_root.resolve()
@@ -301,13 +334,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     recorded = manifest.get("sources_sha256")
     if args.update:
         manifest["sources_sha256"] = actual
-        (repo_root / MANIFEST_REL).write_text(
+        for entry in manifest["screenshots"]:
+            png = repo_root / "image" / entry["file"]
+            entry["sha256"] = hashlib.sha256(png.read_bytes()).hexdigest()
+        # 原本を失わない順序で書く: temp へ書いてから os.replace で差し替える。
+        # 途中で落ちても manifest が truncate された状態にはならない。
+        target = repo_root / MANIFEST_REL
+        tmp = target.with_suffix(".json.tmp")
+        tmp.write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
+        os.replace(tmp, target)
         print(
-            f"OK: sources_sha256 を更新した ({actual[:12]}...、{len(resolved)} files)"
+            f"OK: sources_sha256 ({actual[:12]}...、{len(resolved)} files) と"
+            f" PNG {len(manifest['screenshots'])} 枚の sha256 を更新した"
         )
         return EXIT_OK
+
+    hash_problems = check_screenshot_hashes(repo_root, manifest)
+    if hash_problems:
+        print(
+            "ERROR: commit 済みのスクショが manifest 記録時から変わっている。\n",
+            file=sys.stderr,
+        )
+        for problem in hash_problems:
+            print(problem, file=sys.stderr)
+        print(
+            "\n意図した差し替えなら撮り直したうえで"
+            " `python scripts/check_screenshot_freshness.py --update` を実行すること。",
+            file=sys.stderr,
+        )
+        return EXIT_DRIFT
 
     if recorded != actual:
         print(

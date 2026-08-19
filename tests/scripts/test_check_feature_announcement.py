@@ -101,6 +101,18 @@ _EVASIONS: list[tuple[str, str]] = [
         "hyphen-glued-to-another-token",
         "内部識別子は pre-export-hook と呼ばれます。",
     ),
+    (
+        # Codex adversarial-review 2026-08-20 の指摘 (実測で確認)。
+        # README.md は冒頭に markdownlint 設定用の HTML コメント塊を持つため、
+        # 「コメントに書いただけ」で告知済みになる経路が実在した。
+        # レンダリング後の読者には見えないので告知ではない。
+        "inside-an-html-comment",
+        "<!-- allaganeye export metadata.json -->",
+    ),
+    (
+        "inside-a-multi-line-html-comment",
+        "<!--\nTODO: 後で書く\nallaganeye export metadata.json\n-->",
+    ),
 ]
 
 
