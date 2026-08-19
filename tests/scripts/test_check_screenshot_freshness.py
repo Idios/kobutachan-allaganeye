@@ -115,6 +115,28 @@ def test_digest_changes_when_a_source_file_changes(tmp_path: Path) -> None:
     assert before != after
 
 
+def test_digest_is_line_ending_agnostic(tmp_path: Path) -> None:
+    """CRLF と LF で digest が変わってはいけない。
+
+    本 repo は `core.autocrlf=true` を使うため、Windows の作業ツリーは CRLF、
+    ubuntu runner の checkout は LF になる。改行をそのまま hash に含めると
+    **手元で緑・CI で赤**が常に起きる (PR #976 の初回 CI で実際に発生)。
+    同じ事故は #612 / #816 でも起きており、`.gitattributes` に対症の
+    `eol=lf` が積まれている。ここでは hash 側を改行非依存にして根を断つ。
+    """
+    root = _build_repo(tmp_path)
+    manifest = guard.load_manifest(root)
+    app = root / "gui" / "src" / "App.tsx"
+
+    app.write_bytes(b"export const A = 1;\nexport const B = 2;\n")
+    lf_digest = guard.compute_digest(root, guard.resolve_sources(root, manifest))
+
+    app.write_bytes(b"export const A = 1;\r\nexport const B = 2;\r\n")
+    crlf_digest = guard.compute_digest(root, guard.resolve_sources(root, manifest))
+
+    assert lf_digest == crlf_digest
+
+
 def test_digest_changes_when_a_source_file_is_renamed(tmp_path: Path) -> None:
     """内容が同じでも path が変われば digest は変わる (rename も再撮影の対象)。"""
     root = _build_repo(tmp_path)

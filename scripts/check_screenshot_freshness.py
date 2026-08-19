@@ -219,12 +219,30 @@ def resolve_sources(repo_root: Path, manifest: dict[str, Any]) -> list[Path]:
     return resolved
 
 
+def _normalize_newlines(data: bytes) -> bytes:
+    """CRLF / CR を LF に畳む。
+
+    本 repo は `core.autocrlf=true` を使うため、同じ commit でも Windows の
+    作業ツリーは CRLF、ubuntu runner の checkout は LF になる。改行をそのまま
+    hash に含めると **手元で緑・CI で赤** が常に起きる (PR #976 の初回 CI で
+    実際に発生)。同型の事故は #612 / #816 でも起きており、`.gitattributes` に
+    対症の `eol=lf` が積まれている。ここでは hash 側を改行非依存にして根を断つ。
+
+    `sources` は text の glob (html / ts / tsx / css) に限られるため、この
+    正規化で意味のある差分が消えることはない。
+    """
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 def compute_digest(repo_root: Path, paths: Sequence[Path]) -> str:
-    """path と内容の両方を含む安定ハッシュ。rename でも変わる。"""
+    """path と内容の両方を含む安定ハッシュ。rename でも変わる。
+
+    改行は正規化する (`_normalize_newlines` の docstring 参照)。
+    """
     outer = hashlib.sha256()
     for path in sorted(paths):
         rel = path.relative_to(repo_root).as_posix()
-        inner = hashlib.sha256(path.read_bytes()).hexdigest()
+        inner = hashlib.sha256(_normalize_newlines(path.read_bytes())).hexdigest()
         outer.update(f"{rel}\0{inner}\n".encode())
     return outer.hexdigest()
 
