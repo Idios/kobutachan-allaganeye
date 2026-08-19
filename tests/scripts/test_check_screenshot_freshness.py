@@ -20,6 +20,7 @@ exit code の生値を観測する規律は `tests/scripts/test_check_doc_code_r
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -135,6 +136,39 @@ def test_digest_is_line_ending_agnostic(tmp_path: Path) -> None:
     crlf_digest = guard.compute_digest(root, guard.resolve_sources(root, manifest))
 
     assert lf_digest == crlf_digest
+
+
+def test_digest_uses_case_sensitive_posix_ordering(tmp_path: Path) -> None:
+    """走査順は platform 非依存でなければならない。
+
+    `sorted()` を `Path` オブジェクトに掛けると、Windows では
+    `PureWindowsPath` の比較が **case-insensitive**、Linux では
+    `PurePosixPath` が **case-sensitive** になるため、同じファイル集合でも
+    連結順が変わり digest がずれる。PR #976 の CI はこれで赤になった
+    (内容は 84 file すべて一致していたのに digest だけ不一致だった)。
+
+    `Zebra.tsx` と `apple.tsx` は case-sensitive なら Z (0x5A) が先、
+    case-insensitive なら apple が先になるので、両者を区別できる。
+    """
+    root = _build_repo(
+        tmp_path,
+        sources={
+            "gui/src/Zebra.tsx": "export const Z = 1;\n",
+            "gui/src/apple.tsx": "export const A = 1;\n",
+        },
+    )
+    manifest = guard.load_manifest(root)
+    resolved = guard.resolve_sources(root, manifest)
+
+    # 契約: relative posix 文字列の case-sensitive 昇順で連結する。
+    expected = hashlib.sha256()
+    for rel in sorted(p.relative_to(root).as_posix() for p in resolved):
+        inner = hashlib.sha256(
+            guard._normalize_newlines((root / rel).read_bytes())
+        ).hexdigest()
+        expected.update(f"{rel}\0{inner}\n".encode())
+
+    assert guard.compute_digest(root, resolved) == expected.hexdigest()
 
 
 def test_digest_changes_when_a_source_file_is_renamed(tmp_path: Path) -> None:

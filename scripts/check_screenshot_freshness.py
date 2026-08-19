@@ -238,10 +238,17 @@ def compute_digest(repo_root: Path, paths: Sequence[Path]) -> str:
     """path と内容の両方を含む安定ハッシュ。rename でも変わる。
 
     改行は正規化する (`_normalize_newlines` の docstring 参照)。
+
+    **走査順は relative posix 文字列の case-sensitive 昇順に固定する。**
+    `sorted()` を `Path` オブジェクトへ直接掛けてはいけない。Windows では
+    `PureWindowsPath` の比較が case-insensitive、Linux では `PurePosixPath` が
+    case-sensitive になるため、**同じファイル集合でも連結順が変わり digest が
+    ずれる**。PR #976 の CI はこれで赤になった (84 file の内容はすべて一致して
+    いたのに digest だけ不一致で、原因の切り分けに 2 ラウンド要した)。
     """
     outer = hashlib.sha256()
-    for path in sorted(paths):
-        rel = path.relative_to(repo_root).as_posix()
+    by_rel = sorted((path.relative_to(repo_root).as_posix(), path) for path in paths)
+    for rel, path in by_rel:
         inner = hashlib.sha256(_normalize_newlines(path.read_bytes())).hexdigest()
         outer.update(f"{rel}\0{inner}\n".encode())
     return outer.hexdigest()
