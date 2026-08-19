@@ -107,7 +107,7 @@ ZIP をデスクトップなどに展開<br/>
 
 ## ◆&nbsp;&nbsp;観測の流れ&nbsp;&nbsp;·&nbsp;&nbsp;W O R K F L O W
 
-数時間の録画は、4 つの観測フェーズを経て、試合ごとの戦果へと変換されます。
+数時間の録画は、4 つの処理フェーズを経て、試合ごとの戦果へと変換されます。
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{
@@ -135,7 +135,11 @@ flowchart LR
 
 <br/>
 
-### 5 つの観測フェーズ
+### GUI の 6 画面
+
+<p align="center">
+<sub>v0.3.0 で <b>⑥ ミニマップ切抜き</b> 画面が加わり、GUI は 6 画面構成になりました。<br/>下のギャラリーは分割ワークフローの 5 画面です。</sub>
+</p>
 
 <table align="center">
 <tr>
@@ -227,6 +231,36 @@ flowchart LR
 <sub>Python / FFmpeg は<br/>ZIP に同梱・インストール不要</sub>
 </td>
 </tr>
+<tr>
+<td width="25%" valign="top" align="center">
+<h3>◈</h3>
+<b>ミニマップ切抜き</b><br/>
+<sub>M I N I M A P&nbsp;&nbsp;C R O P</sub>
+<br/><br/>
+<sub>エリアマップ部分だけを<br/>切り出して H.264 で保存<br/><sub>v0.3.0</sub></sub>
+</td>
+<td width="25%" valign="top" align="center">
+<h3>◈</h3>
+<b>並列書き出し</b><br/>
+<sub>P A R A L L E L&nbsp;&nbsp;E X P O R T</sub>
+<br/><br/>
+<sub>複数試合を同時に処理<br/>NVENC / QSV / AMF 自動選択<br/><sub>v0.3.0</sub></sub>
+</td>
+<td width="25%" valign="top" align="center">
+<h3>◈</h3>
+<b>特殊な録画形式</b><br/>
+<sub>M A S K E D&nbsp;&nbsp;/&nbsp;&nbsp;V T U B E R</sub>
+<br/><br/>
+<sub>チャット欄マスク録画や<br/>配信レイアウトにも対応<br/><sub>v0.3.0</sub></sub>
+</td>
+<td width="25%" valign="top" align="center">
+<h3>◈</h3>
+<b>試合後の自動除外</b><br/>
+<sub>P O S T&nbsp;&nbsp;M A T C H</sub>
+<br/><br/>
+<sub>終了後のロビー・街は<br/>既定で MP4 に出さない<br/><sub>v0.3.0</sub></sub>
+</td>
+</tr>
 </table>
 
 <br/>
@@ -241,6 +275,48 @@ flowchart LR
 
 > [!IMPORTANT]
 > **Windows 専用**です。Python や FFmpeg の事前インストールは必要ありません — Portable ZIP に同梱されています。
+
+<br/>
+
+<div align="center">
+  <img src="image/divider.svg" width="90%" alt=""/>
+</div>
+
+<br/>
+
+## ◆&nbsp;&nbsp;コマンドライン&nbsp;&nbsp;·&nbsp;&nbsp;C L I
+
+GUI を使わずコマンドから実行できます。Portable ZIP では `allaganeye.bat`、ソースから動かす場合は `allaganeye` が入口です。
+
+| コマンド | 用途 |
+| --- | --- |
+| `detect` | 検知だけ実行して `metadata.json` を書き出す |
+| `split` | 検知して試合ごとに MP4 へ分割する |
+| `export` | `metadata.json` から並列で書き出す (H.264 再エンコード可) |
+| `minimap` | エリアマップ (ミニマップ) 領域の提案と切り抜き |
+| `debug-brightness` | フレーム輝度を CSV 出力 (しきい値の調整用) |
+
+```bash
+# 検知だけ実行して metadata.json を書き出す
+allaganeye detect "C:\videos\recording.mkv"
+
+# 試合ごとに分割する
+allaganeye split "C:\videos\recording.mkv" -o "C:\out"
+
+# 検知済みの metadata.json から並列で書き出す
+allaganeye export "C:\out\metadata.json" -o "C:\out" --codec h264
+
+# エリアマップ領域を提案 → 提案された領域で切り抜く
+allaganeye minimap "C:\out\metadata.json"
+allaganeye minimap "C:\out\metadata.json" --region 1520,780,380,380
+
+# フレーム輝度を CSV 出力する
+allaganeye debug-brightness "C:\videos\recording.mkv"
+```
+
+**録画形式が特殊な場合**: チャット欄を画像でマスクした録画は `--masked`、ゲーム画面が画面全体でない配信レイアウトの録画は `--vtuber` を `detect` / `split` に付けます。試合終了後のロビー・街の映像は既定では MP4 に出力されません (`metadata.json` には残ります) — 出力するには `--keep-trailing` を付けます。
+
+詳細は [CLI コマンド仕様](docs/cli-spec.md) と [出力仕様マトリクス](docs/output-spec.md) を参照。
 
 <br/>
 

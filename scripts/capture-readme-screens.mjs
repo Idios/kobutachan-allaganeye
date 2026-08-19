@@ -1,14 +1,35 @@
-// One-shot screenshot capture for README's "5 つの観測フェーズ" section.
+// One-shot screenshot capture for the README's GUI gallery.
 //
 // Drives the vite dev build (port 1420) headless via Playwright. For each
-// phase, navigates via the Zustand stores exposed during dev, captures a
+// screen, navigates via the Zustand stores exposed during dev, captures a
 // PNG, and writes it to image/0N-name.png.
 //
-// Run from worktree root with vite dev already up:
+// The list of screenshots is NOT hard-coded here -- it is read from
+// image/screenshot-manifest.json, the same table that
+// scripts/check_screenshot_freshness.py reads. Keeping one table means a
+// screenshot cannot be added to the capture run without also entering the
+// freshness gate's scope (#944).
+//
+// Playwright is a maintainer-only one-shot dependency and is deliberately NOT
+// declared in gui/package.json: the `playwright` package downloads a browser
+// on install, which would land on every CI `npm ci`. Install it transiently:
+//
+//   cd gui && npm install --no-save playwright && npx playwright install chromium
+//
+// Then, with `npm run dev` up in another terminal, run from the repo root:
+//
 //   node scripts/capture-readme-screens.mjs
+//   python scripts/check_screenshot_freshness.py --update
+//
+// NOTE (2026-08-20 実測): capture is not byte-deterministic for every screen.
+// 01 / 03 / 05 reproduce byte-identically, but 02-detecting and 04-preview
+// differ on every run (progress rendering and the video pane settle at
+// slightly different times). Commit only the screenshots that actually
+// changed for a reason; the freshness gate hashes GUI *sources*, not images,
+// precisely because image hashes are not a usable contract here.
 
 import { chromium } from 'playwright';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,6 +37,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 const IMAGE_DIR = resolve(ROOT, 'image');
 mkdirSync(IMAGE_DIR, { recursive: true });
+
+const MANIFEST_PATH = resolve(IMAGE_DIR, 'screenshot-manifest.json');
+const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf-8'));
+if (!Array.isArray(manifest.screenshots) || manifest.screenshots.length === 0) {
+  throw new Error(`${MANIFEST_PATH} has no screenshots[] entries`);
+}
 
 const VITE_URL = 'http://127.0.0.1:1420/';
 const VIEWPORT = { width: 1600, height: 1000 };
@@ -150,11 +177,48 @@ try {
   await page.waitForSelector('[aria-label="screen switcher (dev)"]', { timeout: 10_000 });
   await hideDevSwitcher(page);
 
-  console.log('drop');
-  await navigateTo(page, 'drop', { withSample: false });
-  await capture(page, '01-drop.png');
+  // Per-screen setup. Keyed by the `screen` value in the manifest so the
+  // manifest stays the single list of what gets captured; anything bespoke a
+  // screen needs to look right lives here.
+  const SETUP = {
+    drop: async () => {
+      await navigateTo(page, 'drop', { withSample: false });
+    },
+    detecting: async () => {
+      await captureDetecting(page);
+    },
+    complete: async () => {
+      await navigateTo(page, 'complete', { withSample: true });
+    },
+    preview: async () => {
+      await navigateTo(page, 'preview', { withSample: true, selectMatch: 4 });
+    },
+    export: async () => {
+      await navigateTo(page, 'export', { withSample: true });
+    },
+  };
 
-  console.log('detecting');
+  const unknown = manifest.screenshots.filter((s) => !(s.screen in SETUP));
+  if (unknown.length > 0) {
+    // Fail closed: a manifest entry with no setup here would otherwise be
+    // captured from whatever screen happened to be showing.
+    throw new Error(
+      `no capture setup for screen(s): ${unknown.map((s) => `${s.screen} (${s.file})`).join(', ')}`
+    );
+  }
+
+  for (const { file, screen } of manifest.screenshots) {
+    console.log(screen);
+    await SETUP[screen]();
+    await capture(page, file);
+  }
+
+  console.log('done');
+} finally {
+  await browser.close();
+}
+
+async function captureDetecting(page) {
   // For detecting we need a non-null selectedVideoPath so the
   // sample-fallback branch in DetectingScreen does NOT auto-redirect
   // us to "complete". invoke('start_detect') is pending-forever in the
@@ -186,21 +250,4 @@ try {
     fire({ phase: 'refine', percent: 12.0, log: '[04:12] refine 1 / 9' });
   });
   await page.waitForTimeout(400);
-  await capture(page, '02-detecting.png');
-
-  console.log('complete');
-  await navigateTo(page, 'complete', { withSample: true });
-  await capture(page, '03-complete.png');
-
-  console.log('preview');
-  await navigateTo(page, 'preview', { withSample: true, selectMatch: 4 });
-  await capture(page, '04-preview.png');
-
-  console.log('export');
-  await navigateTo(page, 'export', { withSample: true });
-  await capture(page, '05-export.png');
-
-  console.log('done');
-} finally {
-  await browser.close();
 }
