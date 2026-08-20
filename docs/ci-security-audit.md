@@ -48,12 +48,24 @@ advisory の突合には resolved version が要るため、**Dependabot alert �
 
 pip-audit は severity 閾値を持たないため、`npm audit --audit-level=high` のような「低い severity は素通し」ができない。対応不能な advisory が出た場合は `security-audit.yml` の pip-audit step に `--ignore-vuln GHSA-xxxx-xxxx-xxxx` を追記し、**同じ箇所に (1) なぜ対応できないか (2) いつ見直すか を必ずコメントで書く**。理由の無い ignore は禁止 (恒久 ignore が既成事実化して gate が黙るため)。
 
+#### 監査対象の内訳 (2 invocation ある理由)
+
+pip-audit は 2 回呼ぶ。**1 回では `pull_request.paths` に載せた Python manifest を全部はカバーできない。**
+
+| invocation | 監査対象 | カバーする manifest |
+| --- | --- | --- |
+| `pip-audit` (引数なし) | `pip install -e ".[dev]" -c constraints.txt` した実環境 | `pyproject.toml` (`dependencies` + dev extras) / `constraints.txt` |
+| `pip-audit -r scripts/installer/requirements-pyinstaller.txt` | requirements を解決した結果 (install はしない) | `scripts/installer/requirements-pyinstaller.txt` |
+
+**2 つ目が要るのは、`pyinstaller` / `pyinstaller-hooks-contrib` が `pyproject.toml` の dev extras に入っていないため** (`pip install -e ".[dev]"` した環境に `pip show pyinstaller` すると `Package(s) not found` を返すことを実測)。同ファイルを paths filter に載せておきながら監査しないと、「trigger は塞いだが中身は誰も見ていない」という false-green になる。Portable ZIP は PyInstaller で frozen application を作るので、この依存は**出荷物に直接効く**。
+
 #### この job が見ていない集合
 
 - dev extras を含む実環境全体を監査するので、配布物 (Portable ZIP) に同梱されない dev 依存の advisory でも fail する
 - PyPI に無い依存 (ffmpeg 等の OS バイナリ) は対象外
 - `-c constraints.txt` で固定していない依存は「その日の最新」を監査するため、**同じ commit でも実行日によって結果が変わりうる**
 - `--strict` を付けていないため、editable install した本体は skip される (PyPI 由来でないので監査対象にならない)
+- **PyInstaller 側の解決は ubuntu runner 上で行われる。** Windows 限定の依存 (`pefile` / `pywin32-ctypes` 等、環境マーカーで除外される) は監査対象に入らない。実際の ZIP ビルドは windows runner なので、この差分は残る
 
 ### dependency review を追加した理由 (v0.3.0)
 
