@@ -241,7 +241,27 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
    exit 0 でなければタグを打たない（exit 1 = 見出し日付 / バンプ方向の不一致、exit 2 = 検査自体の構造エラー）。**同じ検査を `release.yml` の `version-check` job がタグ push 時に実行する**ため、ここを飛ばすと*タグを打った後に*赤くなり、タグの打ち直しが必要になる
 
-**この commit をどこへ載せるか**: **リリース PR の head ブランチ（`release/v<新バージョン>`）へ直接 commit / push する。日付のためだけの新しい PR は作らない。** リリース PR はまだマージ前なので、この commit は同じ PR に乗って Step 2-4 で決めた**宛先**へ渡る（minor / major なら `main`。patch で `develop-<新バージョン>` を経由する場合はまずそこへ渡り、後続の `develop-<新バージョン> → main` PR で `main` に載る）。**宛先の名前は Step 2-4 の表が正**で、ここの記述で上書きしない。
+**この commit をどこへ載せるか**: リリース PR の head ブランチへ載せる。リリース PR はまだマージ前なので、この commit は同じ PR に乗って Step 2-4 で決めた**宛先**へ渡る（minor / major なら `main`。patch で `develop-<新バージョン>` を経由する場合はまずそこへ渡り、後続の `develop-<新バージョン> → main` PR で `main` に載る）。**宛先の名前は Step 2-4 の表が正**で、ここの記述で上書きしない。
+
+**載せ方は head ブランチが保護対象かどうかで変わる**（[`docs/release-process.md`](../../../docs/release-process.md) §ブランチ保護と required status checks が保護対象の正）。
+
+| head ブランチ | 保護 | 載せ方 |
+| --- | --- | --- |
+| `release/v<新バージョン>`（minor / major） | **あり** | **専用の PR を 1 本作って merge する**（下記手順） |
+| `develop-<新バージョン>`（patch、裁定 D4） | なし | 直接 commit / push してよい |
+
+> **なぜ minor / major では PR が要るのか**: `required_status_checks` は PR のマージだけでなく**対象 ref への `git push` すべて**に適用される。`release/*` は保護対象なので直接 push は `GH013: Repository rule violations found` で reject される（実測。`docs/release-process.md` §対象 ref の選び方 の表）。「日付のためだけの PR は作らない」という初版の指示は**この保護の導入により無効**になった。
+
+保護対象の head へ載せる手順:
+
+```bash
+git checkout -b claude/changelog-date-v<新バージョン> release/v<新バージョン>
+# 上記 1. / 2. の編集と検査をこのブランチで行う
+git push -u origin claude/changelog-date-v<新バージョン>
+gh pr create --base release/v<新バージョン> --title "docs: set CHANGELOG date for v<新バージョン>" --body-file -
+```
+
+この PR も required status check 8 件を満たす必要がある。**CI 1 サイクル分（十数分）をタグ打ち当日の所要時間に見込んでおくこと。** PR 本文は通常どおり Self-Test Report を埋める（`validate-checklist` が required なので、未消化 checkbox があるとマージできない）。
 
 > **実行順序の制約**: Step 4 は**リリース PR をマージする前**に実行する。`main` は保護ブランチ（`release/vX.Y.Z → main` のマージのみ受け付ける、[`docs/release-process.md`](../../../docs/release-process.md) §ルール 1）なので、マージ後に日付だけ直そうとしても直接 commit できない。**Step 4 → リリース PR マージ → タグ打ちを同じ JST 日のうちに終える**のが正しい順序で、v0.3.0 もこの順で確定させている。
 >
