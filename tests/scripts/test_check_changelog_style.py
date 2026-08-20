@@ -12,7 +12,7 @@
 した検査を緑で通してしまう。両側を parametrize で常駐させる。
 
 `_FALSE_RED` 群は「規約が推奨している書き方」を red にしないことを固定する。
-規約 (`docs/release-process.md` §CHANGELOG entry の記述規約) は詳細を spec への
+規約 (`docs/release-process.md` の CHANGELOG entry の記述規約) は詳細を spec への
 リンクで送れと書いており、その spec の **ファイル名自体に内部段階名が入っている**
 (実在例: `docs/superpowers/specs/2026-07-11-issue-822-masked-oversplit-anchor-design.md`
 は `anchor` を含む)。リンク先を検査対象にすると規約が自分の推奨を罰する。
@@ -284,6 +284,33 @@ def test_malformed_newest_heading_does_not_fall_through_to_older_section(
     result = _run(path)
     assert result.returncode == 2, (
         f"古い節へ fall through して緑になった: {result.stdout + result.stderr}"
+    )
+
+
+def test_unreleased_not_first_h2_is_exit_2(tmp_path: Path) -> None:
+    """`## [Unreleased]` が先頭 h2 でないなら exit 2。**released 節で緑にしない**。
+
+    Codex adversarial-review [medium] の指摘。「最初の h2 を分類する」だけの実装
+    では、released 節が上・`## [Unreleased]` が下という順序の CHANGELOG で
+    **released 節 (通常は clean) を検査して exit 0** を返し、Unreleased 側の
+    内部用語や `### Internal` が無検査で残る。docstring が主張する scope 規則
+    (「Unreleased を優先」) と実装が矛盾していた。
+
+    ここで fail-closed を選ぶのは、順序が壊れている時点でどちらを検査すべきかを
+    推測させるべきでないため。Keep a Changelog では Unreleased は常に先頭に置く。
+    """
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text(
+        _HEADER
+        # 順序が逆: released が先、Unreleased が後
+        + "## [0.3.1] - 2026-08-20\n\n### Fixed\n\n- 何かを直した (#2)。\n\n"
+        + "## [Unreleased]\n\n### Changed\n\n- presence 判定を変えた (#1)。\n",
+        encoding="utf-8",
+    )
+    result = _run(path)
+    assert result.returncode == 2, (
+        f"Unreleased を飛ばして released 節で緑になった: "
+        f"{result.stdout + result.stderr}"
     )
 
 

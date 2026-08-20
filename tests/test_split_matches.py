@@ -2786,7 +2786,7 @@ class TestDiskSpaceCheck:
     def test_check_disk_space_tight_warning_suppressed_by_quiet(self, tmp_path, capsys):
         """`show=False` (= `-q`) では warning を出さない。
 
-        `docs/output-spec.md` 行 15a の `-q` 列 (`×`) の pin。warning のガードは
+        `docs/output-spec.md` 行 15a の `-q` 列 (非出力) の pin。warning のガードは
         `show` だけを見て `verbose` を見ないため、`-q` が唯一の抑制手段である。
         """
         from allaganeye.commands.split_matches import _check_disk_space

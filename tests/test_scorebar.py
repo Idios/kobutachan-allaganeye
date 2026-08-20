@@ -746,7 +746,7 @@ class TestMergeBoundaryPairs:
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_merge_gap_exactly_600s(self, mock_classify, mock_probe_rgb, mock_has_sb):
-        """Gap of 600.0s -> merge attempted (#933 §B: docstring 訂正)。
+        """Gap of 600.0s -> merge attempted (#933 B: docstring 訂正)。
 
         旧記述は `600.0s (= _MERGE_GAP_MAX)` と書いていたが、`_MERGE_GAP_MAX` は
         実装では `None` (= 上限なし) であり 600.0 という値ではない

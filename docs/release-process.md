@@ -109,12 +109,29 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 
 > **判断の分かれ目は「利用者の環境で観測できるか」**。例: lint ツールの pin は観測できないので書かない。配布 ZIP に同梱される cv2 の版は検出結果の再現性として観測できるので書く。
 
-### 書き方
+### 書き方 — 3 部構成
 
-- **利用者向けの説明を 2-3 行**。「何ができるようになったか / 何が変わったか」を利用者の語彙で書く
-- 詳細が必要なら **spec / doc へのリンク**で送る。CHANGELOG 側に設計の説明を書かない
-- **アルゴリズムの段階名・内部識別子を出さない** — `V0`-`V4` / `quorum` / `anchor` / `presence` / `tri-state` / `fallback` の内部段階名などは spec 側に置く。利用者はこれらの語で自分の症状を検索しない
-- issue / PR 番号は `(#N)` で添える
+1 entry は **(a) 太字の機能名 + issue 番号 → (b) 使い方 2-3 行 → (c) 詳細リンク** の 3 部で書く。
+
+```markdown
+- **<太字の機能名>** ([#N](https://github.com/Idios/kobutachan-allaganeye/issues/N)):
+  <利用者の語彙で「何ができるようになったか / 何が変わったか」を 2-3 行>
+  詳細は [<リンク名>](<spec / doc への相対パス>) を参照。
+```
+
+- **(a) 太字の機能名は必須**。`### Added` の太字機能名は機能告知 drift 検査 (spec §5.2 G2-2 / #944) が機能名集合を抽出する SSoT でもあるため、**太字を外すとその機能が検査対象から静かに消える**
+- **(b) は利用者の語彙で 2-3 行**。設計の説明を CHANGELOG 側に書かない
+- **(c) 詳細は spec / doc へのリンクで送る**
+
+**spec 側へ寄せる語彙 (CHANGELOG に出さない)**:
+
+| 分類 | 例 |
+| --- | --- |
+| 内部アルゴリズム名・段階名 | `V0`-`V4` / `quorum` / `anchor` / `presence` / `tri-state` / 内部 fallback の段階名 |
+| GT・テスト名 | ground truth データセット名、`tests/baselines/**` のパス、pytest marker 名 (`slow_detect` 等)、baseline / GT 突合ハーネスの名前 |
+| tolerance 値・しきい値 | 境界許容秒数、quorum 比率、輝度しきい値などの数値。利用者が調整できる CLI オプションの既定値は**除く** (それは利用者から見える振る舞い) |
+
+利用者はこれらの語で自分の症状を検索しない。`(#N)` の issue / PR 番号は常に添える。
 
 ### 発火点 (規約が読まれる場所)
 
@@ -155,6 +172,7 @@ CHANGELOG entry: 不要 (内部専用 — <CI ガード / 開発 doc / skill / �
 - [ ] CI 全ジョブ (Python / GUI frontend / GUI Rust / Pester) が**リリース PR の HEAD** (`release/vX.Y.Z` tip) で緑 — develop tip は release ブランチに載せた出荷直前 commit を含まないため基準にしない
 - [ ] [バージョン保持箇所](versioning.md#バージョン管理場所)が**全箇所**`x.y.0` に更新されている (`python scripts/check_version_consistency.py` が exit 0)
 - [ ] `CHANGELOG.md` に対象バージョンセクションが存在 (**日付 = タグ打ち日 JST** (§タグ運用) / 主要変更点 / breaking changes)
+- [ ] 対象バージョンセクションの entry が **§CHANGELOG entry の記述規約 に適合**している — 掲載範囲が利用者から見た振る舞いの変化に限られ、3 部構成 (太字機能名 + issue 番号 / 使い方 2-3 行 / 詳細リンク) で書かれ、内部用語が spec 側へ寄せられていること (`python scripts/check_changelog_style.py` が exit 0。ただし同 script は**語彙と節の形しか見ず、entry の欠落や内容の正しさは見ない**ので、読者視点の適合はここで人が確認する)
 - [ ] `deferred` ラベル付き issue を全件レビュー済 (close、または次バージョン `deferred` 維持判断、または当該バージョンに引き取り)
 - [ ] 対象レイヤースコープの `P1-high` issue 全 close + `P2-medium` issue 全 close または `deferred` ラベル付与
 

@@ -26,6 +26,10 @@ exit code:
 `## [Unreleased]` セクション**のみ**。無い場合は最新 (ファイル先頭に最も近い)
 `## [x.y.z] - YYYY-MM-DD` セクションのみ。**両方を同時に見ることはしない。**
 
+`## [Unreleased]` が存在するのに**先頭の `## ` 見出しでない**場合は exit 2 に倒す
+(Keep a Changelog の慣行どおり Unreleased は常に先頭)。許すと released 節 (通常は
+clean) を検査して Unreleased 側の違反を見逃す false-green になる。
+
 - 既リリース済みセクションを見ないのは裁定 D7 (既リリース節不可侵) のため。
   v0.3.0 の `### Added` は内部段階名を 14 箇所含む (2026-08-11 実測:
   V0x2 / V1x1 / V2x2 / V3x2 / V4x2 / anchor x3 / presence x2) が、公開済みの
@@ -228,14 +232,34 @@ def find_scannable_section(
     **両方を見ることはしない** (docstring §走査対象 の理由)。
     """
     scannable = mask_fenced_blocks(text)
-    head = _ANY_H2_RE.search(scannable)
-    if head is None:
+    headings = list(_ANY_H2_RE.finditer(scannable))
+    if not headings:
         return None, (
             "走査対象セクションが 0 件: '## ' 見出しが 1 つも無い。"
             "CHANGELOG の構造が壊れている"
         )
 
+    head = headings[0]
     heading = head.group(0).strip()
+
+    # `## [Unreleased]` が存在するなら、それが先頭 h2 でなければならない。
+    # 先頭 h2 だけを分類する実装だと、released 節が上・Unreleased が下という
+    # 順序で **released 節 (通常は clean) を検査して exit 0** を返し、Unreleased
+    # 側の違反が無検査で残る (Codex adversarial-review [medium] の指摘、実測で
+    # 再現)。順序が壊れている時点でどちらを見るべきか推測させず fail-closed に
+    # 倒す -- Keep a Changelog では Unreleased は常に先頭に置く。
+    unreleased_at = next(
+        (i for i, m in enumerate(headings) if _UNRELEASED_RE.match(m.group(0).strip())),
+        None,
+    )
+    if unreleased_at is not None and unreleased_at != 0:
+        return None, (
+            f"'## [Unreleased]' が先頭の '## ' 見出しではない "
+            f"(先頭は {heading!r})。Keep a Changelog の慣行どおり Unreleased は "
+            "常に先頭に置くこと。この状態を許すと、released 節を検査して "
+            "Unreleased 側の違反を見逃す false-green になるため fail させている"
+        )
+
     if _UNRELEASED_RE.match(heading):
         label = "## [Unreleased]"
     elif _VERSION_RE.match(heading):
