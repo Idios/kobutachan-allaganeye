@@ -1,5 +1,5 @@
 ---
-name: fable-consult
+name: allaganeye-fable-consult
 description: 全体的なレビュー・相談用（設計方針/UX/ドキュメント整合/受け入れ条件の網羅性・妥当性/俯瞰的セカンドオピニオン）。コード技術詳細の adversarial レビューは Codex を使うこと。
 model: fable
 tools: Read, Grep, Glob, WebSearch, WebFetch

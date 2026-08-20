@@ -248,6 +248,27 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 - [`docs/refactor-pattern.md`](../../../docs/refactor-pattern.md) §4 判定基準 (green / regression なし / consumer が選択的に乗り換え可能) を引き、Step 5b トリアージ表で (A) PR 内 Phase 分割提案 or (B) 別 issue で Phase 設計 spec を起票する
 - AppError migration (#663→#689→#714/716/725/730/733→#745→#746) を reference 実例として参照
 
+**optional 俯瞰レビュー (allaganeye-fable-consult、#945)**
+
+以下のいずれかを満たす PR で `Agent(subagent_type=allaganeye-fable-consult)` を起動する。**Codex とは対象が違う** — Codex は「コード / テスト diff の技術的欠陥」、Fable は「文書・方針・プロセスの整合と網羅性」(`CLAUDE.md` §「Fable と Codex の棲み分け」):
+
+- **doc-only PR** (`docs/**` / `*.md` のみで code file の変更がゼロ)、または
+- **spec doc / plan doc の新規追加を含む PR** (`docs/superpowers/specs/**` / `docs/superpowers/plans/**` に新規ファイル)
+
+渡す観点は「受け入れ条件の網羅性・妥当性 / 既存 doc との矛盾 / スコープ過大」。**finding は Step 5b トリアージ表に「出所 = fable:consult」と記載して統合する。**
+
+#### 起動記録 (該当時 / 不該当時とも必須)
+
+起動した / しなかったの**どちらの場合も**、Step 6 レビュー報告の「1 行記録」節に以下のいずれか 1 行を明記する:
+
+> `Fable 俯瞰レビュー: 実施 (finding N 件 / 消化 M 件 / 残 K 件)`
+>
+> `Fable 俯瞰レビュー: 非実施 (理由: <doc-only でない / spec 新規追加なし 等 1 行>)`
+
+**`実施` は N / M / K の数値記入が必須。**「実施した」とだけ書けるようにすると、起動して finding をゼロ件のまま放置しても緑になり、記録が no-op になる (#945 が明示した false-green の制約)。残 K 件がある場合は Step 5b トリアージ表に (A) / (B) / (C) のいずれかで載せる。
+
+> **「Fable にレビューさせた」は Codex review 省略の口実にしない** (`CLAUDE.md` §「Fable と Codex の棲み分け」)。両者は併存レイヤーであり、invariant / 不可逆操作に関わる変更は**両方**にかける。
+
 **optional Codex review (Codex 統合、C3)**
 
 以下のいずれかを満たす PR で Codex review を併走させる (人手 trigger or skill 内 auto)。agent 実行は tier 1 = companion script `codex-companion.mjs review --base develop-X.Y.Z` の Bash 実行 (slash `/codex:review` は `disable-model-invocation: true` のため agent から invoke 不可 = Idios 専用 tier 3。`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照):
@@ -515,6 +536,7 @@ Step 5b のトリアージ表を前提に、以下のテンプレート構造で
 (義務を課した Step の側に定型がある。ここは置き場所の固定)。
 
 - 並行 PR 確認: <検出ゼロ / [#M ...]>
+- Fable 俯瞰レビュー: <実施 (finding N 件 / 消化 M 件 / 残 K 件) / 非実施 (理由: ...)>
 - 外部依存規約: <該当 (...) / 非該当 (理由: 本 PR に外部依存の DL / 取得なし)>
 - パス契約: <該当 (...) / 非該当 (理由: パスの生成点・表示点に変更なし)>
 - Codex review 起動: <対象 (理由: ...) / 非対象 (理由: ...)>
