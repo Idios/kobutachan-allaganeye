@@ -295,9 +295,27 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
   書けば緑になる。CI からは subagent 起動の有無を観測できないため、ここは**自己申告のまま**。
   gate が担保するのは「起動条件に該当する PR で `非実施` と書けない」ことと「数値を書かせる」ことだけ
 - **finding の内容が妥当かは見ない。** 数値が揃っていれば通る
-- **変更ファイル一覧が取得できない場合は検査を skip する** (fork PR の権限不足 / API 失敗 /
-  100 file 超で paginate 不可)。ここで落とすと gate が見るべきものではなく API 可用性で red に
-  なるため意図的に安全側へ倒している。skip したことは job log に残る
+
+#### 変更ファイル一覧が取れないときの挙動 (fail-closed、実装の契約)
+
+**`pulls.listFiles` が成功し、空でない完全な一覧が得られることを必須とする。** 取得できない
+場合 (API 失敗 / 権限不足 / `paginate` 不可で 1 page 満杯 = 打ち切りの疑い) は
+**`validate-checklist` が red になる** (silent skip はしない)。required status check で
+「検査せず緑」は false-green であり、限界を doc に明記することは穴を塞がない正当化にならない
+(Codex adversarial-review round 2 [medium])。
+
+workflow は `permissions: contents: read` / `pull-requests: read` を明示宣言している
+([`.github/workflows/pr-checklist.yml`](../../../.github/workflows/pr-checklist.yml))。
+ambient default に依存すると default が絞られた瞬間に全 PR が red になるため。
+
+**bot 例外の適用範囲は狭い。** 「bot が作成し **かつ** Self-Test Report 節が認識できない」
+PR のみ、**file list 取得より手前**で return する (Dependabot 等の template 非準拠 PR を
+落とさないため)。**Self-Test 節を持つ bot PR は fail-closed 経路に入る。**
+この順序が入れ替わると Dependabot が本 gate で落ちるため、
+[`check-pr-checklist.test.js`](../../../.github/scripts/check-pr-checklist.test.js) に
+両方向の回帰テストを置いてある。
+
+> API の一時障害で red になった場合は **job を再実行する**。gate を緩めるのではなく再実行で解く。
 
 **optional Codex review (Codex 統合、C3)**
 

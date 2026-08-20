@@ -231,6 +231,66 @@ skill の欠陥ではないので修正しない。
 **4 は両分岐を covered したから見えた。** 同じ原因が非該当ケースでは偶然正解を出しており、
 片側だけの scenario なら「正しく動いている」と誤認していた。
 
+## Codex adversarial-review (Pre-flight Step 5) — 3 round
+
+EPT の 2 consecutive clears **後**に Codex へかけたところ、EPT が見ていなかった層が出た。
+**EPT は「指示を読んだ実行者が正しく動けるか」を測るが、「gate が回避できるか」は測らない。**
+両者は別の層であり、片方だけでは足りない。
+
+| round | verdict | finding | 対応 |
+| --- | --- | --- | --- |
+| 1 | needs-attention | [medium] checkbox の消化しか見ておらず「実行せずに緑」 | semantic validator 新設 (Idios 裁定) |
+| 2 | needs-attention | [high] 行の削除 / 節外 decoy / 重複で無効化可 | 走査を Self-Test 節内に限定・1 本必須 |
+| | | [medium] file list 不可時の silent skip = false-green | **fail-closed へ変更** + workflow permissions 明示 |
+| | | [low] placeholder 判定が広く false-red | 既知トークンのみへ絞る |
+| 3 | needs-attention | [medium] **doc と実装の契約が食い違う** — round 2 でコードを fail-closed に変えたのに、round 1 で書いた §「見ていない集合」の「skip する」記述を直していなかった | doc を実装の契約へ書き換え |
+
+> **round 3 で新しい回避形は出ず、設計自体への否定もなかった。** 出たのは doc/code の
+> 同期漏れ 1 件のみで、whack-a-mole (同一クラスが 3 周) には至っていない。
+>
+> **この 1 件は自分のミス。** 挙動を変えたのに、その挙動を説明した doc を直さなかった。
+> しかも「skip する (意図的に安全側)」という**逆の主張**が残っており、
+> 運用者向けの runbook として有害だった。[[feedback_mirroring_impl_copies_latent_bugs]] の
+> 変種 — 未検証の主張が契約 doc に昇格したまま残る。
+> **挙動を変える commit では、その挙動を説明している doc を同じ commit で探して直す。**
+
+### round 2 [medium] は自分の判断を覆した
+
+round 1 対応時、私は「file list が取れないときは検査 skip」を **false-red 回避として意図的に選び**、
+それを §「見ていない集合」に明記して済ませていた。Codex の指摘は
+**required status check で「検査せず緑」は穴**というもので、これは正しい。
+「限界を明記する」ことは「穴を塞がない」ことの正当化にならない。
+
+### fail-closed の blast radius を実測した
+
+「全 PR が `listFiles` 成功に依存する」形になるため、bot PR への影響を測った:
+
+| ケース | 結果 |
+| --- | --- |
+| bot PR (Self-Test 節なし) + listFiles 失敗 | **exit 0** (bot 例外が手前で return) |
+| 人間 PR (Self-Test 節あり) + listFiles 失敗 | exit 1 (fail-closed) |
+
+順序が入れ替わると Dependabot が落ちるので、**両方を回帰テストとして pin** した。
+
+### 回避形の実測 (round 2 対応後)
+
+| 記入 | 判定 |
+| --- | --- |
+| 行を削除 (doc-only PR) | **RED** |
+| 行を削除 (code PR、対照) | GREEN |
+| Self-Test 節の外に準拠行を置く | **RED** |
+| 節内に 2 本 | **RED** |
+| 半角 / 全角括弧 / 「理由により非実施」 | **RED** |
+| `未実施` / `未実行` / `スキップ` / `N/A` | **RED** |
+| 山括弧を含む正当な回答 (対照) | GREEN |
+| **`実施 (finding 0 件 / 消化 0 件 / 残 0 件)`** | **GREEN (構造的限界)** |
+
+最後の 1 行は **CI から subagent 起動の有無を観測できない**ため塞げない。
+`/review-pr` §「この gate が見ていない集合」に明記した。**塞げないものを塞げたことにしない。**
+
+なお **file list 不可時は fail-closed (red)** であり skip しない (round 2 [medium] で変更)。
+round 1 時点の「skip する」という記述は round 3 で doc を実装に合わせて訂正済み。
+
 ## harness の知見 (再利用可能)
 
 **#949 の EPT では accuracy が改修前でも満点になり判別力を持たなかった**
