@@ -601,4 +601,51 @@ iteration 5 の 2 点を適用済み。**harness の変更なし** (以後は対
 
 ### 実行結果 (per scenario)
 
-(iteration 6 の subagent 結果を以下に記録)
+| Scenario | 成否 | accuracy (raw) | tool_uses | duration | retries | 新規 unclear (raw) | うち**改修対象**帰属 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| G-1 | o | 6/6 | 6 | 115.9s | 1 (tool 選択のみ) | 2 | **0** |
+| G-2 | o | 5/5 | 4 | 87.4s | 0 | **0** | **0** |
+| G-3 | o | 5/5 | 5 | 99.5s | 0 | 2 | **0** |
+| G-4 (hold-out) | o | 5/5 | 6 | **46.7s** | 0 | **0** | **0** |
+
+> **iteration 6 は clear (改修対象帰属の defect ゼロ、4 scenario すべて)。**
+> hold-out G-4 の duration が 108.9s → **46.7s (-57%)** に落ちた。doc だけで完結し、
+> plugin ソースを descend する必要が減ったことを示す。G-2 / G-4 は unclear point ゼロ。
+
+### 構造化 reflection (iteration 6)
+
+**G-1 #11 — 帰属: harness (対応しない)**: worktree の実絶対パスがシナリオに無い。
+executor 自身が「target prompt 側にも実 path の記載がない」= 設計上の placeholder と認識。
+iteration 7 の prompt で実パスを与えて解消した (harness 修正)。
+
+**G-1 #12 / G-3 #9 — 帰属: 軽微 (対応しない)**: jq 例が「参考実装なのか唯一解なのか」の
+明記が欲しい / 畳み込みの正規形の例が 1 つしかない。**どちらも executor は正しい成果物を
+出せており、判断が割れた事実はない。** 例を増やすと定型の面積が増えるだけなので対応しない
+(mizchi の Red Flag「細部を無限に割る」に該当)。
+
+**G-3 #8 — 帰属: 隣接既存節 (対応しない、iteration 4 と同一)**: `findings_table` ゼロ件時の
+記法が subagent 側 template に無い。**本 PR が触っていない既存 gap**。#949 の範囲外。
+Idios 判断待ちの候補として残す (iteration 4 で既出、再掲)。
+
+### Ledger updates
+
+- Closed: **obligation-without-aggregation-slot** — 集約セクションで 6 件まとめて閉じたのち再発なし
+- Closed: **env-var-assumed-across-tool-calls** / **same-call-constraint-without-fixing-the-entry-state**
+  — `cd` + `export` を手順に組み込んだのち再発なし
+- Closed: **contract-without-extraction-example** — jq 例の追加後、抽出ロジックに関する
+  「自力で設計した」報告は消滅
+
+(収束判定: **1 consecutive clear** / 打ち切りまで 1 round)
+
+---
+
+## Iteration 7 (convergence 2/2)
+
+### Changes (diff from iteration 6)
+
+**skill / doc の変更なし。** harness のみ: G-1 / G-4 の scenario に worktree の実絶対パスを与えた
+(iteration 6 で harness 帰属と判定した G-1 #11 の解消)。
+
+### 実行結果 (per scenario)
+
+(iteration 7 の subagent 結果を以下に記録)
