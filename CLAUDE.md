@@ -382,14 +382,14 @@ Codex CLI が rate-limit / quota / network / auth 等で fail した場合、Cla
 | --- | --- | --- |
 | メイン（設計判断・複雑デバッグ・アーキ変更・新機能・統括） | ユーザー選択（既定 Opus 最新 / 高難度は最初から Fable 最新）。**固定しない** | セッションモデル |
 | 技術レビュー・相談（バグ/セキュリティ/GPU fallback/encoding/adversarial） | Codex | 既存 3-tier（§Codex 運用）。**不変** |
-| 全体レビュー・相談（設計方針/UX/ドキュメント整合/受け入れ条件妥当性/俯瞰） | Fable 最新 | `Agent(subagent_type=fable-consult)` |
+| 全体レビュー・相談（設計方針/UX/ドキュメント整合/受け入れ条件妥当性/俯瞰） | Fable 最新 | `Agent(subagent_type=allaganeye-fable-consult)` |
 | 中難度定型（原因既知バグ修正/テスト作成/スコープ明確 refactor/doc 更新） | Sonnet 最新 | `Agent(subagent_type=allaganeye-sonnet-worker)` |
 | 低難度定型（検索/リネーム/フォーマット/boilerplate/要約/情報収集） | Haiku 最新 | `Agent(subagent_type=allaganeye-haiku-worker)`。ビルトイン Explore は `model:"haiku"` を渡す |
 
 - **エイリアス指定**（`fable` / `opus` / `sonnet` / `haiku`）で各系統の最新に自動追従（フル ID 固定はしない）。
-- agent 定義は **project-local**（`.claude/agents/`）に置く。worker は user-level model-router の同名定義（`~/.claude/agents/{sonnet,haiku}-worker.md`）との衝突を構造的に避けるため **`allaganeye-` prefix** で命名する（precedence 依存を排除し、弱い前提の silent 誤ルーティングを根絶。#889 Codex adversarial-review 反映）。
+- agent 定義は **project-local**（`.claude/agents/`）に置く。**project 定義の agent はすべて `allaganeye-` prefix で命名する** — user-level に同名定義（`~/.claude/agents/{sonnet,haiku}-worker.md` / `~/.claude/agents/fable-consult.md`）が実在し、prefix なしでは precedence 依存になって弱い前提の silent 誤ルーティングを招くため（worker は #889 Codex adversarial-review 反映、fable-consult は #945 で適用）。
 
-### fable-consult の推奨トリガー地点（原則。強制ではない）
+### allaganeye-fable-consult の推奨トリガー地点（原則。強制ではない）
 
 - spec/design doc 執筆完了後・ユーザーレビュー前
 - brainstorming で選択肢が割れて決めきれないとき

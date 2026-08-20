@@ -163,6 +163,22 @@ PR の変更種別に応じて以下を確認する。**code quality (logic / ar
 
 `superpowers:requesting-code-review` skill が dispatch する `superpowers:code-reviewer` subagent に code quality 観点 (logic correctness / architecture / security / code smell / best practices) のレビューを委譲する。subagent は本 skill の責務外の項目 (受け入れ条件 / base sync / 並行 PR / project doc 整合 / マージ後 handoff) には介入しない。
 
+**起動条件**: **原則すべての PR で起動する。非起動は 1 条件だけ** — 変更ファイルが **すべて** `docs/**` または `*.md` (= documentation のみ) の場合に限り起動しない。委譲先の観点 (logic / architecture / security / code smell) は code diff を前提としており、documentation しか無い PR では no-op review にしかならないため。
+
+> **判定は「code file か」ではなく「documentation 以外が 1 つでもあるか」で行う (Codex adversarial-review [medium] 対応)。** 「code file を touch したか」という**肯定形の抽象語**にすると、`.github/workflows/*.yml` / `pyproject.toml` / `constraints.txt` / `*.ps1` / lockfile 等が「code file なのか」の解釈で割れ、**従来は無条件に受けていた code quality review が silent に落ちる**。これらはセキュリティ・実行挙動に直結する。否定形 (documentation だけなら skip) にすれば、**判断に迷う種別はすべて起動側に倒れる**ので安全側で閉じる。
+>
+> `CLAUDE.md` §「destructive write boundary audit checklist」 の「抽象語の観点は具体的な欠陥クラスへの検出力を持たない。検出力は具体列挙にのみ宿る」と同じ理由で、gate は具体条件で書く。
+
+#### 起動記録 (該当時 / 不該当時とも必須)
+
+起動した / しなかったの**どちらの場合も**、Step 6 レビュー報告の「1 行記録」節に以下のいずれか 1 行を明記する:
+
+> `code quality subagent 起動: 実施 (finding N 件 → Step 5b 表へ統合)`
+>
+> `code quality subagent 起動: 非実施 (理由: 変更ファイルが全て docs/** または *.md)`
+
+**なぜ「常時起動だから記録不要」にしないか (#945 EPT で 4 回摘出)**: 本 skill は Step 5a の Fable / Codex に「明示 trigger + 該当/不該当とも記録必須」を課している。Step 5.0 だけが記録義務を持たないと、**「記録漏れなのか、そもそも記録不要設計なのか」が事後に追跡できない**。記録義務は「起動が分岐するか否か」ではなく **reviewer 起動判断点というクラス全体**に課す ([`docs/l2-workflow.md` §「規約・ガード導入の 3 点セット」](../../../docs/l2-workflow.md) ②、および本 skill §「起動記録」の「記録義務は分岐を網羅する」原則)。
+
 > **subagent 起動規約**: 本 dispatch は [`docs/l2-workflow.md` §subagent 起動規約](../../../docs/l2-workflow.md#subagent-起動規約-746-phase-c--741-task-5-教訓) に準拠する。HARD-GATE (Stop conditions / 独断 fix 禁止 / orphan commit 防止) を遵守し、scope を超える発見は BLOCKED 報告で controller (本 skill) に escalate する。F6 (#732) / F7 (#741) と同型の事象を再発させない。
 
 入力に渡す情報:
@@ -247,6 +263,27 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 - 本 PR が `touched files > 30 file` または `diff > 1000 line` を超える場合、Phase 分割すべきだった可能性を疑う
 - [`docs/refactor-pattern.md`](../../../docs/refactor-pattern.md) §4 判定基準 (green / regression なし / consumer が選択的に乗り換え可能) を引き、Step 5b トリアージ表で (A) PR 内 Phase 分割提案 or (B) 別 issue で Phase 設計 spec を起票する
 - AppError migration (#663→#689→#714/716/725/730/733→#745→#746) を reference 実例として参照
+
+**optional 俯瞰レビュー (allaganeye-fable-consult、#945)**
+
+以下のいずれかを満たす PR で `Agent(subagent_type=allaganeye-fable-consult)` を起動する。**Codex とは対象が違う** — Codex は「コード / テスト diff の技術的欠陥」、Fable は「文書・方針・プロセスの整合と網羅性」(`CLAUDE.md` §「Fable と Codex の棲み分け」):
+
+- **doc-only PR** (`docs/**` / `*.md` のみで code file の変更がゼロ)、または
+- **spec doc / plan doc の新規追加を含む PR** (`docs/superpowers/specs/**` / `docs/superpowers/plans/**` に新規ファイル)
+
+渡す観点は「受け入れ条件の網羅性・妥当性 / 既存 doc との矛盾 / スコープ過大」。**finding は Step 5b トリアージ表に「出所 = fable:consult」と記載して統合する。**
+
+#### 起動記録 (該当時 / 不該当時とも必須)
+
+起動した / しなかったの**どちらの場合も**、Step 6 レビュー報告の「1 行記録」節に以下のいずれか 1 行を明記する:
+
+> `Fable 俯瞰レビュー: 実施 (finding N 件 / 消化 M 件 / 残 K 件)`
+>
+> `Fable 俯瞰レビュー: 非実施 (理由: <doc-only でない / spec 新規追加なし 等 1 行>)`
+
+**`実施` は N / M / K の数値記入が必須。**「実施した」とだけ書けるようにすると、起動して finding をゼロ件のまま放置しても緑になり、記録が no-op になる (#945 が明示した false-green の制約)。残 K 件がある場合は Step 5b トリアージ表に (A) / (B) / (C) のいずれかで載せる。
+
+> **「Fable にレビューさせた」は Codex review 省略の口実にしない** (`CLAUDE.md` §「Fable と Codex の棲み分け」)。両者は併存レイヤーであり、invariant / 不可逆操作に関わる変更は**両方**にかける。
 
 **optional Codex review (Codex 統合、C3)**
 
@@ -515,6 +552,8 @@ Step 5b のトリアージ表を前提に、以下のテンプレート構造で
 (義務を課した Step の側に定型がある。ここは置き場所の固定)。
 
 - 並行 PR 確認: <検出ゼロ / [#M ...]>
+- code quality subagent 起動: <実施 (finding N 件 → Step 5b 表へ統合) / 非実施 (理由: 変更ファイルが全て docs/** または *.md)>
+- Fable 俯瞰レビュー: <実施 (finding N 件 / 消化 M 件 / 残 K 件) / 非実施 (理由: ...)>
 - 外部依存規約: <該当 (...) / 非該当 (理由: 本 PR に外部依存の DL / 取得なし)>
 - パス契約: <該当 (...) / 非該当 (理由: パスの生成点・表示点に変更なし)>
 - Codex review 起動: <対象 (理由: ...) / 非対象 (理由: ...)>
