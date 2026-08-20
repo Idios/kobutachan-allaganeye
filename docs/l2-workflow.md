@@ -258,10 +258,12 @@ Codex review の finding は **stdout ではなく保存済み全文から取り
 読み取りは公開 subcommand `status` / `result` を使う (state dir の path を skill 側で再構築しない)。**2 段階で、job id を明示して読む**:
 
 ```bash
-# 0. CLAUDE_PLUGIN_ROOT を張り直す。Bash tool は呼び出し間で env var を保持しないため、
-#    review 実行時に export した値はこの時点で消えている。空のまま使うと
+# 0. cwd と CLAUDE_PLUGIN_ROOT を張り直す。Bash tool は呼び出し間で env var を保持せず、
+#    cwd も turn 境界 / background task の後に main repo へドリフトしうる (本 repo で観測済み)。
+#    review 実行時に export した値はこの時点で消えており、空のまま使うと
 #    node "/scripts/codex-companion.mjs" に展開されて MODULE_NOT_FOUND になる (実測)。
 #    以降の 1 / 2 は「この export と同じ Bash 呼び出しの中で」実行する
+cd "<review を実行した worktree の絶対パス>"
 ls "$HOME/.claude/plugins/cache/openai-codex/codex/"
 export CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<解決した version>"
 

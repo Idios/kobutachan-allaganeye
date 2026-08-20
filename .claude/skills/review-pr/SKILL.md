@@ -278,10 +278,16 @@ Codex review が exit 0 で完了したら、**finding を stdout から拾う�
 1. review を実行した worktree の cwd のまま、**`CLAUDE_PLUGIN_ROOT` を張り直してから**直前の review job の **id を特定する**。以下は**同じ Bash 呼び出しの中で**実行する — Bash tool は呼び出し間で env var を保持しないため、review 実行時の `export` はこの時点で消えており、空のまま使うと `node "/scripts/codex-companion.mjs"` に展開されて `MODULE_NOT_FOUND` になる (実測):
 
    ```bash
+   cd "<review を実行した worktree の絶対パス>"   # cwd は turn 境界で main repo へドリフトしうる。明示する
    ls "$HOME/.claude/plugins/cache/openai-codex/codex/"
    export CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<解決した version>"
    node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" status --json
    ```
+
+   > **`cd` を省略しない。** 呼び出し間で消えるのは env var だけではない — 本 repo では
+   > turn 境界や background task の後に Bash の cwd が worktree から main repo へ
+   > ドリフトする事象が観測されている。cwd が違うと state dir も変わり、
+   > 「job が見つからない」形で静かに外れる
 
    `latestFinished` を先に見て **`jobClass` が `"review"`** ならその `.id`、違えば `recent[]` を先頭から走査して最初に `jobClass == "review"` になった entry の `.id` を採る (この順で最新の review job が一意に決まる。詳細は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md))
 
@@ -500,6 +506,18 @@ Step 5b のトリアージ表を前提に、以下のテンプレート構造で
 | 1 | <具体的な課題> | 受け入れ条件 #N / CI / 5a カバレッジ / 5a 観点 / 5a エッジケース / 5 ロジック / 5 ドキュメント | (A) PR コメント / (B) 新規 issue / (C) 既存 #N 追記 | <分類根拠> |
 
 ※ 摘出課題ゼロの場合のみ「該当なし」と明記して表省略可。1 件でも摘出したら必ず表に載せる。
+
+## 1 行記録 (各 Step が課した記録義務の集約)
+
+各 Step が「Step 6 に 1 行明記する」と課した記録をここに集約する。**該当する行は省略不可**
+(義務を課した Step の側に定型がある。ここは置き場所の固定)。
+
+- 並行 PR 確認: <検出ゼロ / [#M ...]>
+- 外部依存規約: <該当 (...) / 非該当 (理由: 本 PR に外部依存の DL / 取得なし)>
+- パス契約: <該当 (...) / 非該当 (理由: パスの生成点・表示点に変更なし)>
+- Codex review 起動: <対象 (理由: ...) / 非対象 (理由: ...)>
+- Codex 出力読み取り: <成功 (job <job-id> ...) / 失敗 (理由: ...) / 非起動 (理由: ...)>
+- Codex fallback notice: <なし / 本文は docs/l2-workflow.md §Codex fallback の template>
 
 ## 検証推奨
 
