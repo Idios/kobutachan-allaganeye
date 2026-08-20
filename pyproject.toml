@@ -1,3 +1,4 @@
+# TEMPORARY probe for #868 paths-filter red demo -- DO NOT MERGE
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
