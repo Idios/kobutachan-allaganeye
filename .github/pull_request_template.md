@@ -88,7 +88,7 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre
 - [ ] `cd gui && npm run build` (gui-frontend 変更時)
 - [ ] `cargo check --manifest-path gui/src-tauri/Cargo.toml` (gui-rust 変更時)
 - [ ] `Invoke-Pester -Path scripts/tests/` (installer-pester 変更時、Windows 上で)
-- [ ] Fable 俯瞰レビュー (#945) — `実施 (finding N 件 / 消化 M 件 / 残 K 件)` または `非実施 (理由: <1 行>)`。**`実施` は N/M/K の数値記入必須**。起動条件と書式は [`.claude/skills/review-pr/SKILL.md`](../.claude/skills/review-pr/SKILL.md) §「optional 俯瞰レビュー」
+- [ ] Fable 俯瞰レビュー (#945) — **次の 2 条件のいずれかに該当したら `実施`**: (a) doc-only PR (`docs/**` / `*.md` のみで code file 変更ゼロ) / (b) `docs/superpowers/specs/**` または `docs/superpowers/plans/**` への新規ファイル追加を含む。該当時は `実施 (finding N 件 / 消化 M 件 / 残 K 件)` (**N/M/K の数値記入必須**)、非該当時は `非実施 (理由: 上記 2 条件のどちらに非該当か)`。詳細は [`.claude/skills/review-pr/SKILL.md`](../.claude/skills/review-pr/SKILL.md) §「optional 俯瞰レビュー」
 
 #### 関連ドキュメント / マトリクス更新
 
