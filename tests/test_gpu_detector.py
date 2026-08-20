@@ -15,13 +15,28 @@ def _make_frames(brightness_values: list[int]) -> bytes:
     return b"".join(bytes([b]) * _FRAME_SIZE for b in brightness_values)
 
 
-def _popen_mock(mock_popen, stdout_bytes: bytes = b"", returncode: int = 0):
+# Two grid timestamps is enough for every cmd-shape assertion below.
+_GRID = [0.0, 5.0]
+_FPS_KWARGS = {"source_fps_num": 60, "source_fps_den": 1, "is_tail_chunk": False}
+
+
+def _popen_mock(mock_popen, stdout_bytes: bytes | None = None, returncode: int = 0):
     """Wire a ``subprocess.Popen`` mock for the select-filter decode path.
 
     #864 removed the fps-filter path (which used ``subprocess.run``), so the
     direct ``_decode_chunk`` unit tests below drive the select-filter path.
+
+    The default stream emits exactly ``len(_GRID)`` frames rather than ``b""``.
+    An empty stream would still satisfy the dynamic VFR check (its slack at
+    60fps is ``ceil(60 * 0.1)`` = 6 frames, well above a 2-frame grid), so a
+    cmd-shape test built on ``b""`` would pass without the sampling contract
+    ever being exercised (Codex adversarial-review, #864). Tests that need a
+    specific stream still pass one explicitly.
     """
     import io
+
+    if stdout_bytes is None:
+        stdout_bytes = _make_frames([0] * len(_GRID))
 
     proc = MagicMock()
     proc.stdout = io.BytesIO(stdout_bytes)
@@ -30,13 +45,6 @@ def _popen_mock(mock_popen, stdout_bytes: bytes = b"", returncode: int = 0):
     proc.returncode = returncode
     mock_popen.return_value.__enter__.return_value = proc
     return proc
-
-
-# Two grid timestamps is enough for every cmd-shape assertion below; the
-# dynamic VFR slack at 60fps (ceil(60 * 0.1) = 6 frames) tolerates a mock
-# that emits no frames at all, so cmd-only tests can pass empty stdout.
-_GRID = [0.0, 5.0]
-_FPS_KWARGS = {"source_fps_num": 60, "source_fps_den": 1, "is_tail_chunk": False}
 
 
 class TestDecodeChunk:
@@ -482,6 +490,32 @@ class TestDecodeChunk:
         assert 500.0 in result
         assert 501.0 in result
         assert 0.0 not in result
+
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_silent_zero_frame_decode_raises_on_non_tail_chunk(self, mock_popen):
+        """A non-tail chunk that emits nothing is a decode failure, not 255.0 (#864).
+
+        The cmd-shape tests above only inspect the ffmpeg argv, so on their own
+        they cannot tell a working decode from a broken one. This pins the other
+        side: when the emitted frame count misses the expected count by more than
+        the dynamic VFR slack, ``_sample_chunk_frames`` raises and ``scan_gpu``
+        turns that into the CPU fallback -- it must never be swallowed into a
+        silently all-bright chunk (Codex adversarial-review, #864).
+        """
+        grid = [float(i) for i in range(100)]  # slack = max(1, ceil(60*0.1)) = 6
+        _popen_mock(mock_popen, b"")
+
+        with pytest.raises(VideoProcessingError, match="Dynamic VFR"):
+            _decode_chunk(
+                Path("test.mp4"),
+                0.0,
+                100.0,
+                1.0,
+                chunk_timestamps=grid,
+                source_fps_num=60,
+                source_fps_den=1,
+                is_tail_chunk=False,
+            )
 
 
 class TestScanGpu:
