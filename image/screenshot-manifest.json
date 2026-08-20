@@ -4,7 +4,8 @@
     "scripts/capture-readme-screens.mjs が screenshots[] を読んで撮影し、",
     "scripts/check_screenshot_freshness.py が sources の内容ハッシュを検査する。",
     "git 履歴を使わない理由と、この gate が見ていない集合は checker の docstring を参照。",
-    "撮り直したら必ず `python scripts/check_screenshot_freshness.py --update` を実行すること。"
+    "撮り直したら必ず `python scripts/check_screenshot_freshness.py --update` を実行すること。",
+    "image/capture-frame.jpg は README に貼る素材ではなく **撮影専用の入力**。sample mode の mock は動画を読めないため、minimap 画面の <video> に敷く 1 フレームとして使う。"
   ],
   "screenshots": [
     {
@@ -35,7 +36,7 @@
     {
       "file": "06-minimap.png",
       "screen": "minimap",
-      "sha256": "9a71e9e2a640bc9cf408753680cbeaffb3f54702cfb6ead28117ba3825bbc691"
+      "sha256": "b5e03af544b45f5d2d1eecb4e18ab7b9d4dd5ec92e5a8379f4b1bfe372c1ca64"
     }
   ],
   "sources": [
