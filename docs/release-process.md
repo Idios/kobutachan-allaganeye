@@ -150,6 +150,7 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 
 - **`develop-*` / `release/*` 宛の PR は 1 本もマージ阻止されない。** 保護対象が `main` だけなので、日常の開発 PR は CI が red のままでも手動マージできる。**この機構が実際にマージを止めるのは「`main` へ入る瞬間」の 1 回だけ**であり、それまでの全 PR で CI は「気づくための信号」に留まる。これは上記 §対象を `main` に限る理由 で意図的に受け入れた縮退である
 - **check が report されたかしか見ない。** paths filter で skip された job の妥当性も、job の中身が実際に何を検査しているかも見ない
+- **required の 8 件を report できるのは、head 側が現行の workflow を持つ PR だけ。** `pull_request` の workflow は merge ref (base + head) から読まれるため、`develop-*` / `release/*` から出す通常のリリース PR は問題ない。一方 **`main` から直接切った branch を head にする PR (hotfix 等) は、`main` 上の workflow にまだ無い job が never-reported になり恒久的にマージ不能になる**。実例: 2026-08-20 時点の `main` の `ci.yml` には `doc-code-refs` / `feature-announcement` / `screenshot-freshness` が無く、`markdownlint.yml` も paths filter を持ったままである (v0.3.1 のリリース PR で解消する)
 - **required の 8 件以外は red でもマージを止めない。** `hook-test` / `doc-tauri-commands-drift` / `doc-error-hint-drift` / `doc-code-refs` / `shellcheck` / `version-check` / `cargo audit` / `npm audit` / `dependency review` は informational
 - **対象 ref に列挙しないブランチは無保護。** 将来 `hotfix/*` 等を切る場合は本節と workflow の両方を更新しないと素通りする
 - **ruleset は repo 外設定なので、GitHub 側で誰かが無効化しても diff に現れない。** 上記の確認コマンドを `/release` Step 0 で実行することが唯一の検知経路
