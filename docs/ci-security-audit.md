@@ -72,6 +72,17 @@ Portable ZIP は windows runner でビルドするので、**出荷物の依存�
 
 なお step の `shell:` に `${{ matrix.* }}` を書くと phantom run 化するため、shell は job の `defaults` に静的値で逃がしてある (#786 / #788 の教訓)。
 
+**Windows leg には `PYTHONUTF8=1` が必須である。** `pip-audit -r` が内部で使う `pip_requirements_parser.auto_decode()` は、BOM も PEP 263 の coding cookie も持たないファイルを **locale の既定エンコーディング**で decode する。windows runner の既定は cp1252 なので、`requirements-pyinstaller.txt` の UTF-8 日本語コメントで落ちる。
+
+```text
+UnicodeDecodeError: 'charmap' codec can't decode byte 0x81 in position 137:
+character maps to <undefined>
+```
+
+(2026-08-20 に実 runner で観測。matrix 導入前は ubuntu でしか走っていなかったため表面化していなかった。)
+
+UTF-8 mode (PEP 540) にすると `locale.getpreferredencoding(False)` が UTF-8 を返すので解決する。**出荷物のビルド入力である requirements ファイル自体は書き換えない** — pip / PyInstaller 側の読み取り挙動に影響を与えないため。ローカルの Windows で `pip-audit -r` を叩く場合も同じ env が要る。これは [`CLAUDE.md` §encoding boundary audit checklist](../CLAUDE.md) の 3 層目 (OS code page) に該当する。
+
 #### この job が見ていない集合
 
 - dev extras を含む実環境全体を監査するので、配布物 (Portable ZIP) に同梱されない dev 依存の advisory でも fail する

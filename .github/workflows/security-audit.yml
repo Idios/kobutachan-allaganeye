@@ -112,6 +112,19 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      # **Windows leg で必須。** `pip-audit -r` が内部で使う
+      # `pip_requirements_parser.auto_decode()` は、BOM も PEP 263 の coding
+      # cookie も無いファイルを **locale の既定エンコーディング**で decode する。
+      # windows runner の既定は cp1252 なので、`requirements-pyinstaller.txt` の
+      # UTF-8 日本語コメントが `UnicodeDecodeError: 'charmap' codec can't decode
+      # byte 0x81` で落ちる (2026-08-20 に実 runner で観測)。
+      #
+      # UTF-8 mode (PEP 540) にすると `locale.getpreferredencoding(False)` が
+      # UTF-8 を返すので解決する。**出荷物のビルド入力である requirements ファイル
+      # 自体は書き換えない** (pip / PyInstaller 側の読み取りに影響を与えないため)。
+      # ローカルの Windows で `pip-audit -r` を叩く場合も同じ env が要る。
+      PYTHONUTF8: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v5
