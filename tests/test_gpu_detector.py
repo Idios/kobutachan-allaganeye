@@ -15,16 +15,51 @@ def _make_frames(brightness_values: list[int]) -> bytes:
     return b"".join(bytes([b]) * _FRAME_SIZE for b in brightness_values)
 
 
+def _popen_mock(mock_popen, stdout_bytes: bytes = b"", returncode: int = 0):
+    """Wire a ``subprocess.Popen`` mock for the select-filter decode path.
+
+    #864 removed the fps-filter path (which used ``subprocess.run``), so the
+    direct ``_decode_chunk`` unit tests below drive the select-filter path.
+    """
+    import io
+
+    proc = MagicMock()
+    proc.stdout = io.BytesIO(stdout_bytes)
+    proc.stderr = io.BytesIO(b"")
+    proc.wait.return_value = returncode
+    proc.returncode = returncode
+    mock_popen.return_value.__enter__.return_value = proc
+    return proc
+
+
+# Two grid timestamps is enough for every cmd-shape assertion below; the
+# dynamic VFR slack at 60fps (ceil(60 * 0.1) = 6 frames) tolerates a mock
+# that emits no frames at all, so cmd-only tests can pass empty stdout.
+_GRID = [0.0, 5.0]
+_FPS_KWARGS = {"source_fps_num": 60, "source_fps_den": 1, "is_tail_chunk": False}
+
+
 class TestDecodeChunk:
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_parses_frames(self, mock_run):
+    """``_decode_chunk`` vendor/decoder resolution on the select-filter path.
+
+    Pre-#864 these ran through ``_decode_chunk_legacy``; the resolution logic
+    they pin (``_GPU_DECODER_MAP`` / ``_VENDOR_HWACCEL_MAP`` /
+    ``_HWACCELS_NEED_HWDOWNLOAD`` + hwdownload prefix) is identical in
+    ``_decode_chunk_v2``, so the coverage is retargeted rather than dropped.
+    """
+
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_parses_frames(self, mock_popen):
         """Correctly parses multiple frames from stdout."""
-        mock_run.return_value = MagicMock(
-            stdout=_make_frames([128, 5, 200]),
-            stderr=b"",
-            returncode=0,
+        _popen_mock(mock_popen, _make_frames([128, 5, 200]))
+        result, stderr = _decode_chunk(
+            Path("test.mp4"),
+            100.0,
+            103.0,
+            1.0,
+            chunk_timestamps=[100.0, 101.0, 102.0],
+            **_FPS_KWARGS,
         )
-        result, stderr = _decode_chunk(Path("test.mp4"), 100.0, 103.0, 1.0)
 
         assert len(result) == 3
         assert result[100.0] == pytest.approx(128.0)
@@ -32,23 +67,33 @@ class TestDecodeChunk:
         assert result[102.0] == pytest.approx(200.0)
         assert isinstance(stderr, str)
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_hwaccel_auto_when_no_codec(self, mock_run):
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_hwaccel_auto_when_no_codec(self, mock_popen):
         """ffmpeg command includes -hwaccel auto when codec is unknown."""
-        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
-        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0)
+        _popen_mock(mock_popen)
+        _decode_chunk(
+            Path("test.mp4"), 0.0, 10.0, 1.0, chunk_timestamps=_GRID, **_FPS_KWARGS
+        )
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         assert "-hwaccel" in cmd
         assert "auto" in cmd
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_hwaccel_cuda_with_known_codec(self, mock_run):
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_hwaccel_cuda_with_known_codec(self, mock_popen):
         """ffmpeg command uses -hwaccel cuda -c:v av1_cuvid for AV1."""
-        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
-        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="av1")
+        _popen_mock(mock_popen)
+        _decode_chunk(
+            Path("test.mp4"),
+            0.0,
+            10.0,
+            1.0,
+            codec="av1",
+            chunk_timestamps=_GRID,
+            **_FPS_KWARGS,
+        )
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         assert "-hwaccel" in cmd
         cuda_idx = cmd.index("-hwaccel")
         assert cmd[cuda_idx + 1] == "cuda"
@@ -56,20 +101,28 @@ class TestDecodeChunk:
         cv_idx = cmd.index("-c:v")
         assert cmd[cv_idx + 1] == "av1_cuvid"
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_hwaccel_auto_for_vp9_codec(self, mock_run):
-        """VP9 は #538 で NVIDIA cuvid を強制しない (legacy vendor=None path).
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_hwaccel_auto_for_vp9_codec(self, mock_popen):
+        """VP9 は #538 で NVIDIA cuvid を強制しない (vendor=None path).
 
         ffmpeg 8.1 の vp9_cuvid は nv12+csp:gbr を出力し swscaler gray 変換が
         EOPNOTSUPP で失敗するため、NVIDIA dict から vp9 を除外。
-        codec=vp9, vendor=None (legacy call) では else branch に落ち、
-        ``-hwaccel auto`` で動作する。`-c:v vp9_cuvid` は cmd に含まれない。
+        codec=vp9, vendor=None では else branch に落ち、``-hwaccel auto``
+        で動作する。`-c:v vp9_cuvid` は cmd に含まれない。
         AMD AMF 経路は別 test (#546) で vp9_amf が使えることを検証。
         """
-        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
-        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="vp9")
+        _popen_mock(mock_popen)
+        _decode_chunk(
+            Path("test.mp4"),
+            0.0,
+            10.0,
+            1.0,
+            codec="vp9",
+            chunk_timestamps=_GRID,
+            **_FPS_KWARGS,
+        )
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         assert "-hwaccel" in cmd
         hw_idx = cmd.index("-hwaccel")
         assert cmd[hw_idx + 1] == "auto", (
@@ -78,13 +131,22 @@ class TestDecodeChunk:
         )
         assert "vp9_cuvid" not in cmd, "vp9_cuvid must not appear in ffmpeg args (#538)"
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_hwaccel_cuda_for_nvidia_explicit_vendor(self, mock_run):
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_hwaccel_cuda_for_nvidia_explicit_vendor(self, mock_popen):
         """vendor=nvidia 明示時も既存挙動を維持 (#546 回帰防止)."""
-        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
-        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="av1", vendor="nvidia")
+        _popen_mock(mock_popen)
+        _decode_chunk(
+            Path("test.mp4"),
+            0.0,
+            10.0,
+            1.0,
+            codec="av1",
+            vendor="nvidia",
+            chunk_timestamps=_GRID,
+            **_FPS_KWARGS,
+        )
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         hw_idx = cmd.index("-hwaccel")
         assert cmd[hw_idx + 1] == "cuda"
         cv_idx = cmd.index("-c:v")
@@ -104,18 +166,18 @@ class TestDecodeChunk:
             # 以降で QSV decode 対応 (実機 i7-1185G7 / Iris Xe で 8.29x
             # speed @ 720p 確認)。NVIDIA vp9_cuvid (#538/#549 で除外) と
             # 異なり QSV では csp:gbr 問題は発生せず、hwdownload 経由で
-            # 後段の fps/scale/format=gray と整合する。
+            # 後段の select/scale/format=gray と整合する。
             ("vp9", "vp9_qsv"),
         ],
     )
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_hwaccel_qsv_for_intel_codecs(self, mock_run, codec, expected_decoder):
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_hwaccel_qsv_for_intel_codecs(self, mock_popen, codec, expected_decoder):
         """vendor=intel + codec で `-hwaccel qsv -hwaccel_output_format qsv
         -c:v {codec}_qsv` + `hwdownload,format=nv12,` filter prefix を
         組み立てる (#550 / #582, #553 と同じ汎用機構を再利用).
 
         QSV decoder は default で `pix_fmt=qsv` の GPU surface を出力し、
-        後段の swscaler (`fps -> scale -> format=gray`) が `Function not
+        後段の swscaler (`select -> scale -> format=gray`) が `Function not
         implemented (-40)` で失敗する。`_HWACCELS_NEED_HWDOWNLOAD` に
         "qsv" を加え、`-hwaccel_output_format qsv` で surface format を
         明示しつつ filter chain 先頭の `hwdownload,format=nv12,` で
@@ -128,10 +190,19 @@ class TestDecodeChunk:
         - vp9_qsv: 8.29x speed @ 720p (#582)
         - av1_qsv: Tiger Lake 非対応 -> VideoProcessingError -> CPU fallback
         """
-        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
-        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec=codec, vendor="intel")
+        _popen_mock(mock_popen)
+        _decode_chunk(
+            Path("test.mp4"),
+            0.0,
+            10.0,
+            1.0,
+            codec=codec,
+            vendor="intel",
+            chunk_timestamps=_GRID,
+            **_FPS_KWARGS,
+        )
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         hw_idx = cmd.index("-hwaccel")
         assert cmd[hw_idx + 1] == "qsv"
         out_idx = cmd.index("-hwaccel_output_format")
@@ -153,37 +224,53 @@ class TestDecodeChunk:
             "降ろさないと swscaler が pix_fmt=qsv を扱えず失敗する (#550)"
         )
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_hwaccel_auto_for_intel_unsupported_codec(self, mock_run):
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_hwaccel_auto_for_intel_unsupported_codec(self, mock_popen):
         """vendor=intel + `_GPU_DECODER_MAP["intel"]` 未登録 codec
-        (mpeg2video / mpeg4 / vc1 等) は legacy `-hwaccel auto` に
-        fallback (#550 / #582).
+        (mpeg2video / mpeg4 / vc1 等) は `-hwaccel auto` に fallback
+        (#550 / #582).
 
         現時点で Intel 用 dict は h264 / hevc / vp9 / av1 を登録。それ以外の
         codec (例: mpeg2video / mpeg4) は QSV decoder (`mpeg2_qsv` / `vc1_qsv`)
         が ffmpeg に存在しても `_GPU_DECODER_MAP["intel"]` には未登録のため
-        legacy path (-hwaccel auto) に落ち、ffmpeg 側で soft / 自動 hwaccel
-        decode が選ばれる。VP9 は #582 で intel dict に登録済みなので、
-        本テストは mpeg2video で代替。
+        `-hwaccel auto` に落ち、ffmpeg 側で soft / 自動 hwaccel decode が
+        選ばれる。VP9 は #582 で intel dict に登録済みなので、本テストは
+        mpeg2video で代替。
         """
-        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
+        _popen_mock(mock_popen)
         _decode_chunk(
-            Path("test.mp4"), 0.0, 10.0, 1.0, codec="mpeg2video", vendor="intel"
+            Path("test.mp4"),
+            0.0,
+            10.0,
+            1.0,
+            codec="mpeg2video",
+            vendor="intel",
+            chunk_timestamps=_GRID,
+            **_FPS_KWARGS,
         )
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         hw_idx = cmd.index("-hwaccel")
         assert cmd[hw_idx + 1] == "auto"
         assert "mpeg2_qsv" not in cmd
         assert "-hwaccel_output_format" not in cmd
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_hwaccel_d3d11va_for_amd_av1(self, mock_run):
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_hwaccel_d3d11va_for_amd_av1(self, mock_popen):
         """vendor=amd で AV1 は d3d11va + native av1 decoder + hwdownload (#553)."""
-        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
-        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="av1", vendor="amd")
+        _popen_mock(mock_popen)
+        _decode_chunk(
+            Path("test.mp4"),
+            0.0,
+            10.0,
+            1.0,
+            codec="av1",
+            vendor="amd",
+            chunk_timestamps=_GRID,
+            **_FPS_KWARGS,
+        )
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         hw_idx = cmd.index("-hwaccel")
         assert cmd[hw_idx + 1] == "d3d11va"
         # AMD は AMF decoder ではなく native decoder + d3d11va wrapping
@@ -197,51 +284,79 @@ class TestDecodeChunk:
         vf_idx = cmd.index("-vf")
         assert cmd[vf_idx + 1].startswith("hwdownload,format=nv12,")
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_hwaccel_d3d11va_for_amd_h264(self, mock_run):
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_hwaccel_d3d11va_for_amd_h264(self, mock_popen):
         """vendor=amd / codec=h264 でも d3d11va 経路 (#553)."""
-        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
-        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="h264", vendor="amd")
+        _popen_mock(mock_popen)
+        _decode_chunk(
+            Path("test.mp4"),
+            0.0,
+            10.0,
+            1.0,
+            codec="h264",
+            vendor="amd",
+            chunk_timestamps=_GRID,
+            **_FPS_KWARGS,
+        )
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         hw_idx = cmd.index("-hwaccel")
         assert cmd[hw_idx + 1] == "d3d11va"
         cv_idx = cmd.index("-c:v")
         assert cmd[cv_idx + 1] == "h264"
         assert "h264_amf" not in cmd
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_hwaccel_d3d11va_for_amd_hevc(self, mock_run):
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_hwaccel_d3d11va_for_amd_hevc(self, mock_popen):
         """vendor=amd / codec=hevc でも d3d11va 経路 (#553)."""
-        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
-        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="hevc", vendor="amd")
+        _popen_mock(mock_popen)
+        _decode_chunk(
+            Path("test.mp4"),
+            0.0,
+            10.0,
+            1.0,
+            codec="hevc",
+            vendor="amd",
+            chunk_timestamps=_GRID,
+            **_FPS_KWARGS,
+        )
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         hw_idx = cmd.index("-hwaccel")
         assert cmd[hw_idx + 1] == "d3d11va"
         cv_idx = cmd.index("-c:v")
         assert cmd[cv_idx + 1] == "hevc"
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_nvidia_path_skips_hwdownload(self, mock_run):
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_nvidia_path_skips_hwdownload(self, mock_popen):
         """NVIDIA cuvid 経路は hwdownload prefix を付けない (#553 / #550 回帰防止).
 
         cuvid decoder は decode 結果を nv12 system memory に直接出力する
         ため、d3d11va / qsv のような hwdownload は不要。filter chain 先頭が
-        ``fps=...`` で始まることを確認。
+        ``select=`` で始まることを確認 (#864 で ``fps=`` 起点の legacy path
+        は撤去済み)。
         """
-        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
-        _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0, codec="av1", vendor="nvidia")
+        _popen_mock(mock_popen)
+        _decode_chunk(
+            Path("test.mp4"),
+            0.0,
+            10.0,
+            1.0,
+            codec="av1",
+            vendor="nvidia",
+            chunk_timestamps=_GRID,
+            **_FPS_KWARGS,
+        )
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         assert "-hwaccel_output_format" not in cmd
         vf_idx = cmd.index("-vf")
-        assert cmd[vf_idx + 1].startswith("fps="), (
+        assert cmd[vf_idx + 1].startswith("select="), (
             "NVIDIA cuvid path must not include hwdownload prefix"
         )
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_unknown_vendor_falls_back_to_hwaccel_auto(self, mock_run):
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_unknown_vendor_falls_back_to_hwaccel_auto(self, mock_popen):
         """`_VENDOR_HWACCEL_MAP` 未定義の vendor 名は `-hwaccel auto` に
         fallback する (#546 / #553 / #550 回帰防止 + 将来追加忘れガード).
 
@@ -249,7 +364,7 @@ class TestDecodeChunk:
         validation される。本テストは将来新 vendor を `_VENDOR_HWACCEL_MAP`
         に登録し忘れたケースに備えた防御。
         """
-        mock_run.return_value = MagicMock(stdout=b"", stderr=b"", returncode=0)
+        _popen_mock(mock_popen)
         _decode_chunk(
             Path("test.mp4"),
             0.0,
@@ -257,8 +372,10 @@ class TestDecodeChunk:
             1.0,
             codec="av1",
             vendor="apple",  # not in _VENDOR_HWACCEL_MAP
+            chunk_timestamps=_GRID,
+            **_FPS_KWARGS,
         )
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         hw_idx = cmd.index("-hwaccel")
         assert cmd[hw_idx + 1] == "auto", (
             f"unknown vendor should fall back to -hwaccel auto, "
@@ -322,35 +439,45 @@ class TestDecodeChunk:
         assert _select_gpu_vendor("amd", ["amd", "nvidia"]) == "amd"
         assert _select_gpu_vendor("amd", ["nvidia"]) is None
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_nonzero_returncode_raises(self, mock_run):
-        mock_run.return_value = MagicMock(stdout=b"", stderr=b"error", returncode=1)
-        with pytest.raises(VideoProcessingError, match="GPU decode failed"):
-            _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0)
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_nonzero_returncode_raises(self, mock_popen):
+        _popen_mock(mock_popen, b"", returncode=1)
+        with pytest.raises(VideoProcessingError, match="GPU decode v2 failed"):
+            _decode_chunk(
+                Path("test.mp4"), 0.0, 10.0, 1.0, chunk_timestamps=_GRID, **_FPS_KWARGS
+            )
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_ffmpeg_not_found(self, mock_run):
-        mock_run.side_effect = FileNotFoundError("ffmpeg")
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_ffmpeg_not_found(self, mock_popen):
+        mock_popen.side_effect = FileNotFoundError("ffmpeg")
         with pytest.raises(VideoProcessingError, match="ffmpeg not found"):
-            _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0)
+            _decode_chunk(
+                Path("test.mp4"), 0.0, 10.0, 1.0, chunk_timestamps=_GRID, **_FPS_KWARGS
+            )
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_timeout_raises(self, mock_run):
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_timeout_raises(self, mock_popen):
         import subprocess
 
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=300)
+        proc = _popen_mock(mock_popen)
+        proc.wait.side_effect = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=300)
         with pytest.raises(VideoProcessingError, match="timed out"):
-            _decode_chunk(Path("test.mp4"), 0.0, 10.0, 1.0)
+            _decode_chunk(
+                Path("test.mp4"), 0.0, 10.0, 1.0, chunk_timestamps=_GRID, **_FPS_KWARGS
+            )
 
-    @patch("allaganeye.video.gpu_detector.subprocess.run")
-    def test_timestamps_respect_chunk_start(self, mock_run):
+    @patch("allaganeye.video.gpu_detector.subprocess.Popen")
+    def test_timestamps_respect_chunk_start(self, mock_popen):
         """Timestamps start from chunk_start, not 0."""
-        mock_run.return_value = MagicMock(
-            stdout=_make_frames([100, 100]),
-            stderr=b"",
-            returncode=0,
+        _popen_mock(mock_popen, _make_frames([100, 100]))
+        result, _ = _decode_chunk(
+            Path("test.mp4"),
+            500.0,
+            502.0,
+            1.0,
+            chunk_timestamps=[500.0, 501.0],
+            **_FPS_KWARGS,
         )
-        result, _ = _decode_chunk(Path("test.mp4"), 500.0, 502.0, 1.0)
 
         assert 500.0 in result
         assert 501.0 in result
@@ -700,12 +827,8 @@ class TestScanGpu:
         ``chunk_start + k*interval``).
         """
         mock_grid = [321.0, 324.0, 327.0]  # deliberately off from chunk_start
-        with patch("allaganeye.video.gpu_detector.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                stdout=_make_frames([100, 5, 200]),
-                stderr=b"",
-                returncode=0,
-            )
+        with patch("allaganeye.video.gpu_detector.subprocess.Popen") as mock_popen:
+            _popen_mock(mock_popen, _make_frames([100, 5, 200]))
             result, _ = _decode_chunk(
                 Path("test.mp4"),
                 319.65,  # off-grid chunk_start
@@ -713,6 +836,7 @@ class TestScanGpu:
                 3.0,
                 codec=None,
                 chunk_timestamps=mock_grid,
+                **_FPS_KWARGS,
             )
 
         assert set(result) == set(mock_grid), (
@@ -834,8 +958,6 @@ class TestDecodeChunkV2Cmd:
     def test_nvidia_new_path(self, _mock_ff, mock_popen, monkeypatch):
         import io
 
-        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
-
         mock_proc = MagicMock()
         # chunk_timestamps has 2 entries -> select filter emits exactly 2 frames.
         # expected_frames = len(chunk_timestamps) = 2; stream must match.
@@ -887,8 +1009,6 @@ class TestDecodeChunkV2Cmd:
     def test_amd_new_path_keeps_hwdownload(self, _mock_ff, mock_popen, monkeypatch):
         import io
 
-        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
-
         mock_proc = MagicMock()
         # chunk_timestamps has 2 entries -> select filter emits exactly 2 frames.
         from allaganeye.video.detector import _FRAME_SIZE as _FS
@@ -934,8 +1054,6 @@ class TestDecodeChunkV2Cmd:
     @patch("allaganeye.video.gpu_detector.find_ffmpeg", return_value="ffmpeg")
     def test_intel_qsv_new_path(self, _mock_ff, mock_popen, monkeypatch):
         import io
-
-        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
 
         mock_proc = MagicMock()
         # chunk_timestamps has 2 entries -> select filter emits exactly 2 frames.

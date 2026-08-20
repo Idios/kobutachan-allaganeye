@@ -1,6 +1,5 @@
 """Tests for match boundary detection."""
 
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -37,7 +36,6 @@ from allaganeye.video.detector import (
     _merge_regions,
     _probe_single_frame,
     _refine_blackout_regions,
-    _use_legacy_fps_filter,
     detect_match_boundaries,
 )
 
@@ -1012,11 +1010,19 @@ class TestProbeSingleFrame:
 class TestDetectMatchBoundaries:
     @patch("allaganeye.video.detector._resolve_masked_region", return_value=FULL_FRAME)
     @patch("allaganeye.video.detector._probe_single_frame")
-    def test_all_bright(self, mock_probe, _mock_region):
+    @patch("allaganeye.video.detector._decode_chunk_cpu")
+    def test_all_bright(self, mock_chunk, mock_probe, _mock_region):
         # _mock_region: zero-blackout Pass 1 now routes through the masked
         # fallback gate (#753 A5); stub the region resolver to FULL_FRAME so the
         # masked path returns None and falls through to the standard result
         # without spawning real ffmpeg probes (kept fast/deterministic).
+        # mock_chunk: #864 removed the fps-filter fallback, so Pass 1 without
+        # source_fps now raises instead of silently degrading. Stub the decode
+        # like the sibling tests do rather than depending on a real ffmpeg
+        # invocation failing into the 255.0 fallback.
+        mock_chunk.side_effect = lambda vp, ts, cs, ce, si, **kwargs: {
+            t: 128.0 for t in ts
+        }
         mock_probe.return_value = 128.0
         result = detect_match_boundaries(
             Path("test.mp4"), duration_hint=300.0, min_match_duration=100.0
@@ -1512,22 +1518,46 @@ class TestDetectMatchBoundaries:
 
 
 class TestDecodeChunkCpu:
-    """Tests for _decode_chunk_cpu frame fallback behavior."""
+    """Tests for _decode_chunk_cpu frame fallback behavior.
 
-    @patch("allaganeye.video.detector.subprocess.run")
+    #864 で legacy fps-filter path を撤去したため、これらの #214 fallback
+    契約 (フレーム欠落 -> 255.0) は select-filter path 上で検証する。
+    truncation は tail chunk で確認する: non-tail chunk の欠落は
+    ``_sample_chunk_frames`` の動的 VFR 検出が ``VideoProcessingError``
+    にする側の契約で、そちらは ``TestSampleChunkFramesVfr`` が持つ。
+    """
+
+    @staticmethod
+    def _popen_mock(mock_popen, stdout_bytes: bytes):
+        """Wire a Popen mock that yields *stdout_bytes* and exits cleanly."""
+        import io
+
+        proc = MagicMock()
+        proc.stdout = io.BytesIO(stdout_bytes)
+        proc.stderr = io.BytesIO(b"")
+        proc.wait.return_value = 0
+        proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = proc
+        return proc
+
+    @patch("allaganeye.video.detector.subprocess.Popen")
     @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
-    def test_truncated_stdout_fills_missing_with_255(self, _mock_ff, mock_run):
-        """When ffmpeg returns fewer frames than expected, missing ones get 255.0."""
+    def test_truncated_stdout_fills_missing_with_255(self, _mock_ff, mock_popen):
+        """When ffmpeg emits fewer frames than expected, missing ones get 255.0."""
         timestamps = [0.0, 1.0, 2.0, 3.0]
-        # Return only 2 full frames (dark)
         dark_frame = bytes(b"\x00" * _FRAME_SIZE)
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=dark_frame * 2,
-            stderr=b"",
-        )
+        self._popen_mock(mock_popen, dark_frame * 2)
 
-        result = _decode_chunk_cpu(Path("test.mp4"), timestamps, 0.0, 4.0, 1.0)
+        result = _decode_chunk_cpu(
+            Path("test.mp4"),
+            timestamps,
+            0.0,
+            4.0,
+            1.0,
+            source_fps_num=60,
+            source_fps_den=1,
+            is_tail_chunk=True,
+        )
 
         assert len(result) == 4
         # First 2 timestamps have real brightness (0.0 = all black)
@@ -1537,30 +1567,45 @@ class TestDecodeChunkCpu:
         assert result[2.0] == 255.0
         assert result[3.0] == 255.0
 
-    @patch("allaganeye.video.detector.subprocess.run")
+    @patch("allaganeye.video.detector.subprocess.Popen")
     @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
-    def test_zero_byte_stdout_fills_all_with_255(self, _mock_ff, mock_run):
-        """When ffmpeg returns 0 bytes, all timestamps get 255.0."""
+    def test_zero_byte_stdout_fills_all_with_255(self, _mock_ff, mock_popen):
+        """When ffmpeg emits 0 bytes, all timestamps get 255.0."""
         timestamps = [0.0, 1.0, 2.0]
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=b"",
-            stderr=b"",
-        )
+        self._popen_mock(mock_popen, b"")
 
-        result = _decode_chunk_cpu(Path("test.mp4"), timestamps, 0.0, 3.0, 1.0)
+        result = _decode_chunk_cpu(
+            Path("test.mp4"),
+            timestamps,
+            0.0,
+            3.0,
+            1.0,
+            source_fps_num=60,
+            source_fps_den=1,
+            is_tail_chunk=True,
+        )
 
         assert len(result) == 3
         assert all(v == 255.0 for v in result.values())
 
-    @patch("allaganeye.video.detector.subprocess.run")
+    @patch("allaganeye.video.detector.subprocess.Popen")
     @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
-    def test_timeout_fills_all_with_255(self, _mock_ff, mock_run):
-        """When ffmpeg times out, all timestamps get 255.0."""
+    def test_timeout_fills_all_with_255(self, _mock_ff, mock_popen):
+        """When ffmpeg overruns the deadline, all timestamps get 255.0."""
         timestamps = [0.0, 1.0, 2.0]
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=300)
+        proc = self._popen_mock(mock_popen, bytes(b"\x00" * _FRAME_SIZE * 3))
+        proc.wait.side_effect = subprocess.TimeoutExpired(cmd="ffmpeg", timeout=300)
 
-        result = _decode_chunk_cpu(Path("test.mp4"), timestamps, 0.0, 3.0, 1.0)
+        result = _decode_chunk_cpu(
+            Path("test.mp4"),
+            timestamps,
+            0.0,
+            3.0,
+            1.0,
+            source_fps_num=60,
+            source_fps_den=1,
+            is_tail_chunk=False,
+        )
 
         assert len(result) == 3
         assert all(v == 255.0 for v in result.values())
@@ -1856,34 +1901,6 @@ class TestPass1HysteresisIntegration:
         assert len(result) == 1
 
 
-class TestUseLegacyFpsFilter:
-    """env var rollback helper (#576 S6)."""
-
-    def test_default_false(self, monkeypatch):
-        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
-        assert _use_legacy_fps_filter() is False
-
-    def test_explicit_1_returns_true(self, monkeypatch):
-        monkeypatch.setenv("ALLAGANEYE_DETECT_FPS_FILTER", "1")
-        assert _use_legacy_fps_filter() is True
-
-    def test_other_values_return_false(self, monkeypatch):
-        for value in ("0", "true", "yes", "", "2"):
-            monkeypatch.setenv("ALLAGANEYE_DETECT_FPS_FILTER", value)
-            assert _use_legacy_fps_filter() is False, f"value={value!r}"
-
-
-class TestConftestEnvVarAutouse:
-    """conftest.py autouse fixture clears ALLAGANEYE_DETECT_FPS_FILTER (#576 S6)."""
-
-    def test_env_var_unset_by_default(self):
-        # autouse fixture should have unset it before this test runs.
-        assert "ALLAGANEYE_DETECT_FPS_FILTER" not in os.environ, (
-            "conftest autouse should unset ALLAGANEYE_DETECT_FPS_FILTER. "
-            "CI pollution risk (#576 R6)."
-        )
-
-
 # ---------------------------------------------------------------------------
 # _sample_chunk_frames / _resolve_fps_rational (#576 S2.2 / S2.3)
 # ---------------------------------------------------------------------------
@@ -2117,7 +2134,6 @@ class TestDecodeChunkCpuNewPath:
     def test_cmd_uses_input_seek_no_fps_passthrough(
         self, _mock_ff, mock_popen, monkeypatch
     ):
-        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
 
         mock_proc = MagicMock()
         # chunk_timestamps has 3 entries -> select filter emits exactly 3 frames.
@@ -2176,8 +2192,6 @@ class TestDecodeChunkCpuV2NonzeroReturncode:
         """proc.returncode != 0 -> 255.0 fallback, stderr read from tempfile."""
         import logging
 
-        monkeypatch.delenv("ALLAGANEYE_DETECT_FPS_FILTER", raising=False)
-
         # Simulate tempfile that ffmpeg would have written to.
         # seek(0) + read() must return the error bytes.
         fake_stderr_buf = _io.BytesIO(b"error: some ffmpeg failure")
@@ -2218,14 +2232,36 @@ class TestDecodeChunkCpuV2NonzeroReturncode:
         )
 
 
-class TestDecodeChunkCpuLegacyRollback:
-    """env var=1 で旧 fps filter cmd が生成されること (#576 S6 / S7.1.7)."""
+class TestLegacyFpsFilterRetired:
+    """#864: legacy fps filter path と env var は撤去済み。
 
-    @patch("allaganeye.video.detector.subprocess.run")
+    #576 は新 path を default 化しつつ ``ALLAGANEYE_DETECT_FPS_FILTER=1`` を
+    transitional な緊急 rollback として残した。#864 でその escape hatch ごと
+    撤去したので、本クラスは「env var が再導入されていない」ことを 2 面から
+    pin する:
+
+    1. **behavioral** -- env var を立てても ffmpeg cmd が新 path のまま
+       (`select=` filter / dual seek) であること
+    2. **source scan** -- production package から env var 名が消えていること
+
+    どちらか片方だと弱い: (1) だけだと別名 env var での復活を見逃し、
+    (2) だけだと「名前は消えたが分岐は残った」を見逃す。
+    """
+
+    _ENV_VAR = "ALLAGANEYE_DETECT_FPS_FILTER"
+
+    @patch("allaganeye.video.detector.subprocess.Popen")
     @patch("allaganeye.video.detector.find_ffmpeg", return_value="ffmpeg")
-    def test_legacy_cmd_used_when_env_set(self, _mock_ff, mock_run, monkeypatch):
-        monkeypatch.setenv("ALLAGANEYE_DETECT_FPS_FILTER", "1")
-        mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
+    def test_env_var_is_inert_cpu_path(self, _mock_ff, mock_popen, monkeypatch):
+        """env var=1 でも新 path (Popen + select filter) のまま (#864)."""
+        monkeypatch.setenv(self._ENV_VAR, "1")
+
+        mock_proc = MagicMock()
+        mock_proc.stdout = _io.BytesIO(bytes([0] * _FRAME_SIZE * 3))
+        mock_proc.stderr = _io.BytesIO(b"")
+        mock_proc.wait.return_value = 0
+        mock_proc.returncode = 0
+        mock_popen.return_value.__enter__.return_value = mock_proc
 
         _decode_chunk_cpu(
             Path("test.mp4"),
@@ -2238,15 +2274,31 @@ class TestDecodeChunkCpuLegacyRollback:
             is_tail_chunk=False,
         )
 
-        called_cmd = mock_run.call_args[0][0]
-        # legacy: -ss before -i
-        i_idx = called_cmd.index("-i")
-        ss_idx = called_cmd.index("-ss")
-        assert ss_idx < i_idx, f"legacy -ss must precede -i, got {called_cmd}"
-        # legacy: fps= present in -vf
-        vf_idx = called_cmd.index("-vf")
-        vf_value = called_cmd[vf_idx + 1]
-        assert "fps=" in vf_value, f"legacy must keep fps filter, got -vf {vf_value!r}"
+        assert mock_popen.called, (
+            f"{self._ENV_VAR}=1 still routes to the retired subprocess.run "
+            f"legacy path -- the escape hatch was not removed (#864)."
+        )
+        called_cmd = mock_popen.call_args[0][0]
+        vf_value = called_cmd[called_cmd.index("-vf") + 1]
+        assert "fps=" not in vf_value, (
+            f"env var must not restore the PTS-based fps filter, got -vf {vf_value!r}"
+        )
+        assert "select='not(mod(n\\," in vf_value, (
+            f"new path select filter missing under env var, got {vf_value!r}"
+        )
+
+    def test_env_var_absent_from_production_sources(self):
+        """``allaganeye/**/*.py`` から env var 名が消えている (#864 受け入れ条件)."""
+        package_root = Path(det.__file__).resolve().parent.parent
+        offenders = [
+            str(path.relative_to(package_root))
+            for path in sorted(package_root.rglob("*.py"))
+            if self._ENV_VAR in path.read_text(encoding="utf-8")
+        ]
+        assert offenders == [], (
+            f"{self._ENV_VAR} must not appear in the production package "
+            f"after #864; found in: {offenders}"
+        )
 
 
 class TestDetectMatchBoundariesRationalFps:

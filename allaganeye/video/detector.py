@@ -116,8 +116,9 @@ def _resolve_fps_rational(
     Priority:
     1. ``fps_num`` + ``fps_den`` both given -> use as-is
     2. ``source_fps`` (float) only -> ``Fraction(...).limit_denominator(10000)``
-    3. all None -> raise VideoProcessingError (caller should not call here
-       without source_fps; legacy path is selected via env var separately)
+    3. all None -> raise VideoProcessingError.  Since #864 removed the
+       fps-filter fallback this is a hard error rather than a silent
+       degrade; ``probe`` rejects ``fps <= 0`` so production always has one.
     """
     # probe.py returns (0, 0) on parse failure; we deliberately fall through
     # to source_fps (float) for that case via the > 0 checks below.
@@ -1404,26 +1405,16 @@ def _decode_chunk_cpu(
 ) -> dict[float, float]:
     """Decode a chunk in CPU mode.
 
-    Dispatches to the legacy fps-filter path when env var
-    ``ALLAGANEYE_DETECT_FPS_FILTER=1`` is set or when rational fps cannot
-    be resolved.  Otherwise uses the new output-seek + Python N-th
-    sampling path (#576).
+    Always uses the output-seek + Python N-th sampling path (#576).  The
+    pre-#576 fps-filter path and its transitional env var escape hatch
+    were removed in #864, so an unresolvable frame rate now raises
+    ``VideoProcessingError`` from ``_resolve_fps_rational`` instead of
+    silently degrading to the version-dependent legacy path.  ``probe``
+    hard-fails on ``fps <= 0``, so production callers always supply one.
+    See ``docs/video-processing.md`` for the retired env var's name.
     """
     if not chunk_timestamps:
         return {}
-
-    use_legacy = _use_legacy_fps_filter() or (
-        source_fps_num is None and source_fps_den is None and source_fps is None
-    )
-    if use_legacy:
-        return _decode_chunk_cpu_legacy(
-            video_path,
-            chunk_timestamps,
-            chunk_start,
-            chunk_end,
-            sample_interval,
-            region,
-        )
 
     fps_num, fps_den = _resolve_fps_rational(
         source_fps_num,
@@ -1441,83 +1432,6 @@ def _decode_chunk_cpu(
         is_tail_chunk,
         region,
     )
-
-
-def _decode_chunk_cpu_legacy(
-    video_path: Path,
-    chunk_timestamps: list[float],
-    chunk_start: float,
-    chunk_end: float,
-    sample_interval: float,
-    region: CaptureRegion = FULL_FRAME,
-) -> dict[float, float]:
-    """Legacy fps-filter chunk decode (pre-#576). Kept for env var rollback.
-
-    Scheduled for removal in v0.3.x patch release.
-    """
-    chunk_duration = chunk_end - chunk_start
-    fps_value = 1.0 / sample_interval
-
-    cmd = [
-        find_ffmpeg(),
-        "-threads",
-        "1",
-        "-ss",
-        str(chunk_start),
-        "-t",
-        str(chunk_duration),
-        "-i",
-        str(video_path),
-        "-vf",
-        f"fps={fps_value},scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
-        "-f",
-        "rawvideo",
-        "-pix_fmt",
-        "gray",
-        "pipe:1",
-    ]
-
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=max(300, int(chunk_duration * 2)),
-        )
-    except FileNotFoundError as e:
-        raise VideoProcessingError(
-            "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
-        ) from e
-    except subprocess.TimeoutExpired:
-        logger.warning("CPU chunk decode timed out [%.1f-%.1f]", chunk_start, chunk_end)
-        return {t: 255.0 for t in chunk_timestamps}
-
-    if proc.returncode != 0:
-        logger.warning(
-            "CPU chunk decode failed [%.1f-%.1f]: %s",
-            chunk_start,
-            chunk_end,
-            proc.stderr.decode(errors="replace")[-200:],
-        )
-        return {t: 255.0 for t in chunk_timestamps}
-
-    # Parse raw frames and map to pre-computed timestamps
-    data = proc.stdout
-    results: dict[float, float] = {}
-    frame_idx = 0
-    offset = 0
-
-    while offset + _FRAME_SIZE <= len(data) and frame_idx < len(chunk_timestamps):
-        frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
-        results[chunk_timestamps[frame_idx]] = _frame_brightness(frame, region)
-        offset += _FRAME_SIZE
-        frame_idx += 1
-
-    # Fill missing timestamps with safe non-blackout value
-    for t in chunk_timestamps:
-        if t not in results:
-            results[t] = 255.0
-
-    return results
 
 
 def _decode_chunk_cpu_v2(
@@ -1696,10 +1610,9 @@ def _scan_cpu(
 ) -> dict[float, float]:
     """CPU mode: chunked decode (output seek + Python N-th sampling, #576).
 
-    When ``source_fps_num``/``source_fps_den`` (or float ``source_fps``) is
-    provided AND env var ``ALLAGANEYE_DETECT_FPS_FILTER`` is not set, uses
-    the new output-seek path.  Otherwise falls back to the legacy
-    fps-filter path.
+    ``source_fps_num``/``source_fps_den`` (or float ``source_fps``) must
+    resolve to a usable frame rate; there is no fps-filter fallback since
+    #864 removed it.
     """
     timestamps = _generate_timestamps(duration_hint, sample_interval)
     if not timestamps:
@@ -2563,41 +2476,6 @@ long loading -- which a single fixed early offset could miss
 (Codex adversarial-review, 2026-05-23) -- while keeping post-match
 false-positive exposure low.  Used by ``_flag_post_match_trailing``.
 """
-
-# ---------------------------------------------------------------------------
-# Legacy fps-filter rollback switch (#576)
-# ---------------------------------------------------------------------------
-# Transitional escape hatch: when ALLAGANEYE_DETECT_FPS_FILTER=1 the
-# detector reverts to the pre-#576 chunked fps=N filter path.  Default
-# (= False) is the new output-seek + N-th sampling path.  Scheduled for
-# removal in v0.3.x patch release (see CHANGELOG / docstring).
-
-
-def _use_legacy_fps_filter() -> bool:
-    """Return True when the legacy fps-filter path is forced via env var (#576).
-
-    **Transitional / scheduled for removal in v0.3.x.**
-
-    Setting ``ALLAGANEYE_DETECT_FPS_FILTER=1`` reverts the detector to
-    the pre-#576 chunked ``fps=N`` filter path.  Originally provided as
-    both an emergency escape hatch for ffmpeg version regressions AND
-    a perf escape (output seek had ~10x regression).  Codex perf rescue
-    Option 1 (dual seek, commit a864834) restored perf to legacy levels
-    (~6m18s for obs-20260118 on RTX 5090 vs legacy ~7 min), so the perf
-    angle is no longer relevant.  CI / production should NEVER set this
-    var (CHANGELOG "Deprecated").
-
-    Removal plan:
-
-    - v0.3.0: env var supported (this function exists, returns env value)
-    - v0.3.x: env var removed (this function deleted, only new path
-      exists, _decode_chunk_cpu_legacy / _decode_chunk_legacy purged)
-
-    See ``docs/superpowers/specs/2026-05-18-v030-l3-detect-fps-filter-retirement-design.md``
-    S6 for rollback design and ``CHANGELOG.md`` for the deprecation
-    timeline.
-    """
-    return os.environ.get("ALLAGANEYE_DETECT_FPS_FILTER") == "1"
 
 
 def _borderline_pseudo_regions(
