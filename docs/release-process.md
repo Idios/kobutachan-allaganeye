@@ -99,7 +99,7 @@ CI の起動条件 (workflow の `on:`) と、**red を実際にマージ阻止�
 | --- | --- |
 | ruleset 名 | `required-status-checks` |
 | enforcement | `active` |
-| 対象 ref | `refs/heads/main` / `refs/heads/release/*` / `refs/heads/develop-*` |
+| 対象 ref | **`refs/heads/main` のみ** (下記 §対象を `main` に限る理由 を参照) |
 | rule | `required_status_checks` |
 | strict (branch up-to-date 要求) | `false` (無関係な PR のマージのたびに全 PR の rebase を強いるため) |
 | bypass actors | なし (repository admin も required 緑まで手動マージできない) |
@@ -119,6 +119,20 @@ required に指定する check は以下の 8 件。
 
 **required に入れる check は「全 PR で必ず report される」ものに限る。** GitHub は workflow が paths filter で丸ごと skip された場合その check を report しないため、条件付き起動の workflow を required にすると、条件に当たらない PR が `Expected — waiting for status` のまま恒久的にマージ不能になる。`markdownlint` を required にするにあたり [`markdownlint.yml`](../.github/workflows/markdownlint.yml) の paths filter を撤去したのはこのため。
 
+### 対象を `main` に限る理由 (実測、2026-08-20)
+
+**`required_status_checks` は PR のマージだけでなく、対象 ref への `git push` すべてに適用される。** `release/*` や `develop-*` を対象に含めるとリリース手順が自分自身をロックする。使い捨て ruleset (対象 `refs/heads/rulesetprobe/*`、required 8 件、後片付け済) で実測した結果は以下のとおり。
+
+| 操作 | `do_not_enforce_on_create` | 結果 |
+| --- | --- | --- |
+| 新規ブランチ作成 (`git push origin <sha>:refs/heads/rulesetprobe/creation`) | `false` | **reject** — `GH013: Repository rule violations found` / `8 of 8 required status checks are expected` |
+| 同上 | `true` | 通る (exit 0) |
+| 既存ブランチへの追加 push | `true` | **reject** (同じ `GH013`)。`do_not_enforce_on_create` は**作成時しか免除しない** |
+
+これが衝突する具体箇所は [`.claude/skills/release/SKILL.md`](../.claude/skills/release/SKILL.md) §Step 4 で、CHANGELOG 見出し日付の commit を「リリース PR の head ブランチへ**直接 commit / push** する。日付のためだけの新しい PR は作らない」と定めている。裁定 D4 により patch release のリリース PR head は `develop-<version>` なので、**`develop-*` を保護すると次の patch release のタグ打ちで即座に発火する**。`main` 以外を対象にすると必ずこの Step と衝突する。
+
+したがって対象は `main` のみとし (Idios 判断 2026-08-20)、`develop-*` / `release/*` は保護しない。**この選択は下記「見ていない集合」の 1 項目目をそのまま受け入れることを意味する。**
+
 ### 変更手順 (順序厳守)
 
 1. **先に workflow 側を直す** — 新しい base パターンを足す場合は `ci.yml` / `markdownlint.yml` の `pull_request.branches` を先に更新し、その変更が対象ブランチへマージされていること
@@ -134,6 +148,7 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 
 ### この機構が見ていない集合
 
+- **`develop-*` / `release/*` 宛の PR は 1 本もマージ阻止されない。** 保護対象が `main` だけなので、日常の開発 PR は CI が red のままでも手動マージできる。**この機構が実際にマージを止めるのは「`main` へ入る瞬間」の 1 回だけ**であり、それまでの全 PR で CI は「気づくための信号」に留まる。これは上記 §対象を `main` に限る理由 で意図的に受け入れた縮退である
 - **check が report されたかしか見ない。** paths filter で skip された job の妥当性も、job の中身が実際に何を検査しているかも見ない
 - **required の 8 件以外は red でもマージを止めない。** `hook-test` / `doc-tauri-commands-drift` / `doc-error-hint-drift` / `doc-code-refs` / `shellcheck` / `version-check` / `cargo audit` / `npm audit` / `dependency review` は informational
 - **対象 ref に列挙しないブランチは無保護。** 将来 `hotfix/*` 等を切る場合は本節と workflow の両方を更新しないと素通りする
