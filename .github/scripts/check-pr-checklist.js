@@ -458,6 +458,18 @@ function validateFableRow(body, files) {
     };
   }
 
+  // `未実施` / `未実行` は `実施` を部分文字列として含むため、素朴な判定だと
+  // 「実施と書いてあるが数値が無い」という**誤ったメッセージ**で赤になる (実測)。
+  // 赤という結論は同じでも理由が嘘になるので、紛らわしい変種は名指しで弾く。
+  if (/未実施|未実行/.test(row)) {
+    return {
+      ok: false,
+      reason:
+        'Fable 俯瞰レビュー行に `未実施` / `未実行` と書かれています。' +
+        '本欄の語彙は `実施` または `非実施` の 2 つだけです (`非実施` は起動条件に該当しなかったことを意味します)。',
+    };
+  }
+
   const declaredHijisshi = /非実施/.test(row);
   const declaredJisshi = !declaredHijisshi && /実施/.test(row);
 
@@ -548,13 +560,25 @@ async function checkPrChecklist({ github, context, core }) {
   let files = null;
   try {
     if (github && github.rest && github.rest.pulls && context.repo && pr.number) {
-      const res = await github.rest.pulls.listFiles({
+      const params = {
         owner: context.repo.owner,
         repo: context.repo.repo,
         pull_number: pr.number,
         per_page: 100,
-      });
-      files = res && res.data;
+      };
+      if (typeof github.paginate === 'function') {
+        // 100 file 超の PR でも全件取る。1 page しか見ないと doc-only を誤判定する。
+        files = await github.paginate(github.rest.pulls.listFiles, params);
+      } else {
+        const res = await github.rest.pulls.listFiles(params);
+        const page = (res && res.data) || [];
+        // paginate が無く 1 page 満杯 = 続きがあるかもしれない。**部分リストで判定しない**
+        // (doc-only を誤って成立させ、必要なレビューを skip させうる)。
+        files = page.length >= params.per_page ? null : page;
+        if (files === null) {
+          core.info('PR file list may be truncated (no paginate available); skipping Fable row semantic check.');
+        }
+      }
     }
   } catch (e) {
     core.info(`Could not list PR files (${e.message}); skipping Fable row semantic check.`);

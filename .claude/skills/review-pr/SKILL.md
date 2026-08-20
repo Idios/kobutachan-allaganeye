@@ -285,6 +285,20 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 
 > **「Fable にレビューさせた」は Codex review 省略の口実にしない** (`CLAUDE.md` §「Fable と Codex の棲み分け」)。両者は併存レイヤーであり、invariant / 不可逆操作に関わる変更は**両方**にかける。
 
+#### この gate が見ていない集合 (#945、Codex adversarial-review 対応)
+
+`validate-checklist` は Self-Test Report の Fable 行を **変更ファイル一覧と突き合わせて**検査する
+(`check-pr-checklist.js` の `validateFableRow`)。起動条件に該当するのに `非実施` と書けば red、
+`実施` なのに finding / 消化 / 残 が整数で揃っていなければ red。**ただし以下は構造的に検査外**:
+
+- **実際にレビューを実行したかは検証できない。** `実施 (finding 0 件 / 消化 0 件 / 残 0 件)` と
+  書けば緑になる。CI からは subagent 起動の有無を観測できないため、ここは**自己申告のまま**。
+  gate が担保するのは「起動条件に該当する PR で `非実施` と書けない」ことと「数値を書かせる」ことだけ
+- **finding の内容が妥当かは見ない。** 数値が揃っていれば通る
+- **変更ファイル一覧が取得できない場合は検査を skip する** (fork PR の権限不足 / API 失敗 /
+  100 file 超で paginate 不可)。ここで落とすと gate が見るべきものではなく API 可用性で red に
+  なるため意図的に安全側へ倒している。skip したことは job log に残る
+
 **optional Codex review (Codex 統合、C3)**
 
 以下のいずれかを満たす PR で Codex review を併走させる (人手 trigger or skill 内 auto)。agent 実行は tier 1 = companion script `codex-companion.mjs review --base develop-X.Y.Z` の Bash 実行 (slash `/codex:review` は `disable-model-invocation: true` のため agent から invoke 不可 = Idios 専用 tier 3。`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照):

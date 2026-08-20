@@ -1238,3 +1238,20 @@ test('#945 corpus: 実テンプレート行を `非実施` へ置換 — code PR
   assert.equal(validateFableRow(row, CODE_FILES).ok, true, 'code PR では正当');
   assert.equal(validateFableRow(row, DOC_ONLY_FILES).ok, false, 'doc-only では不当');
 });
+
+test('#945: `未実施` / `未実行` は専用メッセージで red (実施 の部分一致で誤解説しない)', () => {
+  // `未実施` は `実施` を部分文字列として含む。素朴な判定だと「実施と書いてあるが
+  // 数値が無い」という**嘘の理由**で赤になる。赤という結論が同じでも理由は正しくあるべき。
+  for (const word of ['未実施', '未実行']) {
+    const r = validateFableRow(`- [x] Fable 俯瞰レビュー (#945): ${word} (理由: x)`, DOC_ONLY_FILES);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /語彙は/, `${word}: 専用メッセージが出る`);
+  }
+});
+
+test('#945: 起動条件に該当しない語彙 (スキップ / N/A) も red', () => {
+  for (const word of ['スキップ', 'N/A', '省略']) {
+    const r = validateFableRow(`- [x] Fable 俯瞰レビュー (#945): ${word}`, DOC_ONLY_FILES);
+    assert.equal(r.ok, false, `${word} は red`);
+  }
+});
