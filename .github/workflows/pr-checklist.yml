@@ -4,6 +4,12 @@ on:
   pull_request:
     types: [opened, edited, synchronize]
 
+# Fable 欄の semantic 検査が PR の変更ファイル一覧を読むため明示宣言する (#945)。
+# ambient default に依存すると、default が絞られた瞬間に gate が fail-closed で落ちる。
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   validate-checklist:
     runs-on: ubuntu-latest

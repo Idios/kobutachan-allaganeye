@@ -33,21 +33,28 @@ const context = {
 };
 // PR_FILES が与えられたときだけ listFiles を生やす。未指定なら github は空のままで、
 // checker 側の「files 取得不可 → semantic 検査 skip」経路を通る (従来テストの挙動を保つ)。
-const github = process.env.PR_FILES
-  ? { rest: { pulls: { listFiles: async () => ({ data: JSON.parse(process.env.PR_FILES) }) } } }
-  : {};
+// PR_FILES 未指定なら「1 file の code PR」を既定にする。#945 で checker が fail-closed に
+// なったため、files を渡さない既存テストが全部 red になるのを避ける (それらは Fable 検査の
+// 対象外を見ているテストであり、file list の可用性を測る意図ではない)。
+const DEFAULT_FILES = [{ filename: 'allaganeye/x.py', status: 'modified' }];
+const listFiles = process.env.PR_FAIL_LIST_FILES
+  ? async () => { throw new Error('simulated API failure'); }
+  : async () => ({ data: process.env.PR_FILES ? JSON.parse(process.env.PR_FILES) : DEFAULT_FILES });
+const github = { rest: { pulls: { listFiles } } };
 checker({ github, context, core }).catch((e) => {
   process.stdout.write('[throw] ' + e.message + '\\n');
   process.exitCode = 2;
 });
 `;
 
-function runCheckerProcess(body, userType, files) {
+function runCheckerProcess(body, userType, files, opts) {
   const env = { ...process.env, CHECKER_PATH, PR_BODY: body };
   if (userType) env.PR_USER_TYPE = userType;
   else delete env.PR_USER_TYPE;
   if (files) env.PR_FILES = JSON.stringify(files);
   else delete env.PR_FILES;
+  if (opts && opts.failListFiles) env.PR_FAIL_LIST_FILES = '1';
+  else delete env.PR_FAIL_LIST_FILES;
   const result = spawnSync(process.execPath, ['-e', CHILD_SOURCE], { env, encoding: 'utf8' });
   return { status: result.status, stdout: result.stdout || '', stderr: result.stderr || '' };
 }
@@ -666,32 +673,6 @@ test('#936 D9: 実テンプレートは 24 box 中 13 box のみが gate 対象'
   assert.equal(result.unchecked, 13, 'gate 対象となる - [ ] の数 (受け入れ条件 2 + Self-Test 11)');
 });
 
-test('#945: Self-Test Report の Fable 欄が未記入なら validate-checklist が red (生 exit code)', () => {
-  // 3 点セット ③ (発火側の red 実証)。カウント関数の戻り値ではなく、
-  // actions/github-script 相当の子プロセスを通した **exit code の生値** を観測する。
-  // これが 1 にならないなら、box を足しても gate は 1 度も赤を出さない no-op である。
-  const fableLine =
-    '- [ ] Fable 俯瞰レビュー (#945) — `実施 (finding N 件 / 消化 M 件 / 残 K 件)` または `非実施 (理由: <1 行>)`';
-  const body = [
-    '#### Self-Test Report (machine-verified)',
-    '',
-    '- [x] `ruff check .`',
-    fableLine,
-    '',
-  ].join('\n');
-
-  const red = runCheckerProcess(body);
-  assert.equal(red.status, 1, 'Fable 欄が未記入なら exit 1 (red)');
-  assert.match(red.stdout, /::error::/, 'core.setFailed が呼ばれている');
-
-  // 対照: 同じ本文で Fable 欄だけを [x] にすると緑になる。
-  // これが無いと「何を書いても赤い」だけの gate と区別できない。
-  // placeholder を残したまま [x] にするのは「レビューせずに緑」なので実記入形へ置換する
-  const filled = '- [x] Fable 俯瞰レビュー (#945): 非実施 (理由: doc-only でない)';
-  const green = runCheckerProcess(body.replace(fableLine, filled));
-  assert.equal(green.status, 0, 'Fable 欄を消化すれば exit 0 (green)');
-});
-
 test('#936: `*` / `+` / 番号付き list marker の checkbox も数える (false-green 修正)', () => {
   // Codex adversarial-review round 2 [medium]。GFM の task list は `-` 以外の marker でも
   // checkbox としてレンダリングされるため、`- ` 固定だと可視の未消化を見逃す。
@@ -1126,22 +1107,17 @@ test('indented backtick fence (0-3 space indent within list) is stripped', () =>
   assert.equal(result.hasAnySection, true);
 });
 
-// --- #945: Fable 行の semantic 検査 (Codex adversarial-review [medium] 対応) ---------
+// --- #945: Fable 行の semantic 検査 (Codex adversarial-review round 1-2 対応) --------
 //
 // checkbox の消化だけを見る gate は「レビューを実行せずに緑」を防げない。
-// 以下は **値の妥当性**で red が出ることを示す。従来の「未記入 → red」とは別のクラス。
+// 走査は **Self-Test Report 節の task 行だけ**に限定する — 本文全体を見る実装では、
+// 行の削除・節外の decoy 行・分割で無効化できた (round 2 [high])。
 
-const { validateFableRow } = require('./check-pr-checklist.js');
+const { validateFableRow, countAcceptanceCriteriaCheckboxes: countCB } = require('./check-pr-checklist.js');
 
-const FABLE_ROW_UNRUN = '- [x] Fable 俯瞰レビュー (#945) — 非実施 (理由: doc-only でない)';
-const FABLE_ROW_RUN = '- [x] Fable 俯瞰レビュー (#945) — 実施 (finding 2 件 / 消化 2 件 / 残 0 件)';
-const FABLE_ROW_PLACEHOLDER =
-  '- [x] Fable 俯瞰レビュー (#945) — 実施 (finding N 件 / 消化 M 件 / 残 K 件)';
-
-const DOC_ONLY_FILES = [
-  { filename: 'docs/l2-workflow.md', status: 'modified' },
-  { filename: 'docs/release-process.md', status: 'modified' },
-];
+const ROW_UNRUN = '- [x] Fable 俯瞰レビュー (#945): 非実施 (理由: doc-only でない)';
+const ROW_RUN = '- [x] Fable 俯瞰レビュー (#945): 実施 (finding 2 件 / 消化 2 件 / 残 0 件)';
+const DOC_ONLY_FILES = [{ filename: 'docs/a.md', status: 'modified' }];
 const CODE_FILES = [
   { filename: 'allaganeye/export/pool.py', status: 'modified' },
   { filename: 'docs/cli-spec.md', status: 'modified' },
@@ -1151,107 +1127,124 @@ const SPEC_ADDED_FILES = [
   { filename: 'docs/superpowers/specs/2026-08-21-x.md', status: 'added' },
 ];
 
-test('#945 semantic: doc-only PR で `非実施` は red (起動条件 (a) 該当)', () => {
-  const r = validateFableRow(FABLE_ROW_UNRUN, DOC_ONLY_FILES);
+/** Self-Test 節の task 行だけを渡す (checker 本体と同じ経路で抽出する) */
+function rowsFromBody(body) {
+  return countCB(body).selfTestRows;
+}
+function bodyWith(rows) {
+  return ['#### Self-Test Report (machine-verified)', '', '- [x] `ruff check .`', ...rows, ''].join('\n');
+}
+
+test('#945 semantic: doc-only PR で `非実施` は red', () => {
+  const r = validateFableRow(rowsFromBody(bodyWith([ROW_UNRUN])), DOC_ONLY_FILES);
   assert.equal(r.ok, false);
   assert.match(r.reason, /doc-only/);
 });
 
-test('#945 semantic: spec 新規追加 PR で `非実施` は red (起動条件 (b) 該当、code file 混在でも)', () => {
-  // code file を含むので doc-only ではない。(b) だけで発火することを示す。
-  const r = validateFableRow(FABLE_ROW_UNRUN, SPEC_ADDED_FILES);
+test('#945 semantic: spec 新規追加 PR で `非実施` は red (code file 混在でも (b) で発火)', () => {
+  const r = validateFableRow(rowsFromBody(bodyWith([ROW_UNRUN])), SPEC_ADDED_FILES);
   assert.equal(r.ok, false);
   assert.match(r.reason, /specs\/plans/);
 });
 
 test('#945 semantic: 通常の code PR で `非実施` は green (対照)', () => {
-  // 対照が無いと「何を書いても赤い」だけの gate と区別できない。
-  const r = validateFableRow(FABLE_ROW_UNRUN, CODE_FILES);
-  assert.equal(r.ok, true);
+  assert.equal(validateFableRow(rowsFromBody(bodyWith([ROW_UNRUN])), CODE_FILES).ok, true);
 });
 
-test('#945 semantic: `実施` は N/M/K がプレースホルダのままなら red', () => {
-  const r = validateFableRow(FABLE_ROW_PLACEHOLDER, DOC_ONLY_FILES);
+test('#945 semantic: `実施` + 実数 3 件は green / 数値不足は red', () => {
+  assert.equal(validateFableRow(rowsFromBody(bodyWith([ROW_RUN])), DOC_ONLY_FILES).ok, true);
+  const short = '- [x] Fable 俯瞰レビュー (#945): 実施 (finding 2 件)';
+  assert.equal(validateFableRow(rowsFromBody(bodyWith([short])), DOC_ONLY_FILES).ok, false);
+});
+
+// --- round 2 [high]: 行の削除 / 節外 decoy / 重複 -----------------------------------
+
+test('#945 bypass: Fable 行を削除すると red (不在は緑にしない)', () => {
+  const r = validateFableRow(rowsFromBody(bodyWith([])), DOC_ONLY_FILES);
   assert.equal(r.ok, false);
-  assert.match(r.reason, /整数/);
+  assert.match(r.reason, /ありません/);
 });
 
-test('#945 semantic: `実施` + 実数 3 件は green', () => {
-  const r = validateFableRow(FABLE_ROW_RUN, DOC_ONLY_FILES);
-  assert.equal(r.ok, true);
-});
-
-test('#945 semantic: files 不明時は skip する (API 可用性で false-red にしない)', () => {
-  assert.equal(validateFableRow(FABLE_ROW_UNRUN, null).ok, true);
-  assert.equal(validateFableRow(FABLE_ROW_UNRUN, []).ok, true);
-});
-
-test('#945 semantic: 生 exit code — doc-only PR の誤った `非実施` で validate-checklist が red', () => {
-  // 3 点セット ③。カウント関数ではなく子プロセスの **exit code の生値**で観測する。
+test('#945 bypass: Self-Test 節の外に置いた行は数えない (decoy 無効)', () => {
+  // 節の外に準拠行を置き、節内には置かない → 不在として red になるべき。
   const body = [
     '#### Self-Test Report (machine-verified)',
     '',
     '- [x] `ruff check .`',
-    FABLE_ROW_UNRUN,
+    '',
+    '#### 関連ドキュメント / マトリクス更新',
+    '',
+    ROW_RUN, // 節外の decoy
     '',
   ].join('\n');
+  const r = validateFableRow(rowsFromBody(body), DOC_ONLY_FILES);
+  assert.equal(r.ok, false, '節外 decoy では通らない');
+  assert.match(r.reason, /ありません/);
+});
+
+test('#945 bypass: 節内に 2 本あると red (準拠 decoy + 非準拠の併置)', () => {
+  const r = validateFableRow(rowsFromBody(bodyWith([ROW_RUN, ROW_UNRUN])), DOC_ONLY_FILES);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /2 本/);
+});
+
+// --- round 2 [low]: placeholder 判定の範囲 ------------------------------------------
+
+test('#945: placeholder トークンが残っていれば red、山括弧だけなら green', () => {
+  const unfilled = '- [x] Fable 俯瞰レビュー (#945): 実施 (finding N 件 / 消化 M 件 / 残 K 件)';
+  assert.equal(validateFableRow(rowsFromBody(bodyWith([unfilled])), DOC_ONLY_FILES).ok, false);
+
+  // 正当な回答に山括弧が入っても弾かない (false-red 回避)
+  const withAngle =
+    '- [x] Fable 俯瞰レビュー (#945): 実施 (finding 1 件 / 消化 1 件 / 残 0 件) 詳細 <https://example.com/x>';
+  assert.equal(validateFableRow(rowsFromBody(bodyWith([withAngle])), DOC_ONLY_FILES).ok, true);
+});
+
+test('#945: `未実施` / `未実行` は専用メッセージで red', () => {
+  for (const w of ['未実施', '未実行']) {
+    const r = validateFableRow(rowsFromBody(bodyWith([`- [x] Fable 俯瞰レビュー (#945): ${w} (理由: x)`])), DOC_ONLY_FILES);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /語彙は/);
+  }
+});
+
+test('#945: スキップ / N/A 等の語彙も red', () => {
+  for (const w of ['スキップ', 'N/A', '省略']) {
+    const r = validateFableRow(rowsFromBody(bodyWith([`- [x] Fable 俯瞰レビュー (#945): ${w}`])), DOC_ONLY_FILES);
+    assert.equal(r.ok, false, `${w} は red`);
+  }
+});
+
+// --- corpus: 実テンプレート ---------------------------------------------------------
+
+test('#945 corpus: 実テンプレートは Self-Test 節に Fable 行を 1 本だけ持つ', () => {
+  const tpl = fs.readFileSync(TEMPLATE_PATH, 'utf8');
+  const fableRows = countCB(tpl).selfTestRows.filter((r) => /Fable[ \t\u3000]*俯瞰レビュー/.test(r));
+  assert.equal(fableRows.length, 1, '節内にちょうど 1 本');
+});
+
+test('#945 corpus: 実テンプレートの未記入行は red (placeholder のまま [x] にしただけでは通らない)', () => {
+  const tpl = fs.readFileSync(TEMPLATE_PATH, 'utf8').replace('- [ ] Fable', '- [x] Fable');
+  const r = validateFableRow(countCB(tpl).selfTestRows, DOC_ONLY_FILES);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /未記入/);
+});
+
+// --- fail-closed: files が取れない場合 ----------------------------------------------
+
+test('#945 fail-closed: listFiles が失敗すると exit 1 (silent skip しない)', () => {
+  const body = bodyWith([ROW_UNRUN]);
+  const boom = runCheckerProcess(body, undefined, undefined, { failListFiles: true });
+  assert.equal(boom.status, 1, 'API 失敗は red');
+  assert.match(boom.stdout, /取得できませんでした/);
+});
+
+test('#945 fail-closed: 生 exit code — doc-only PR の誤った `非実施` で red / 正しい `実施` で green', () => {
+  const body = bodyWith([ROW_UNRUN]);
   const red = runCheckerProcess(body, undefined, DOC_ONLY_FILES);
-  assert.equal(red.status, 1, '起動条件該当なのに非実施なら exit 1');
+  assert.equal(red.status, 1);
   assert.match(red.stdout, /::error::/);
 
-  const green = runCheckerProcess(body.replace(FABLE_ROW_UNRUN, FABLE_ROW_RUN), undefined, DOC_ONLY_FILES);
-  assert.equal(green.status, 0, '実施 + 実数なら exit 0');
-});
-
-// --- #945: 実テンプレートを corpus に使う (合成 fixture では届かなかった) ------------
-//
-// 上の semantic テストは短い合成行を使っており、**実テンプレート行では false-red が出た**。
-// 実物の行は説明文として「実施」「非実施」の両方を含むため、素朴な文字列一致では
-// 記入済みと誤認する。合成 fixture だけの発火実証は「実物に届かない gate」を通してしまう。
-
-function realFableRow() {
-  const tpl = fs.readFileSync(TEMPLATE_PATH, 'utf8');
-  // **checkbox 行に限定する。** コメント内の記入ガイドにも同じ語が出るため、
-  // 素朴な includes だと説明文を拾ってしまう (実際に踏んだ)。
-  const line = tpl
-    .split(/\r?\n/)
-    .find((l) => /^[ \t]{0,3}[-*+][ \t]+\[[ xX]\]/.test(l) && l.includes('Fable 俯瞰レビュー'));
-  assert.ok(line, 'テンプレートに Fable 行が存在する');
-  return line;
-}
-
-test('#945 corpus: 実テンプレートの未記入 Fable 行 (placeholder のまま) は red', () => {
-  // `[x]` にしただけで中身を置き換えていない = レビューしていない。これを緑にしてはいけない。
-  const row = realFableRow().replace('- [ ]', '- [x]');
-  const r = validateFableRow(row, DOC_ONLY_FILES);
-  assert.equal(r.ok, false);
-  assert.match(r.reason, /placeholder/);
-});
-
-test('#945 corpus: 実テンプレート行を `実施` + 実数へ置換したら green (false-red が無い)', () => {
-  const row = '- [x] Fable 俯瞰レビュー (#945): 実施 (finding 2 件 / 消化 2 件 / 残 0 件)';
-  assert.equal(validateFableRow(row, DOC_ONLY_FILES).ok, true);
-});
-
-test('#945 corpus: 実テンプレート行を `非実施` へ置換 — code PR なら green / doc-only なら red', () => {
-  const row = '- [x] Fable 俯瞰レビュー (#945): 非実施 (理由: doc-only でなく specs/plans 新規追加もなし)';
-  assert.equal(validateFableRow(row, CODE_FILES).ok, true, 'code PR では正当');
-  assert.equal(validateFableRow(row, DOC_ONLY_FILES).ok, false, 'doc-only では不当');
-});
-
-test('#945: `未実施` / `未実行` は専用メッセージで red (実施 の部分一致で誤解説しない)', () => {
-  // `未実施` は `実施` を部分文字列として含む。素朴な判定だと「実施と書いてあるが
-  // 数値が無い」という**嘘の理由**で赤になる。赤という結論が同じでも理由は正しくあるべき。
-  for (const word of ['未実施', '未実行']) {
-    const r = validateFableRow(`- [x] Fable 俯瞰レビュー (#945): ${word} (理由: x)`, DOC_ONLY_FILES);
-    assert.equal(r.ok, false);
-    assert.match(r.reason, /語彙は/, `${word}: 専用メッセージが出る`);
-  }
-});
-
-test('#945: 起動条件に該当しない語彙 (スキップ / N/A) も red', () => {
-  for (const word of ['スキップ', 'N/A', '省略']) {
-    const r = validateFableRow(`- [x] Fable 俯瞰レビュー (#945): ${word}`, DOC_ONLY_FILES);
-    assert.equal(r.ok, false, `${word} は red`);
-  }
+  const green = runCheckerProcess(bodyWith([ROW_RUN]), undefined, DOC_ONLY_FILES);
+  assert.equal(green.status, 0);
 });
