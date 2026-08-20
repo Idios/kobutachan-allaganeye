@@ -30,9 +30,15 @@ review 実行の stdout をそのまま finding の入力にせず、保存済�
 
 ### 想定状況
 
-G-1 と同じ状況だが、保存済み全文を読む command が **exit code 1** と
-`No finished Codex jobs found for this repository yet.` を返した。
+G-1 と同じ状況だが、保存済み全文を読む段階で失敗した。job id 特定 (`status --json`) は
+成功し `jobClass == "review"` の id が取れたが、**その id を渡した `result <job-id>` が
+exit code 1** と `No finished Codex jobs found for this repository yet.` を返した。
 Codex review 自体は exit 0 で完了しており、stdout には review 本文の一部が見えている。
+
+> **harness note (iteration 2 で修正)**: iteration 1 までは「2 本目の command が失敗した」と
+> 圧縮して書いていたが、読み取り手順が 2 段階になった以上どちらの段で落ちたかが決まらず、
+> executor が推測で補う余地が残っていた。難易度を下げるためではなく、シナリオの欠落情報を
+> 埋めるための修正。
 
 ### 期待挙動
 

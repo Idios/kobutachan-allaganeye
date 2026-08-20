@@ -285,11 +285,17 @@ Codex review が exit 0 で完了したら、**finding を stdout から拾う�
    **id を省略しない。** 省略時の選択は `jobClass` を見ずに「現 session の最新完了 job」を返すだけなので、同じ session で `/codex:rescue` や `task` を走らせていると **review ではない job の出力を review の finding として取り込む**
 
 3. exit 0 なら、その出力を finding の入力とする。**stdout に見えていた分だけで triage しない**
-4. **exit 非ゼロ (読み取り失敗) なら、Step 6 レビュー報告に次を 1 行明記する** — fallback ではないので Codex fallback notice とは別物:
+4. **成否にかかわらず、Step 6 レビュー報告に次のいずれか 1 行を必ず書く** (3 状態すべてに定型がある。`成功` 以外は理由が必須):
 
+   > `Codex 出力読み取り: 成功 (job <job-id> の result 全文を finding の入力にした)`
+   >
    > `Codex 出力読み取り: 失敗 (理由: <result の stderr 先頭 1 行>)。stdout に見えた範囲のみで triage した`
+   >
+   > `Codex 出力読み取り: 非起動 (理由: <上記「起動条件不該当時の明示記録」と同じ理由>)`
 
-   この 1 行が無いと「全文を読んだ」と「読めなかった」が事後に区別できない ([`docs/l2-workflow.md` §「規約・ガード導入の 3 点セット」](../../../docs/l2-workflow.md) ②)
+   `失敗` は **fallback ではない**ので Codex fallback notice とは別物。この 1 行が無いと「全文を読んだ」「読めなかった」「そもそも起動していない」が事後に区別できない ([`docs/l2-workflow.md` §「規約・ガード導入の 3 点セット」](../../../docs/l2-workflow.md) ②)
+
+   > **`/iterate-review` の subagent mode で実行している場合**、この 1 行は Step 6 レビュー報告ではなく final message の `## meta` に同名で書く (controller が Step 4 Final summary へ転記する)。`非起動` を選んだときは、上記「起動条件不該当時の明示記録」の 1 行を**この行の理由として畳んでよい** (固定 5 セクションに専用スロットを増やさない)
 
 `--background` / `--wait` は付けない。`review` / `adversarial-review` では受理されるだけで無視され、常に foreground blocking になる (openai-codex 1.0.4 時点)。長時間 review を非同期化したい場合は Bash tool の `run_in_background: true` を使う。
 
