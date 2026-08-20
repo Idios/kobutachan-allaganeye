@@ -145,8 +145,26 @@ jobs:
       #   - PyPI に無い依存 (ffmpeg 等の OS バイナリ) は対象外
       #   - `-c constraints.txt` で固定していない依存は「その日の最新」を監査する
       #     ため、同じ commit でも実行日によって結果が変わりうる
-      - name: Run pip-audit
+      - name: Run pip-audit (installed environment)
         run: pip-audit --progress-spinner off
+
+      # **`scripts/installer/requirements-pyinstaller.txt` は上の step では
+      # 監査されない。** pyinstaller / pyinstaller-hooks-contrib は
+      # `pyproject.toml` の dev extras に**入っていない**ため、
+      # `pip install -e ".[dev]"` した環境には存在しないからである
+      # (`pip show pyinstaller` が "Package(s) not found" を返すことを実測)。
+      #
+      # 同ファイルを `pull_request.paths` に載せておきながら監査しないのは、
+      # 「trigger は塞いだが中身は誰も見ていない」という false-green そのもの。
+      # Portable ZIP は PyInstaller で frozen application を作るので、この依存は
+      # **出荷物に直接効く**。別 invocation で必ず監査する。
+      #
+      # `-r` は install せずに requirements を解決して監査する。
+      # 見ていない集合: 解決は ubuntu runner 上で行われるため、Windows 限定の
+      # 依存 (pefile / pywin32-ctypes 等、環境マーカーで除外される) は監査対象に
+      # 入らない。実際のビルドは windows runner なので、その差分は残る。
+      - name: Run pip-audit (PyInstaller build requirements)
+        run: pip-audit --progress-spinner off -r scripts/installer/requirements-pyinstaller.txt
 
   npm-audit:
     name: npm audit (JavaScript)
