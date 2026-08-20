@@ -63,6 +63,32 @@ gh api "repos/Idios/kobutachan-allaganeye/dependency-graph/compare/<base>...<hea
 
 CI が常時 fail する状態を避けるため、本 workflow では default 設定 (vulnerability のみ fail) で運用する。warning は log 出力で確認可能。
 
+### npm audit の閾値を `high` のまま据え置く判断 (v0.3.1、#933 §A)
+
+`npm audit --audit-level=high` が moderate / low を素通しする点 (下記 §本 workflow が green でも Dependabot alert が出るケース の項目 2) について、**閾値を下げるかを実測して決めた**。
+
+**実測 (2026-08-11、`develop-0.3.1` @ 15e0c17、`cd gui && npm audit --json`)**:
+
+| severity | 件数 |
+| --- | --- |
+| critical | 0 |
+| high | **1** |
+| moderate | 0 |
+| low | 0 |
+| info | 0 |
+
+**判断: 閾値は `high` のまま据え置く。** 理由は「下げても今日は何も変わらない」こと — moderate / low が 0 件なので、`--audit-level=moderate` に下げても**新規 finding は 0 件**である。閾値を下げる動機は「素通しされている実害があること」だが、それが現時点で存在しない。ノイズ量の実測もできないまま閾値だけ厳しくすると、最初に moderate が 1 件出た日に「なぜ厳しくしたか」を誰も説明できない状態で CI が赤くなる。
+
+なお moderate の取りこぼしは dependency-review job (`fail-on-severity: moderate`) が別経路で拾うため、閾値を据え置いても素通しするのは **low のみ**である (項目 2 に既述)。
+
+**唯一の high (要対応、本 doc の判断とは別件)**: `nanoid` 3.3.16 (`gui/package-lock.json`、`"dev": true` の推移的依存)。advisory は GHSA-2v37-7h3g-55p8「custom generators can loop indefinitely when size is zero」で、影響範囲は `<3.3.17`、`fixAvailable: true`。**lockfile のみの bump で解消できる**。dev 依存でありビルド成果物には入らないため出荷をブロックしないが、次に `gui/package-lock.json` を触る PR で解消する。
+
+**再現コマンド**:
+
+```bash
+cd gui && npm audit --json
+```
+
 ### tauri 2.11 transitive 制約 (PR #760 v0.2.1 Track A)
 
 tauri 2.10.3 → 2.11.1 bump (PR #760) を実施したが、以下の transitive 依存は新版へ解決できなかった:

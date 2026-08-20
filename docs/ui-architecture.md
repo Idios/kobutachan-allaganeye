@@ -46,13 +46,15 @@ stateDiagram-v2
     preview --> complete: [◀ 一覧へ] or [元に戻す] 完了
     preview --> export: [書き出し]
 
-    export --> preview: [◀ プレビュー] (idle/error 時のみ)
-    export --> minimap: [⬦ ミニマップ切抜きへ] (completed phase のみ描画、#893)
+    export --> preview: [◀ プレビュー] (running/cancelling 中は disabled、#933)
+    export --> minimap: [⬦ ミニマップ切抜きへ] (completed phase のみ描画 + matches 0 件なら disabled、#893)
 
     minimap --> complete: [◀ 一覧へ] (#893)
 ```
 
 > **[✓ 完了 — フォルダを開く] は画面遷移しない**: ExportScreen の `handleOpenFolder` は `open_folder_in_explorer` を invoke するだけで `navigate` を呼ばない (旧実装の `navigate('complete')` は Explorer が開く前に遷移する不具合として #466 review #5 で撤去済)。したがって `export --> complete` のエッジは存在しない。
+>
+> **`export --> preview` の条件の訂正 (#933)**: 旧記述は「idle/error 時のみ」だったが、実装は `disabled={running || cancelling}` である (`ExportScreen.tsx` の `[◀ プレビュー]` ボタンと、それを包む `DisabledTooltip`)。`ExportPhase` は `idle / running / cancelling / completed / error` の 5 値 (`gui/src/screens/types.ts`) なので、**押せるのは idle / completed / error の 3 phase**であり `completed` が抜けていた。禁止側 (`running` / `cancelling`) を書くほうが実装と 1 対 1 に対応する。
 >
 > **minimap 画面内の phase 遷移** (`idle / running / cancelling / completed / error`) は §5 の minimap 節および [ui-interaction-spec.md §2.6](ui-interaction-spec.md) を参照 (#893)。
 

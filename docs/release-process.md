@@ -87,6 +87,79 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 - 手動で dry-run ビルドを確認したい場合は、Actions タブから `Release` workflow を `workflow_dispatch` で起動する (Release は作成されず ZIP artifact のみ)
 - `/release` スキルは develop → main PR 作成・CHANGELOG 更新の支援に使う (Release 作成自体は上記 workflow が担う)
 
+## CHANGELOG entry の記述規約 (#952)
+
+`CHANGELOG.md` の version セクションは、[`scripts/extract_release_notes.py`](../scripts/extract_release_notes.py) が**丸ごと抽出して GitHub Release の本文にする**。つまり CHANGELOG の書き方はそのまま公開リリースノートの品質になる。読者は FF14 プレイヤーであってメンテナではない。
+
+### 掲載範囲 — 何を書き、何を書かないか
+
+**書く**: 利用者から見た振る舞いが変わったもの。
+
+- 新しいコマンド / オプション / GUI 画面、既存の出力や既定値の変化
+- 利用者が踏みうる不具合の修正、性能の変化、非互換 (breaking change)
+- **配布物 (Portable ZIP) の中身の変化** — 同梱依存の版、同梱 README の内容など
+
+**書かない (entry 不要、裁定 R7 / 2026-08-11)**: 利用者から見た振る舞いが変わらないもの。
+
+- CI job / ガード / チェックスクリプトの新設・変更
+- 開発者向け doc (`docs/developer-setup.md` / `docs/l2-workflow.md` 等)、skill (`.claude/skills/**`)、hook
+- テスト、lint / 型チェックの版 pin、内部 refactor
+
+これらの記録は **PR 本文と issue** に残る。CHANGELOG に重複させない。`### Internal` 節は過去バージョン (0.1.1 / 0.2.0 / 0.3.0) の歴史記録として残すが、**新規バージョンでは使わない** — 上記のとおり Release 本文に丸ごと出てしまい、読者には意味を持たないため。
+
+> **判断の分かれ目は「利用者の環境で観測できるか」**。例: lint ツールの pin は観測できないので書かない。配布 ZIP に同梱される cv2 の版は検出結果の再現性として観測できるので書く。
+
+### 書き方 — 3 部構成
+
+1 entry は **(a) 太字の機能名 + issue 番号 → (b) 使い方 2-3 行 → (c) 詳細リンク** の 3 部で書く。
+
+```markdown
+- **<太字の機能名>** ([#N](https://github.com/Idios/kobutachan-allaganeye/issues/N)):
+  <利用者の語彙で「何ができるようになったか / 何が変わったか」を 2-3 行>
+  詳細は [<リンク名>](<spec / doc への相対パス>) を参照。
+```
+
+- **(a) 太字の機能名は必須**。`### Added` の太字機能名は機能告知 drift 検査 (spec §5.2 G2-2 / #944) が機能名集合を抽出する SSoT でもあるため、**太字を外すとその機能が検査対象から静かに消える**
+- **(b) は利用者の語彙で 2-3 行**。設計の説明を CHANGELOG 側に書かない
+- **(c) 詳細は spec / doc へのリンクで送る**
+
+**spec 側へ寄せる語彙 (CHANGELOG に出さない)**:
+
+| 分類 | 例 |
+| --- | --- |
+| 内部アルゴリズム名・段階名 | `V0`-`V4` / `quorum` / `anchor` / `presence` / `tri-state` / 内部 fallback の段階名 |
+| GT・テスト名 | ground truth データセット名、`tests/baselines/**` のパス、pytest marker 名 (`slow_detect` 等)、baseline / GT 突合ハーネスの名前 |
+| tolerance 値・しきい値 | 境界許容秒数、quorum 比率、輝度しきい値などの数値。利用者が調整できる CLI オプションの既定値は**除く** (それは利用者から見える振る舞い) |
+
+利用者はこれらの語で自分の症状を検索しない。`(#N)` の issue / PR 番号は常に添える。
+
+### 発火点 (規約が読まれる場所)
+
+本規約は宣言だけでは発火しないので、以下の 3 箇所に紐づける。
+
+1. **[`.claude/skills/release/SKILL.md`](../.claude/skills/release/SKILL.md) §Step 3 項目 2** — `## [Unreleased]` を `## [<新バージョン>] - YYYY-MM-DD` へ改名する手順に、本節への参照と `check_changelog_style.py` の実行を含める。**改名を飛ばすと `check_version_consistency.py --tag` が「該当版の節がありません」で落ちる**ので、この手順は避けて通れない
+2. **[`.github/pull_request_template.md`](../.github/pull_request_template.md) §関連ドキュメント / マトリクス更新** — PR 作成時に「CHANGELOG entry の要否を判断した」ことを記録する。**この box は CI の counting 対象外である** (#936 / #967 で確定した blast radius は `## 受け入れ条件` と `#### Self-Test Report` の 2 群のみ)。したがってこれは**人手ゲート**であり、未記入でも `validate-checklist` は赤にならない
+3. **機械検査**: [`scripts/check_changelog_style.py`](../scripts/check_changelog_style.py) — CI (`ci.yml` の `changelog-style` job) が走査対象セクションを検査する。**3 点セットの ③ (発火側の red 実証) を担うのはこれだけ**で、1 と 2 は読まれる場所の確保にすぎない
+
+### 非実施時の記録義務
+
+**内部変更のみの PR で entry を書かなかった場合、PR 本文に 1 行残す**:
+
+```text
+CHANGELOG entry: 不要 (内部専用 — <CI ガード / 開発 doc / skill / テスト / 版 pin のいずれか>)
+```
+
+無記載では「判断して不要と決めた」と「書き忘れた」が区別できない。**Track D (version bump) は、この行を持たない PR が当該リリースに含まれていないことを確認する。**
+
+### 機械検査が見ていない集合
+
+`scripts/check_changelog_style.py` は形と語彙しか見ない。以下は構造的に検査外である。
+
+- **entry の内容が正しいか** — 書かれた振る舞いが実装と一致するかは見ない
+- **書くべき entry が欠けているか** — 「利用者に見える変更なのに entry が無い」は検出できない。これは上記「非実施時の記録義務」の 1 行と Track D の確認で担保する人手ゲートである
+- **既リリース済みセクション** — `## [Unreleased]` と最新 version セクション以外は走査しない (裁定 D7 の既リリース節不可侵。v0.3.0 の `### Added` には内部用語が 14 箇所あり、遡って直さない方針のため scope を切らないと恒久 red になる)
+- **禁止語のリスト漏れ** — 語彙リストは人手で維持する。新しい内部段階名が生まれても自動では追加されない
+
 ## ブランチ保護と required status checks (#947)
 
 CI の起動条件 (workflow の `on:`) と、**red を実際にマージ阻止へ変換する機構** (repository ruleset) は別物である。前者だけでは「赤いまま Merge ボタンを押せる」状態が残るため、両方を揃えて初めてゲートになる。
@@ -167,6 +240,7 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 - [ ] required status checks の ruleset が生きている (`gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'` が非空で、[§ブランチ保護と required status checks](#ブランチ保護と-required-status-checks-947) の 8 件を含む) — ruleset は repo 外設定で diff に現れないため、無効化を検知できるのはこの確認だけ (#947)
 - [ ] [バージョン保持箇所](versioning.md#バージョン管理場所)が**全箇所**`x.y.0` に更新されている (`python scripts/check_version_consistency.py` が exit 0)
 - [ ] `CHANGELOG.md` に対象バージョンセクションが存在 (**日付 = タグ打ち日 JST** (§タグ運用) / 主要変更点 / breaking changes)
+- [ ] 対象バージョンセクションの entry が **§CHANGELOG entry の記述規約 に適合**している — 掲載範囲が利用者から見た振る舞いの変化に限られ、3 部構成 (太字機能名 + issue 番号 / 使い方 2-3 行 / 詳細リンク) で書かれ、内部用語が spec 側へ寄せられていること (`python scripts/check_changelog_style.py` が exit 0。ただし同 script は**語彙と節の形しか見ず、entry の欠落や内容の正しさは見ない**ので、読者視点の適合はここで人が確認する)
 - [ ] `deferred` ラベル付き issue を全件レビュー済 (close、または次バージョン `deferred` 維持判断、または当該バージョンに引き取り)
 - [ ] 対象レイヤースコープの `P1-high` issue 全 close + `P2-medium` issue 全 close または `deferred` ラベル付与
 

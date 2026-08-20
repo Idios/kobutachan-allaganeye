@@ -340,6 +340,24 @@ jobs:
         shell: bash
         run: python scripts/check_screenshot_freshness.py
 
+  changelog-style:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+
+      # scripts/check_changelog_style.py は標準ライブラリのみで動くため
+      # pip install を持たない。走査対象は `## [Unreleased]` (無ければ最新
+      # version セクション) のみで、既リリース済みセクションは見ない (裁定 D7)。
+      # exit 1 = 規約違反 / exit 2 = 検査自体が壊れている (#952)。
+      # 規約の正は docs/release-process.md §CHANGELOG entry の記述規約。
+      - name: Check CHANGELOG entry style (internal jargon / Internal section)
+        shell: bash
+        run: python scripts/check_changelog_style.py
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:

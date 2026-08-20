@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+<!-- 書き方は docs/release-process.md §CHANGELOG entry の記述規約 を参照。
+     利用者から見た振る舞いが変わらない変更 (CI ガード / 開発 doc / skill /
+     テスト / 版 pin) に entry は不要。その場合は PR 本文に
+     「CHANGELOG entry: 不要 (内部専用 -- <種別>)」を 1 行残す。 -->
+
+### Changed
+
+- **配布 ZIP に同梱する依存の版を固定** ([#916](https://github.com/Idios/kobutachan-allaganeye/issues/916)):
+  Portable ZIP をビルドするときに同梱する画像処理ライブラリなどの版を固定しました。
+  同じバージョンの ZIP なら**いつビルドしても検出結果が同じ**になります。以前は
+  ビルドした時点で入手できる最新版が入るため、同じ v0.3.x でも検出結果が変わりうる
+  状態でした。
+
 ## [0.3.0] - 2026-08-04
 
 L3 (配信形式対応 + 性能改善) リリース。エリアマップ切り抜き (`minimap` CLI + GUI 画面) と

@@ -746,7 +746,15 @@ class TestMergeBoundaryPairs:
     @patch(f"{SCOREBAR_MODULE}._probe_frame_rgb")
     @patch(f"{SCOREBAR_MODULE}.classify_blackout")
     def test_merge_gap_exactly_600s(self, mock_classify, mock_probe_rgb, mock_has_sb):
-        """Gap exactly 600.0s (= _MERGE_GAP_MAX) -> merge attempted."""
+        """Gap of 600.0s -> merge attempted (#933 B: docstring 訂正)。
+
+        旧記述は `600.0s (= _MERGE_GAP_MAX)` と書いていたが、`_MERGE_GAP_MAX` は
+        実装では `None` (= 上限なし) であり 600.0 という値ではない
+        (`allaganeye/video/scorebar.py` の `_MERGE_GAP_MAX` 定義と、
+        `if _MERGE_GAP_MAX is None or gap <= _MERGE_GAP_MAX:` の分岐)。
+        したがって 600.0 は**境界値ではなく単なる代表値**で、この test が固定して
+        いるのは「上限なしなので 10 分の gap でも merge 判定に進む」ことである。
+        """
         mock_classify.side_effect = ["match_boundary", "match_boundary"]
         mock_probe_rgb.return_value = b"\x00" * 100
         mock_has_sb.return_value = False

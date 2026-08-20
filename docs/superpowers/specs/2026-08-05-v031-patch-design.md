@@ -568,6 +568,9 @@ base は全 Track `develop-0.3.1` (D4)。Track の意味づけは [`docs/release
 - [ ] **G2-3 スクショ陳腐化**: blob 同一・commit 日時のみ新しいケースで**赤になる**ことを確認 (squash merge の false-green を潰した証拠)
 - [ ] **G2-5 #876**: 存在しないモジュール名を流して retry が発火することを確認
 - [ ] **G4-1 Pre-flight 鮮度**: 宣言に無い open PR を作って fail することを確認
+- [x] **#952 CHANGELOG entry 記述規約**: 内部用語を注入して exit 1 / `### Internal` 節を注入して exit 1 / 最新セクションの見出し書式を崩して exit 2 (古い節へ fall through して緑を返さないこと) / `## [Unreleased]` を先頭 h2 でない位置に置いて exit 2 を確認 — **消化済み (PR-B2、2026-08-11)**。`scripts/check_changelog_style.py` + `ci.yml` の `changelog-style` job、pin test は `tests/scripts/test_check_changelog_style.py` (24 件)
+
+> **#952 の行を追加した理由**: 本 issue は当初「人手ゲートのみで完結する場合は §7.2 への追加は不要」としていたが、実装時に機械検査 (`check_changelog_style.py`) を導入したため、#952 の受け入れ条件最終項目に従って 1 行追加した。**実装中に自作の false-green を 2 件検出して潰している** — (a) 最新見出しの書式を崩すと古い `## [0.2.1]` 節へ fall through して exit 0 を返した (b) `## [Unreleased]` が先頭 h2 でないと released 節を検査して exit 0 を返した (Codex adversarial-review [medium] の指摘)。どちらも「既リリース節は通常 clean」なので、検査対象が黙って移ったことに気づけない形だった。
 
 ### 7.3 SSoT 整合
 

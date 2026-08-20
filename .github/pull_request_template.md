@@ -96,6 +96,7 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre
 - [ ] CLAUDE.md / `docs/l2-workflow.md` の更新要否確認 — 不要なら `[x]` + 理由付記
 - [ ] 出力書式を変更した場合、`docs/cli-spec.md` の該当出力例も更新 (再発防止: #343 系)
 - [ ] docs / 識別子のリネーム時は `docs/l2-workflow.md` §「doc 節参照健全性確認」 で §「<旧名>」grep し残骸ゼロ確認
+- [ ] **CHANGELOG entry の要否を判断した** ([`docs/release-process.md`](../docs/release-process.md) §CHANGELOG entry の記述規約) — 利用者から見た振る舞いが変わる変更なら `## [Unreleased]` へ追記。内部専用なら本文に `CHANGELOG entry: 不要 (内部専用 — <CI ガード / 開発 doc / skill / テスト / 版 pin>)` を 1 行残す
 
 #### 実機検証 (machine-unverifiable — plain bullet で書く)
 

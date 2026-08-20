@@ -637,15 +637,19 @@ test('#936: Self-Test Report だけの本文でも gate が有効 (skip しな�
   assert.equal(result.unchecked, 1);
 });
 
-test('#936 D9: 実テンプレートは 22 box 中 12 box のみが gate 対象', () => {
+test('#936 D9: 実テンプレートは 23 box 中 12 box のみが gate 対象', () => {
   // 実物の `.github/pull_request_template.md` を通した end-to-end の blast radius 固定。
   // 内訳: 受け入れ条件 2 + Self-Test Report 10 = 12 (required)
-  //       Iron Law 1 が 2 / Iron Law 3 が 2 / Iron Law 4 が 1 / 関連ドキュメント 5 = 10 (非対象)
+  //       Iron Law 1 が 2 / Iron Law 3 が 2 / Iron Law 4 が 1 / 関連ドキュメント 6 = 11 (非対象)
   // テンプレートの checkbox を増減したらこの数値を更新すること (意図的な tripwire)。
+  //
+  // 2026-08-11 (#952): 関連ドキュメント へ「CHANGELOG entry の要否を判断した」を
+  // 1 box 追加したため総数 22 -> 23。**gate 対象は 12 のまま**であることが重要で、
+  // これは新 box が counting 対象外の節に入った証拠になる (D9 の範囲を広げていない)。
   const template = fs.readFileSync(TEMPLATE_PATH, 'utf8');
   const totalUnchecked = (template.match(/- \[ \]/g) || []).length;
   const result = countAcceptanceCriteriaCheckboxes(template);
-  assert.equal(totalUnchecked, 22, 'テンプレート全体の - [ ] 総数');
+  assert.equal(totalUnchecked, 23, 'テンプレート全体の - [ ] 総数');
   assert.equal(result.unchecked, 12, 'gate 対象となる - [ ] の数 (受け入れ条件 2 + Self-Test 10)');
 });
 
