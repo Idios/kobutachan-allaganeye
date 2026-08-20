@@ -200,6 +200,10 @@ tauri 2.10.3 → 2.11.1 bump (PR #760) を実施したが、以下の transitive
 
 **`dependabot.yml` が担うのは 3 行目だけ**である。alert と security updates は repo 設定側にあり、`dependabot.yml` の有無とは独立に動く。
 
+> **`dependabot.yml` は既定ブランチ (`main`) からしか読まれない。** `schedule: cron` と同じ制約で、`develop-*` へ merge しただけでは version updates は 1 度も起動しない (GitHub の仕様)。2026-08-20 時点で `gh api repos/.../contents/.github/dependabot.yml?ref=main` は **404**、`?ref=develop-0.3.1` は 200 を返す = **まだ有効になっていない**。
+>
+> 有効化の確認は v0.3.1 のリリース PR が `main` へ渡った後に行う。`gh api repos/Idios/kobutachan-allaganeye/contents/.github/dependabot.yml?ref=main` が 200 を返し、かつ Insights > Dependency graph > Dependabot に 3 ecosystem が並べば有効。**「ファイルを追加したので効いている」と読まないこと。**
+
 `dependabot.yml` に `ignore` 条件を 1 つも書いていないのは意図的である。`ignore` は version updates だけでなく **security updates にも効く**ため、「semver-minor を一律 ignore」のような書き方をすると、v0.3.0 で実際に踏んだ undici 7.28.0 → 7.29.0 (minor bump) のような**脆弱性修正 PR まで黙って抑止される**。ノイズは `open-pull-requests-limit: 3` で量的に抑え、採否は PR ごとに人間が判断する。
 
 **over-bump PR の扱い** (#836 で確立した規約): 直接依存は「最小 patch を exact-pin で直接編集」が正。Dependabot は latest minor まで上げる PR を出すことがある (実例: vite 8.0.16 → 8.1.0 は #836 で却下)。そういう PR は **close して、必要な分だけ手で当てる**。Dependabot の提案は「上流に更新が出た」という通知として読み、diff をそのまま採用する義務はない。とくに `pyproject.toml` の上限 (`typer<0.25` / `click<8.4` / `opencv-python-headless<5`) と `constraints.txt` の exact pin は**遅れではなく確定済みの方針** (#863 / #916 裁定 D8) なので、これを超える PR は原則 close する。
