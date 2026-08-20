@@ -637,7 +637,7 @@ test('#936: Self-Test Report だけの本文でも gate が有効 (skip しな�
   assert.equal(result.unchecked, 1);
 });
 
-test('#936 D9: 実テンプレートは 23 box 中 12 box のみが gate 対象', () => {
+test('#936 D9: 実テンプレートは 24 box 中 13 box のみが gate 対象', () => {
   // 実物の `.github/pull_request_template.md` を通した end-to-end の blast radius 固定。
   // 内訳: 受け入れ条件 2 + Self-Test Report 10 = 12 (required)
   //       Iron Law 1 が 2 / Iron Law 3 が 2 / Iron Law 4 が 1 / 関連ドキュメント 6 = 11 (非対象)
@@ -646,11 +646,39 @@ test('#936 D9: 実テンプレートは 23 box 中 12 box のみが gate 対象'
   // 2026-08-11 (#952): 関連ドキュメント へ「CHANGELOG entry の要否を判断した」を
   // 1 box 追加したため総数 22 -> 23。**gate 対象は 12 のまま**であることが重要で、
   // これは新 box が counting 対象外の節に入った証拠になる (D9 の範囲を広げていない)。
+  //
+  // 2026-08-20 (#945): Self-Test Report へ「Fable 俯瞰レビュー」を 1 box 追加したため
+  // 総数 23 -> 24、**gate 対象も 12 -> 13** に増えた。#952 の追加とは逆に、
+  // こちらは counting 対象節に入れるのが目的なので gate 対象が増えるのが正しい。
   const template = fs.readFileSync(TEMPLATE_PATH, 'utf8');
   const totalUnchecked = (template.match(/- \[ \]/g) || []).length;
   const result = countAcceptanceCriteriaCheckboxes(template);
-  assert.equal(totalUnchecked, 23, 'テンプレート全体の - [ ] 総数');
-  assert.equal(result.unchecked, 12, 'gate 対象となる - [ ] の数 (受け入れ条件 2 + Self-Test 10)');
+  assert.equal(totalUnchecked, 24, 'テンプレート全体の - [ ] 総数');
+  assert.equal(result.unchecked, 13, 'gate 対象となる - [ ] の数 (受け入れ条件 2 + Self-Test 11)');
+});
+
+test('#945: Self-Test Report の Fable 欄が未記入なら validate-checklist が red (生 exit code)', () => {
+  // 3 点セット ③ (発火側の red 実証)。カウント関数の戻り値ではなく、
+  // actions/github-script 相当の子プロセスを通した **exit code の生値** を観測する。
+  // これが 1 にならないなら、box を足しても gate は 1 度も赤を出さない no-op である。
+  const fableLine =
+    '- [ ] Fable 俯瞰レビュー (#945) — `実施 (finding N 件 / 消化 M 件 / 残 K 件)` または `非実施 (理由: <1 行>)`';
+  const body = [
+    '#### Self-Test Report (machine-verified)',
+    '',
+    '- [x] `ruff check .`',
+    fableLine,
+    '',
+  ].join('\n');
+
+  const red = runCheckerProcess(body);
+  assert.equal(red.status, 1, 'Fable 欄が未記入なら exit 1 (red)');
+  assert.match(red.stdout, /::error::/, 'core.setFailed が呼ばれている');
+
+  // 対照: 同じ本文で Fable 欄だけを [x] にすると緑になる。
+  // これが無いと「何を書いても赤い」だけの gate と区別できない。
+  const green = runCheckerProcess(body.replace('- [ ] Fable', '- [x] Fable'));
+  assert.equal(green.status, 0, 'Fable 欄を消化すれば exit 0 (green)');
 });
 
 test('#936: `*` / `+` / 番号付き list marker の checkbox も数える (false-green 修正)', () => {

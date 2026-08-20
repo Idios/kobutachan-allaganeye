@@ -32,6 +32,37 @@ description: deferred issue レビュー → バージョンバンプ → リリ
 
 注意: 本ゲートは Iron Law 1 (受け入れ条件全充足) のリリースレベル展開。`deferred` review (Step 0b / 0c) はゲート §共通項目内の 1 行に対応するため、Step 0b / 0c はゲート確認の延長として扱う。
 
+### Step 0a-2: リリース俯瞰レビュー (allaganeye-fable-consult、必須) (#945)
+
+Step 0a の全件達成を確認したら、**`Agent(subagent_type=allaganeye-fable-consult)` を起動して
+リリース記述を俯瞰レビューさせる**。本ステップはスキップできない。
+
+**対象** (3 点をまとめて渡す):
+
+- `CHANGELOG.md` の対象バージョンセクション — [`docs/release-process.md` §CHANGELOG entry の記述規約](../../../docs/release-process.md) を満たしているか。**この節はそのまま GitHub Release の本文になる**ので、読者 (FF14 プレイヤー) の語彙で書けているか
+- release notes / リリース PR 本文の記述
+- Step 0a の受け入れゲート達成状況 — 「達成」と付けた項目が実際に達成の実質を持つか
+
+**観点**: 利用者から見た振る舞いの記述漏れ / 内部語彙の混入 / 既存 doc との矛盾 / スコープ過大。
+コードの技術的欠陥は対象外 (それは Codex、`CLAUDE.md` §「Fable と Codex の棲み分け」)。
+
+#### 起動記録 (実施 / 非実施とも必須、数値記入 required)
+
+Step 0a の 3 択と同じ画面に、以下のいずれか 1 行を明記する:
+
+> `fable 俯瞰レビュー: 実施 (finding N 件 / 消化 M 件 / 残 K 件 → Track D PR 本文へ転記)`
+>
+> `fable 俯瞰レビュー: 非実施 (理由: <1 行>)`
+
+**`実施` は N / M / K の数値記入が必須。** 数値を required にしないとこの step は no-op になる —
+Step 0a の判定は「達成 / 未達成 / **該当なし**」の 3 択で、**「該当なし」で通過できてしまう**ため
+(#945 が明示した false-green の制約)。**残 K 件がある場合は Track D (version bump) の PR 本文へ
+転記する義務がある。** 「実施した」とだけ書いて finding をゼロ件のまま放置する経路を塞ぐ。
+
+> **記録義務は分岐を網羅する**: 実施 / 非実施の両方に定型を置いてある。異常系・非該当だけに
+> 定型を用意すると、正常系のたびに実行者が文言を発明して表記が揺れる
+> (`/review-pr` §「起動記録」と同じ原則)。
+
 ### Step 0b: deferred 全件取得 (M9、F8 教訓)
 
 リリース前に `deferred` ラベル付き issue を全件取得する。**release-blocker label は新設しない** (M8 撤回、2026-05-17 確定) — 取得対象は `deferred` 単独で十分。
