@@ -106,4 +106,95 @@ skill 逐語で採用 (iteration 0 の発明が消えた)。N/M/K 必須も正�
 
 ### 実行結果
 
-(iteration 2 の subagent 結果を以下に記録)
+| Scenario | 成否 | accuracy (raw) | tool_uses | duration | retries | 新規 unclear (raw) | うち defect-class |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| F-1 | o | 5/5 | 4 | 148.1s | 0 | 2 | **0** |
+| F-2 | o | 5/5 | 3 | 129.0s | 0 | 1 | **0** |
+
+**iteration 2 は clear** (#945 scope 内の defect-class ゼロ)。2 consecutive clears
+(iteration 1 + 2) を一旦達成したが、この後 Idios 裁定で Step 5.0 を修正したため
+**収束判定はリセットし iteration 3 以降でやり直す** (収束が検証した artifact と
+ship する artifact をズラさないため)。
+
+### 構造化 reflection (iteration 2)
+
+**F-1 #4 / F-2 #4 — 帰属: 隣接既存節 → Idios 裁定により (A) PR 内修正へ**
+
+Step 5.0 の非対称は **iteration 1 / 2 で計 4 executor が独立に指摘**した。
+さらに重要なのは、4 人が同じ doc-only PR に対して **4 通りの扱いをした**という事実:
+
+| executor | Step 5.0 の扱い |
+| --- | --- |
+| iter1 F-1 | 起動しないと判断 (除外根拠を自力で作文) |
+| iter1 F-2 | 「無条件起動」と読み、Step 5 本文へ独自 1 文で記録 |
+| iter2 F-1 | 「skip する明示根拠が無い」ので起動、記録行を自力で新設 |
+| iter2 F-2 | 起動、ただし書式発明を避けて既存の Step 5b 統合経路のみに記録 |
+
+**これが非対称の実コスト。** 文体の揺れではなく、起動するか否かの判断自体が割れている。
+
+**F-1 #5 — 帰属: 隣接既存節 (対応しない、Idios 判断待ち)**
+
+- Issue: 「root cause」が skill 内で 2 つの異なるスコープで使われている
+  (Step 1.1 M5 = **過去 merged PR の件数** / Step 5c = **diff 内の root cause 種別数**)。
+  相互参照も書き分けも無く、Codex trigger 判定時に混同しうる
+- General Fix Rule: 同一 skill 内で同じ用語を異なるスコープで使う場合は別名に分ける
+
+---
+
+## Iteration 3 (Step 5.0 修正後)
+
+### Changes
+
+Idios 裁定により Step 5.0 を (A) PR 内修正:
+
+- **起動条件**: code file を 1 つでも touch する PR で起動 / doc-only では非起動
+- **起動記録**: `実施` / `非実施` の両分岐に定型を与え、Step 6 の 1 行記録集約 slot にも追加
+
+**この修正が満たす判定文言 (適用前に明示)**: F-1/F-2 要件 2「skill が定義する全レビュアーに
+ついて起動有無の 1 行記録がある」と、F-2 要件 5「skill が定義していない記録書式を発明しない」。
+
+### 実行結果
+
+| Scenario | 成否 | accuracy (raw) | tool_uses | duration | retries | 新規 unclear (raw) | うち defect-class |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| F-1 | o | 5/5 | 3 | 101.5s | 0 | 1 | **0** (harness) |
+| F-2 | o | 5/5 | 3 | 118.2s | 0 | 1 | **0** (隣接既存節) |
+
+**4 通りに割れていた Step 5.0 の扱いが 1 つに収束した**:
+
+- F-1 (doc-only): `code quality subagent 起動: 非実施 (理由: doc-only PR、code file 変更ゼロ)`
+- F-2 (code PR): `code quality subagent 起動: 実施 (finding N 件 → Step 5b 表へ統合)`
+
+両者とも skill 定義の書式をそのまま使い、**独自書式の発明はゼロ**。
+
+### 構造化 reflection (iteration 3)
+
+**F-1 #6 — 帰属: harness (iteration 4 で解消)**: 架空 PR に対する dry-run なので
+N/M/K の実数を持てない。「判断 + 書式提示までが成果物の上限」とシナリオ側で明示すべき、
+という指摘。iteration 4 の prompt に dry-run 明示を追加した (難易度低下ではなく設問の欠落補完)。
+
+**F-2 #5 — 帰属: 隣接既存節 (対応しない、Idios 判断待ち)**
+
+- Issue: 「L1 core ロジック」の定義が skill 内 2 箇所で不一致。Step 5a の Codex 起動条件は
+  抽象語 (`L1 (CLI / detector / GPU)`)、Codex fallback の重要 PR 判定は具体ファイル列挙
+  (`detector.py` / `gpu_detector.py` / `audio/*.py` / `video/detector.py`)。境界ファイル
+  (`video/capture_region.py` 等) で判定が割れうる
+- General Fix Rule: 同一概念を複数箇所で参照する規約は、**具体ファイルリストを 1 箇所に正として
+  定義**し他はリンクにする。`CLAUDE.md` 自身の「検出力は具体列挙にのみ宿る」を
+  **レビュアー起動条件の記述自体にも適用する**
+- 帰属判断: 本 PR が触っていない既存節。#945 の scope 外
+
+(収束判定: **1 consecutive clear** / 打ち切りまで 1 round)
+
+---
+
+## Iteration 4 (convergence 2/2)
+
+### Changes
+
+**skill / doc の変更なし** (iteration 3 の clear を確定させるため対象テキストを固定)。
+harness のみ: F-1 #6 に対応して prompt に dry-run 前提を明示。
+
+### 実行結果
+
+(iteration 4 の subagent 結果を以下に記録)
