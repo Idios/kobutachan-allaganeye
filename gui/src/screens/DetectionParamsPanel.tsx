@@ -143,6 +143,17 @@ export function DetectionParamsPanel() {
             </button>
           </div>
 
+          {/* #944 §D: --masked / --vtuber は GUI から発見できる手段が皆無だった
+              (gui/src 全体で該当語が生成型と schema にしか出てこなかった)。
+              v0.3.1 では GUI へのフラグ追加は行わない方針のため、
+              「CLI にある」ことを文言で示すに留める。 */}
+          <div className={styles.cliOnlyNote} data-testid="detection-params-cli-only">
+            チャット欄を画像でマスクした録画や、ゲーム画面が画面全体でない配信
+            レイアウトの録画は、上のしきい値では検知できないことがあります。その
+            場合は CLI の <code>--masked</code> / <code>--vtuber</code> を使って
+            ください（GUI からは指定できません）。
+          </div>
+
           <div className={styles.resetRow}>
             <button
               type="button"

@@ -276,6 +276,54 @@ jobs:
         shell: bash
         run: python scripts/check_doc_code_refs.py
 
+  feature-announcement:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
+
+      # SSoT は typer runtime registry (`typer.main.get_command(app).commands`)
+      # なので、`doc-code-refs` と違い CLI を import できる状態が要る。
+      # `allaganeye/cli.py` の `@app.command` を静的走査する実装だと、
+      # #944 で実際に漏れた `minimap` / `export` (どちらも `register(app)` 経由)
+      # がちょうど検査対象外になる。
+      - name: Install allaganeye (CLI registry を読むため)
+        run: pip install -e . -c constraints.txt
+
+      # 同梱 README.txt は source を grep せず pwsh で実際に描画して検査する
+      # (here-string / 関数境界の取り違えによる false-green を避けるため)。
+      # pwsh は ubuntu-latest runner にプリインストールされている。
+      # exit 1 = 告知漏れ / exit 2 = 検査自体が壊れている (#944)。
+      - name: Check shipped CLI subcommands are announced in entry docs
+        shell: bash
+        run: python scripts/check_feature_announcement.py
+
+  screenshot-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+
+      # scripts/check_screenshot_freshness.py は標準ライブラリのみで動くため
+      # pip install を持たない。**git 履歴も使わない**: actions/checkout@v4 の
+      # 既定 fetch-depth: 1 では `git log -- <path>` が全ファイルについて同じ
+      # 1 commit を返し、commit 日時比較も blob 変化点の追跡も無条件 green に
+      # なる (2026-08-20 実測)。照合は source の内容ハッシュで行う。
+      # exit 1 = 撮り直し漏れ / exit 2 = 検査自体が壊れている (#944)。
+      - name: Check README screenshots are captured from current GUI sources
+        shell: bash
+        run: python scripts/check_screenshot_freshness.py
+
   changelog-style:
     runs-on: ubuntu-latest
     steps:

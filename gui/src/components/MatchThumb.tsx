@@ -35,10 +35,7 @@ export interface MatchThumbProps {
  * is kept as a fallback for sample mode and any failure path so the layout
  * never collapses.
  *
- * Hits the existing thumbnail cache (`<install dir>/cache/<hash>/thumbs/`,
- * resolved by `thumb_cache_dir()` on the Rust side from `current_exe().parent()`
- * -- not the user profile, per the Portable ZIP philosophy; dev =
- * `target/debug/cache/...`),
+ * Hits the existing thumbnail cache (`~/.allaganeye/cache/<hash>/thumbs/`),
  * so repeat renders re-use generated frames without re-spawning ffmpeg.
  */
 export function MatchThumb({

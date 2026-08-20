@@ -21,15 +21,7 @@ export interface RecentEntry {
 }
 
 export interface RecentState {
-  /**
-   * Latest snapshot from `<install dir>/recent.json`, newest first.
-   *
-   * The path is resolved on the Rust side by `recent_path()` from
-   * `current_exe().parent()` -- NOT from the user profile. PR #655 Round 2 moved
-   * it there for the Portable ZIP philosophy (extract = install, delete =
-   * uninstall, so nothing is left behind in `~`). Dev builds land in
-   * `target/debug/recent.json` (gitignored).
-   */
+  /** Latest snapshot from `~/.allaganeye/recent.json`, newest first. */
   entries: RecentEntry[];
   /** Set true after the first successful `load()` so the UI can skip the empty-state flicker on subsequent re-mounts. */
   loaded: boolean;

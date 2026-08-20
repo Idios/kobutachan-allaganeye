@@ -434,7 +434,47 @@ checker (`.github/scripts/check-pr-checklist.js`) は GitHub のレンダリン�
   - **認識される形**: ATX heading (`#` 1-6 個 + ASCII space/tab 区切り)、0-3 space インデント、blockquote 内、閉じ ATX (`#### ... ####`)、Unicode ハイフン / NBSP を含む heading text
   - **認識されない形** (= red になる。heading を直せば解消): bold 疑似見出し (`**Self-Test Report**`)、`#` の直後が全角空白、setext (下線 `---` / `===`)、heading 先頭に絵文字などの前置文字、節の削除・改名、項目を全部 plain bullet に落とす
   - **例外**: bot 作成の PR (`user.type === "Bot"`、dependabot 等) は節の存在要求を skip する。実在 #831 は heading 0 / checkbox 0 で、bot に template 遵守は求められないため。未消化 checkbox がある場合は bot でも red になる
-  - 必須化の範囲は実測で決めた: 実在 merged PR 本文 + テンプレート 29 本のうち **Self-Test Report 節は 29/29 に存在**、節内 checkbox は**最小 2 件**。一方 `## 受け入れ条件` の完全一致 heading は **22/31 に存在しない** (suffix 形が多い) ため**必須にしていない**
+  - 必須化の範囲は実測で決めた。対象は **2026-08-08 時点の直近 merged PR 200 本 = #585 〜 #972** (2026-04-25 〜 2026-08-08)。再現手順は以下 (`--limit` の窓は時間が経つとずれるので、**上の PR 番号範囲が実測した窓**である):
+
+    ```bash
+    # 1. 対象 PR の番号とマージ日時を取得
+    gh pr list --repo Idios/kobutachan-allaganeye --state merged --limit 200 \
+      --json number,mergedAt --jq '.[] | "\(.number) \(.mergedAt)"' > prs.txt
+
+    # 2. 本文を 1 本ずつ取得 (body は pr list では取れないので pr view を使う)
+    while read -r n d; do
+      gh pr view "$n" --repo Idios/kobutachan-allaganeye --json body --jq .body > "pr-$n.md"
+    done < prs.txt
+
+    # 3. checker に通して集計 (hasSelfTestSection / selfTestItems / unchecked を数える)
+    #    red の判定式は checker と同じ: unchecked > 0 || !hasSelfTestSection || selfTestItems === 0
+    node -e '
+      const fs = require("fs");
+      const c = require("./.github/scripts/check-pr-checklist.js");
+      // `## 受け入れ条件` の完全一致 heading (checker と同じ判定: suffix 付きは対象外)
+      const AC = /^ {0,3}#{1,6}[ \t]+(受け入れ条件|acceptance\s+criteria)[ \t]*#*[ \t]*$/im;
+      let st = 0, ac = 0, red = 0, n = 0, min = Infinity;
+      for (const f of fs.readdirSync(".").filter((f) => /^pr-\d+\.md$/.test(f))) {
+        const text = fs.readFileSync(f, "utf8");
+        const r = c.countAcceptanceCriteriaCheckboxes(text);
+        n++;
+        if (AC.test(text)) ac++;
+        if (r.hasSelfTestSection) { st++; if (r.selfTestItems > 0) min = Math.min(min, r.selfTestItems); }
+        if (r.unchecked > 0 || !r.hasSelfTestSection || r.selfTestItems === 0) red++;
+      }
+      console.log({ total: n, hasSelfTest: st, acExact: ac, red, minItems: min });
+    '
+    ```
+
+    | 観測 | 実測値 |
+    | --- | --- |
+    | `Self-Test Report` 節あり | 155 / 200 |
+    | `## 受け入れ条件` の**完全一致** heading あり | **16 / 200** (184 本に無い) → だから**必須にしない** |
+    | 節内 checkbox の最小件数 | 1 |
+    | fail-closed で red になる本文 | 54 / 200 |
+    | うち **2026-05-19 以降** | **0 件** |
+
+    red 54 本はすべて **2026-05-18 以前** = Self-Test Report 規約が定着する前の本文で、以後 2.5 か月の PR は全件通る。したがって「今の書き方」に対する blast radius はゼロだが、**古い本文を再検証すれば red になる**ことは事実なので、過去 PR を編集して validate-checklist を再走させるときは注意する
 - インデント 4 以上の行の解釈は「**開いている list の最も浅いインデント**」で近似している (list 継続なら task item / list が無ければ indented code block)。list item の content indent を超える深い入れ子 (6-8 space 等) は GitHub が code とするのに数える (false-red)
 - 未閉鎖の fence / 行頭 `<!--` は「**開いた container の終端まで**」読み飛ばす。root で開いた場合は文書末まで (GitHub と一致)、list / blockquote 内で開いた場合はその container の終端で閉じる
 - HTML block は **type 1** (`pre` / `script` / `style` / `textarea`、閉じタグまで) と **type 6** (ブロック要素タグ、空行まで) のみ扱う。type 7 (任意タグ単独行) は近似していない (false-red)。raw HTML の `<h2>` 等は読み飛ばすだけで heading としての節閉じ効果は持たない
@@ -443,9 +483,16 @@ checker (`.github/scripts/check-pr-checklist.js`) は GitHub のレンダリン�
 
 - heading を link 化した形 (`## [受け入れ条件](#ac)`) は heading text が完全一致に落ちるため対象外
 - **setext heading (`見出し` + `---` / `===`) は認識しない**。GitHub は heading にするが、実測で「setext を使う本文は 31 本中 0 件 / `---` 区切りを含む本文は 3 件」で、段落直後の `---` を setext と解釈すると偽の heading が対象節を打ち切る false-green が出る (実在 PR #943 の本文に `---` を 1 行足すと exit 1 → exit 0 に反転)。得るもの 0 / 害 3 なので認識しない側に倒した
-- **既知の false-green は 1 件残っている** (#967 で計測済み): 折り返し行 (lazy continuation) の直後に 4 space 入れ子の項目を置く形。節は認識されるため fail-closed では拾えず、GitHub 上に見える未消化 checkbox が 1 件数え落ちる。他の認識漏れ (絵文字前置 / bold 疑似見出し / 全角空白区切り / setext / marker 改行 box) は fail-closed により red になり解消済み
+- **既知の false-green (節は認識されるので fail-closed では拾えない形)**。いずれも「GitHub 上には未消化 checkbox が見えるのに gate は通る」:
+  - 折り返し行 (lazy continuation) の直後に 4 space 入れ子の項目を置く形 — realism 中〜高 (長い項目を折り返し、その下に子項目を書く形)
+  - 継続行を左端に流した形 (heredoc で本文を組むと起きうる)。継続行のインデントが 2 以上なら発火しない
+  - list item 配下に字下げした小見出しを置くと、節の pop 判定が document 上の階層と食い違う形 — realism 低〜中
+  - Self-Test 節を **blockquote で引用しただけ**の本文でも「節が存在する」と判定される (引用内の `[x]` が項目として数えられる) — realism 低。ただし引用が未消化 `- [ ]` を含む場合は red になる
+- **既知の false-red** (誤りの向きは安全側。メッセージが見えるので自己修正できる): 上記の深い入れ子 (6-8 space) / type 7 HTML / `- [ ]` に後続テキストが無い行 (編集途中) / list 内 fence の直後に fence 行より浅い項目が来る形
 
-同じ集合を `.github/scripts/check-pr-checklist.js` 冒頭のコメントにも記録している (doc だけに置くと次の実装者に届かないため)。期待値の決め方と再現材料は #967 / PR #970 の renderer 突合表 (`gh api markdown` の `aria-label="Incomplete task"` 個数と checker の counting を突き合わせたもの) を参照。**新しい角を見つけたら推測で直さず、まず renderer に通して期待値を決めること。**
+heading 形式の認識漏れ (絵文字前置 / bold 疑似見出し / 全角空白区切り / setext / marker 改行 box / 節の削除・改名) は fail-closed により red になり解消済み。
+
+`.github/scripts/check-pr-checklist.js` 冒頭のコメントにも同じ分類を要約してある (doc だけに置くと次の実装者に届かないため)。**完全な一覧と根拠数値は本節が SSoT** で、docstring 側は要約 + ポインタ。期待値の決め方と再現材料は #967 / PR #970-#972 の renderer 突合表 (`gh api markdown` の `aria-label="Incomplete task"` 個数と checker の counting を突き合わせたもの) を参照。**新しい角を見つけたら推測で直さず、まず renderer に通して期待値を決めること。**
 
 ## PR body 規約 (期待値 / 現状 / 修正内容)
 

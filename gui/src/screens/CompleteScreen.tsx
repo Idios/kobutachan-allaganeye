@@ -107,9 +107,30 @@ export function CompleteScreen() {
     navigate('drop');
   }
 
+  // #944 §D: post_match は default split / export の対象外なので、complete の
+  // 「試合数」(全件) と export 見出しの件数がずれる。内訳表示に使う。
+  const postMatchCount = metadata.matches.filter((m) => m.post_match).length;
+  // #944 §D: masked fallback は 0 暗転時に自動発火するが、GUI へは何も伝えて
+  // いなかった (`masked_fallback_used` は schema にあるのにどこにも描画されて
+  // いない)。ユーザーは通常経路との違いを知る手段が無かった。
+  const maskedFallbackUsed =
+    metadata.detection_params?.masked_fallback_used === true;
+
   return (
     <div className={styles.screen} data-testid="complete-screen">
       <SampleModeBanner />
+      {maskedFallbackUsed && (
+        <div
+          className={styles.fallbackNotice}
+          role="status"
+          data-testid="complete-masked-fallback-notice"
+        >
+          通常の検知で暗転が見つからなかったため、<b>マスク録画向けの経路</b>
+          （CLI の <code>--masked</code> 相当）に自動で切り替えて検知しました。
+          結果が期待と違う場合は、CLI で <code>--masked</code> や{' '}
+          <code>--vtuber</code> を明示して再検知してください。
+        </div>
+      )}
       <div className={styles.topBar}>
         <div className={styles.statusDot} aria-hidden="true" />
         <div className={styles.sourceBox}>
@@ -137,6 +158,17 @@ export function CompleteScreen() {
           <div>
             <div className={styles.statLabel}>試合数</div>
             <div className={styles.statValue}>{metadata.matches.length}</div>
+            {/* #944 §D: この数は post_match を含むが、export 画面の見出しは
+                含まない件数を出すため「数が食い違う」と読めた。内訳を出して
+                どちらも正しいことが分かるようにする (数自体は変えない)。 */}
+            {postMatchCount > 0 && (
+              <div
+                className={styles.statNote}
+                data-testid="complete-post-match-note"
+              >
+                うち {postMatchCount} 件は試合後
+              </div>
+            )}
           </div>
           <div>
             <div className={styles.statLabel}>所要</div>
@@ -287,7 +319,10 @@ export function CompleteScreen() {
                     </div>
                   </div>
                   {isPostMatch && (
-                    <div className={`${styles.typeBadge} ${styles.postMatchBadge}`}>
+                    <div
+                      className={`${styles.typeBadge} ${styles.postMatchBadge}`}
+                      title="試合終了後のロビー・街と判定された区間です。metadata.json には残りますが、既定では MP4 に書き出されません（CLI の --keep-trailing で出力できます）。"
+                    >
                       試合後
                     </div>
                   )}
