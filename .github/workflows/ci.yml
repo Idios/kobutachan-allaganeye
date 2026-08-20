@@ -380,7 +380,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $moduleName = 'Pester'
+          $moduleName = 'AllaganeyeNoSuchModule876'  # TEMPORARY probe for #876 red demo -- DO NOT MERGE
           $minVersion = [version]'5.0.0'
           $maxAttempts = 3
           $installed = $null
