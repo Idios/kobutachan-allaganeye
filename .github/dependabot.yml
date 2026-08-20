@@ -1,0 +1,60 @@
+# Dependabot version updates (#868)
+#
+# **本ファイルが担うのは「脆弱性と無関係な定期 bump PR」だけ。**
+# 脆弱性起点の自動 PR (Dependabot security updates) と alert は repo 設定側で
+# 既に有効になっており (`gh api repos/Idios/kobutachan-allaganeye/automated-security-fixes`
+# が `{"enabled":true,"paused":false}`)、本ファイルの有無とは独立に動く。
+#
+# `ignore` を意図的に 1 つも書いていない理由:
+#   dependabot.yml の `ignore` 条件は version updates だけでなく security updates
+#   にも効く。「semver-minor を一律 ignore」のような書き方をすると、v0.3.0 で
+#   実際に踏んだ undici 7.28.0 -> 7.29.0 (minor bump) のような**脆弱性修正 PR まで
+#   黙って抑止される**。ノイズは `open-pull-requests-limit` で量的に抑え、
+#   採否は人間 (Idios) が PR ごとに判断する方針を採る。
+#
+# over-bump PR の扱い (#836 で確立した規約):
+#   直接依存は「最小 patch を exact-pin で直接編集」が正。Dependabot は latest
+#   minor まで上げてくる PR を出すことがある (実例: vite 8.0.16 -> 8.1.0 は
+#   #836 で Idios が却下)。そういう PR は **close して、必要な分だけ手で当てる**。
+#   Dependabot の提案は「上流に更新が出た」という通知として読み、diff をそのまま
+#   採用する義務はない。詳細は docs/ci-security-audit.md を参照。
+#
+# pip ecosystem の限界 (実測 2026-08-20、docs/ci-security-audit.md に詳細):
+#   GitHub の dependency graph は `constraints.txt` を**まったく解析しない**
+#   (black / isort / rich は graph に存在しない)。`pyproject.toml` の依存も
+#   名前だけで resolved version を持たない。したがって pip 側の追従は本ファイル
+#   だけでは完結せず、`security-audit.yml` の pip-audit job が実環境を監査する
+#   ことで補う。
+version: 2
+updates:
+  # GitHub Actions の version pin は「外部依存の版固定規約」で手動 bump が原則
+  # だが、追従忘れが起きやすい (dependency-review-action@v5.0.0 のように moving
+  # major tag を持たない action は特に気づけない)。3 ecosystem のうち最も
+  # 費用対効果が高い。
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(actions)"
+
+  - package-ecosystem: "npm"
+    directory: "/gui"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(gui-deps)"
+
+  # pyproject.toml の上限 (typer<0.25 / click<8.4 / opencv-python-headless<5) は
+  # **遅れではなく確定済みの方針** (#863 / #916 裁定 D8)。Dependabot がこれを
+  # 超える PR を出してきても採用しない。constraints.txt の exact pin は
+  # bit-exact baseline の provenance なので、動かすと baseline 再取得が要る。
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(py-deps)"
