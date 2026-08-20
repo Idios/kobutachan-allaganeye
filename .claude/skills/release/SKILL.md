@@ -247,6 +247,48 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 >
 > なお基準日を省いた `python scripts/check_version_consistency.py --tag v<新バージョン>` は、日付欄の**存在**しか見ない（値は比較しない）。Step 3 のバンプ時点ではタグを打つ日が未確定なので、そちらでは省略形で構わない。
 
+### Step 5: security 再チェック（タグ打ちの直前、必須）
+
+**変更していない既存依存に対して、後から公開された advisory を能動的に取りに行く工程。**
+
+v0.3.0 では advisory 公開からタグ打ちまで **約 7 時間**の窓があり、その間に公開された undici の新規 advisory 5 件（`>= 7.0.0, < 7.29.0`）を直前に踏んだ（`0e163b8`）。PR 時点の CI は依存を触った PR でしか起動しないため、リリース直前に静止した repo は構造的に無検査になる（[`docs/ci-security-audit.md`](../../../docs/ci-security-audit.md) §構造的ギャップ 3）。
+
+**注意: 「余裕のあるバージョンへ上げる」対策では防げない。** 上記 5 件は新規公開の GHSA で、7.28.0 に余裕があっても同じく該当した。したがって headroom 検出器は作らない（[#950](https://github.com/Idios/kobutachan-allaganeye/issues/950)）。
+
+1. `security-audit.yml` をリリース PR の HEAD に対して実行する:
+
+   ```bash
+   gh workflow run security-audit.yml --ref <リリース PR の head ブランチ>
+   gh run list --workflow security-audit.yml --limit 1
+   ```
+
+   `cargo audit` / `pip audit` / `npm audit` の 3 job が緑であること。`dependency review` は `pull_request` 以外では skip されるので、この経路では走らない（それが正しい）。
+
+2. Dependabot alert の open 分を直接確認する:
+
+   ```bash
+   gh api repos/Idios/kobutachan-allaganeye/dependabot/alerts --paginate \
+     -q '.[] | select(.state=="open") | [.number, .security_advisory.severity, .dependency.package.name, (.security_vulnerability.first_patched_version.identifier // "NONE")] | @tsv'
+   ```
+
+   **`?state=all` を付けてはいけない。** `all` は本 API の有効値ではなく、無効値は 422 ではなく **HTTP 200 + 空配列**で返る（`state=bogusvalue` と挙動が一致する。2026-08-20 実測）。つまり「alert ゼロ」に見える緑が作れてしまう。state は絞らず、上記のとおり `jq` 側で `select(.state=="open")` する。
+
+3. 未対応の open alert が残る場合は、タグを打つ前に Idios へ提示して「修正してから出す / 既知として出す」を判断してもらう。
+
+**実施しなかった場合の記録義務**: 本 Step を実行しなかったときは、リリース PR 本文へ 1 行だけ理由を残す（[`.claude/skills/review-pr/SKILL.md`](../review-pr/SKILL.md) の `Codex review 起動: 非対象 (理由: …)` パターンの踏襲）。
+
+```text
+security 再チェック: 非実施 (理由: …)
+```
+
+**無記載を許さない。** 記録が無いと「実施して緑だった」と「そもそも実施していない」が区別できず、後から監査できなくなる。
+
+#### この工程が見ていない集合
+
+- **再チェックからタグ push までの窓は 0 にできない。** 本件の実測窓は advisory 公開からタグまで**約 7 時間**
+- **Dependabot alert 経路は既定ブランチ（`main`）しか scan しない。** release 期間中は stale な状態を読む（[`docs/ci-security-audit.md`](../../../docs/ci-security-audit.md) に既記載）
+- **`security-audit.yml` の `schedule: cron` は daily なので、最悪 24h 遅延する。** さらに cron は **`main` 上の workflow ファイルでしか有効にならない**ため、develop へ入れただけでは 1 度も走らない
+
 ### タグ打ち・GitHub Release 作成
 
 リリース PR マージ後の手順（本スキル範囲外、`docs/release-process.md` §タグ運用 を参照）:
