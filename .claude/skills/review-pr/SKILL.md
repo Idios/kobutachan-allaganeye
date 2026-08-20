@@ -163,6 +163,23 @@ PR の変更種別に応じて以下を確認する。**code quality (logic / ar
 
 `superpowers:requesting-code-review` skill が dispatch する `superpowers:code-reviewer` subagent に code quality 観点 (logic correctness / architecture / security / code smell / best practices) のレビューを委譲する。subagent は本 skill の責務外の項目 (受け入れ条件 / base sync / 並行 PR / project doc 整合 / マージ後 handoff) には介入しない。
 
+**起動条件**: PR が **code file を 1 つでも touch している場合に起動する**。`docs/**` / `*.md` のみで code file の変更がゼロの PR (= doc-only) では**起動しない** — 委譲先の観点 (logic / architecture / security / code smell) は code diff を前提としており、対象が存在しないため no-op review にしかならない。
+
+#### 起動記録 (該当時 / 不該当時とも必須)
+
+起動した / しなかったの**どちらの場合も**、Step 6 レビュー報告の「1 行記録」節に以下のいずれか 1 行を明記する:
+
+> `code quality subagent 起動: 実施 (finding N 件 → Step 5b 表へ統合)`
+>
+> `code quality subagent 起動: 非実施 (理由: doc-only PR、code file 変更ゼロ)`
+
+> **なぜ「常時起動だから記録不要」にしないか (#945 EPT で 4 回摘出)**: 本 skill は Step 5a の
+> Fable / Codex に「明示 trigger + 該当/不該当とも記録必須」を課している。Step 5.0 だけが
+> 記録義務を持たないと、**「記録漏れなのか、そもそも記録不要設計なのか」が事後に追跡できない**。
+> 記録義務は「起動が分岐するか否か」ではなく **reviewer 起動判断点というクラス全体**に課す
+> ([`docs/l2-workflow.md` §「規約・ガード導入の 3 点セット」](../../../docs/l2-workflow.md) ②、
+> および本 skill §「起動記録」の「記録義務は分岐を網羅する」原則)。
+
 > **subagent 起動規約**: 本 dispatch は [`docs/l2-workflow.md` §subagent 起動規約](../../../docs/l2-workflow.md#subagent-起動規約-746-phase-c--741-task-5-教訓) に準拠する。HARD-GATE (Stop conditions / 独断 fix 禁止 / orphan commit 防止) を遵守し、scope を超える発見は BLOCKED 報告で controller (本 skill) に escalate する。F6 (#732) / F7 (#741) と同型の事象を再発させない。
 
 入力に渡す情報:
@@ -536,6 +553,7 @@ Step 5b のトリアージ表を前提に、以下のテンプレート構造で
 (義務を課した Step の側に定型がある。ここは置き場所の固定)。
 
 - 並行 PR 確認: <検出ゼロ / [#M ...]>
+- code quality subagent 起動: <実施 (finding N 件 → Step 5b 表へ統合) / 非実施 (理由: doc-only PR、code file 変更ゼロ)>
 - Fable 俯瞰レビュー: <実施 (finding N 件 / 消化 M 件 / 残 K 件) / 非実施 (理由: ...)>
 - 外部依存規約: <該当 (...) / 非該当 (理由: 本 PR に外部依存の DL / 取得なし)>
 - パス契約: <該当 (...) / 非該当 (理由: パスの生成点・表示点に変更なし)>
