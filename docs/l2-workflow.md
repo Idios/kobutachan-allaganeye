@@ -481,7 +481,9 @@ PR 本文の checkbox のうち **`受け入れ条件` / `Acceptance criteria` /
 
 **それ以外の節の checkbox は counting されない。** 実物テンプレートでは 22 box のうち gate 対象は 12 box (受け入れ条件 2 + Self-Test Report 10) で、Iron Law 1 群 2 / Iron Law 3 群 2 / Iron Law 4 群 1 / 関連ドキュメント群 5 = 計 10 box は未消化でも job は通る (「該当なしなら `[x]` + 理由付記」と書かれている項目も CI では強制されない)。
 
-**job が red でもマージは構造的にブロックされない。** repo に required status check が設定されていないため (`main` は branch protection ありだが `required_status_checks` は未設定、`develop-*` は無保護、ruleset なし)、`validate-checklist` の red は「気づくための信号」であってマージ阻止機構ではない。required status check 化の判断は #947 で扱う。
+**日常の PR (base=`develop-*`) では job が red でもマージは構造的にブロックされない。** #947 の決着 (2026-08-20) により `validate-checklist` は required status check になったが、**保護対象は `main` と `release/*` だけ**で `develop-*` は無保護のまま。したがって日常の開発 PR では red は依然「気づくための信号」であり、マージ阻止機構として効くのは `release/*` と `main` へ入る 2 箇所だけである。
+
+保護対象・required の 8 件・除外理由の正は [`docs/release-process.md` §ブランチ保護と required status checks](release-process.md) にある (ruleset は repo 外設定で diff に現れないため、同節が SSoT)。`develop-*` を保護しない理由は `/release` Step 4 が patch release で `develop-<version>` へ直接 commit する手順を残しているため。
 
 ### Why
 
