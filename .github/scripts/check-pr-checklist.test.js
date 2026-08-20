@@ -22,23 +22,32 @@ const core = {
   setFailed: (m) => { process.stdout.write('::error::' + m + '\\n'); process.exitCode = 1; },
 };
 const context = {
+  repo: { owner: 'Idios', repo: 'kobutachan-allaganeye' },
   payload: {
     pull_request: {
+      number: 1,
       body: process.env.PR_BODY,
       user: process.env.PR_USER_TYPE ? { type: process.env.PR_USER_TYPE } : undefined,
     },
   },
 };
-checker({ github: {}, context, core }).catch((e) => {
+// PR_FILES が与えられたときだけ listFiles を生やす。未指定なら github は空のままで、
+// checker 側の「files 取得不可 → semantic 検査 skip」経路を通る (従来テストの挙動を保つ)。
+const github = process.env.PR_FILES
+  ? { rest: { pulls: { listFiles: async () => ({ data: JSON.parse(process.env.PR_FILES) }) } } }
+  : {};
+checker({ github, context, core }).catch((e) => {
   process.stdout.write('[throw] ' + e.message + '\\n');
   process.exitCode = 2;
 });
 `;
 
-function runCheckerProcess(body, userType) {
+function runCheckerProcess(body, userType, files) {
   const env = { ...process.env, CHECKER_PATH, PR_BODY: body };
   if (userType) env.PR_USER_TYPE = userType;
   else delete env.PR_USER_TYPE;
+  if (files) env.PR_FILES = JSON.stringify(files);
+  else delete env.PR_FILES;
   const result = spawnSync(process.execPath, ['-e', CHILD_SOURCE], { env, encoding: 'utf8' });
   return { status: result.status, stdout: result.stdout || '', stderr: result.stderr || '' };
 }
@@ -677,7 +686,9 @@ test('#945: Self-Test Report の Fable 欄が未記入なら validate-checklist 
 
   // 対照: 同じ本文で Fable 欄だけを [x] にすると緑になる。
   // これが無いと「何を書いても赤い」だけの gate と区別できない。
-  const green = runCheckerProcess(body.replace('- [ ] Fable', '- [x] Fable'));
+  // placeholder を残したまま [x] にするのは「レビューせずに緑」なので実記入形へ置換する
+  const filled = '- [x] Fable 俯瞰レビュー (#945): 非実施 (理由: doc-only でない)';
+  const green = runCheckerProcess(body.replace(fableLine, filled));
   assert.equal(green.status, 0, 'Fable 欄を消化すれば exit 0 (green)');
 });
 
@@ -1113,4 +1124,117 @@ test('indented backtick fence (0-3 space indent within list) is stripped', () =>
   assert.equal(result.unchecked, 0);
   assert.equal(result.checked, 1);
   assert.equal(result.hasAnySection, true);
+});
+
+// --- #945: Fable 行の semantic 検査 (Codex adversarial-review [medium] 対応) ---------
+//
+// checkbox の消化だけを見る gate は「レビューを実行せずに緑」を防げない。
+// 以下は **値の妥当性**で red が出ることを示す。従来の「未記入 → red」とは別のクラス。
+
+const { validateFableRow } = require('./check-pr-checklist.js');
+
+const FABLE_ROW_UNRUN = '- [x] Fable 俯瞰レビュー (#945) — 非実施 (理由: doc-only でない)';
+const FABLE_ROW_RUN = '- [x] Fable 俯瞰レビュー (#945) — 実施 (finding 2 件 / 消化 2 件 / 残 0 件)';
+const FABLE_ROW_PLACEHOLDER =
+  '- [x] Fable 俯瞰レビュー (#945) — 実施 (finding N 件 / 消化 M 件 / 残 K 件)';
+
+const DOC_ONLY_FILES = [
+  { filename: 'docs/l2-workflow.md', status: 'modified' },
+  { filename: 'docs/release-process.md', status: 'modified' },
+];
+const CODE_FILES = [
+  { filename: 'allaganeye/export/pool.py', status: 'modified' },
+  { filename: 'docs/cli-spec.md', status: 'modified' },
+];
+const SPEC_ADDED_FILES = [
+  { filename: 'allaganeye/export/pool.py', status: 'modified' },
+  { filename: 'docs/superpowers/specs/2026-08-21-x.md', status: 'added' },
+];
+
+test('#945 semantic: doc-only PR で `非実施` は red (起動条件 (a) 該当)', () => {
+  const r = validateFableRow(FABLE_ROW_UNRUN, DOC_ONLY_FILES);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /doc-only/);
+});
+
+test('#945 semantic: spec 新規追加 PR で `非実施` は red (起動条件 (b) 該当、code file 混在でも)', () => {
+  // code file を含むので doc-only ではない。(b) だけで発火することを示す。
+  const r = validateFableRow(FABLE_ROW_UNRUN, SPEC_ADDED_FILES);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /specs\/plans/);
+});
+
+test('#945 semantic: 通常の code PR で `非実施` は green (対照)', () => {
+  // 対照が無いと「何を書いても赤い」だけの gate と区別できない。
+  const r = validateFableRow(FABLE_ROW_UNRUN, CODE_FILES);
+  assert.equal(r.ok, true);
+});
+
+test('#945 semantic: `実施` は N/M/K がプレースホルダのままなら red', () => {
+  const r = validateFableRow(FABLE_ROW_PLACEHOLDER, DOC_ONLY_FILES);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /整数/);
+});
+
+test('#945 semantic: `実施` + 実数 3 件は green', () => {
+  const r = validateFableRow(FABLE_ROW_RUN, DOC_ONLY_FILES);
+  assert.equal(r.ok, true);
+});
+
+test('#945 semantic: files 不明時は skip する (API 可用性で false-red にしない)', () => {
+  assert.equal(validateFableRow(FABLE_ROW_UNRUN, null).ok, true);
+  assert.equal(validateFableRow(FABLE_ROW_UNRUN, []).ok, true);
+});
+
+test('#945 semantic: 生 exit code — doc-only PR の誤った `非実施` で validate-checklist が red', () => {
+  // 3 点セット ③。カウント関数ではなく子プロセスの **exit code の生値**で観測する。
+  const body = [
+    '#### Self-Test Report (machine-verified)',
+    '',
+    '- [x] `ruff check .`',
+    FABLE_ROW_UNRUN,
+    '',
+  ].join('\n');
+  const red = runCheckerProcess(body, undefined, DOC_ONLY_FILES);
+  assert.equal(red.status, 1, '起動条件該当なのに非実施なら exit 1');
+  assert.match(red.stdout, /::error::/);
+
+  const green = runCheckerProcess(body.replace(FABLE_ROW_UNRUN, FABLE_ROW_RUN), undefined, DOC_ONLY_FILES);
+  assert.equal(green.status, 0, '実施 + 実数なら exit 0');
+});
+
+// --- #945: 実テンプレートを corpus に使う (合成 fixture では届かなかった) ------------
+//
+// 上の semantic テストは短い合成行を使っており、**実テンプレート行では false-red が出た**。
+// 実物の行は説明文として「実施」「非実施」の両方を含むため、素朴な文字列一致では
+// 記入済みと誤認する。合成 fixture だけの発火実証は「実物に届かない gate」を通してしまう。
+
+function realFableRow() {
+  const tpl = fs.readFileSync(TEMPLATE_PATH, 'utf8');
+  // **checkbox 行に限定する。** コメント内の記入ガイドにも同じ語が出るため、
+  // 素朴な includes だと説明文を拾ってしまう (実際に踏んだ)。
+  const line = tpl
+    .split(/\r?\n/)
+    .find((l) => /^[ \t]{0,3}[-*+][ \t]+\[[ xX]\]/.test(l) && l.includes('Fable 俯瞰レビュー'));
+  assert.ok(line, 'テンプレートに Fable 行が存在する');
+  return line;
+}
+
+test('#945 corpus: 実テンプレートの未記入 Fable 行 (placeholder のまま) は red', () => {
+  // `[x]` にしただけで中身を置き換えていない = レビューしていない。これを緑にしてはいけない。
+  const row = realFableRow().replace('- [ ]', '- [x]');
+  const r = validateFableRow(row, DOC_ONLY_FILES);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /placeholder/);
+});
+
+test('#945 corpus: 実テンプレート行を `実施` + 実数へ置換したら green (false-red が無い)', () => {
+  const row = '- [x] Fable 俯瞰レビュー (#945): 実施 (finding 2 件 / 消化 2 件 / 残 0 件)';
+  assert.equal(validateFableRow(row, DOC_ONLY_FILES).ok, true);
+});
+
+test('#945 corpus: 実テンプレート行を `非実施` へ置換 — code PR なら green / doc-only なら red', () => {
+  const row = '- [x] Fable 俯瞰レビュー (#945): 非実施 (理由: doc-only でなく specs/plans 新規追加もなし)';
+  assert.equal(validateFableRow(row, CODE_FILES).ok, true, 'code PR では正当');
+  assert.equal(validateFableRow(row, DOC_ONLY_FILES).ok, false, 'doc-only では不当');
 });

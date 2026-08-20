@@ -406,6 +406,100 @@ function countAcceptanceCriteriaCheckboxes(body) {
   };
 }
 
+/**
+ * Fable 俯瞰レビュー行の semantic 検査 (#945、Codex adversarial-review [medium] 対応)。
+ *
+ * **checkbox が `[x]` かどうかだけでは gate にならない。** doc-only PR で
+ * `- [x] Fable 俯瞰レビュー ... 非実施 (理由: ...)` と書けば、レビューを 1 度も実行せずに
+ * 緑になってしまう。実際 #945 の EPT iteration 4 で、2 trigger 両該当の PR に対し
+ * executor が「非実施」と記入する事象が起きている (自己申告は満点だった)。
+ * そこで **変更ファイル一覧と突き合わせて値の妥当性まで見る**。
+ *
+ * 判定:
+ *   - 起動条件 = (a) 変更が全て `docs/**` または `*.md` (doc-only)
+ *              OR (b) `docs/superpowers/{specs,plans}/**` への新規ファイル追加
+ *   - 該当なのに `非実施` → red
+ *   - `実施` なのに N/M/K が整数で揃っていない → red
+ *
+ * files が取得できない場合 (API 失敗 / 権限不足 / テストで未注入) は **検査を skip する**。
+ * ここで落とすと「gate が本来見るべきもの」ではなく「API の可用性」で red になり、
+ * 原因追跡が難しい false-red を生むため。skip したことは core.info に残す。
+ */
+const FABLE_ROW_RE = /^[ \t]{0,3}(?:[-*+]|\d+[.)])[ \t]+\[[ xX]\][ \t]*(.*Fable[ \t]*俯瞰レビュー.*)$/m;
+
+function isDocPath(p) {
+  return p.startsWith('docs/') || p.toLowerCase().endsWith('.md');
+}
+
+function isSpecOrPlanPath(p) {
+  return p.startsWith('docs/superpowers/specs/') || p.startsWith('docs/superpowers/plans/');
+}
+
+/**
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+function validateFableRow(body, files) {
+  // HTML コメント内の記入ガイド (説明として「実施」「非実施」を含む) を拾わないよう除去する。
+  // checker の他の検査もコメントは不可視として扱う (#936)。
+  const visible = String(body).replace(/<!--[\s\S]*?-->/g, '');
+  const m = FABLE_ROW_RE.exec(visible);
+  if (!m) return { ok: true }; // 行そのものの不在は unchecked 側の検査 (テンプレ準拠) に委ねる
+  const row = m[1];
+
+  // **placeholder が残っている行を先に弾く。** テンプレートの未記入行は説明文として
+  // `実施` と `非実施` の**両方**を含むため、素朴に文字列一致すると記入済みと誤認する。
+  // (#945: 実テンプレート行で false-red を踏んだ。合成 fixture では再現しなかった)
+  if (/[<＜][^>＞]*[>＞]/.test(row)) {
+    return {
+      ok: false,
+      reason:
+        'Fable 俯瞰レビュー行が未記入です (`<...>` の placeholder が残っています)。' +
+        '`実施 (finding N 件 / 消化 M 件 / 残 K 件)` か `非実施 (理由: ...)` に置き換えてください。',
+    };
+  }
+
+  const declaredHijisshi = /非実施/.test(row);
+  const declaredJisshi = !declaredHijisshi && /実施/.test(row);
+
+  if (!declaredJisshi && !declaredHijisshi) {
+    return { ok: false, reason: 'Fable 俯瞰レビュー行が `実施` / `非実施` のどちらでもありません。' };
+  }
+
+  if (declaredJisshi) {
+    // 「実施」は finding / 消化 / 残 の 3 数値が整数で必要 (N/M/K のまま残っていないか)
+    const nums = row.match(/(?:finding|消化|残)[^0-9]{0,8}(\d+)[ \t]*件/g) || [];
+    if (nums.length < 3) {
+      return {
+        ok: false,
+        reason:
+          '`実施` と記入されていますが finding / 消化 / 残 の 3 数値が整数で揃っていません ' +
+          '(`N` `M` `K` のままのプレースホルダは不可)。実際にレビューを実行して実数を記入してください。',
+      };
+    }
+    return { ok: true };
+  }
+
+  // 「非実施」— 起動条件に該当していないことを変更ファイルで裏取りする
+  if (!Array.isArray(files) || files.length === 0) {
+    return { ok: true }; // files 不明時は skip (呼び出し側が core.info に記録)
+  }
+  const docOnly = files.every((f) => isDocPath(f.filename));
+  const addedSpecOrPlan = files.some((f) => f.status === 'added' && isSpecOrPlanPath(f.filename));
+  if (docOnly || addedSpecOrPlan) {
+    const which = [docOnly ? '(a) doc-only PR' : null, addedSpecOrPlan ? '(b) specs/plans への新規追加' : null]
+      .filter(Boolean)
+      .join(' / ');
+    return {
+      ok: false,
+      reason:
+        `Fable 俯瞰レビューの起動条件 ${which} に該当していますが \`非実施\` と記入されています。` +
+        '`Agent(subagent_type=allaganeye-fable-consult)` を実行し ' +
+        '`実施 (finding N 件 / 消化 M 件 / 残 K 件)` を実数で記入してください。',
+    };
+  }
+  return { ok: true };
+}
+
 // async は actions/github-script@v7 caller (`await checker({github, context, core})`) との
 // 互換のため維持。内部に await はないが、yml 側 `await` を可能にするため Promise 返却が必要。
 async function checkPrChecklist({ github, context, core }) {
@@ -450,8 +544,35 @@ async function checkPrChecklist({ github, context, core }) {
     return;
   }
 
+  // #945: Fable 行の semantic 検査。checkbox の消化だけでは「実行せずに緑」を防げない。
+  let files = null;
+  try {
+    if (github && github.rest && github.rest.pulls && context.repo && pr.number) {
+      const res = await github.rest.pulls.listFiles({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        pull_number: pr.number,
+        per_page: 100,
+      });
+      files = res && res.data;
+    }
+  } catch (e) {
+    core.info(`Could not list PR files (${e.message}); skipping Fable row semantic check.`);
+  }
+  if (!files) {
+    core.info('PR file list unavailable; Fable row semantic check skipped (checkbox check still applied).');
+  }
+  const fable = validateFableRow(body, files);
+  if (!fable.ok) {
+    core.setFailed(
+      `${fable.reason} 詳細は .claude/skills/review-pr/SKILL.md §「optional 俯瞰レビュー」を参照。`
+    );
+    return;
+  }
+
   core.info(`All ${checked} required checklist item(s) are checked.`);
 }
 
 module.exports = checkPrChecklist;
 module.exports.countAcceptanceCriteriaCheckboxes = countAcceptanceCriteriaCheckboxes;
+module.exports.validateFableRow = validateFableRow;
