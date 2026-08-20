@@ -62,7 +62,7 @@ base 最新化 + 直近マージ PR + 並行 worktree PR 重複確認は `/revie
 >
 > **Codex fallback (C6)**: subagent が `/review-pr` 内で Codex review (tier 1 = companion script `codex-companion.mjs review` の Bash 実行。slash `/codex:review` は `disable-model-invocation: true` のため agent から invoke 不可 = Idios 専用 tier 3、`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照) を実行して fail した場合は [`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback) の手順に従い superpowers `requesting-code-review` subagent を fallback として起動する。Final summary comment (Step 4) に「Codex fallback notice」を必須記載 (Iron Law 5 整合)。**Step 2.3 の per-round Round summary AskUserQuestion ではなく、収束時に 1 回投稿する Step 4 の summary comment を指す。**
 >
-> **Codex 出力の読み取り (#949、openai-codex 1.0.4 時点)**: Codex review が exit 0 で完了した場合、subagent は `/review-pr` §「Codex 出力の読み取り」に従い `codex-companion.mjs result` (job-id 省略) で**保存済み全文**を読んでから finding を統合する。stdout に見えた分だけで triage するのは禁止。読み取りに失敗した (= `result` が exit 非ゼロ) 場合は理由を 1 行記録する義務があり、subagent は下記 prompt template item 7 の `## meta` に `Codex 出力読み取り` 行として申告し、controller はそれを Step 4 の Final summary へ転記する。**fallback ではないので Codex fallback notice とは別行**。`--background` / `--wait` は付けない (受理されるが無視される)。
+> **Codex 出力の読み取り (#949、openai-codex 1.0.4 時点)**: Codex review が exit 0 で完了した場合、subagent は `/review-pr` §「Codex 出力の読み取り」に従い `codex-companion.mjs status --json` で `jobClass == "review"` の job id を特定し、`result <job-id>` で**保存済み全文**を読んでから finding を統合する (**job id は省略しない**)。stdout に見えた分だけで triage するのは禁止。読み取りに失敗した (= `result` が exit 非ゼロ) 場合は理由を 1 行記録する義務があり、subagent は下記 prompt template item 7 の `## meta` に `Codex 出力読み取り` 行として申告し、controller はそれを Step 4 の Final summary へ転記する。**fallback ではないので Codex fallback notice とは別行**。`--background` / `--wait` は付けない (受理されるが無視される)。
 
 prompt template (固定):
 
@@ -106,7 +106,7 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
    - Codex 出力読み取り: <成功 (job <job-id> の result 全文を finding の入力にした) / 失敗 (理由: <1 行>、stdout の範囲のみで triage) / 非起動 (理由: <起動条件のどれに不該当か>)>
    ```
 
-8. **Codex review を起動した場合は、finding を `/review-pr` §「Codex 出力の読み取り」の手順で保存済み全文から取り込む。** stdout に見えた分だけで triage しない。`## meta` の `Codex 出力読み取り` 行は**省略不可**で、`失敗` と `非起動` は**理由も必須** (省略はいずれも parse error)。`非起動` の理由には `/review-pr` の「起動条件不該当時の明示記録」の内容を畳んでよい — **この行以外に Codex 関連の slot を新設しない**
+8. **Codex review を起動した場合は、finding を `/review-pr` §「Codex 出力の読み取り」の手順で保存済み全文から取り込む。** stdout に見えた分だけで triage しない。`## meta` の `Codex 出力読み取り` 行は**省略不可**で、`失敗` と `非起動` は**理由も必須** (省略はいずれも parse error)。`非起動` の理由には `/review-pr` の「起動記録 (該当時 / 不該当時とも必須)」の非対象行の内容を畳んでよい — **この行以外に Codex 関連の slot を新設しない**
 ````
 
 #### Step 2.2 Findings parse + 握り潰し防止 validation
@@ -120,7 +120,7 @@ Agent tool の戻り値 markdown から `## findings_table` セクションの�
 3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**。**検査範囲は `## findings_table` / `## ambiguous_judgments` の行に限る** (item 1 / 2 / 4 / 5 と同じスコープ)。`## meta` の状態記録行 (`Codex 出力読み取り: 非起動 (理由: ...)` 等) は**対象外** — 記録義務を課した行が握り潰し検出に巻き込まれると、正しく申告するほど parse error になる
 4. **`ambiguous_judgments` セクションが存在する** (空でもセクション自体は必須): 不在は parse error
 5. **(A) 強優先方針違反検出**: `latent issue / CI failure / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述` 等の典型 (A) trigger を含む finding が (A) 以外 ((A)* / (B) / (C)) に分類されている場合は **parse error**
-6. **`## meta` に `Codex 出力読み取り` 行がある** (#949): `成功` / `失敗 (理由: ...)` / `非起動 (理由: ...)` のいずれかで始まること。行の不在は **parse error**。**`失敗` と `非起動` はどちらも理由が必須**で、理由括弧を欠いたものは parse error (根拠は「読んだ」「読めなかった」「起動していない」を事後に区別できなくすることであり、この理屈は 2 分岐に等しく効く。片方だけを名指しすると、名指しされていない側が緩いと読める抜け道になる)。`非起動` の理由は `/review-pr` Step 5a の「起動条件不該当時の明示記録」と同一内容でよい (**同 record の専用スロットは増やさず本行に畳む**)
+6. **`## meta` に `Codex 出力読み取り` 行がある** (#949): `成功` / `失敗 (理由: ...)` / `非起動 (理由: ...)` のいずれかで始まること。行の不在は **parse error**。**`失敗` と `非起動` はどちらも理由が必須**で、理由括弧を欠いたものは parse error (根拠は「読んだ」「読めなかった」「起動していない」を事後に区別できなくすることであり、この理屈は 2 分岐に等しく効く。片方だけを名指しすると、名指しされていない側が緩いと読める抜け道になる)。`非起動` の理由は `/review-pr` Step 5a §「起動記録 (該当時 / 不該当時とも必須)」の非対象行と同一内容でよい (**同 record の専用スロットは増やさず本行に畳む**)
 
 **parse error 時の対処**:
 

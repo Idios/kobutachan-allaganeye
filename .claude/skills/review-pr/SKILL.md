@@ -256,13 +256,20 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 - 過去 root cause が複数 (Step 1.1 M5 警告 ≥2 件)、または
 - L1 (CLI / detector / GPU) の core ロジック変更を含む
 
-#### 起動条件不該当時の明示記録 (H-4 fix)
+#### 起動記録 (該当時 / 不該当時とも必須、H-4 fix)
 
-上記 3 条件すべて不該当の PR (= Codex review 非起動) の場合、Step 6 レビュー報告に以下を 1 行明記する:
+起動した / しなかったの**どちらの場合も**、Step 6 レビュー報告に以下のいずれか 1 行を明記する。**両分岐に定型がある** — 片方だけを定型化すると、定型のない側は実行者ごとの作文になり表記が揺れる:
 
+> `Codex review 起動: 対象 (理由: <上記 3 条件のどれに該当したか>)`
+>
 > `Codex review 起動: 非対象 (理由: touched <N> file / single root cause / non-L1-core)`
 
 これがないと「Codex review を意図的に skip したのか / 忘れたのか」が事後追跡できない (Iron Law 5 整合)。
+
+> **記録義務は分岐を網羅する。** 本節と下記「Codex 出力の読み取り」の 2 record は、いずれも
+> **起こりうる状態すべてに定型を用意する**方針で書いてある (起動 = 対象 / 非対象、
+> 読み取り = 成功 / 失敗 / 非起動)。新しい記録義務を足すときも同じ原則に従うこと。
+> 異常系だけに定型を置くと、正常系のたびに実行者が文言を発明する
 
 #### Codex 出力の読み取り (#949、openai-codex 1.0.4 時点)
 
@@ -291,11 +298,13 @@ Codex review が exit 0 で完了したら、**finding を stdout から拾う�
    >
    > `Codex 出力読み取り: 失敗 (理由: <result の stderr 先頭 1 行>)。stdout に見えた範囲のみで triage した`
    >
-   > `Codex 出力読み取り: 非起動 (理由: <上記「起動条件不該当時の明示記録」と同じ理由>)`
+   > `Codex 出力読み取り: 非起動 (理由: <上記「起動記録」の非対象行と同じ理由>)`
 
    `失敗` は **fallback ではない**ので Codex fallback notice とは別物。この 1 行が無いと「全文を読んだ」「読めなかった」「そもそも起動していない」が事後に区別できない ([`docs/l2-workflow.md` §「規約・ガード導入の 3 点セット」](../../../docs/l2-workflow.md) ②)
 
-   > **`/iterate-review` の subagent mode で実行している場合**、この 1 行は Step 6 レビュー報告ではなく final message の `## meta` に同名で書く (controller が Step 4 Final summary へ転記する)。`非起動` を選んだときは、上記「起動条件不該当時の明示記録」の 1 行を**この行の理由として畳んでよい** (固定 5 セクションに専用スロットを増やさない)
+   **読み取りが失敗したときの再試行・原因診断は任意**。1 行記録して先へ進んでよい (原因診断は本 step の責務ではない)。ただし cwd が review 実行時の worktree と違っていた場合だけは、cwd を直して 1 度だけやり直す — これは診断ではなく手順ミスの訂正である
+
+   > **`/iterate-review` の subagent mode で実行している場合**、この 1 行は Step 6 レビュー報告ではなく final message の `## meta` に同名で書く (controller が Step 4 Final summary へ転記する)。`非起動` を選んだときは、上記「起動記録」の非対象行を**この行の理由として畳んでよい** (固定 5 セクションに専用スロットを増やさない)
 
 `--background` / `--wait` は付けない。`review` / `adversarial-review` では受理されるだけで無視され、常に foreground blocking になる (openai-codex 1.0.4 時点)。長時間 review を非同期化したい場合は Bash tool の `run_in_background: true` を使う。
 
