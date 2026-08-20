@@ -137,7 +137,7 @@ ffmpeg [-hwaccel <name> [-hwaccel_output_format <fmt>] -c:v <decoder>] \
 - dual seek: `-ss <chunk_start - SEEK_LEAD_SECONDS>` を `-i` 前に (keyframe への高速ジャンプ)、`-ss <output_seek>` を `-i` 後に (GOP pre-roll の正確な trim)
 - `select='not(mod(n,N))'`: frame index `n` ベースで N 枚おきに抽出（PTS ベースの `fps` filter とは異なり ffmpeg version 非依存）
 - 1 プロセスあたり多数フレームをデコードするため、GPU 初期化コストが分散される
-- legacy path (`fps=1/{interval}` filter) に落ちるのは env var `ALLAGANEYE_DETECT_FPS_FILTER=1` 指定時、および fps metadata (`source_fps_num` / `source_fps_den` / `source_fps`) が 1 つも解決できない場合 (正: `_scan_cpu` / `scan_gpu` の docstring。詳細: §ffmpeg fps filter の version 依存制約)
+- legacy path (`fps=1/{interval}` filter) は #864 で撤去済み。fps metadata (`source_fps_num` / `source_fps_den` / `source_fps`) が 1 つも解決できない場合は縮退せず `VideoProcessingError` を送出する (正: `_decode_chunk_cpu` / `_decode_chunk` の docstring。`probe` が `fps <= 0` を hard fail するため production 経路では到達しない。詳細: §ffmpeg fps filter の version 依存制約)
 
 **CPU モードとの差異**: CPU / GPU いずれもチャンク分割デコードだが、GPU モードは `-hwaccel` によるハードウェアデコードを使い、チャンク数を動画長に応じて動的調整する (#437) 点が異なる。CPU モードのチャンク数は CPU コア数のみで決まる (正: `_scan_cpu`)。Pass 1 以降（transition expansion, Pass 2, フィルタリング）は共通。
 
@@ -145,11 +145,10 @@ ffmpeg [-hwaccel <name> [-hwaccel_output_format <fmt>] -c:v <decoder>] \
 
 ### ffmpeg fps filter の version 依存制約 (#577, #576 で解決済み)
 
-`_scan_cpu` および GPU chunked decode で旧 path (env var
-`ALLAGANEYE_DETECT_FPS_FILTER=1` 指定時) が使用する `fps=N` filter は、
-ffmpeg version によりフレーム選択タイミングが変動する。極短時間
+`_scan_cpu` および GPU chunked decode の旧 path が使用していた `fps=N`
+filter は、ffmpeg version によりフレーム選択タイミングが変動する。極短時間
 (< 1s) blackout の取りこぼしが起こりうる (PR #575 の root cause 分析で
-確定)。
+確定)。この旧 path は #576 で default から外れ、#864 で撤去された。
 
 **新 path (#576 完了後、default)** は fps filter を廃止し、**dual seek**
 (input seek で `SEEK_LEAD_SECONDS` 手前まで飛び、output seek で chunk 先頭に
@@ -184,11 +183,12 @@ n: 4 pts:3092 pts_time:6184  mean:[45 127 128]  <-- output PTS 6184 の Y-mean=4
 output PTS 6184 と称しながら ~1.1s 遅れた input frame をサンプリングして
 いた (Y-mean=45 は実時間 6185.1s の brightness=43.82 と整合)。
 
-**rollback path (transitional, v0.3.x で削除)**
+**rollback path (撤去済み、#864)**
 
-env var `ALLAGANEYE_DETECT_FPS_FILTER=1` を設定すると旧 fps filter path
-に切替わる。緊急 escape 用途のみ、CI / production で使わないこと。
-詳細は
+v0.3.0 では緊急 escape 用の transitional な rollback env var を残していたが、
+v0.3.1 (#864) で legacy path ごと撤去した。**現在 fps filter 経路に切り替える
+手段は無い**。撤去した env var 名と当時の設計意図は `CHANGELOG.md` の
+v0.3.0 Deprecated / v0.3.1 Removed エントリ、および
 `docs/superpowers/specs/2026-05-18-v030-l3-detect-fps-filter-retirement-design.md`
 S6 を参照。
 

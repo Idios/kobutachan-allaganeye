@@ -129,6 +129,13 @@ def detection_with_scorebar(
         min_match_duration=300.0,
         min_blackout_duration=3.0,
         src_resolution=(meta["width"], meta["height"]),
+        # #864: mirror the production detect_kwargs (split_matches.py). Without
+        # these this fixture silently exercised the pre-#576 fps-filter path
+        # instead of the shipped one -- the removal of that path is what
+        # surfaced it.
+        source_fps=meta["fps"],
+        source_fps_num=meta["fps_num"],
+        source_fps_den=meta["fps_den"],
     )
     elapsed = time.monotonic() - start
 
@@ -173,6 +180,10 @@ def detection_without_scorebar(
         min_match_duration=300.0,
         min_blackout_duration=3.0,
         # src_resolution omitted -> no scorebar filtering
+        # #864: see detection_with_scorebar -- fps must be threaded through.
+        source_fps=meta["fps"],
+        source_fps_num=meta["fps_num"],
+        source_fps_den=meta["fps_den"],
     )
     elapsed = time.monotonic() - start
 
