@@ -164,6 +164,7 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 
 - [ ] `develop-x.x.0` 上で対象スコープの全 PR がマージ済み
 - [ ] CI 全ジョブ (Python / GUI frontend / GUI Rust / Pester) が**リリース PR の HEAD** (`release/vX.Y.Z` tip) で緑 — develop tip は release ブランチに載せた出荷直前 commit を含まないため基準にしない
+- [ ] **タグ打ち直前の security 再チェックを実施した** ([`/release` SKILL.md](../.claude/skills/release/SKILL.md) §Step 5) — `security-audit.yml` の 3 job (`cargo audit` / `pip audit` / `npm audit`) が**リリース PR の HEAD** で緑、かつ Dependabot の open alert がゼロまたは Idios が既知として了承済み。実施しなかった場合はリリース PR 本文に `security 再チェック: 非実施 (理由: …)` を 1 行残す。**この工程が見ていない集合**は同 §Step 5 に列挙してある (再チェックからタグまでの窓は 0 にできない / alert は既定ブランチしか scan しない / cron は最悪 24h 遅延) (#950)
 - [ ] required status checks の ruleset が生きている (`gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'` が非空で、[§ブランチ保護と required status checks](#ブランチ保護と-required-status-checks-947) の 8 件を含む) — ruleset は repo 外設定で diff に現れないため、無効化を検知できるのはこの確認だけ (#947)
 - [ ] [バージョン保持箇所](versioning.md#バージョン管理場所)が**全箇所**`x.y.0` に更新されている (`python scripts/check_version_consistency.py` が exit 0)
 - [ ] `CHANGELOG.md` に対象バージョンセクションが存在 (**日付 = タグ打ち日 JST** (§タグ運用) / 主要変更点 / breaking changes)

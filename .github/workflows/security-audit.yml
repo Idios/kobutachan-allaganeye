@@ -7,7 +7,27 @@ on:
       - 'gui/src-tauri/Cargo.toml'
       - 'gui/package-lock.json'
       - 'gui/package.json'
+      # #868: Python manifest が抜けていたため、Python 依存だけを変更する PR では
+      # 本 workflow 自体が起動せず pip の advisory が PR 段階で一切検査されて
+      # いなかった。paths を足すだけでは「起動するが Python を見る job が無い」
+      # false-green になるため、同 issue で pip-audit job も同時に追加している。
+      - 'pyproject.toml'
+      - 'constraints.txt'
+      - 'scripts/installer/requirements-pyinstaller.txt'
       - '.github/workflows/security-audit.yml'
+      - '.github/dependabot.yml'
+  # #950: PR が 1 本も来ない期間は既定ブランチの依存状態が無検査になる。
+  # v0.3.0 では advisory 公開からタグ打ちまで約 7 時間の窓があり、その間に
+  # 公開された undici の新規 advisory 5 件を直前に踏んだ。
+  #
+  # **`schedule` は既定ブランチ (main) 上の workflow ファイルでしか有効にならない**
+  # (GitHub の仕様)。develop-* へ merge しただけでは定期実行は始まらず、main へ
+  # 入るまで 1 度も走らない。
+  #
+  # この cron が見ていない集合: cron 間隔以内でしか検知できない (daily なので
+  # 最悪 24h 遅延する)。タグ打ち直前の窓を 0 にはできない。
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
 
 permissions:
@@ -70,6 +90,63 @@ jobs:
           # だが、scope を解決できない依存が将来現れたとき silent に素通しさせない
           # ため明示する (false green を作らない)。
           fail-on-scope: runtime, development, unknown
+
+  pip-audit:
+    name: pip audit (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
+
+      # **本 job は「実際に install した環境」を監査する。** manifest を静的に
+      # 読む方式にしないのは、GitHub の dependency graph が Python について
+      # 使い物にならないと実測できているため (2026-08-20):
+      #   - `constraints.txt` の exact pin は graph に 1 件も登録されない
+      #     (black / isort / rich は存在しない)
+      #   - `pyproject.toml` の依存は名前だけで resolved version を持たない
+      # advisory の突合には resolved version が要るので、Dependabot alert も
+      # dependency-review job も Python 依存については原理的に発火しない。
+      # 実環境を audit する本 job だけがその穴を塞ぐ。詳細は
+      # docs/ci-security-audit.md を参照。
+      - name: Install project (audit 対象の実環境を作る)
+        run: pip install -e ".[dev]" -c constraints.txt
+
+      # バージョンは上限付き (外部依存の版固定規約 (b))。cargo-audit の
+      # `--version "^0.22"` と同じ扱いで、advisory DB は実行時に取得するため
+      # exact pin にはしない。
+      - name: Install pip-audit
+        run: pip install "pip-audit>=2.10,<3" -c constraints.txt
+
+      # pip-audit は **severity の閾値を持たず、advisory に 1 件でも当たれば fail**
+      # する。npm audit の `--audit-level=high` / dependency-review の
+      # `fail-on-severity: moderate` より厳しい。導入時点 (2026-08-20) の実測では
+      # 該当ゼロなので恒久 red にはならない。
+      #
+      # 誤検知・対応不能な advisory が出た場合の許容ルール:
+      #   `--ignore-vuln GHSA-xxxx-xxxx-xxxx` を下に追記し、**同じ行に (1) なぜ
+      #   対応できないか (2) いつ見直すか** をコメントで書く。理由を書かない
+      #   ignore は禁止 (書かないと恒久 ignore が既成事実化して gate が黙る)。
+      #
+      # `--strict` は付けない。editable install した本体 (kobutachan-allaganeye)
+      # は PyPI 由来でないため skip 警告が出るが、`--strict` にするとその警告で
+      # job が落ちて常時 red になる。
+      #
+      # この job が見ていない集合:
+      #   - dev extras を含む実環境全体を見るので、配布物 (Portable ZIP) に
+      #     同梱されない dev 依存の advisory でも fail する
+      #   - PyPI に無い依存 (ffmpeg 等の OS バイナリ) は対象外
+      #   - `-c constraints.txt` で固定していない依存は「その日の最新」を監査する
+      #     ため、同じ commit でも実行日によって結果が変わりうる
+      - name: Run pip-audit
+        run: pip-audit --progress-spinner off
 
   npm-audit:
     name: npm audit (JavaScript)
