@@ -202,4 +202,3 @@ G-1 #3 の General Fix Rule「結果を一意に特定する識別子を明示�
 ### 実行結果 (per scenario)
 
 (iteration 1 の subagent 結果を以下に記録)
-
