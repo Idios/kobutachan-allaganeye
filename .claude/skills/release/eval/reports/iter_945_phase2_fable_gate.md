@@ -100,4 +100,142 @@ skill 逐語で出し、残 K 件の転記義務にも言及した。duration �
 
 ### 実行結果
 
-(iteration 2 の subagent 結果を以下に記録)
+| Scenario | 成否 | accuracy | tool_uses | duration | 新規 unclear | うち defect-class |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-1 | o | 5/5 | 2 | 82.2s | 1 | **1** (Track D 未定義) |
+
+**R-1 #4 — 帰属: 改修対象 (iteration 3 で修正)**: 「残 K 件は **Track D** の PR 本文へ転記」と
+書いたが、Track D の定義は `docs/release-process.md:382` の表にしかなく skill 内に無い。
+executor は Step 3 の内容から**推測で対応付けた**。転記先を短縮名だけで指示する場合は
+定義を当該ステップ内に 1 行インライン化する。
+
+---
+
+## Iteration 3
+
+### Changes
+
+Track D のインライン定義を追加。**scenario R-2 を新設** (PR テンプレート側の Fable 欄を
+実際に埋める側。Step 0a-2 だけ検証してテンプレート欄を検証しないのは Phase 1 で
+Codex に指摘された「境界を見ていない」と同じ穴になるため)。
+
+### 実行結果
+
+| Scenario | 成否 | accuracy | tool_uses | duration | 新規 unclear | うち defect-class |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-1 | o | 5/5 | 2 | 66.6s | 2 | **1** (転記先 slot 欠落) |
+| R-2 (code PR、非該当) | o | 4/4 | 2 | 57.8s | 1 | 0 |
+
+**R-1 #5 — 帰属: 改修対象 (iteration 4 で修正)。ledger `obligation-without-aggregation-slot`
+の 3 回目の再発**: 「Track D PR 本文へ転記」と義務づけているのに、転記先 (Step 3 の PR body
+テンプレート) に置き場所が無い。executor は「どの見出し配下に書くか指定がない」と報告。
+
+| 発生 | 義務の場所 | slot が無かった箇所 |
+| --- | --- | --- |
+| #949 iter0 | subagent の記録義務 | final message の `## meta` |
+| #949 iter5 | Step 5a/5.0 の 1 行記録 | `/review-pr` Step 6 テンプレート |
+| 本件 iter3 | Step 0a-2 の転記義務 | `/release` Step 3 の PR body |
+
+個別 patch を止めてクラスで閉じた — Step 3 に `### fable 俯瞰レビュー (Step 0a-2)` を新設し、
+**「どこかへ転記せよ」と書く規約は転記先テンプレートの名前付きスロットと必ず対で用意する**
+という原則を skill に明記。
+
+---
+
+## Iteration 4
+
+### 実行結果
+
+| Scenario | 成否 (self-report) | accuracy | tool_uses | duration | 新規 unclear | うち defect-class |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-1 | o | 5/5 | 2 | 58.5s | **0** | 0 |
+| R-2 (doc-only + spec 新規、**該当**) | o (自己申告) | 4/4 | 2 | 118.2s | 2 | **1 (成果物が誤り)** |
+
+### 本 EPT で最も重い finding — 自己申告は満点、成果物は誤り
+
+R-2 は **2 trigger 両該当の PR に対し `非実施` と記入した**。正解は `実施`。
+executor 自身は 4/4 と自己採点しており、**self-report では検出できない**。
+
+- Cause: テンプレートの Fable 行が起動条件を `review-pr/SKILL.md` へ**委譲**していた。
+  テンプレートだけを読む記入者は条件を確認できず、`CLAUDE.md` の推奨トリガーが
+  「原則。強制ではない」と advisory 表現なので**非実施側に倒れた**
+- **同じ原因が iteration 3 の R-2 (code PR) では偶然正解 (非実施) を出していた。**
+  非該当ケースだけ見ていたら「正しく動いている」と誤認していた
+- General Fix Rule: **記入者が実際に読む場所に決定的な条件を置く。**
+  別ファイルへ委譲すると、委譲先を読まない実行者が周辺の緩い記述に倒れる
+
+### 次の修正 (= iteration 5)
+
+テンプレート行に 2 条件 ((a) doc-only / (b) specs・plans への新規追加) を**インライン化**。
+非実施の理由も「2 条件のどちらに非該当か」を書かせる形にした。
+
+---
+
+## Iteration 5 (convergence 1/2)
+
+### 実行結果
+
+| Scenario | 成否 | accuracy | tool_uses | duration | 新規 unclear | うち defect-class |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-1 | o | 5/5 | 2 | 55.0s | **0** | 0 |
+| R-2 (回帰テスト: iter4 で誤答したのと同一シナリオ) | o | 4/4 | 2 | 151.4s | 2 | **0** |
+
+**回帰は解消**。R-2 は `実施 (finding 1 件 / 消化 1 件 / 残 0 件)` と正しく記入し、
+(a)(b) 両条件の該当を根拠として明示した。R-1 は user-level の `fable-consult` (prefix なし) が
+存在し `CLAUDE.md` がそれを禁じていることまで踏まえており、改名の理由も伝わっている。
+
+---
+
+## Iteration 6 (convergence 2/2)
+
+**skill / doc の変更なし** (収束を確定させるため対象テキストを固定)。
+base の #985 / #986 / #987 を取り込んだが、いずれも `release/SKILL.md` の L269 以降を触っており
+Step 0a-2 (L35-71) とは自動マージが成立。マージ後に **Step 3 が「バージョンバンプと PR 作成」の
+ままで転記先 slot (L248) が Step 3 の範囲 (L164-269) 内に残っている**ことを行番号で確認した
+(自動マージが通っても参照先が別 step へずれれば doc として壊れるため)。
+
+### 実行結果
+
+| Scenario | 成否 | accuracy | tool_uses | duration | 新規 unclear | うち defect-class |
+| --- | --- | --- | --- | --- | --- | --- |
+| R-1 | o | 5/5 | 2 | 63.9s | 1 (harness) | **0** |
+| R-2 | o | 4/4 | 2 | 137.4s | 1 (harness) | **0** |
+
+両者の unclear は同一で、**dry-run 指示 (実行禁止) と skill の「実測値記入 required」の
+メタ衝突**。executor は数値を捏造せず衝突自体を報告しており、対処として正しい。
+skill の欠陥ではないので修正しない。
+
+> **iteration 5 + 6 で 2 consecutive clears を達成。**
+
+---
+
+## 収束サマリ (#945 Phase 2)
+
+| iteration | 対象テキスト | defect-class | 判定 |
+| --- | --- | --- | --- |
+| 0 | 改修**前** | — | **red baseline (x、2/5)** |
+| 1 | Step 0a-2 新設 + Fable 欄 | 1 (材料が未生成) | — |
+| 2 | 材料リスト修正 | 1 (Track D 未定義) | — |
+| 3 | Track D 定義 + R-2 新設 | 1 (転記先 slot) | — |
+| 4 | 転記先 slot 新設 | **1 (成果物が誤り)** | — |
+| 5 | 起動条件インライン化 | 0 | **clear 1/2** |
+| 6 | 変更なし | 0 | **clear 2/2** |
+
+**捕まえた欠陥 4 件はすべて「義務は書いたが受け皿・参照先が実在しない」型**:
+
+1. 材料 3 点中 2 点が Step 3 まで存在しない → executor が代替物を発明
+2. `Track D` が skill 内で未定義 → executor が推測で対応付け
+3. 転記先の見出しが未固定 → 「指定がない」と報告 (同クラス 3 回目)
+4. 起動条件を別ファイルへ委譲 → **成果物が実際に誤り**
+
+**4 は両分岐を covered したから見えた。** 同じ原因が非該当ケースでは偶然正解を出しており、
+片側だけの scenario なら「正しく動いている」と誤認していた。
+
+## harness の知見 (再利用可能)
+
+**#949 の EPT では accuracy が改修前でも満点になり判別力を持たなかった**
+([[feedback_ept_checklist_leaks_the_answer]])。今回 red baseline が本当に赤くなった
+(`x`、2/5) のは、要件 2 が「**数値が記録に含まれる**」という
+**その機構が存在しない限り生成できない出力**を要求しているため。
+
+**成果物の*性質*を述べる checklist は改修前でも満点になる。*機構の産物*を要求すると red が出る。**
