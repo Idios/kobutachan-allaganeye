@@ -255,16 +255,34 @@ tier 1 が成功している限り「Codex review 実施済」の記載は正当
 
 Codex review の finding は **stdout ではなく保存済み全文から取り込む**。`review` / `adversarial-review` は foreground 実行でも job log と state に全文を保存しており (`lib/tracked-jobs.mjs` が完了時に rendered 全文を `"Final output"` ブロックとして append、`<jobId>.json` に `rendered` を保存)、`createJobLogFile` は background 限定ではない。**新しい保存機構は作らない。既にあるものを読む。**
 
-読み取りは公開 subcommand `result` を使う (state dir の path を skill 側で再構築しない):
+読み取りは公開 subcommand `status` / `result` を使う (state dir の path を skill 側で再構築しない)。**2 段階で、job id を明示して読む**:
 
 ```bash
-node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result
+# 1. 直前の review job の id を特定する (review を実行したのと同じ cwd で)
+node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" status --json
+#    → latestFinished / recent[] のうち jobClass == "review" の最新 entry の .id を取る
+#      (kind は "review" / "adversarial-review" のどちらか)
+
+# 2. その id を明示して全文を読む
+node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result <job-id>
 ```
 
-- **job-id は省略する。** 省略時は `CODEX_COMPANION_SESSION_ID` (Bash tool の環境に現 Claude session id が入っている) で絞られるため、**「今この session で自分が起動した review」の最新完了 job** が選ばれる。他セッションの job を誤って読むことはない
-- 過去 job を明示指定する場合のみ `result <job-id>` を渡す。job-id ありでは session filter が外れる
-- `--json` を付けると `{job, storedJob}` が返り全文は `storedJob.rendered`。**agent が読むだけなら `--json` なしのプレーン出力で足りる** (rendered 全文 + Codex session ID + resume コマンドが print される)
-- **cwd は review を実行した worktree に合わせる。** state dir は git worktree root ごとに分かれる (`lib/state.mjs` が slug = worktree basename + realpath の sha256 先頭 16 桁で分ける) ため、別ディレクトリから実行すると同じ job に到達しない
+- **job id を省略してはいけない。** 省略時の選択は `lib/job-control.mjs` の `matchJobReference` が
+  「現 session の完了 job のうち最新の 1 件」を返すだけで、**`jobClass` を見ない**。同じ session で
+  `/codex:rescue` や `task` を走らせていると、そちらが review より後に完了した時点で
+  **review ではない job の出力を review の finding として取り込む**。選択は「最新」ではなく
+  **job id という一意識別子**に基づかせる (同型の教訓: §「規約・ガード導入の 3 点セット」の
+  「弱い述語で対象を選ばない」)
+- `status` / job id 省略時の `result` はいずれも `CODEX_COMPANION_SESSION_ID` (Bash tool の環境に
+  現 Claude session id が入っている) で絞られるため、**他セッションの job が混ざることはない**。
+  絞り切れないのは同一 session 内の別種 job だけであり、それを潰すのが上記の `jobClass` 選択
+- `result <job-id>` は session filter が外れるため、過去 session の job も明示指定で読める
+- `--json` を付けると `{job, storedJob}` が返り全文は `storedJob.rendered`。**agent が読むだけなら
+  `result` は `--json` なしのプレーン出力で足りる** (rendered 全文 + Codex session ID + resume コマンドが print される)。
+  `status` は id を機械的に選ぶので `--json` を付ける
+- **cwd は review を実行した worktree に合わせる。** state dir は git worktree root ごとに分かれる
+  (`lib/state.mjs` が slug = worktree basename + realpath の sha256 先頭 16 桁で分ける) ため、
+  別ディレクトリから実行すると同じ job に到達しない
 
 読めなかった場合 (job が見つからない / plugin の内部構造が変わった等) は **exit code 非ゼロ + `No finished Codex jobs found for this repository yet.` 等のメッセージ**が返る (実測)。この場合は §「規約・ガード導入の 3 点セット」② に従い、**stdout に見えていた範囲だけで triage した旨と読み取り失敗の理由を PR 本文 / skill report に 1 行記録する**。無言で stdout だけ使うのは禁止 (「読んだ」と「読めなかった」が事後に区別できなくなる)。
 
@@ -1141,8 +1159,10 @@ if run.exit_code != 0:
         ask_user_question(["再試行", "Claude fallback", "abort"])
 else:
     # 成功時は stdout ではなく保存済み全文を読む (§「Codex 出力の読み取り」)
-    # cwd は review を実行した worktree のまま。job-id は省略する (現 session の最新完了 job に絞られる)
-    stored = run_bash('node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result')
+    # cwd は review を実行した worktree のまま。job id は省略せず jobClass == "review" で選ぶ
+    snapshot = run_bash('node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" status --json')
+    job_id = newest_id_with_job_class(snapshot.stdout, "review")   # 省略すると rescue / task job を掴む
+    stored = run_bash(f'node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result {job_id}')
 
     if stored.exit_code != 0:
         # 読み取り失敗。fallback ではない — stdout の範囲で triage し理由を 1 行記録する

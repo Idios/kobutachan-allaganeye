@@ -268,16 +268,24 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 
 Codex review が exit 0 で完了したら、**finding を stdout から拾う前に保存済み全文を読む**。契約の正は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md) で、本 step はその適用にあたる。
 
-1. review を実行した worktree の cwd のまま、job-id を**省略して** `result` を実行する:
+1. review を実行した worktree の cwd のまま、直前の review job の **id を特定する**:
 
    ```bash
-   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result
+   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" status --json
    ```
 
-   job-id 省略時は現 Claude session が起動した最新完了 job に絞られる (`CODEX_COMPANION_SESSION_ID`)。`--json` は不要 (プレーン出力が rendered 全文)
+   `latestFinished` / `recent[]` のうち **`jobClass` が `"review"`** の最新 entry の `.id` を採る
 
-2. exit 0 なら、その出力を finding の入力とする。**stdout に見えていた分だけで triage しない**
-3. **exit 非ゼロ (読み取り失敗) なら、Step 6 レビュー報告に次を 1 行明記する** — fallback ではないので Codex fallback notice とは別物:
+2. その id を**明示して** `result` を実行する (`--json` は不要。プレーン出力が rendered 全文):
+
+   ```bash
+   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result <job-id>
+   ```
+
+   **id を省略しない。** 省略時の選択は `jobClass` を見ずに「現 session の最新完了 job」を返すだけなので、同じ session で `/codex:rescue` や `task` を走らせていると **review ではない job の出力を review の finding として取り込む**
+
+3. exit 0 なら、その出力を finding の入力とする。**stdout に見えていた分だけで triage しない**
+4. **exit 非ゼロ (読み取り失敗) なら、Step 6 レビュー報告に次を 1 行明記する** — fallback ではないので Codex fallback notice とは別物:
 
    > `Codex 出力読み取り: 失敗 (理由: <result の stderr 先頭 1 行>)。stdout に見えた範囲のみで triage した`
 
