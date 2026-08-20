@@ -275,15 +275,17 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 
 Codex review が exit 0 で完了したら、**finding を stdout から拾う前に保存済み全文を読む**。契約の正は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md) で、本 step はその適用にあたる。
 
-1. review を実行した worktree の cwd のまま、直前の review job の **id を特定する**:
+1. review を実行した worktree の cwd のまま、**`CLAUDE_PLUGIN_ROOT` を張り直してから**直前の review job の **id を特定する**。以下は**同じ Bash 呼び出しの中で**実行する — Bash tool は呼び出し間で env var を保持しないため、review 実行時の `export` はこの時点で消えており、空のまま使うと `node "/scripts/codex-companion.mjs"` に展開されて `MODULE_NOT_FOUND` になる (実測):
 
    ```bash
+   ls "$HOME/.claude/plugins/cache/openai-codex/codex/"
+   export CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<解決した version>"
    node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" status --json
    ```
 
-   `latestFinished` / `recent[]` のうち **`jobClass` が `"review"`** の最新 entry の `.id` を採る
+   `latestFinished` を先に見て **`jobClass` が `"review"`** ならその `.id`、違えば `recent[]` を先頭から走査して最初に `jobClass == "review"` になった entry の `.id` を採る (この順で最新の review job が一意に決まる。詳細は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md))
 
-2. その id を**明示して** `result` を実行する (`--json` は不要。プレーン出力が rendered 全文):
+2. その id を**明示して** `result` を実行する (`--json` は不要。プレーン出力が rendered 全文。`CLAUDE_PLUGIN_ROOT` は step 1 と同じ Bash 呼び出しなら張り直し不要):
 
    ```bash
    node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result <job-id>

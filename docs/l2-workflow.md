@@ -258,14 +258,26 @@ Codex review の finding は **stdout ではなく保存済み全文から取り
 読み取りは公開 subcommand `status` / `result` を使う (state dir の path を skill 側で再構築しない)。**2 段階で、job id を明示して読む**:
 
 ```bash
+# 0. CLAUDE_PLUGIN_ROOT を張り直す。Bash tool は呼び出し間で env var を保持しないため、
+#    review 実行時に export した値はこの時点で消えている。空のまま使うと
+#    node "/scripts/codex-companion.mjs" に展開されて MODULE_NOT_FOUND になる (実測)。
+#    以降の 1 / 2 は「この export と同じ Bash 呼び出しの中で」実行する
+ls "$HOME/.claude/plugins/cache/openai-codex/codex/"
+export CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<解決した version>"
+
 # 1. 直前の review job の id を特定する (review を実行したのと同じ cwd で)
 node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" status --json
-#    → latestFinished / recent[] のうち jobClass == "review" の最新 entry の .id を取る
-#      (kind は "review" / "adversarial-review" のどちらか)
 
 # 2. その id を明示して全文を読む
 node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result <job-id>
 ```
+
+- **id の採り方は一意に決まる**: `latestFinished` を先に見て `jobClass == "review"` ならその `.id`、
+  違えば `recent[]` を先頭から走査して最初に `jobClass == "review"` になった entry の `.id`。
+  `status` は job を新しい順に並べ、`latestFinished` は最新の完了 job、`recent[]` はそれを除いた
+  残りを新しい順に持つので、この順で見れば「最新の review job」が一意に定まる。
+  jq を使うなら `(.latestFinished, .recent[]) | select(.jobClass=="review") | .id` の先頭 1 件
+  (`kind` は `"review"` / `"adversarial-review"` のどちらかになる)
 
 - **job id を省略してはいけない。** 省略時の選択は `lib/job-control.mjs` の `matchJobReference` が
   「現 session の完了 job のうち最新の 1 件」を返すだけで、**`jobClass` を見ない**。同じ session で
