@@ -26,6 +26,27 @@ review 実行の stdout をそのまま finding の入力にせず、保存済�
 5. 依存する plugin の version が併記されている
 6. Step 5b トリアージ表への統合 (出所の記載) に触れている
 
+## G-4 (hold-out): Pre-flight Step 5 の adversarial-review を読み戻す
+
+> **hold-out**。iteration 0-3 では使わず、収束判定時の overfitting check にのみ使う。
+> G-1/G-2 が `/review-pr` Step 5a (`review` subcommand) 経由なのに対し、こちらは
+> Iron Law 6 Pre-flight Step 5 (`adversarial-review` subcommand) 経由。
+> `docs/l2-workflow.md` §「Codex 出力の読み取り」が skill 経由でなく**単独で**機能するかを見る。
+
+### 想定状況
+
+PR 作成直前の Iron Law 6 Pre-flight Step 5 で `adversarial-review --base develop-0.3.1 "<focus>"` を
+実行し exit 0 で完了した。executor は finding を triage して PR 本文へ反映する直前にいる。
+なお同じ session では先に `/codex:rescue` を 1 回走らせており、そちらの job も完了済みである。
+
+### 要件チェックリスト
+
+1. **[critical]** finding の取り込み元が review 実行時の stdout ではなく保存済み全文である
+2. **[critical]** 同 session の rescue job を誤って掴まない選択方法が示されている
+3. 実行する command が具体的で、そのまま実行できる形になっている
+4. cwd の制約に言及している
+5. 読み取り失敗時にどう記録するかに言及している
+
 ## G-2 (edge): 保存済み出力の読み取りに失敗した
 
 ### 想定状況

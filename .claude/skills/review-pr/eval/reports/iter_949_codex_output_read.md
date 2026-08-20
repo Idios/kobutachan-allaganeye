@@ -364,4 +364,76 @@ skill 本文側の parse error 条件と一致させること。
 
 ### 実行結果 (per scenario)
 
-(iteration 3 の subagent 結果を以下に記録)
+| Scenario | 成否 (self-report) | accuracy (raw) | tool_uses | duration | retries | 新規 unclear (raw) | うち**改修対象**帰属 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| G-1 | o | 6/6 | 7 | 97.4s | 0 | 1 | **0** |
+| G-2 | o | 5/5 | 5 | 101.0s | 0 | 1 | **0** (実測で反証) |
+| G-3 | o | 5/5 | 5 | 145.1s | 0 | 2 | **0** |
+
+### 構造化 reflection (iteration 3、raw と帰属の両方を記録)
+
+**G-1 #6 — 帰属: harness (対応しない)**
+
+- Issue: plugin version を Step 6 report に書く固定スロットが無く、executor が独自に 1 行足した
+- 帰属判断: **本 harness のチェックリスト item 5 が過剰指定**。#949 の受け入れ条件は
+  「依存 plugin version が **doc / skill に**併記されている」であり、**PR ごとの report への
+  記載は要求していない**。skill 側は節タイトルに `openai-codex 1.0.4 時点` を持っており条件を満たす。
+  ここで per-PR の記録義務を新設すると Iron Law 3 (issue の範囲外) に触れる
+- ただし「version 依存が silent に壊れる手順ほど per-PR に version を残す価値がある」という指摘自体は
+  妥当。**Idios 判断待ちの候補**として残す (本 PR では実装しない)
+
+**G-2 #3 — 帰属: 改修対象に見えたが実測で反証 (対応しない)**
+
+- Issue: テンプレートの理由欄が `<result の stderr 先頭 1 行>` と stderr を名指ししているが、
+  CLI がエラーを stdout に出す実装もありうるので脆いのではないか
+- **実測**: `result` を対象なしで実行し stdout / stderr を分離して観測したところ、
+  `No finished Codex jobs found for this repository yet.` は **stderr にのみ**出力され、
+  stdout は空、exit code 1 だった (openai-codex 1.0.4)。**テンプレートの記述は正しい**
+- 帰属判断: executor の推論であり事実ではない。memory `feedback_codex_findings_need_measurement`
+  の「推論ハズレを実測で潰す」に該当。**修正しない。反証をここに記録する**
+
+**G-3 #3 / #4 — 帰属: harness (#3) / 軽微 (#4、対応しない)**
+
+- #3: 要件 3-5 (「説明せよ」) を固定 5 セクションの内側に書くか外側かが決まらない
+  → **本 harness の設計ミス**。`/iterate-review` の固定構造は machine-parse 用であり、
+  「説明」を求める要件はそもそも deliverable ではなく report 側に置くべきだった。
+  iteration 4 の prompt で placement を明示して修正した (難易度低下ではなく設問の欠陥修正)
+- #4: doc-only PR 向けの非対象行の記入例が無い → 定型は既にあり、値を PR ごとに埋めるだけ。
+  例を増やすと定型の面積が増えるだけで判断は変わらない。**対応しない**
+
+> **iteration 3 は clear (改修対象帰属の新規 unclear = 0)。**
+> raw では 4 件出ているが、内訳は harness 3 件 + 実測で反証 1 件。
+> memory `feedback_ept_checklist_leaks_the_answer` が要求する
+> 「改修 / harness / 隣接既存節に帰属を分けて raw と両方書く」に従って両方を残した。
+
+### Ledger updates
+
+- Closed: **template-only-for-the-failure-branch** — iteration 3 で「記録義務は起こりうる状態
+  すべてに定型を用意する」原則を節内に明記したことで、3 iteration 連続の再発が止まった
+  (iteration 3 では同クラスの新規発生ゼロ)
+- Added (harness ledger): **checklist-over-specifies-vs-issue-AC** (G-1 #6) — 評価チェックリストが
+  issue の受け入れ条件より広い要求を書くと、skill の欠陥でないものが unclear point に化ける
+- Added (harness ledger): **asking-for-prose-inside-a-machine-parsed-structure** (G-3 #3)
+
+(収束判定: **1 consecutive clear** / 打ち切りまで 1 round)
+
+---
+
+## Iteration 4 (convergence + overfitting check)
+
+### Changes (diff from iteration 3)
+
+**skill / doc の変更なし** (iteration 3 の clear を確定させるため、対象テキストは固定)。
+harness 側のみ 2 点:
+
+- G-3 prompt に「要件 3-5 は deliverable 内でも report 側でもよい」と placement を明示
+  (G-3 #3 = harness 欠陥の修正)
+- **hold-out scenario G-4 を追加** (mizchi protocol の overfitting check)。
+  G-1/G-2 が `/review-pr` Step 5a (`review` subcommand) 経由なのに対し、G-4 は
+  Iron Law 6 Pre-flight Step 5 (`adversarial-review` subcommand) 経由 + **同 session に
+  rescue job が併存**する条件。`docs/l2-workflow.md` §「Codex 出力の読み取り」が
+  skill を介さず単独で機能するか、および job 一意特定の設計が効くかを見る
+
+### 実行結果 (per scenario)
+
+(iteration 4 の subagent 結果を以下に記録)
