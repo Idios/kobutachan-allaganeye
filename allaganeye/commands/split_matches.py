@@ -77,17 +77,34 @@ _CLOSED_STREAM_ERRNOS = frozenset({errno.EPIPE, errno.EINVAL})
 def is_closed_stream_error(exc: BaseException) -> bool:
     """True when *exc* means stdout went away rather than a real I/O failure (#652).
 
-    Kept narrow on purpose: a blanket ``except OSError`` here would turn a genuine
-    failure (ENOSPC while writing metadata.json, say) into a silent success, which
-    is strictly worse than the traceback this is meant to remove.
+    Safe to use at **application scope** (around a whole command), so it must be
+    narrow: a blanket ``except OSError`` would turn a genuine failure (ENOSPC while
+    writing metadata.json, say) into a silent success, which is strictly worse than
+    the traceback this is meant to remove.
+
+    ``ValueError`` is deliberately NOT accepted here. It only means "closed stream"
+    when it came out of a stream operation; at application scope any ``ValueError``
+    could be an ordinary bug. Concretely, ``integrity.check()`` parses the bundled
+    manifest with ``int(entry["size"])``, so a corrupted manifest raises
+    ``ValueError`` -- classifying that as a closed pipe would report **exit 0 for a
+    failed integrity check** whose contract is exit 7 (Codex adversarial-review).
+    Use :func:`is_closed_stream_op_error` at the stream call site instead.
     """
     if isinstance(exc, BrokenPipeError):
         return True
-    if isinstance(exc, ValueError):
-        # "I/O operation on closed file" -- click/io raise this once the stream
-        # object itself has been closed rather than the fd broken.
-        return True
     return isinstance(exc, OSError) and exc.errno in _CLOSED_STREAM_ERRNOS
+
+
+def is_closed_stream_op_error(exc: BaseException) -> bool:
+    """:func:`is_closed_stream_error`, plus ``ValueError``, for stream call sites.
+
+    Only correct where the guarded operation *is* a read/write/flush on the stream,
+    so a ``ValueError`` can only be io's "I/O operation on closed file". Never use
+    this to wrap application logic.
+    """
+    if isinstance(exc, ValueError):
+        return True
+    return is_closed_stream_error(exc)
 
 
 @contextmanager
@@ -102,7 +119,7 @@ def _tolerate_closed_stdout() -> Iterator[None]:
     try:
         yield
     except (OSError, ValueError) as exc:
-        if not is_closed_stream_error(exc):
+        if not is_closed_stream_op_error(exc):
             raise
         logger.debug("stdout closed; skipping progress render", exc_info=True)
 

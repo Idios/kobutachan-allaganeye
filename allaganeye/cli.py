@@ -43,24 +43,24 @@ class _TolerantStdout:
         self._wrapped = wrapped
 
     def write(self, data: str) -> int:
-        from allaganeye.commands.split_matches import is_closed_stream_error
+        from allaganeye.commands.split_matches import is_closed_stream_op_error
 
         try:
             return self._wrapped.write(data)  # type: ignore[attr-defined]
         except (OSError, ValueError) as exc:
-            if not is_closed_stream_error(exc):
+            if not is_closed_stream_op_error(exc):
                 raise
             # Report the write as accepted: callers (click) treat a short write
             # as an error worth retrying, which would just raise again.
             return len(data)
 
     def flush(self) -> None:
-        from allaganeye.commands.split_matches import is_closed_stream_error
+        from allaganeye.commands.split_matches import is_closed_stream_op_error
 
         try:
             self._wrapped.flush()  # type: ignore[attr-defined]
         except (OSError, ValueError) as exc:
-            if not is_closed_stream_error(exc):
+            if not is_closed_stream_op_error(exc):
                 raise
 
     def __getattr__(self, name: str) -> object:
@@ -756,13 +756,17 @@ def main() -> None:
     except click.exceptions.Abort:
         click.echo("Aborted!", err=True)
         rv = 1
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
         # #652: `allaganeye ... | head -N` closes our stdout mid-run. On Windows
         # that surfaces as OSError EINVAL (not BrokenPipeError), which used to
-        # escape as a traceback. Progress rendering is already shielded inside
-        # split_matches, so reaching here means a write outside that shield lost
-        # the race; exit quietly rather than blaming the user for using a pager.
-        # Narrow on purpose -- a real I/O failure (ENOSPC etc.) still propagates.
+        # escape as a traceback. The _TolerantStdout proxy already absorbs this at
+        # the stream, so reaching here means a write outside the proxy lost the
+        # race; exit quietly rather than blaming the user for using a pager.
+        #
+        # OSError only, and only the closed-stream errnos. Catching ValueError at
+        # this scope would swallow ordinary bugs -- e.g. a corrupted integrity
+        # manifest raises ValueError from int(entry["size"]) and must stay exit 7,
+        # not become a silent exit 0 (Codex adversarial-review).
         from allaganeye.commands.split_matches import is_closed_stream_error
 
         if not is_closed_stream_error(exc):

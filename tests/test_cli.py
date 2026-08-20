@@ -1648,6 +1648,28 @@ class TestClosedStdoutExitsQuietly:
         assert "Traceback" not in combined, f"traceback leaked to the user: {combined}"
         assert "Errno 22" not in combined, f"raw OSError leaked to the user: {combined}"
 
+    def test_app_scope_valueerror_is_not_swallowed(self, monkeypatch):
+        """A ValueError from application logic must not be read as a closed pipe.
+
+        Codex adversarial-review on #652: the first cut classified *every*
+        ``ValueError`` as a closed stream at app scope. ``integrity.check()``
+        parses the bundled manifest with ``int(entry["size"])``, so a corrupted
+        manifest raises ``ValueError`` -- which would have reported **exit 0 for a
+        failed integrity check** whose contract is exit 7. ValueError is only
+        closed-stream evidence at the stream call site, never here.
+        """
+        from allaganeye import cli
+
+        monkeypatch.setattr("sys.argv", ["allaganeye", "--version"])
+        monkeypatch.setattr(
+            cli,
+            "app",
+            MagicMock(side_effect=ValueError("invalid literal for int() with base 10")),
+        )
+
+        with pytest.raises(ValueError, match="invalid literal for int"):
+            cli.main()
+
     def test_unrelated_oserror_is_not_swallowed(self, monkeypatch):
         """A genuine I/O failure must still propagate (#652 must not mask errors).
 

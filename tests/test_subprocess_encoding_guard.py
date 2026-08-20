@@ -61,6 +61,31 @@ def _subprocess_bindings(tree: ast.AST) -> tuple[set[str], dict[str, str]]:
             for alias in node.names:
                 if alias.name in _SPAWN_NAMES:
                     direct_names[alias.asname or alias.name] = alias.name
+
+    # Assignment aliases: ``run = subprocess.run`` / ``_spawn = sp.Popen``.
+    # Without this, rebinding the callable is a one-line way to walk past the
+    # scan (Codex adversarial-review). Two passes so an alias assigned before
+    # its import statement (module-level order is irrelevant to ast.walk) is
+    # still resolved.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        value = node.value
+        spawn: str | None = None
+        if (
+            isinstance(value, ast.Attribute)
+            and value.attr in _SPAWN_NAMES
+            and isinstance(value.value, ast.Name)
+            and value.value.id in module_aliases
+        ):
+            spawn = value.attr
+        elif isinstance(value, ast.Name) and value.id in direct_names:
+            spawn = direct_names[value.id]
+        if spawn is None:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                direct_names[target.id] = spawn
     return module_aliases, direct_names
 
 
@@ -77,6 +102,33 @@ def _spawn_callee(
         return None
     if isinstance(func, ast.Name):
         return direct_names.get(func.id)
+    return None
+
+
+def _partial_spawn_callee(
+    node: ast.Call, module_aliases: set[str], direct_names: dict[str, str]
+) -> str | None:
+    """Return the spawn name when *node* is ``functools.partial(<spawn>, ...)``.
+
+    A partial detaches the kwargs from the eventual call, so an
+    attribute/name-only scan of call sites would never see it.
+    """
+    func = node.func
+    is_partial = (isinstance(func, ast.Attribute) and func.attr == "partial") or (
+        isinstance(func, ast.Name) and func.id == "partial"
+    )
+    if not is_partial or not node.args:
+        return None
+    first = node.args[0]
+    if (
+        isinstance(first, ast.Attribute)
+        and first.attr in _SPAWN_NAMES
+        and isinstance(first.value, ast.Name)
+        and first.value.id in module_aliases
+    ):
+        return first.attr
+    if isinstance(first, ast.Name):
+        return direct_names.get(first.id)
     return None
 
 
@@ -101,11 +153,35 @@ def _is_literal_false(kw: ast.keyword | None) -> bool:
     )
 
 
+def _has_kwargs_splat(node: ast.Call) -> bool:
+    """True when the call forwards ``**kwargs`` (text mode becomes unprovable)."""
+    return any(kw.arg is None for kw in node.keywords)
+
+
+def _is_nonliteral(kw: ast.keyword | None) -> bool:
+    """True when *kw* is present but its value is not a literal ``True``/``False``."""
+    return kw is not None and not isinstance(kw.value, ast.Constant)
+
+
 def _decodes_to_str(node: ast.Call) -> bool:
-    """True when the call returns ``str`` (so an implicit codec would be used)."""
+    """True when the call may return ``str`` (so an implicit codec could be used).
+
+    **Fails closed.** Codex adversarial-review flagged that only accepting a literal
+    ``text=True`` lets a spawn slip through when text mode is switched on by a
+    variable or a forwarded ``**kwargs``. Since the guard cannot evaluate those
+    statically, it treats "cannot prove this is binary" as "must prove it declares a
+    codec" -- noisier, but a guard that only catches the literal form is the shape
+    that lets #656 come back.
+    """
     if _is_literal_true(_keyword(node, "text")):
         return True
     if _is_literal_true(_keyword(node, "universal_newlines")):
+        return True
+    if _is_nonliteral(_keyword(node, "text")):
+        return True
+    if _is_nonliteral(_keyword(node, "universal_newlines")):
+        return True
+    if _has_kwargs_splat(node):
         return True
     # ``encoding=`` alone also switches the streams to text mode -- but that is
     # the compliant form, so it is handled by the encoding check below.
@@ -123,10 +199,23 @@ def _violations_in_file(path: pathlib.Path) -> list[str]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
+        callee = _partial_spawn_callee(node, module_aliases, direct_names)
+        if callee is not None:
+            # functools.partial(subprocess.run, ...) -- the kwargs are frozen
+            # here, so require the codec here too rather than chasing the
+            # call site (Codex adversarial-review).
+            if _keyword(node, "encoding") is None or _keyword(node, "errors") is None:
+                out.append(
+                    f"{rel}:{node.lineno}: functools.partial over subprocess.{callee} "
+                    f"must pin encoding='utf-8', errors='replace' -- the guard cannot "
+                    f"follow the resulting callable to its call sites (#658)."
+                )
+            continue
+
         callee = _spawn_callee(node, module_aliases, direct_names)
         if callee is None:
             continue
-        if _is_literal_false(_keyword(node, "text")):
+        if _is_literal_false(_keyword(node, "text")) and not _has_kwargs_splat(node):
             continue  # explicit binary mode
         if not _decodes_to_str(node):
             continue  # binary mode -- caller decodes explicitly
@@ -224,6 +313,32 @@ def test_no_text_mode_subprocess_without_explicit_encoding():
         pytest.param(
             "def f():\n    import subprocess\n    subprocess.run(cmd, text=True)\n",
             id="lazy-import-inside-function",
+        ),
+        # --- indirections Codex adversarial-review called out (#658) ---
+        pytest.param(
+            "import subprocess\nrun = subprocess.run\nrun(cmd, text=True)\n",
+            id="assignment-alias",
+        ),
+        pytest.param(
+            "import subprocess as sp\n_spawn = sp.Popen\n_spawn(cmd, text=True)\n",
+            id="assignment-alias-of-alias",
+        ),
+        pytest.param(
+            "import functools, subprocess\n"
+            "runner = functools.partial(subprocess.run, text=True)\n",
+            id="functools-partial",
+        ),
+        pytest.param(
+            "import subprocess\nsubprocess.run(cmd, **kwargs)\n",
+            id="kwargs-splat-hides-text-mode",
+        ),
+        pytest.param(
+            "import subprocess\nsubprocess.run(cmd, text=want_text)\n",
+            id="variable-text-mode",
+        ),
+        pytest.param(
+            "import subprocess\nsubprocess.run(cmd, text=False, **kwargs)\n",
+            id="kwargs-splat-can-override-text-false",
         ),
     ],
 )
