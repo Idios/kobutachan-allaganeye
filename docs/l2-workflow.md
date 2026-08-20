@@ -271,8 +271,9 @@ node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result <job-id>
   「現 session の完了 job のうち最新の 1 件」を返すだけで、**`jobClass` を見ない**。同じ session で
   `/codex:rescue` や `task` を走らせていると、そちらが review より後に完了した時点で
   **review ではない job の出力を review の finding として取り込む**。選択は「最新」ではなく
-  **job id という一意識別子**に基づかせる (同型の教訓: §「規約・ガード導入の 3 点セット」の
-  「弱い述語で対象を選ばない」)
+  **job id という一意識別子**に基づかせる (同型の規律: `CLAUDE.md` §「destructive write boundary
+  audit checklist」 問 2「述語は『解決後の同一性』か、それとも『名前・文字列』か」。
+  read 側にも同じ問いが立つ)
 - `status` / job id 省略時の `result` はいずれも `CODEX_COMPANION_SESSION_ID` (Bash tool の環境に
   現 Claude session id が入っている) で絞られるため、**他セッションの job が混ざることはない**。
   絞り切れないのは同一 session 内の別種 job だけであり、それを潰すのが上記の `jobClass` 選択
