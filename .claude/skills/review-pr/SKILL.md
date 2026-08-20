@@ -173,12 +173,7 @@ PR の変更種別に応じて以下を確認する。**code quality (logic / ar
 >
 > `code quality subagent 起動: 非実施 (理由: doc-only PR、code file 変更ゼロ)`
 
-> **なぜ「常時起動だから記録不要」にしないか (#945 EPT で 4 回摘出)**: 本 skill は Step 5a の
-> Fable / Codex に「明示 trigger + 該当/不該当とも記録必須」を課している。Step 5.0 だけが
-> 記録義務を持たないと、**「記録漏れなのか、そもそも記録不要設計なのか」が事後に追跡できない**。
-> 記録義務は「起動が分岐するか否か」ではなく **reviewer 起動判断点というクラス全体**に課す
-> ([`docs/l2-workflow.md` §「規約・ガード導入の 3 点セット」](../../../docs/l2-workflow.md) ②、
-> および本 skill §「起動記録」の「記録義務は分岐を網羅する」原則)。
+**なぜ「常時起動だから記録不要」にしないか (#945 EPT で 4 回摘出)**: 本 skill は Step 5a の Fable / Codex に「明示 trigger + 該当/不該当とも記録必須」を課している。Step 5.0 だけが記録義務を持たないと、**「記録漏れなのか、そもそも記録不要設計なのか」が事後に追跡できない**。記録義務は「起動が分岐するか否か」ではなく **reviewer 起動判断点というクラス全体**に課す ([`docs/l2-workflow.md` §「規約・ガード導入の 3 点セット」](../../../docs/l2-workflow.md) ②、および本 skill §「起動記録」の「記録義務は分岐を網羅する」原則)。
 
 > **subagent 起動規約**: 本 dispatch は [`docs/l2-workflow.md` §subagent 起動規約](../../../docs/l2-workflow.md#subagent-起動規約-746-phase-c--741-task-5-教訓) に準拠する。HARD-GATE (Stop conditions / 独断 fix 禁止 / orphan commit 防止) を遵守し、scope を超える発見は BLOCKED 報告で controller (本 skill) に escalate する。F6 (#732) / F7 (#741) と同型の事象を再発させない。
 
