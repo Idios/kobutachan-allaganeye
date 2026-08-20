@@ -179,12 +179,18 @@ gh pr list --search "<元issue#>" --state all \
 #   # C:\Program Files\Git\scripts\... へ書き換えて MODULE_NOT_FOUND になる (実測)
 #   export CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<解決した version>"
 #   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review \
-#     [--wait|--background] --base <base> "<focus 文字列 (ASCII)>"
+#     --base <base> "<focus 文字列 (ASCII)>"
 #   # 注意: `... | tee log` で受けると tee の exit code が返るため Codex の失敗を
 #   #       見逃す。rc は ${PIPESTATUS[0]} で確認する (本 PR で実際に見逃した)
+#   # 注意: --background / --wait を付けてはいけない。review / adversarial-review は
+#   #       常に foreground blocking で、両フラグは受理されるだけで無視される
+#   #       (openai-codex 1.0.4 時点。下記 §「Codex 出力の読み取り」 参照)。
+#   #       非同期化が要る場合は Bash tool 側の run_in_background: true を使う
 # focus 文字列は固定の例示から選ぶのではなく本 PR の diff から導出する。
 # 手順は下記 §「Step 5 の focus 導出手順」 に従う (省略不可)。
 # 出力の finding は Claude が triage し (A) PR 内修正 / (B)(C) handoff のいずれかへ振り分け。
+# finding の取り込み元は stdout ではなく保存済み全文 (`result` subcommand)。
+# 手順は下記 §「Codex 出力の読み取り」 に従う (省略不可)。
 # Codex 自身に commit させない (M3 整合)。Codex CLI が fail した場合は
 # `docs/l2-workflow.md` §Codex fallback (L-β β-5 で追加) に従う (tier 2)。
 ```
@@ -237,13 +243,36 @@ openai-codex plugin の `commands/adversarial-review.md` frontmatter には **`d
 
 | tier | path | trigger | 実行者 |
 | --- | --- | --- | --- |
-| 1 (default) | **companion script 直接呼び出し**: `node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review [--wait\|--background] --base <base> "<focus>"` を Bash 経由で実行。本物の Codex GPT-5.4 review が agent 一気通貫で回る (PR #823 / #850 / #851 / #852 実績。focus は ASCII 推奨、`--background` + `run_in_background` で長時間 review を非同期化可) | 常時 (Pre-flight Step 5 必須実行) | agent |
+| 1 (default) | **companion script 直接呼び出し**: `node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review --base <base> "<focus>"` を Bash 経由で実行。本物の Codex GPT-5.4 review が agent 一気通貫で回る (PR #823 / #850 / #851 / #852 実績。focus は ASCII 推奨)。**`review` / `adversarial-review` は常に foreground blocking で、`--background` / `--wait` は受理されるが無視される** (openai-codex 1.0.4 時点、#949 で実測)。長時間 review を非同期化したい場合は Bash tool の `run_in_background: true` を使う (実際に効いているのはこちら)。finding は stdout ではなく §「Codex 出力の読み取り」 の手順で保存済み全文から取り込む | 常時 (Pre-flight Step 5 必須実行) | agent |
 | 2 (fallback) | superpowers `requesting-code-review` subagent。**Codex CLI が rate-limit / quota / network / auth 等で fail した場合のみ** (検出条件・重要 PR 判定・「Codex fallback notice」必須記載は §Codex fallback (C6) に従う) | tier 1 の Codex CLI fail | agent |
 | 3 (escalation) | Idios 自身が `/codex:adversarial-review` を直接 invoke し、結果を agent に share して PR 本文に追記 | Idios が tier 1/2 の review 内容・結果に不足ありと判断した場合 | Idios |
 
 tier 1 が成功している限り「Codex review 実施済」の記載は正当 (Iron Law 5 整合)。tier 2 で代替した場合は Codex fallback notice を必ず記載し、Codex review 済と誤認させない。
 
 > **歴史記録の扱い (#854 R2 確定)**: 実行済み dated plans/specs (`docs/superpowers/plans/` / `docs/superpowers/specs/`) 内の slash 表記 (`/codex:review` 等) は当時の実行記録 (historical record) であり、本 3-tier への遡及書き換えは行わない。sweep で検出しても対応不要 (living doc = CLAUDE.md / 本 doc / skill / hook / 現行 roadmap (現時点は `docs/superpowers/specs/2026-06-29-v030-l3-roadmap.md`。roadmap 交代時は本注記も更新する) のみが整合対象)。
+
+#### Codex 出力の読み取り (#949、openai-codex 1.0.4 時点)
+
+Codex review の finding は **stdout ではなく保存済み全文から取り込む**。`review` / `adversarial-review` は foreground 実行でも job log と state に全文を保存しており (`lib/tracked-jobs.mjs` が完了時に rendered 全文を `"Final output"` ブロックとして append、`<jobId>.json` に `rendered` を保存)、`createJobLogFile` は background 限定ではない。**新しい保存機構は作らない。既にあるものを読む。**
+
+読み取りは公開 subcommand `result` を使う (state dir の path を skill 側で再構築しない):
+
+```bash
+node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result
+```
+
+- **job-id は省略する。** 省略時は `CODEX_COMPANION_SESSION_ID` (Bash tool の環境に現 Claude session id が入っている) で絞られるため、**「今この session で自分が起動した review」の最新完了 job** が選ばれる。他セッションの job を誤って読むことはない
+- 過去 job を明示指定する場合のみ `result <job-id>` を渡す。job-id ありでは session filter が外れる
+- `--json` を付けると `{job, storedJob}` が返り全文は `storedJob.rendered`。**agent が読むだけなら `--json` なしのプレーン出力で足りる** (rendered 全文 + Codex session ID + resume コマンドが print される)
+- **cwd は review を実行した worktree に合わせる。** state dir は git worktree root ごとに分かれる (`lib/state.mjs` が slug = worktree basename + realpath の sha256 先頭 16 桁で分ける) ため、別ディレクトリから実行すると同じ job に到達しない
+
+読めなかった場合 (job が見つからない / plugin の内部構造が変わった等) は **exit code 非ゼロ + `No finished Codex jobs found for this repository yet.` 等のメッセージ**が返る (実測)。この場合は §「規約・ガード導入の 3 点セット」② に従い、**stdout に見えていた範囲だけで triage した旨と読み取り失敗の理由を PR 本文 / skill report に 1 行記録する**。無言で stdout だけ使うのは禁止 (「読んだ」と「読めなかった」が事後に区別できなくなる)。
+
+> **この手順が見ていない集合 / 耐久性**:
+>
+> - 依存先は plugin 内部実装 (`result` subcommand の存在、`storedJob.rendered`、`state.mjs` の path 規約)。**openai-codex の version up で silent に壊れる** — log が読めなくても review 自体は成功するため気付かない。version 併記 (1.0.4 時点) 以上の防御は無い
+> - `lib/state.mjs` の `MAX_JOBS = 50` 超過分は log ごと実削除される。**長期監査には使えない** (直後に読むことが前提)
+> - 本手順が担保するのは「保存済み出力を読むこと」だけ。**Codex が finding を出さなかった場合や、出力自体が不完全だった場合は検査しない**
 
 ### 判定
 
@@ -1084,17 +1113,19 @@ Codex CLI (`codex-companion.mjs` runtime) が以下のいずれかで fail し�
 | exit code 非ゼロ + stderr に `auth`, `unauthorized`, `401`, `403`, `api.?key` | **認証失敗 (明確)** → 自動 fallback + user notify |
 | exit code 非ゼロ + stderr に `timeout`, `EHOSTUNREACH`, `ENETUNREACH`, `ECONNRESET` | **network failure (明確)** → 自動 fallback |
 | exit code 非ゼロ + 上記いずれにも該当しない stderr | **曖昧** → user に AskUserQuestion (再試行 / Claude fallback / abort) |
-| exit code 0 + stdout が空 / parse 不能 | **応答異常** → user に AskUserQuestion |
+| exit code 0 + **保存済み出力** (§「Codex 出力の読み取り」) が空 / parse 不能 | **応答異常** → user に AskUserQuestion |
+| exit code 0 + 保存済み出力を読めない (`result` が非ゼロ / plugin 構造変化) | **読み取り失敗** → fallback ではない。stdout の範囲で triage し、読めなかった理由を 1 行記録 (§「Codex 出力の読み取り」) |
 
 ### 検出 + fallback の擬似コード (skill 内実装イメージ)
 
 `/review-pr` Step 5a / `/iterate-review` Round 2.1 等で Codex を invoke した後の処理イメージ。agent からの通常実行は companion script 直接呼び出し (§Step 5 の invocation path (3-tier、#795) の tier 1。`review` / `adversarial-review` とも slash command は `disable-model-invocation: true` のため agent invoke 不可、slash 形式は tier 3 = Idios 専用)。**subcommand と focus の対応に注意**: `review` は focus positional を受けず非空 focus を reject する。project 固有 focus を渡す場合は `adversarial-review` を使う:
 
 ```text
-result = run_bash('node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review --base develop-0.3.0 "<focus>"')
+# --background / --wait は付けない (受理されるが無視される。openai-codex 1.0.4 時点)
+run = run_bash('node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review --base develop-0.3.1 "<focus>"')
 
-if result.exit_code != 0:
-    stderr_lower = result.stderr.lower()
+if run.exit_code != 0:
+    stderr_lower = run.stderr.lower()
     if matches_any(stderr_lower, ["rate", "quota", "429", "usage_limit"]):
         fallback_reason = "token 枯渇"
         invoke_fallback("superpowers:requesting-code-review")
@@ -1108,14 +1139,26 @@ if result.exit_code != 0:
     else:
         # 曖昧 → user 判断
         ask_user_question(["再試行", "Claude fallback", "abort"])
-elif result.stdout.empty() or not parseable(result.stdout):
-    fallback_reason = "応答異常"
-    ask_user_question(["再試行", "Claude fallback", "abort"])
 else:
-    integrate_findings(result.stdout)
+    # 成功時は stdout ではなく保存済み全文を読む (§「Codex 出力の読み取り」)
+    # cwd は review を実行した worktree のまま。job-id は省略する (現 session の最新完了 job に絞られる)
+    stored = run_bash('node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result')
+
+    if stored.exit_code != 0:
+        # 読み取り失敗。fallback ではない — stdout の範囲で triage し理由を 1 行記録する
+        report.append(format_read_failure_notice(stored.stderr[:200]))
+        findings_text = run.stdout
+    else:
+        findings_text = stored.stdout
+
+    if findings_text.empty() or not parseable(findings_text):
+        fallback_reason = "応答異常"
+        ask_user_question(["再試行", "Claude fallback", "abort"])
+    else:
+        integrate_findings(findings_text)
 
 if fallback_invoked:
-    report.append(format_fallback_notice(fallback_reason, result.stderr[:200]))
+    report.append(format_fallback_notice(fallback_reason, run.stderr[:200]))
 ```
 
 実装は skill prompt 側 (`/review-pr` SKILL.md Step 5a / `/iterate-review` SKILL.md Step 2.1) で行う。Codex CLI のラッパー (`codex-companion.mjs`) との連携詳細は openai-codex plugin doc を参照。

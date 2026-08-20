@@ -264,6 +264,27 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 
 これがないと「Codex review を意図的に skip したのか / 忘れたのか」が事後追跡できない (Iron Law 5 整合)。
 
+#### Codex 出力の読み取り (#949、openai-codex 1.0.4 時点)
+
+Codex review が exit 0 で完了したら、**finding を stdout から拾う前に保存済み全文を読む**。契約の正は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md) で、本 step はその適用にあたる。
+
+1. review を実行した worktree の cwd のまま、job-id を**省略して** `result` を実行する:
+
+   ```bash
+   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result
+   ```
+
+   job-id 省略時は現 Claude session が起動した最新完了 job に絞られる (`CODEX_COMPANION_SESSION_ID`)。`--json` は不要 (プレーン出力が rendered 全文)
+
+2. exit 0 なら、その出力を finding の入力とする。**stdout に見えていた分だけで triage しない**
+3. **exit 非ゼロ (読み取り失敗) なら、Step 6 レビュー報告に次を 1 行明記する** — fallback ではないので Codex fallback notice とは別物:
+
+   > `Codex 出力読み取り: 失敗 (理由: <result の stderr 先頭 1 行>)。stdout に見えた範囲のみで triage した`
+
+   この 1 行が無いと「全文を読んだ」と「読めなかった」が事後に区別できない ([`docs/l2-workflow.md` §「規約・ガード導入の 3 点セット」](../../../docs/l2-workflow.md) ②)
+
+`--background` / `--wait` は付けない。`review` / `adversarial-review` では受理されるだけで無視され、常に foreground blocking になる (openai-codex 1.0.4 時点)。長時間 review を非同期化したい場合は Bash tool の `run_in_background: true` を使う。
+
 Codex の finding は Step 5b トリアージ表に「出所 = codex:review」と記載して統合する。Codex に直接 commit させない (M3 整合)。
 
 #### Codex fail 時の fallback 手順 (C6、L-β β-5 で追加)

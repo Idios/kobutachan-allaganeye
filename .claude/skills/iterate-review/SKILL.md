@@ -61,6 +61,8 @@ base 最新化 + 直近マージ PR + 並行 worktree PR 重複確認は `/revie
 > **subagent 起動規約**: 本 dispatch は [`docs/l2-workflow.md` §subagent 起動規約](../../../docs/l2-workflow.md#subagent-起動規約-746-phase-c--741-task-5-教訓) に準拠する。`__ITERATE_REVIEW_SUBAGENT_MODE__` marker + `(A)*` / ambiguous_judgments の自己申告 (下記 prompt template の item 6 / 7) で HARD-GATE (Stop conditions / 独断 fix 禁止) を担保する。controller (本 skill) が Step 2.2 validation で「無視 / 観察のみ / スコープ対象外」キーワード単独行を parse error とすることで、subagent の独断 fix 倍数を 0 に抑える。F6 / F7 と同型の事象を再発させない。
 >
 > **Codex fallback (C6)**: subagent が `/review-pr` 内で Codex review (tier 1 = companion script `codex-companion.mjs review` の Bash 実行。slash `/codex:review` は `disable-model-invocation: true` のため agent から invoke 不可 = Idios 専用 tier 3、`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照) を実行して fail した場合は [`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback) の手順に従い superpowers `requesting-code-review` subagent を fallback として起動する。Final summary comment (Step 4) に「Codex fallback notice」を必須記載 (Iron Law 5 整合)。**Step 2.3 の per-round Round summary AskUserQuestion ではなく、収束時に 1 回投稿する Step 4 の summary comment を指す。**
+>
+> **Codex 出力の読み取り (#949、openai-codex 1.0.4 時点)**: Codex review が exit 0 で完了した場合、subagent は `/review-pr` §「Codex 出力の読み取り」に従い `codex-companion.mjs result` (job-id 省略) で**保存済み全文**を読んでから finding を統合する。stdout に見えた分だけで triage するのは禁止。読み取りに失敗した (= `result` が exit 非ゼロ) 場合は理由を 1 行記録する義務があり、subagent は下記 prompt template item 7 の `## meta` に `Codex 出力読み取り` 行として申告し、controller はそれを Step 4 の Final summary へ転記する。**fallback ではないので Codex fallback notice とは別行**。`--background` / `--wait` は付けない (受理されるが無視される)。
 
 prompt template (固定):
 
@@ -101,7 +103,10 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
    - mergeStateStatus: <CLEAN/BEHIND/...>
    - 並行 PR: <検出ゼロ / [#X handled]>
    - CI status: <green/failing/pending>
+   - Codex 出力読み取り: <成功 (result 全文を finding の入力にした) / 失敗 (理由: <1 行>、stdout の範囲のみで triage) / 非起動 (Codex review 起動条件 不該当)>
    ```
+
+8. **Codex review を起動した場合は、finding を `/review-pr` §「Codex 出力の読み取り」の手順で保存済み全文から取り込む。** stdout に見えた分だけで triage しない。`## meta` の `Codex 出力読み取り` 行は**省略不可** (省略は parse error)
 ````
 
 #### Step 2.2 Findings parse + 握り潰し防止 validation
@@ -115,6 +120,7 @@ Agent tool の戻り値 markdown から `## findings_table` セクションの�
 3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**
 4. **`ambiguous_judgments` セクションが存在する** (空でもセクション自体は必須): 不在は parse error
 5. **(A) 強優先方針違反検出**: `latent issue / CI failure / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述` 等の典型 (A) trigger を含む finding が (A) 以外 ((A)* / (B) / (C)) に分類されている場合は **parse error**
+6. **`## meta` に `Codex 出力読み取り` 行がある** (#949): `成功` / `失敗 (理由: ...)` / `非起動 (...)` のいずれかで始まること。行の不在、および理由なしの `失敗` は **parse error** (「読んだ」「読めなかった」「起動していない」を事後に区別できなくなる)
 
 **parse error 時の対処**:
 
@@ -329,6 +335,12 @@ PR は <R> ラウンドの review-fix で収束。全 findings 解消完了。
 - (A) 残: 0 / (B) handoff: <#N1, #N2 or なし> / (C) handoff: <#M1 or なし>
 - 並行 PR: <検出ゼロ / [#X handled]>
 - base sync: <CLEAN / 取り込み済み>
+
+## Codex 出力読み取り (#949)
+
+(各 Round の subagent `## meta` から転記。全 Round 成功なら "全 Round 成功" の 1 行でよい。1 Round でも失敗 / 非起動があれば Round 番号付きで列挙する)
+
+- Round <N>: <成功 / 失敗 (理由: <1 行>、stdout の範囲のみで triage) / 非起動 (理由)>
 
 ## Codex fallback notice (J-4 fix、C6 整合)
 
