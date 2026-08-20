@@ -46,6 +46,36 @@ Fable も Codex も**起動せず**、どちらについても理由付きの 1 
 4. 「意図的に skip」と「忘れた」が事後に区別できる
 5. **skill が定義していない記録書式を発明していない**
 
+## F-3 (境界): documentation でも通常 code でもない PR
+
+> **追加の経緯 (Codex adversarial-review [medium])**: F-1 / F-2 は「doc-only」と「通常の
+> code PR」の両端しか見ておらず、**その間にある種別 (workflow / config / lockfile / script) を
+> 1 つも covered していなかった**。Step 5.0 の gate を「code file を touch したか」という
+> 肯定形の抽象語で書いていた当初案では、この中間種別が解釈で割れて
+> **従来は無条件に受けていた code quality review が silent に落ちる**。
+> gate を否定形 (documentation のみなら skip) へ反転したうえで、その中間種別を
+> 実際に covered する scenario を足す。
+
+### 想定状況
+
+PR は `.github/workflows/ci.yml` と `constraints.txt` の 2 file のみを変更する。
+`.py` / `.ts` / `.rs` は 1 つも含まない。diff 40 行、single root cause。
+doc-only でもなく、spec / plan の新規追加もなく、15 file / 500 行 を大きく下回り、
+L1 core の変更でもない。
+
+### 期待挙動
+
+**code quality subagent は起動する** (documentation のみではないため)。
+Fable と Codex は起動しない。
+
+### 要件チェックリスト
+
+1. **[critical]** code quality subagent を**起動する**と判断している
+   (`.py` を含まないことを理由に skip していない)
+2. **[critical]** 3 レビュアーすべてについて起動有無の 1 行記録がある (非起動時は理由付き)
+3. 判断根拠が gate の条件文に基づいており、「code file とは何か」の自己解釈に依存していない
+4. skill が定義していない記録書式を発明していない
+
 > **F-2 の 要件 5 が対になっている理由**: F-1 だけだと「起動して何か書けば通る」ため、
 > 書式を実行者が発明しても検出できない。改修前テキストでは実際に executor が
 > 出所ラベルと記録行の**両方を発明した** (iteration 0 の red baseline)。

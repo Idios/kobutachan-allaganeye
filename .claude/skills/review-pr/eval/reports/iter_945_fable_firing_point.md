@@ -247,6 +247,43 @@ F-1 (doc-only) / F-2 (code PR) とも 4 行ないし 5 行の記録 slot をす�
 **4 executor が同じ doc-only PR に対し 4 通りの扱い**をしていた (起動判断自体が割れていた)。
 これは #945 の当初 scope 外だったが、Idios 裁定で (A) PR 内修正とした。
 
+## 本 PR の scope (Phase 1) と繰り越し (Phase 2)
+
+**#945 の作業項目 5 件のうち 2 件は本 PR に含まれない。** 対象ファイルを open PR #978 が
+触っており、先に触ると衝突するため (Idios 裁定で stacked PR + Phase 分割を選択):
+
+| 作業項目 | 本 PR |
+| --- | --- |
+| 1. `/release` Step 0a-2 の新設 (`.claude/skills/release/SKILL.md`) | **Phase 2** (#978 と衝突) |
+| 2. 非起動時の 1 行記録 | Phase 1 ✓ |
+| 3. `/review-pr` の起動条件 | Phase 1 ✓ |
+| 4. `allaganeye-` prefix 改名 | Phase 1 ✓ |
+| 5. Self-Test Report の Fable 欄 (`.github/pull_request_template.md`) + red 実証 | **Phase 2** (#978 と衝突) |
+
+したがって **#945 の受け入れ条件のうち「`/release` Step 0a-2 の数値記入 required」と
+「Self-Test Report の Fable 欄 + `validate-checklist` red 実証」の 2 件は本 PR では未達**。
+#978 マージ後に rebase して追補する。
+
+> **Codex adversarial-review [high] が同じ点を指摘した** (「release firing point が未実装で、
+> 受け入れ条件は `allaganeye-fable-consult` が `release` と `review-pr` の**両方**で hit する
+> ことを求めている」)。Codex の recommendation は「実装するか、scope を明示的に revise するか」の
+> 2 択で、**本 PR は後者を採る**。Idios 裁定に基づく分割であり見落としではない。
+
+## Codex adversarial-review (Pre-flight Step 5)
+
+- job: `review-mt10dn6k-f3co4f` / Verdict: **needs-attention (No-ship)** / findings 2 件
+- **[medium] 対応済み (A)**: Step 5.0 の gate が「code file を touch したか」という**肯定形の
+  抽象語**で、`.github/workflows/*.yml` / `pyproject.toml` / `constraints.txt` / `*.ps1` /
+  lockfile が解釈で割れ、**従来無条件だった code quality review が silent に落ちる**経路が
+  あった。**否定形へ反転** (非起動は「変更ファイルがすべて `docs/**` または `*.md`」の 1 条件のみ)。
+  判断に迷う種別はすべて起動側に倒れる
+- **[high] scope 明示で対応**: 上記 §「本 PR の scope」のとおり
+
+> **この [medium] は本 EPT の scenario 設計の穴でもあった。** F-1 (doc-only) と F-2 (通常 code PR) の
+> **両端しか見ておらず、その間の種別 (workflow / config / lockfile) を 1 つも covered して
+> いなかった**。scenario F-3 を追加して境界を塞いだ。
+> **教訓: gate を新設したら「明確に該当」「明確に非該当」だけでなく「境界」の scenario を置く。**
+
 ## Idios 判断待ちの候補 (本 PR では実装しない)
 
 いずれも本 PR が触っていない既存節。#945 の scope 外:
