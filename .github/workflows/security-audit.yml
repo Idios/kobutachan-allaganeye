@@ -116,6 +116,16 @@ jobs:
       # dependency-review job も Python 依存については原理的に発火しない。
       # 実環境を audit する本 job だけがその穴を塞ぐ。詳細は
       # docs/ci-security-audit.md を参照。
+      # runner 同梱の toolchain を先に上げる。actions/setup-python@v5 の
+      # Python 3.11.9 は **pip 24.0 / setuptools 65.5.0** を積んでおり、
+      # setuptools 65.5.0 は PYSEC-2022-43012 / PYSEC-2025-49 / PYSEC-2026-1918 /
+      # PYSEC-2026-3447 の 4 件に該当する (2026-08-20 に実 runner で観測)。
+      # これは repo の依存ではなく runner 環境の問題なので、`--ignore-vuln` で
+      # 黙らせるのではなく上げて直す。放置すると「常に赤い pip-audit」になり、
+      # override が常態化して gate が死ぬ。
+      - name: Upgrade build toolchain (runner 同梱の pip / setuptools は古い)
+        run: python -m pip install --upgrade pip setuptools
+
       - name: Install project (audit 対象の実環境を作る)
         run: pip install -e ".[dev]" -c constraints.txt
 
