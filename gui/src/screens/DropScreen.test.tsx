@@ -822,3 +822,14 @@ describe('#676 SelectedCard path display', () => {
     ).toBeInTheDocument();
   });
 });
+
+// #944 §D: GUI にバージョン表示も doc への導線も 1 つも無く、ユーザーが自分の
+// 版を知る手段が無かった。
+describe('#944 DropScreen app metadata', () => {
+  it('shows the app version and where the docs live', () => {
+    render(<DropScreen />);
+    const meta = screen.getByTestId('drop-app-meta');
+    expect(meta).toHaveTextContent(/Allagan Eye v\d+\.\d+\.\d+/);
+    expect(meta).toHaveTextContent('github.com/Idios/kobutachan-allaganeye');
+  });
+});
