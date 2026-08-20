@@ -197,4 +197,67 @@ harness のみ: F-1 #6 に対応して prompt に dry-run 前提を明示。
 
 ### 実行結果
 
-(iteration 4 の subagent 結果を以下に記録)
+| Scenario | 成否 | accuracy (raw) | tool_uses | duration | retries | 新規 unclear (raw) | うち defect-class |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| F-1 | o | 5/5 | 3 | 80.7s | 0 | 1 | **0** (隣接既存節 / harness) |
+| F-2 | o | 5/5 | 3 | 87.1s | 0 | 1 | **0** (tool 制約) |
+
+**iteration 4 は clear。iteration 3 + 4 で 2 consecutive clears を達成。**
+
+F-1 (doc-only) / F-2 (code PR) とも 4 行ないし 5 行の記録 slot をすべて skill 定義の書式で埋め、
+**独自書式の発明ゼロ**。duration も 148s / 129s → 81s / 87s と短縮した。
+
+### 構造化 reflection (iteration 4、すべて非 defect)
+
+**F-1 #7 — 帰属: 隣接既存節 + harness (対応しない)**
+
+- Issue: `CLAUDE.md` §「Fable と Codex の棲み分け」の「invariant / 不可逆操作に関わる spec は
+  **両方**にかける」は**内容依存で機械判定できない**のに対し、skill の Codex 起動条件は
+  数値・カテゴリで機械判定可能。粒度の違う 2 基準が同一トピックに重なっている
+- executor の処理は適切: 機械 trigger の判定を採りつつ、内容依存側を「未確認」として明示し、
+  **どちらかに黙って倒さなかった**
+- General Fix Rule: advisory な原則 (内容依存) と skill の明示 trigger (機械的) が重なる場合、
+  判定材料が無いなら機械 trigger をデフォルト採用し、内容依存側は「未確定・要確認」と明示する
+
+**F-2 #6 — 帰属: tool 制約 (skill の欠陥ではない)**
+
+- Issue: `review-pr/SKILL.md` が 787 行あり Read 1 回で truncate される
+- General Fix Rule: truncation 警告が出たら必ず offset 付きで次ページを読んでから結論を出す
+  (今回 Step 6 テンプレート本体が後半にあり、前半だけで判断すると**書式を自作するリスク**があった)
+- 本 skill が長大であること自体は #945 の scope 外
+
+---
+
+## 収束サマリ (#945)
+
+| iteration | 対象テキスト | defect-class | 判定 |
+| --- | --- | --- | --- |
+| 0 | 改修**前** | 出所ラベル / 記録書式を**両方発明** | **red baseline** |
+| 1 | +Fable 発火点 | 0 | clear (ただし後で reset) |
+| 2 | 同上 | 0 | clear (ただし後で reset) |
+| 3 | +Step 5.0 対称化 | 0 | **clear 1/2** |
+| 4 | 変更なし | 0 | **clear 2/2** |
+
+> **iteration 2 の時点で 2 consecutive clears に到達していたが、その後 Idios 裁定で
+> Step 5.0 を修正したため収束判定をリセットし、修正後のテキストで取り直した。**
+> 収束が検証した artifact と ship する artifact をズラさないための措置
+> (#949 の EPT でも同じ判断をしている)。
+
+**本 EPT が捕まえた最大の欠陥**: Step 5.0 の記録義務・起動条件の欠落。
+**4 executor が同じ doc-only PR に対し 4 通りの扱い**をしていた (起動判断自体が割れていた)。
+これは #945 の当初 scope 外だったが、Idios 裁定で (A) PR 内修正とした。
+
+## Idios 判断待ちの候補 (本 PR では実装しない)
+
+いずれも本 PR が触っていない既存節。#945 の scope 外:
+
+1. **「root cause」の用語衝突** — Step 1.1 M5 は**過去 merged PR の件数**、Step 5c は
+   **diff 内の root cause 種別数**。相互参照も書き分けも無い (iteration 2 F-1 指摘)
+2. **「L1 core」の定義不一致** — Step 5a は抽象語 (`L1 (CLI / detector / GPU)`)、
+   Codex fallback の重要 PR 判定は具体ファイル列挙。境界ファイル
+   (`video/capture_region.py` 等) で判定が割れうる。`CLAUDE.md` 自身の
+   「検出力は具体列挙にのみ宿る」を**レビュアー起動条件の記述自体にも適用すべき**
+   (iteration 3 F-2 指摘)
+3. **advisory 原則と機械 trigger の粒度差** — `CLAUDE.md` の「invariant/不可逆操作の spec は
+   Fable と Codex の両方にかける」が内容依存で、skill の機械 trigger と重なっている
+   (iteration 4 F-1 指摘)
