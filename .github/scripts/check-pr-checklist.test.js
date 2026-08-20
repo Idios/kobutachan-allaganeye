@@ -1248,3 +1248,20 @@ test('#945 fail-closed: 生 exit code — doc-only PR の誤った `非実施` �
   const green = runCheckerProcess(bodyWith([ROW_RUN]), undefined, DOC_ONLY_FILES);
   assert.equal(green.status, 0);
 });
+
+test('#945 regression: bot PR は fail-closed の影響を受けない (Dependabot が落ちない)', () => {
+  // fail-closed 化で「全 PR が listFiles 成功に依存する」ようになったが、
+  // bot 例外 (Self-Test 節を持たない bot PR) は file list 検査より**手前**で return する。
+  // 順序が入れ替わると Dependabot が本 gate で落ちるので pin する。
+  const body = '## 受け入れ条件\n\n- [x] ok\n';
+  const r = runCheckerProcess(body, 'Bot', undefined, { failListFiles: true });
+  assert.equal(r.status, 0, 'bot PR は listFiles 失敗でも緑');
+  assert.match(r.stdout, /Bot-authored PR/);
+});
+
+test('#945 regression: 人間 PR は listFiles 失敗で red (fail-closed が効いている対照)', () => {
+  const body = '#### Self-Test Report (machine-verified)\n\n- [x] ruff\n';
+  const r = runCheckerProcess(body, undefined, undefined, { failListFiles: true });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /取得できませんでした/);
+});
