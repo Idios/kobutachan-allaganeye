@@ -59,8 +59,10 @@ Step 0a の 3 択と同じ画面に、以下のいずれか 1 行を明記する
 
 **`実施` は N / M / K の数値記入が必須。** 数値を required にしないとこの step は no-op になる —
 Step 0a の判定は「達成 / 未達成 / **該当なし**」の 3 択で、**「該当なし」で通過できてしまう**ため
-(#945 が明示した false-green の制約)。**残 K 件がある場合は Track D (version bump) の PR 本文へ
-転記する義務がある。** 「実施した」とだけ書いて finding をゼロ件のまま放置する経路を塞ぐ。
+(#945 が明示した false-green の制約)。**残 K 件がある場合は Track D の PR 本文へ転記する義務がある。**
+「実施した」とだけ書いて finding をゼロ件のまま放置する経路を塞ぐ。
+
+**Track D = version bump + CHANGELOG を担う直列最後の PR** ([`docs/release-process.md` §Patch release の Track 構造](../../../docs/release-process.md#patch-release-の-track-構造))。本 skill では **Step 2 以降で作るリリース PR** がこれにあたる。転記先を短縮名だけで書くと、Track 構造を知らない実行者が対応表を推測で埋めることになるため定義をここに置く。
 
 > **記録義務は分岐を網羅する**: 実施 / 非実施の両方に定型を置いてある。異常系・非該当だけに
 > 定型を用意すると、正常系のたびに実行者が文言を発明して表記が揺れる
