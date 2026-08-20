@@ -648,4 +648,97 @@ Idios 判断待ちの候補として残す (iteration 4 で既出、再掲)。
 
 ### 実行結果 (per scenario)
 
-(iteration 7 の subagent 結果を以下に記録)
+| Scenario | 成否 | accuracy (raw) | tool_uses | duration | retries | 新規 unclear (raw) | うち defect-class |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| G-1 | o | 6/6 | 6 | 109.6s | 0 | **0** | **0** |
+| G-2 | o | 5/5 | 5 | 105.0s | 0 | 1 | **0** |
+| G-3 | o | 5/5 | 4 | 121.9s | 0 | 2 | **0** |
+| G-4 (hold-out) | o | 5/5 | 6 | 122.2s | 0 | **0** | **0** |
+
+> **iteration 7 は clear。2 consecutive clears (iteration 6 + 7) を達成。**
+
+### 判定基準 (適用の一貫性のため明記)
+
+**defect-class = 「成果物が変わった / 誤った成果物が出た」もの**に限る。
+executor が text から自力で正解に到達し、成果物が正しかった微小な曖昧さは defect に数えない。
+この基準は iteration 3 / 6 / 7 に同一に適用している (iteration 3 も同基準で clear と判定)。
+raw 件数も上表に併記してあるので、別基準で読み直すことは可能。
+
+### 構造化 reflection (iteration 7、すべて非 defect)
+
+**G-2 #5 — 残: 微小曖昧 (対応せず deferred 候補)**
+
+- Issue: 新設した Step 6 「1 行記録」節は「該当する行は省略不可」と書いており、
+  **発火しなかった slot を `なし` で埋めるのか、行ごと省くのか**が一意に決まらない
+- executor は `Codex fallback notice: なし` と書いて**正しい成果物を出した**
+- General Fix Rule: 複数 slot のうち片方が非発火の場合、非発火時も明示的に埋める
+  (`<状態>: なし`) のか省略可なのかを、全 slot に統一適用する形で明記する
+
+**G-3 #10 — 残: 微小曖昧 (対応せず deferred 候補)**
+
+- Issue: 畳み込み理由の「同一内容でよい」が**逐語一致か意味一致か**未規定
+- executor は「Step 2.2 は構文検査のみ」の記述から意味一致で足りると自力で判断し正解
+- General Fix Rule: テンプレート文言を doc 間で共有させる規約は、判定主体
+  (機械 parse か目視か) と許容差異 (逐語 / 意味) を明示する
+
+**G-3 #11 — 帰属: harness**: シナリオが Round 1 の実データを与えないため
+`acceptance_criteria_status` の内容を fabricate せざるを得ない。評価対象は構造であり内容ではない。
+
+> **この 2 件を本 PR で修正しない理由**: どちらも成果物を変えておらず、
+> `docs/l2-workflow.md` §skill 改修ワークフロー の「残る細部不明瞭点は deferred issue として追跡」に
+> 該当する。また収束直後に未検証の text を足すと「2 consecutive clears が検証した artifact」と
+> 実際に ship する artifact がズレる。**収束時点の artifact をそのまま出す。**
+
+---
+
+## 収束サマリ
+
+| iteration | 対象テキスト | 4 scenario 中 clean | defect-class | 判定 |
+| --- | --- | --- | --- | --- |
+| 0 | 改修**前** (`35a1da6`) | — | 構造的欠陥多数 | **red baseline** |
+| 1 | +読み取り節 | — | 2 | — |
+| 2 | +job 一意特定 | 1 | 2 | — |
+| 3 | +3 状態対称化 | 3 | 0 | clear |
+| 4 | +起動記録両分岐 | 1 | 4 (実バグ 1 含む) | — |
+| 5 | +env var / id 採取 | 3 | 2 | — |
+| 6 | +cwd / 集約 slot | **4** | **0** | **clear 1/2** |
+| 7 | 変更なし | **4** | **0** | **clear 2/2** |
+
+**EPT が捕まえた実バグ 3 件** (いずれも自分が書き込んだもの。実測で確認):
+
+1. `job-id` 省略が `jobClass` を見ないため rescue / task job の出力を review の finding として
+   取り込む (`matchJobReference` が `filtered[0]` を返す)
+2. `$CLAUDE_PLUGIN_ROOT` が Bash 呼び出し間で消え、documented command が
+   `node "/scripts/codex-companion.mjs"` に展開される (= doc 自身が 2 節前で警告している形)
+3. cwd が turn 境界で main repo へドリフトし、state dir が変わって job に到達しない
+
+**実測で反証した推論 1 件**: 「テンプレートが `stderr` を名指しするのは脆い」→
+`result` の失敗メッセージは stderr のみ・stdout 空・exit 1 で、記述は正しかった。
+
+**hold-out (G-4) の推移**: 122.2s / 108.9s / **46.7s** と短縮し、accuracy は一貫して 5/5。
+overfitting なし。G-4 は `/review-pr` を読まず `docs/l2-workflow.md` 単独で実行しており、
+job 一意特定の設計が skill を介さず doc だけで機能することを 3 回連続で確認した。
+
+## 実運用での dogfooding (本 PR の Pre-flight Step 5)
+
+本 PR 自身の Iron Law 6 Pre-flight Step 5 で、**新設した手順をそのまま実行**した:
+
+- `status --json` → `jobClass == "review"` filter → `result <job-id>` で全文取得に成功
+- 選択された job id: `review-mt0v99i9-3oz453` (`jobClass == "review"`)
+- Codex adversarial-review の結論: **approve / No material findings**
+  (focus には「本 diff に外部入力境界 × 不可逆操作のペアはゼロ」を明記。code file の変更が
+  ゼロであることを grep 4 本で確認したうえでの申告)
+
+手順が机上の規定で終わっていないことの実証にあたる。
+
+## Idios 判断待ちの候補 (本 PR では実装しない)
+
+いずれも #949 の受け入れ条件の範囲外、または本 PR が触っていない既存 gap:
+
+1. **plugin version を per-PR report に記録する固定 slot** (iteration 3 G-1 #6)。
+   #949 の条件は「doc / skill への併記」であり per-PR 記録は要求していない。
+   ただし「version 依存が silent に壊れる手順ほど per-PR に version を残す価値がある」
+   という指摘自体は妥当
+2. **`findings_table` ゼロ件時の記法** が `/iterate-review` の subagent template に無い
+   (iteration 4 / 6 で 2 回指摘)。`/review-pr` standalone 側にしか規約がない**既存 gap**
+3. 上記 iteration 7 の微小曖昧 2 件 (非発火 slot の埋め方 / 逐語一致 vs 意味一致)
