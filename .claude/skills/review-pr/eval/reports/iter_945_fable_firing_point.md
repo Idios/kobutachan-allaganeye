@@ -247,6 +247,42 @@ F-1 (doc-only) / F-2 (code PR) とも 4 行ないし 5 行の記録 slot をす�
 **4 executor が同じ doc-only PR に対し 4 通りの扱い**をしていた (起動判断自体が割れていた)。
 これは #945 の当初 scope 外だったが、Idios 裁定で (A) PR 内修正とした。
 
+## Iteration 5 (Codex [medium] 修正の検証、境界 scenario)
+
+### Changes
+
+Step 5.0 の gate を**肯定形 → 否定形**へ反転 (非起動は「変更ファイルがすべて `docs/**` または
+`*.md`」の 1 条件のみ)。記録定型の理由文言も同条件へ揃えた。
+
+### 実行結果
+
+| Scenario | 成否 | accuracy (raw) | tool_uses | duration | retries | 新規 unclear (raw) | うち defect-class |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **F-3 (境界: workflow + constraints.txt のみ)** | **o** | **4/4** | 3 | 80.8s | 0 | 1 | **0** |
+
+**修正が効いていることの直接の証拠**: executor は code quality subagent を**起動する**と判断し、
+その理由として
+
+> 「`.github/workflows/ci.yml` / `constraints.txt` が `docs/**` でも `*.md` でもない → 非起動条件
+> 不成立 → 起動」「**『yml/constraints.txt はソースコードか』という自己解釈の trap は踏んでいない**。
+> skill 自身が『肯定形にすると解釈で割れる』と警告している箇所を明示的に回避した」
+
+と述べた。**肯定形のままなら silent skip しえた種別が、否定形で確実に起動側へ倒れた。**
+
+### 構造化 reflection (iteration 5)
+
+**F-3 #1 — 帰属: 改修対象 (#982 由来、非 defect、Idios 判断待ち)**
+
+- Issue: Step 6 の「1 行記録」集約節が **reviewer 起動記録** (code quality / Fable / Codex) と
+  **構造チェック記録** (並行 PR 確認 / 外部依存規約 / パス契約) を同じ節に並記しており、
+  「specialised reviewer とは何か」が skill 内で定義されていない
+- executor は自力で正しく切り分けた (成果物は正しい)
+- General Fix Rule: 「reviewer (外部 / subagent への委譲)」と「structural check (skill 内ロジックの
+  該当性判定)」を語彙・見出しレベルで区別する
+- 帰属: 集約節は #982 で新設したもの。**非 defect** なので本 PR では触らず候補に残す
+
+---
+
 ## 本 PR の scope (Phase 1) と繰り越し (Phase 2)
 
 **#945 の作業項目 5 件のうち 2 件は本 PR に含まれない。** 対象ファイルを open PR #978 が
