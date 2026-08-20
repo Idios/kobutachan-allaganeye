@@ -525,4 +525,80 @@ iteration 4b の 4 点 (上記) を適用済み。harness は G-1 / G-4 の scen
 
 ### 実行結果 (per scenario)
 
-(iteration 5 の subagent 結果を以下に記録)
+| Scenario | 成否 | accuracy (raw) | tool_uses | duration | retries | 新規 unclear (raw) | うち**改修対象**帰属 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| G-1 | o | 6/6 | 8 | 154.2s | 0 | 2 | **2** |
+| G-2 | o | 5/5 | 3 | 87.6s | 0 | 1 | **0** (harness) |
+| G-3 | o | 5/5 | 5 | 101.1s | 0 | **0** | **0** |
+| G-4 (hold-out) | o | 5/5 | 9 | 108.9s | 0 | **0** | **0** |
+
+> hold-out G-4 は **「指示不足に起因する不明点は生じなかった」** と明示的に報告。
+> plugin ソースを読んで `adversarial-review` / `review` → `jobClass: "review"`、
+> rescue (`task` kind) → `jobClass: "task"` を自力で確認し、判別根拠にしている。
+> **accuracy 低下なし = overfitting なし (2 回連続)。**
+
+### 構造化 reflection (iteration 5)
+
+**G-2 #4 — 帰属: harness (対応しない)**
+
+- Issue: シナリオが「`status` は成功したのに同じ id で `result` が失敗する」という一見矛盾した状態を設定している
+- 帰属判断: **本 harness が作った人工的な状況**。executor 自身が
+  「原因診断を必須にしない設計は、まさにこの種の矛盾を吸収するための正しい設計だと判断した」と
+  述べており、**設計の妥当性を裏づける方向の指摘**。対応不要
+
+**G-1 #9 — 帰属: 改修対象 (iteration 5 で修正)**
+
+- Issue: 「同じ Bash 呼び出しの中で実行する」とだけ書き、その呼び出しの**起点 cwd** を
+  固定する手段 (明示 `cd` を要求するのか harness の cwd 継続に依存してよいのか) が未規定
+- Cause: 本節は env var 消失への対処に主眼があり、cwd 継続性は harness 依存の暗黙前提だった
+- General Fix Rule: 「同じ呼び出し内で完結させよ」という制約を書く節は、呼び出しの**起点状態**
+  (cwd を含む) も明示的に固定する。呼び出し間で消えるのが env var だけとは限らない前提で書く
+- **本 repo では実害がある**: turn 境界 / background task 後に Bash の cwd が worktree から
+  main repo へドリフトする事象が観測済み (memory `feedback_worktree_bash_cwd_drift`)。
+  cwd が違うと state dir も変わり「job が見つからない」形で**静かに外れる**
+
+**G-1 #10 — 帰属: 改修対象 + 隣接既存節 (iteration 5 で一括修正)**
+
+- Issue: `/review-pr` の Step 6 レビュー報告テンプレートに、「Step 6 に 1 行明記する」と
+  課された記録の**置き場所が 1 つも無い**
+- Cause: 記録義務は各 Step の本文に追記されるだけで、テンプレート側が追随していない
+  (指示とテンプレートが非同期)
+- General Fix Rule: 新しい「Step 6 に書け」という記録義務を追加するときは、その記載箇所
+  (どのセクションの下に、どんな見出しで) までテンプレート側に反映する
+- **ledger `obligation-without-aggregation-slot` の template 層での再発 (2 回目)**。
+  本 PR が足した 2 件だけでなく、**既存の 並行 PR 確認 / 外部依存規約 / パス契約 /
+  Codex fallback notice も同じ穴を抱えていた** (計 6 件)。本 PR 分だけ slot 化すると
+  既存 4 件との非対称が残り同じ問題を再生産するため、集約セクション 1 つで 6 件まとめて閉じた
+
+> **iteration 5 は clear ではない** (改修対象帰属 2 件)。ただし G-2 / G-3 / G-4 の 3 scenario は
+> 新規 unclear ゼロで、残っていたのは G-1 の 2 件のみ。指摘の粒度も
+> 構造 → 実行可能性 → 配置 と一貫して細かくなっている (発散ではない)。
+
+### Ledger updates
+
+- Re-seen (**2 回目**): **obligation-without-aggregation-slot** — 初出は subagent final message の
+  `## meta`、今回は `/review-pr` Step 6 テンプレート。**既存 fix が防げなかった理由** —
+  iteration 0 の fix は「subagent → controller」の 1 経路にだけ slot を作り、
+  **standalone 実行時の報告テンプレート**という別経路を見ていなかった。今回は本 PR 分だけでなく
+  既存 4 件を含む 6 件を 1 セクションに集約して閉じた
+- Added: **same-call-constraint-without-fixing-the-entry-state** (G-1 #9)
+
+### 次の修正 (= iteration 5、commit `1d0d428`)
+
+1. 読み取り手順の冒頭に明示 `cd "<worktree の絶対パス>"` を追加し、cwd ドリフトの実害も明記
+2. `/review-pr` Step 6 テンプレートに `## 1 行記録 (各 Step が課した記録義務の集約)` を新設し、
+   6 件の記録義務の置き場所を固定
+
+(収束判定: **0 consecutive clears** / 打ち切りまで 2 round)
+
+---
+
+## Iteration 6 (convergence 1/2)
+
+### Changes (diff from iteration 5)
+
+iteration 5 の 2 点を適用済み。**harness の変更なし** (以後は対象テキストを固定して収束を見る)。
+
+### 実行結果 (per scenario)
+
+(iteration 6 の subagent 結果を以下に記録)
