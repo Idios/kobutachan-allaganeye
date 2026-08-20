@@ -9,8 +9,24 @@ on:
   # fallback で継承することで incremental build (~30-60s) に短縮する。
   push:
     branches: [main, "develop-*"]
+  # #947 -- pull_request の branches filter は **PR の base** に適用される。
+  # `release/*` を統合ブランチに使う minor release では、そこへ流し込む中間 PR が
+  # 構造的に無検査で通っていた (v0.3.0 実測: #927 / #929 / #930 / #931 / #932 /
+  # #938 / #939 / #940 / #941 / #942 / #943 の 11 本。#938 は Python 実装 3 +
+  # テスト 3 を変更しながら走った check は `validate-checklist` 1 個だけ)。
+  #
+  # **`push.branches` (上記 L10-11) には `release/*` を足さない。** 足すと
+  # `release/* -> main` の PR は release ブランチの生存期間ずっと open なので、
+  # 同一 commit に対し push run (`github.ref=refs/heads/release/vX`) と
+  # pull_request run (`github.ref=refs/pull/N/merge`) の 2 本が起動する。下の
+  # concurrency group は ref を含む (L26) ため別 group となり dedupe されず、
+  # windows runner を含む full CI が丸ごと 2 倍走る。
+  #
+  # この filter が見ていない集合: branches filter は allowlist なので、ここに
+  # 列挙しない base (将来 `hotfix/*` 等を切る場合) は依然として無検査のままになる。
+  # 「全 base をカバーした」ことは意味しない。
   pull_request:
-    branches: [main, "develop-*"]
+    branches: [main, "develop-*", "release/*"]
 
 concurrency:
   # 同一 ref への連続 push は前 run を cancel して無駄を省く。ただし main /
@@ -340,12 +356,54 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # #876 -- PSGallery / PowerShellGet は windows runner 上で間欠的に
+      # "No match was found for the specified search criteria and module name
+      # 'Pester'" を返す (PR #874 で実発生。19 分前の #871 マージ run では成功
+      # していたので transient)。retry で自癒させ、この job の結果が
+      # 「Pester テストの成否」だけを反映するようにする。
+      #
+      # **成否判定を Install-Module の error semantics に委ねない。**
+      # PackageManagement のエラーは -ErrorAction Stop / $ErrorActionPreference
+      # を素通りして非終了のまま抜けることがあるため、毎 attempt の後に
+      # `Get-Module -ListAvailable` で **実際に 5.0.0 以上が入ったか** を確認する。
+      # これが無いと「install に失敗したのに retry せず次へ進み、後段で落ちる」
+      # 経路が残り、retry が silent な no-op になる。
+      #
+      # この retry が見ていない集合:
+      #   - PSGallery が恒久障害なら 3 回とも失敗して従来どおり red になる (正しい)
+      #   - module の cache 化はしていないので install 自体は毎 run 走る
+      #     (#876 の選択肢 (b) は不採用。cache key の陳腐化という別の穴を作るため)
+      #   - **正常時には永久に不発**。通常の PR では 1 回目で成功するので、
+      #     この分岐が生きているかは通常の緑からは分からない (発火実証は
+      #     存在しないモジュール名を流して行う。PR 本文に run URL を記録)
       - name: Install Pester v5
         shell: pwsh
         run: |
-          Install-Module Pester -MinimumVersion 5.0.0 -Scope CurrentUser -Force -SkipPublisherCheck
-          Import-Module Pester -MinimumVersion 5.0.0
-          (Get-Module Pester).Version
+          $ErrorActionPreference = 'Stop'
+          $moduleName = 'Pester'
+          $minVersion = [version]'5.0.0'
+          $maxAttempts = 3
+          $installed = $null
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            try {
+              Install-Module $moduleName -MinimumVersion $minVersion -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
+            } catch {
+              Write-Host "::warning::Install-Module ${moduleName}: attempt ${attempt}/${maxAttempts} threw: $($_.Exception.Message)"
+            }
+            $installed = Get-Module -ListAvailable -Name $moduleName |
+              Where-Object { $_.Version -ge $minVersion } |
+              Sort-Object Version -Descending |
+              Select-Object -First 1
+            if ($null -ne $installed) { break }
+            Write-Host "::warning::${moduleName} >= ${minVersion} still not available after attempt ${attempt}/${maxAttempts}"
+            if ($attempt -lt $maxAttempts) { Start-Sleep -Seconds (15 * $attempt) }
+          }
+          if ($null -eq $installed) {
+            throw "Install-Module ${moduleName}: version ${minVersion} or later is not available after ${maxAttempts} attempt(s)"
+          }
+          Write-Host "Installed ${moduleName} $($installed.Version) on attempt ${attempt}/${maxAttempts}"
+          Import-Module $moduleName -MinimumVersion $minVersion
+          (Get-Module $moduleName).Version
 
       - name: Run Pester tests
         shell: pwsh
