@@ -411,25 +411,6 @@ function countAcceptanceCriteriaCheckboxes(body) {
   };
 }
 
-/**
- * Fable 俯瞰レビュー行の semantic 検査 (#945、Codex adversarial-review [medium] 対応)。
- *
- * **checkbox が `[x]` かどうかだけでは gate にならない。** doc-only PR で
- * `- [x] Fable 俯瞰レビュー ... 非実施 (理由: ...)` と書けば、レビューを 1 度も実行せずに
- * 緑になってしまう。実際 #945 の EPT iteration 4 で、2 trigger 両該当の PR に対し
- * executor が「非実施」と記入する事象が起きている (自己申告は満点だった)。
- * そこで **変更ファイル一覧と突き合わせて値の妥当性まで見る**。
- *
- * 判定:
- *   - 起動条件 = (a) 変更が全て `docs/**` または `*.md` (doc-only)
- *              OR (b) `docs/superpowers/{specs,plans}/**` への新規ファイル追加
- *   - 該当なのに `非実施` → red
- *   - `実施` なのに N/M/K が整数で揃っていない → red
- *
- * files が取得できない場合 (API 失敗 / 権限不足 / テストで未注入) は **検査を skip する**。
- * ここで落とすと「gate が本来見るべきもの」ではなく「API の可用性」で red になり、
- * 原因追跡が難しい false-red を生むため。skip したことは core.info に残す。
- */
 const FABLE_LABEL_RE = /Fable[ 	　]*俯瞰レビュー/;
 // 未記入 placeholder の検出は **既知のトークンのみ**を見る。
 // 「山括弧が 1 組でもあれば未記入」とすると、正当な回答に含まれる <URL> や型名まで
