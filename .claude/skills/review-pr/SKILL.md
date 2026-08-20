@@ -289,7 +289,9 @@ Codex review が exit 0 で完了したら、**finding を stdout から拾う�
    > ドリフトする事象が観測されている。cwd が違うと state dir も変わり、
    > 「job が見つからない」形で静かに外れる
 
-   `latestFinished` を先に見て **`jobClass` が `"review"`** ならその `.id`、違えば `recent[]` を先頭から走査して最初に `jobClass == "review"` になった entry の `.id` を採る (この順で最新の review job が一意に決まる。詳細は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md))
+   **まず `running[]` を見る。** `jobClass == "review"` の entry が居るなら**それが今回の review でまだ終わっていない**ので、空になるまで待つ。この状態で `latestFinished` を読むと **1 つ前の review の出力を今回の結果として取り込む** (実測)。
+
+   `running[]` が空になったら、`latestFinished` を先に見て **`jobClass` が `"review"`** ならその `.id`、違えば `recent[]` を先頭から走査して最初に `jobClass == "review"` になった entry の `.id` を採る。採った id が**今回起動した review のものか**を `updatedAt` / target base で 1 度確認する (詳細は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md))
 
 2. その id を**明示して** `result` を実行する (`--json` は不要。プレーン出力が rendered 全文。`CLAUDE_PLUGIN_ROOT` は step 1 と同じ Bash 呼び出しなら張り直し不要):
 

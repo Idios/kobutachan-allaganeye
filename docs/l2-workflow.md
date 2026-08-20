@@ -274,8 +274,16 @@ node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" status --json
 node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result <job-id>
 ```
 
+- **先に `running[]` を見る。** `status --json` の `running[]` に `jobClass == "review"` の entry が
+  居るなら、**それが今回起動した review であり、まだ終わっていない**。この状態で
+  `latestFinished` を読むと **1 つ前の review の出力を今回の結果として取り込む** (実測: 本規約を
+  作った PR 自身の Pre-flight で踏んだ)。`running[]` が空になるまで待ってから id を採ること。
+  `latestFinished` / `recent[]` は**完了 job しか含まない**ので、running の存在は
+  ここでしか判らない
 - **id の採り方は一意に決まる**: `latestFinished` を先に見て `jobClass == "review"` ならその `.id`、
   違えば `recent[]` を先頭から走査して最初に `jobClass == "review"` になった entry の `.id`。
+  採った id が**今回起動した review のものか** (`updatedAt` が起動時刻より後か、target が今回の base か)
+  を 1 度確認する。「最新の完了 review」は「今 self が起動した review」と**同義ではない**。
   `status` は job を新しい順に並べ、`latestFinished` は最新の完了 job、`recent[]` はそれを除いた
   残りを新しい順に持つので、この順で見れば「最新の review job」が一意に定まる。
   jq を使うなら `(.latestFinished, .recent[]) | select(.jobClass=="review") | .id` の先頭 1 件
