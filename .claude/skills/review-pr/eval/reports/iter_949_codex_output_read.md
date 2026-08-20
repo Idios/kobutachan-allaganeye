@@ -201,4 +201,99 @@ G-1 #3 の General Fix Rule「結果を一意に特定する識別子を明示�
 
 ### 実行結果 (per scenario)
 
-(iteration 1 の subagent 結果を以下に記録)
+| Scenario | 成否 (self-report) | accuracy (raw) | tool_uses | duration | retries | Weak phase |
+| --- | --- | --- | --- | --- | --- | --- |
+| G-1 | o | 6/6 | 6 (**iter0 比 -67%**) | 68.2s (**-77%**) | 0 | Trace all OK |
+| G-2 | o | 5/5 | 2 (**-83%**) | 80.3s (**-41%**) | 0 | Trace all OK |
+| G-3 | o | 5/5 | 6 (±0) | 193.8s (+28%) | 0 | Trace all OK |
+
+> **`tool_uses` の崩れ方が本 iteration の主要な signal。** iteration 0 で G-1 / G-2 が
+> 18 / 12 step を費やしていたのは plugin ソースを descend していたからで、
+> 手順が skill 内に入った iteration 1 では 6 / 2 に落ちた。3 scenario の skew も解消
+> (18/12/6 → 6/2/6)。accuracy は相変わらず全部満点で判別力なし。
+
+### 構造化 reflection (iteration 1 で新規に surfaced)
+
+**G-1 #4 — 帰属: harness / 構造 (対応不要と判断)**
+
+- Issue: skill (簡潔) と l2-workflow (詳細) の 2 ファイルにまたがるため、根拠まで知るには両方読む必要がある
+- Cause: 「skill は簡潔、doc が詳細」は本 project の意図的な分担
+- General Fix Rule: 分散する場合、簡潔側に「詳細側のどのレベルの情報が要るか」を一言添える
+- **判断**: 既存の doc 分担方針そのものへの指摘であり、本 PR の scope 外。対応しない
+
+**G-2 #1 — 帰属: harness (iteration 2 で修正)**
+
+- Issue: シナリオが「2 本目の command が exit 1」とだけ書き、`status` 段と `result` 段の
+  どちらで落ちたかを特定していない
+- Cause: iteration 1 で読み取りが 2 段階になったのに、シナリオが 1 段階前提のまま圧縮されていた
+- General Fix Rule: 複数ステップの CLI プロトコルを 1 文に圧縮したシナリオを与えられたら、
+  欠落した中間ステップを推測で補って事実として書かない
+- **判断**: skill ではなく harness の欠陥。scenario G-2 を修正した (難易度低下ではない)
+
+**G-3 #1 — 帰属: 改修対象 (iteration 2 で修正)**
+
+- Issue: Step 2.2 item 6 は理由必須を `失敗` だけ名指しし、`非起動` には要求していない。
+  「名指しされていない分岐は緩い」と読める
+- Cause: 共通の正当化理由 (事後に区別できない) を与えながら、parse error 条件は 1 分岐しか
+  明文化していなかった
+- General Fix Rule: 列挙型の状態値に共通の正当化理由を与える validation rule は、
+  parse error 条件も分岐ごとに**対称に**明文化する
+
+**G-3 #2 — 帰属: 改修対象 (iteration 2 で修正、ledger 再発)**
+
+- Issue: `/review-pr` H-4 の「Codex review 起動: 非対象」記録に、`/iterate-review` の固定
+  5 セクションに専用スロットが無い。executor は `## meta` に独自 bullet を生やした
+- Cause: 委譲元 skill の記録義務カタログと、委譲先 skill の固定出力スキーマが非同期
+- General Fix Rule: 呼び出し先 skill が新しい 1 行記録義務を追加したら、呼び出し元 skill の
+  固定出力スキーマにも対応する named slot を同時に追加する
+
+> **ledger 再発の分析**: `obligation-without-aggregation-slot` は iteration 0 で
+> Added 済みだった。**なぜ既存 fix が再発を防げなかったか** — iteration 0 の fix は
+> 「読み取り」の record にだけ slot を作り、**同じ Step 5a が課す姉妹義務 (H-4 の起動記録)**
+> を見落としていた。1 件の義務に対して slot を 1 個作る対応では、同一 step が複数の義務を
+> 課している場合に取りこぼす。iteration 2 では slot を増やす代わりに、
+> `非起動` の理由へ H-4 record を畳む形にした (契約の面積を増やさない)
+
+### Discretionary fill-ins (iteration 1 で新規)
+
+- G-1: **成功時**の Step 6 記録行を自力で作文 (skill が定型を持つのは「非該当時」「失敗時」のみ)。
+  iteration 0 でも同じ fill-in が出ており **2 回連続で再発**
+- G-1: `status --json` の出力を jq で抜くか目視で採るかは未規定
+- G-2: 読み取り失敗時に retry するか否かが未規定。記録行を表内に書くか本文に書くかも未規定
+- G-3: `Codex review 起動` bullet を `## meta` に**自力で新設** (G-3 #2 と同根)
+
+### Ledger updates
+
+- Re-seen: **obligation-without-aggregation-slot** (初出 iter 0) — 既存 fix が防げなかった理由は
+  「同一 step の姉妹義務を見落とし、義務 1 件につき slot 1 個で対応した」ため
+- Added: **asymmetric-enumeration-rule** (G-3 #1) — 列挙型状態値の一部分岐だけに
+  parse error 条件を明文化する
+- Added: **template-only-for-the-failure-branch** (G-1 discretionary の再発) — 記録義務の
+  定型を異常系にだけ用意し、正常系を実行者の作文に任せる
+
+### 次の修正 (= iteration 2、commit `013ff30`)
+
+1. `/review-pr` Step 5a: `成功` / `失敗` / `非起動` の**3 状態すべてに定型**を与える
+2. `/iterate-review` Step 2.2 item 6: `失敗` と `非起動` の**両方で理由必須**に統一
+3. `/iterate-review` prompt template item 8: H-4 の起動記録は slot を増やさず
+   `非起動` の理由へ畳む旨を明記
+4. (harness) scenario G-2 にどちらの段で落ちたかを明記
+
+(収束判定: 0 consecutive clears / 打ち切りまで 2 round)
+
+---
+
+## Iteration 2
+
+### Changes (diff from iteration 1)
+
+**theme: 記録行の対称化** (ledger pattern `template-only-for-the-failure-branch` /
+`asymmetric-enumeration-rule` / `obligation-without-aggregation-slot` 再発)
+
+上記「次の修正」4 点。**この修正が満たす判定文言 (適用前に明示)**: G-1 要件 6 の
+「出所の記録方法」を成功系にも与えること、および G-3 要件 2「非起動が理由付きで書かれている」を
+skill 本文側の parse error 条件と一致させること。
+
+### 実行結果 (per scenario)
+
+(iteration 2 の subagent 結果を以下に記録)
