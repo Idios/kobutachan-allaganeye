@@ -93,7 +93,25 @@ jobs:
 
   pip-audit:
     name: pip audit (Python)
-    runs-on: ubuntu-latest
+    # **OS matrix にしている理由**: Python の依存解決は環境マーカーで OS ごとに
+    # 変わる。ubuntu だけで監査すると、**出荷物にしか入らない Windows 限定の
+    # transitive が永久に無検査**になる。実例:
+    #   - `pyinstaller` -> `pefile` / `pywin32-ctypes` (Windows のみ)
+    #   - `typer` -> `click` -> `colorama` (Windows のみ)
+    # Portable ZIP は windows runner でビルドするので、出荷物の依存集合は
+    # windows 側が正である。2026-08-20 時点では上記いずれにも advisory は
+    # 存在しない (実測) が、「今ゼロ」は「今後もゼロ」を意味しない。
+    #
+    # step の `shell:` に `${{ matrix.* }}` を書くと phantom run 化するため、
+    # shell は job の `defaults` に静的値で逃がしてある (#786 / #788 の教訓)。
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -169,10 +187,9 @@ jobs:
       # Portable ZIP は PyInstaller で frozen application を作るので、この依存は
       # **出荷物に直接効く**。別 invocation で必ず監査する。
       #
-      # `-r` は install せずに requirements を解決して監査する。
-      # 見ていない集合: 解決は ubuntu runner 上で行われるため、Windows 限定の
-      # 依存 (pefile / pywin32-ctypes 等、環境マーカーで除外される) は監査対象に
-      # 入らない。実際のビルドは windows runner なので、その差分は残る。
+      # `-r` は install せずに requirements を解決して監査する。解決結果は OS
+      # ごとに変わるので、上の matrix によって ubuntu / windows の**両方**で走る。
+      # windows leg が pefile / pywin32-ctypes を含む出荷物どおりの集合を見る。
       - name: Run pip-audit (PyInstaller build requirements)
         run: pip-audit --progress-spinner off -r scripts/installer/requirements-pyinstaller.txt
 

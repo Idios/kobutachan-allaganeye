@@ -59,13 +59,27 @@ pip-audit は 2 回呼ぶ。**1 回では `pull_request.paths` に載せた Pyth
 
 **2 つ目が要るのは、`pyinstaller` / `pyinstaller-hooks-contrib` が `pyproject.toml` の dev extras に入っていないため** (`pip install -e ".[dev]"` した環境に `pip show pyinstaller` すると `Package(s) not found` を返すことを実測)。同ファイルを paths filter に載せておきながら監査しないと、「trigger は塞いだが中身は誰も見ていない」という false-green になる。Portable ZIP は PyInstaller で frozen application を作るので、この依存は**出荷物に直接効く**。
 
+#### OS matrix にしている理由
+
+本 job は `ubuntu-latest` と `windows-latest` の **両方**で走る。Python の依存解決は環境マーカーで OS ごとに変わるため、ubuntu だけで監査すると**出荷物にしか入らない Windows 限定の transitive が永久に無検査**になる。
+
+| 依存経路 | Windows 限定 transitive |
+| --- | --- |
+| `pyinstaller` | `pefile` / `pywin32-ctypes` |
+| `typer` → `click` | `colorama` |
+
+Portable ZIP は windows runner でビルドするので、**出荷物の依存集合は windows 側が正**である。2026-08-20 時点では上記いずれにも advisory は存在しない (GitHub Advisory DB を `affects=<pkg>` で実測、全バージョンで 0 件) が、「今ゼロ」は「今後もゼロ」を意味しない。
+
+なお step の `shell:` に `${{ matrix.* }}` を書くと phantom run 化するため、shell は job の `defaults` に静的値で逃がしてある (#786 / #788 の教訓)。
+
 #### この job が見ていない集合
 
 - dev extras を含む実環境全体を監査するので、配布物 (Portable ZIP) に同梱されない dev 依存の advisory でも fail する
 - PyPI に無い依存 (ffmpeg 等の OS バイナリ) は対象外
 - `-c constraints.txt` で固定していない依存は「その日の最新」を監査するため、**同じ commit でも実行日によって結果が変わりうる**
 - `--strict` を付けていないため、editable install した本体は skip される (PyPI 由来でないので監査対象にならない)
-- **PyInstaller 側の解決は ubuntu runner 上で行われる。** Windows 限定の依存 (`pefile` / `pywin32-ctypes` 等、環境マーカーで除外される) は監査対象に入らない。実際の ZIP ビルドは windows runner なので、この差分は残る
+- **監査するのは `ubuntu-latest` / `windows-latest` の 2 つだけ。** macOS 限定の依存は対象外だが、本プロジェクトは Windows のみ対応なので実害はない
+- **ZIP ビルド時に PyInstaller が frozen application へ取り込む内容までは見ない。** 監査対象は PyPI パッケージの版であって、bundle された成果物ではない
 
 ### dependency review を追加した理由 (v0.3.0)
 
