@@ -163,7 +163,11 @@ PR の変更種別に応じて以下を確認する。**code quality (logic / ar
 
 `superpowers:requesting-code-review` skill が dispatch する `superpowers:code-reviewer` subagent に code quality 観点 (logic correctness / architecture / security / code smell / best practices) のレビューを委譲する。subagent は本 skill の責務外の項目 (受け入れ条件 / base sync / 並行 PR / project doc 整合 / マージ後 handoff) には介入しない。
 
-**起動条件**: PR が **code file を 1 つでも touch している場合に起動する**。`docs/**` / `*.md` のみで code file の変更がゼロの PR (= doc-only) では**起動しない** — 委譲先の観点 (logic / architecture / security / code smell) は code diff を前提としており、対象が存在しないため no-op review にしかならない。
+**起動条件**: **原則すべての PR で起動する。非起動は 1 条件だけ** — 変更ファイルが **すべて** `docs/**` または `*.md` (= documentation のみ) の場合に限り起動しない。委譲先の観点 (logic / architecture / security / code smell) は code diff を前提としており、documentation しか無い PR では no-op review にしかならないため。
+
+> **判定は「code file か」ではなく「documentation 以外が 1 つでもあるか」で行う (Codex adversarial-review [medium] 対応)。** 「code file を touch したか」という**肯定形の抽象語**にすると、`.github/workflows/*.yml` / `pyproject.toml` / `constraints.txt` / `*.ps1` / lockfile 等が「code file なのか」の解釈で割れ、**従来は無条件に受けていた code quality review が silent に落ちる**。これらはセキュリティ・実行挙動に直結する。否定形 (documentation だけなら skip) にすれば、**判断に迷う種別はすべて起動側に倒れる**ので安全側で閉じる。
+>
+> `CLAUDE.md` §「destructive write boundary audit checklist」 の「抽象語の観点は具体的な欠陥クラスへの検出力を持たない。検出力は具体列挙にのみ宿る」と同じ理由で、gate は具体条件で書く。
 
 #### 起動記録 (該当時 / 不該当時とも必須)
 
@@ -171,7 +175,7 @@ PR の変更種別に応じて以下を確認する。**code quality (logic / ar
 
 > `code quality subagent 起動: 実施 (finding N 件 → Step 5b 表へ統合)`
 >
-> `code quality subagent 起動: 非実施 (理由: doc-only PR、code file 変更ゼロ)`
+> `code quality subagent 起動: 非実施 (理由: 変更ファイルが全て docs/** または *.md)`
 
 **なぜ「常時起動だから記録不要」にしないか (#945 EPT で 4 回摘出)**: 本 skill は Step 5a の Fable / Codex に「明示 trigger + 該当/不該当とも記録必須」を課している。Step 5.0 だけが記録義務を持たないと、**「記録漏れなのか、そもそも記録不要設計なのか」が事後に追跡できない**。記録義務は「起動が分岐するか否か」ではなく **reviewer 起動判断点というクラス全体**に課す ([`docs/l2-workflow.md` §「規約・ガード導入の 3 点セット」](../../../docs/l2-workflow.md) ②、および本 skill §「起動記録」の「記録義務は分岐を網羅する」原則)。
 
@@ -548,7 +552,7 @@ Step 5b のトリアージ表を前提に、以下のテンプレート構造で
 (義務を課した Step の側に定型がある。ここは置き場所の固定)。
 
 - 並行 PR 確認: <検出ゼロ / [#M ...]>
-- code quality subagent 起動: <実施 (finding N 件 → Step 5b 表へ統合) / 非実施 (理由: doc-only PR、code file 変更ゼロ)>
+- code quality subagent 起動: <実施 (finding N 件 → Step 5b 表へ統合) / 非実施 (理由: 変更ファイルが全て docs/** または *.md)>
 - Fable 俯瞰レビュー: <実施 (finding N 件 / 消化 M 件 / 残 K 件) / 非実施 (理由: ...)>
 - 外部依存規約: <該当 (...) / 非該当 (理由: 本 PR に外部依存の DL / 取得なし)>
 - パス契約: <該当 (...) / 非該当 (理由: パスの生成点・表示点に変更なし)>
