@@ -436,4 +436,93 @@ harness 側のみ 2 点:
 
 ### 実行結果 (per scenario)
 
-(iteration 4 の subagent 結果を以下に記録)
+| Scenario | 成否 | accuracy (raw) | tool_uses | duration | retries | 新規 unclear (raw) | うち**改修対象**帰属 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| G-1 | o | 6/6 | 4 | 103.2s | 0 | 2 | **2** |
+| G-2 | o | 5/5 | 4 | 96.9s | 0 | **0** | **0** |
+| G-3 | o | 5/5 | 7 | 149.8s | 0 | 3 | 2 |
+| **G-4 (hold-out)** | **o** | **5/5** | 8 | 106.2s | 0 | 2 | 2 (G-1 と同一) |
+
+> **overfitting check: 合格。** hold-out G-4 の accuracy 5/5 は直近平均と同水準で、
+> 15 point 以上の低下はない。G-4 は `/review-pr` を読まず `docs/l2-workflow.md` 単独で
+> 実行しており、**job 一意特定の設計が skill を介さず doc だけで機能する**ことが確認できた
+> (executor は plugin ソースを読んで rescue job が `jobClass == "task"` になることまで自力で確認し、
+> `jobClass == "review"` filter で除外する方法に到達した)。
+
+### 構造化 reflection (iteration 4)
+
+**G-1 #7 / G-4 #2 — 帰属: 改修対象 (実バグ。iteration 4b で修正)**
+
+**2 人の executor が独立に同じ点を挙げた。**
+
+- Issue: 読み取り手順のコマンドが `$CLAUDE_PLUGIN_ROOT` を使うが、review 実行は前のターン
+  (別 Bash 呼び出し) なので、この変数は読み取り時点で消えている
+- **実測**: fresh な Bash 呼び出しで `CLAUDE_PLUGIN_ROOT` は **unset**。documented command は
+  `node "/scripts/codex-companion.mjs"` に展開される。これは `docs/l2-workflow.md` §Step 5 が
+  **自分で警告している** `MODULE_NOT_FOUND` の形そのもの
+- Cause: Step 5 の invocation 節と本節が同じ env var を暗黙に共有しており、
+  「別ターンで読む」ケースでの再設定要否に触れていなかった
+- General Fix Rule: 複数ステップにまたがる手順書が「前段で設定した env var を後段でも使う」形を
+  取る場合、各ステップ冒頭に「同一 shell 呼び出し前提 / 別呼び出しなら再設定が必要」を明記する
+
+**G-1 #8 / G-4 #1 — 帰属: 改修対象 (iteration 4b で修正)**
+
+- Issue: 「`latestFinished` / `recent[]` のうち `jobClass == "review"` の最新 entry」が、
+  どちらを先に見るか未規定。jq 等の抽出例も無い
+- Cause: 概念契約 (id という一意識別子で選ぶ) は書いたが、機械的な抽出手順を自然文で済ませた
+- General Fix Rule: 機械可読な JSON を parse させる手順には、少なくとも 1 つの実行可能な
+  抽出コマンド例を併記する。自然文だけだと実行者ごとに parse ロジックがぶれる
+
+**G-3 #5 — 帰属: 改修対象 (iteration 4b で修正)**
+
+- Issue: 「起動記録を `非起動` の理由に畳んでよい」の**完成形の例**が無く、2 つの定型を
+  どう 1 文に合成するかが実行者判断だった
+- General Fix Rule: 「別記録の内容を既存スロットに畳んでよい」と規定する箇所では、
+  畳み込み後の完成形を最低 1 つ添える
+
+**G-3 #6 — 帰属: 改修対象 (iteration 4b で修正)**
+
+- Issue: Step 2.2 item 6 が構文検査 (括弧の有無) だけなのか、理由の中身の妥当性まで見るのかが未規定
+- General Fix Rule: 「理由必須」を課すときは、構文チェックと意味チェックを分けて明示するか、
+  意味チェックは validation では担保しないと明記する
+
+**G-3 #7 — 帰属: 隣接既存節 (対応しない)**
+
+- Issue: `findings_table` がゼロ件のときの記法が subagent 固定 template 側に無く、
+  `/review-pr` 側 (standalone 用) の規定を準用してよいか自明でない
+- 帰属判断: **本 PR が触っていない既存の gap**。#949 の範囲外なので対応しない。
+  Idios 判断待ちの候補として残す
+
+> **iteration 4 は clear ではない** (改修対象帰属の新規 unclear が実バグ 1 件を含め計 4 件)。
+> ただし内訳は「実行可能性の精度」に関するもので、構造的欠陥ではない。
+> **1 consecutive clear はここでリセットされる。**
+
+### Ledger updates
+
+- Added: **env-var-assumed-across-tool-calls** (G-1 #7 / G-4 #2) — 前段で設定した env var を
+  後段の別呼び出しでも使える前提で手順を書く。**実測で確認した唯一の実バグ**
+- Added: **contract-without-extraction-example** (G-1 #8 / G-4 #1) — 機械可読出力の
+  parse 契約を自然文だけで書き、抽出コマンド例を欠く
+- Added: **policy-without-worked-example** (G-3 #5) — 「畳んでよい」等の方針だけ書いて完成形を欠く
+
+### 次の修正 (= iteration 4b、commit `cbc221f` / `b47c2fe`)
+
+1. 読み取り手順に `CLAUDE_PLUGIN_ROOT` の再 export を組み込み、消える理由と失敗形を明記
+2. id の採り方を `latestFinished` → `recent[]` の順で一意に決まる形で明文化 + jq 例を併記
+3. 畳み込み後の完成形を 1 例示す
+4. Step 2.2 item 6 は構文検査のみである旨を明記
+
+(収束判定: **0 consecutive clears** / 打ち切りまで 2 round)
+
+---
+
+## Iteration 5 (convergence)
+
+### Changes (diff from iteration 4)
+
+iteration 4b の 4 点 (上記) を適用済み。harness は G-1 / G-4 の scenario に
+「review 実行は前の Bash 呼び出しだった」を明示 (env var 消失が観測対象に入るようにする harness 修正)。
+
+### 実行結果 (per scenario)
+
+(iteration 5 の subagent 結果を以下に記録)
