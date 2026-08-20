@@ -3,7 +3,7 @@
 import re
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import click
 import pytest
@@ -193,6 +193,44 @@ def test_version_short_flag(monkeypatch: pytest.MonkeyPatch):
     result = runner.invoke(app, ["-V"])
     assert result.exit_code == 0
     assert "allaganeye" in result.stdout
+
+
+def test_version_lowercase_short_flag(monkeypatch: pytest.MonkeyPatch):
+    """`allaganeye -v` should also print the version (#376).
+
+    Most lightweight CLIs use lowercase ``-v`` for version, and users who try it
+    used to get ``No such option: -v``.
+    """
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
+    result = runner.invoke(app, ["-v"])
+    assert result.exit_code == 0, f"`-v` should print version, got: {result.output}"
+    assert "allaganeye" in result.stdout
+
+
+def test_subcommand_v_still_means_verbose(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """`allaganeye split <video> -v` must stay verbose, not version (#376).
+
+    The top-level and subcommand parsers are separate, so adding ``-v`` to the
+    root callback must not shadow the subcommand's verbose flag. Pin both halves
+    of the collision: this test and ``test_version_lowercase_short_flag`` fail in
+    opposite directions if the two ever get wired to the same parser.
+    """
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
+    video = tmp_path / "dummy.mp4"
+    video.write_bytes(b"\x00")
+    with patch(MODULE) as mock_run:
+        mock_run.return_value = None
+        result = runner.invoke(app, ["split", str(video), "-v"])
+
+    assert mock_run.called, (
+        f"`split ... -v` must reach run_split (verbose), not the version "
+        f"callback. exit={result.exit_code} output={result.output}"
+    )
+    assert mock_run.call_args.kwargs.get("verbose") is True, (
+        f"-v must be parsed as verbose=True, got {mock_run.call_args.kwargs!r}"
+    )
 
 
 def test_strip_ansi_handles_non_csi_escapes():
@@ -1550,6 +1588,108 @@ def test_main_emits_hint_for_single_dash_version(monkeypatch, capsys):
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     assert "Did you mean --version?" in combined
+
+
+def test_single_dash_version_hint_survives_lowercase_v(monkeypatch, capsys):
+    """`allaganeye -version` keeps its hint after `-v` became a version alias (#376).
+
+    click reads `-version` as the short-option cluster `-v -e -r -s -i -o -n`. Now
+    that `-v` is a real option the first *unknown* letter moved from `-v` to `-e`,
+    so a test asserting the old message would have silently stopped covering #440.
+    The user-visible contract is the hint, not which letter is reported.
+    """
+    from allaganeye.cli import main
+
+    monkeypatch.setenv("ALLAGANEYE_INTEGRITY_SKIP", "1")
+    monkeypatch.setattr("sys.argv", ["allaganeye", "-version"])
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+
+    assert excinfo.value.code != 0
+    combined = "".join(capsys.readouterr())
+    assert "Did you mean --version?" in combined, (
+        f"the #440 hint must survive the -v alias, got: {combined}"
+    )
+    assert "No such option: -e" in combined, (
+        f"expected the cluster to now fail on -e (documented in docs/cli-spec.md), "
+        f"got: {combined}"
+    )
+
+
+class TestClosedStdoutExitsQuietly:
+    """`allaganeye ... | head` must not traceback when the reader goes away (#652).
+
+    Windows + Python 3.12 raises ``OSError: [Errno 22] Invalid argument`` (not
+    ``BrokenPipeError``) when writing to a pipe whose reader has exited, so both
+    shapes have to be handled.
+    """
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            pytest.param(BrokenPipeError(32, "Broken pipe"), id="broken-pipe-posix"),
+            pytest.param(OSError(22, "Invalid argument"), id="einval-windows"),
+        ],
+    )
+    def test_main_exits_zero_without_traceback(self, monkeypatch, capsys, exc):
+        from allaganeye import cli
+
+        monkeypatch.setattr("sys.argv", ["allaganeye", "split", "x.mp4"])
+        monkeypatch.setattr(cli, "app", MagicMock(side_effect=exc))
+
+        with pytest.raises(SystemExit) as excinfo:
+            cli.main()
+
+        assert excinfo.value.code == 0, (
+            f"closed stdout should exit 0 quietly, got {excinfo.value.code}"
+        )
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+        assert "Traceback" not in combined, f"traceback leaked to the user: {combined}"
+        assert "Errno 22" not in combined, f"raw OSError leaked to the user: {combined}"
+
+    def test_unrelated_oserror_is_not_swallowed(self, monkeypatch):
+        """A genuine I/O failure must still propagate (#652 must not mask errors).
+
+        Swallowing every OSError here would turn e.g. a failed metadata write into
+        a silent exit 0, which is strictly worse than the traceback being fixed.
+        """
+        from allaganeye import cli
+
+        monkeypatch.setattr("sys.argv", ["allaganeye", "split", "x.mp4"])
+        monkeypatch.setattr(
+            cli, "app", MagicMock(side_effect=OSError(28, "No space left on device"))
+        )
+
+        with pytest.raises(OSError, match="No space left on device"):
+            cli.main()
+
+
+def test_tolerate_closed_stdout_swallows_pipe_errors():
+    """Progress rendering must not abort detection when stdout is gone (#652)."""
+    from allaganeye.commands.split_matches import _tolerate_closed_stdout
+
+    with _tolerate_closed_stdout():
+        raise OSError(22, "Invalid argument")
+
+    with _tolerate_closed_stdout():
+        raise BrokenPipeError(32, "Broken pipe")
+
+    with _tolerate_closed_stdout():
+        raise ValueError("I/O operation on closed file")
+
+
+def test_tolerate_closed_stdout_reraises_unrelated_errors():
+    """It must stay a narrow shield, not a blanket except (#652)."""
+    from allaganeye.commands.split_matches import _tolerate_closed_stdout
+
+    with pytest.raises(OSError, match="No space left on device"):
+        with _tolerate_closed_stdout():
+            raise OSError(28, "No space left on device")
+
+    with pytest.raises(RuntimeError):
+        with _tolerate_closed_stdout():
+            raise RuntimeError("unrelated")
 
 
 def test_main_emits_hint_for_single_dash_help(monkeypatch, capsys):

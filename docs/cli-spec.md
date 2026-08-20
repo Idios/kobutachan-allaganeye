@@ -14,7 +14,7 @@ CLI コマンド・引数・オプションの**構文**をまとめる。各オ
 
 | オプション | 説明 |
 | --- | --- |
-| `--version`, `-V` | バージョン表示 (#337)。Portable ZIP では同梱物 integrity 検査を兼ね、欠損時 exit 7 (#668)。検査は `allaganeye/cli.py` の `version_callback` からのみ呼ばれるため、他のサブコマンド実行経路では exit 7 は発生しない |
+| `--version`, `-V`, `-v` | バージョン表示 (#337、`-v` は #376 で追加)。**`-v` がバージョン表示になるのはトップレベルのみ**で、`allaganeye split <video> -v` のようにサブコマンド側に置いた `-v` は従来どおり verbose (両者は別の parser が処理する)。Portable ZIP では同梱物 integrity 検査を兼ね、欠損時 exit 7 (#668)。検査は `allaganeye/cli.py` の `version_callback` からのみ呼ばれるため、他のサブコマンド実行経路では exit 7 は発生しない |
 | `--help` | ヘルプ表示 (短縮形なし) |
 
 ## split コマンド
@@ -621,9 +621,11 @@ Error: ffmpeg failed
 Usage: allaganeye [OPTIONS] COMMAND [ARGS]...
 Try 'allaganeye --help' for help.
 
-Error: No such option: -v
+Error: No such option: -e
 Did you mean --version?
 ```
+
+> `-version` は click に short option の集合 (`-v -e -r -s -i -o -n`) として解釈される。#376 で `-v` をトップレベルの version alias にしたため、報告される未知 option は `-v` から**次の未知文字 `-e` に変わった**。`_suggest_long_option_hint` は失敗した option 文字ではなく argv の token を走査するので、`Did you mean --version?` のヒントは従来どおり出る。
 
 - 出力先: stderr (click `exc.show()` + `click.echo(..., err=True)` の hint 行)
 - 終了コード: 2 (`NoSuchOption.exit_code` = click UsageError 系のデフォルト)

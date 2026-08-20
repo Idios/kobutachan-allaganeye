@@ -19,6 +19,55 @@ from allaganeye.exceptions import (
 
 _VERBOSE_HINT = "  (Run with -v / --verbose for full details)"
 
+
+class _TolerantStdout:
+    """stdout proxy that ignores writes once the reader has gone away (#652).
+
+    ``allaganeye split <video> -v | head -20`` closes our stdout as soon as head
+    has its lines. Every subsequent write then raises -- on Windows + Python 3.12
+    as ``OSError: [Errno 22] Invalid argument`` rather than ``BrokenPipeError``.
+
+    Guarding individual call sites does not work here: the writes are spread across
+    ``typer.echo`` in the environment header, click's progress bars, and direct
+    ``sys.stdout.write`` calls, and typer prints its own pretty traceback before
+    ``main`` ever sees the exception. Swapping the stream itself covers all of them
+    at one point.
+
+    Only the closed-stream errnos are swallowed (see ``is_closed_stream_error``);
+    anything else propagates so a real I/O failure is still visible. Every other
+    attribute delegates to the wrapped stream, so click's ``isatty()`` / ``encoding``
+    / ``fileno()`` probes keep seeing the truth.
+    """
+
+    def __init__(self, wrapped: object) -> None:
+        self._wrapped = wrapped
+
+    def write(self, data: str) -> int:
+        from allaganeye.commands.split_matches import is_closed_stream_error
+
+        try:
+            return self._wrapped.write(data)  # type: ignore[attr-defined]
+        except (OSError, ValueError) as exc:
+            if not is_closed_stream_error(exc):
+                raise
+            # Report the write as accepted: callers (click) treat a short write
+            # as an error worth retrying, which would just raise again.
+            return len(data)
+
+    def flush(self) -> None:
+        from allaganeye.commands.split_matches import is_closed_stream_error
+
+        try:
+            self._wrapped.flush()  # type: ignore[attr-defined]
+        except (OSError, ValueError) as exc:
+            if not is_closed_stream_error(exc):
+                raise
+
+    def __getattr__(self, name: str) -> object:
+        # Transparent delegation: click probes isatty() / encoding / fileno().
+        return getattr(self._wrapped, name)
+
+
 app = typer.Typer(
     name="allaganeye",
     help="FF14 Frontline video auto-highlight extraction tool.",
@@ -53,6 +102,14 @@ def _root_callback(
         typer.Option(
             "--version",
             "-V",
+            # #376: lowercase ``-v`` is the convention in most lightweight
+            # CLIs, and users who tried it got ``No such option: -v``. This is
+            # safe because the root callback and the subcommand parsers are
+            # separate: ``allaganeye -v`` prints the version, while
+            # ``allaganeye split <video> -v`` still reaches the subcommand's
+            # own ``-v`` verbose flag (pinned from both sides in
+            # tests/test_cli.py).
+            "-v",
             callback=version_callback,
             is_eager=True,
             help="Show version and exit.",
@@ -674,6 +731,12 @@ def main() -> None:
     ``app()`` entry point.
     """
     rv: int = 0
+    # #652: install before any output so a pager/head closing our stdout cannot
+    # turn into a traceback. Wrapping the stream (rather than each write site)
+    # is what makes this cover typer.echo, click progress bars and direct writes
+    # alike; typer prints its own pretty traceback before the except below could
+    # ever see the error, so catching alone is not enough.
+    sys.stdout = _TolerantStdout(sys.stdout)  # type: ignore[assignment]
     try:
         result = app(standalone_mode=False)
         if isinstance(result, int):
@@ -693,4 +756,37 @@ def main() -> None:
     except click.exceptions.Abort:
         click.echo("Aborted!", err=True)
         rv = 1
+    except (OSError, ValueError) as exc:
+        # #652: `allaganeye ... | head -N` closes our stdout mid-run. On Windows
+        # that surfaces as OSError EINVAL (not BrokenPipeError), which used to
+        # escape as a traceback. Progress rendering is already shielded inside
+        # split_matches, so reaching here means a write outside that shield lost
+        # the race; exit quietly rather than blaming the user for using a pager.
+        # Narrow on purpose -- a real I/O failure (ENOSPC etc.) still propagates.
+        from allaganeye.commands.split_matches import is_closed_stream_error
+
+        if not is_closed_stream_error(exc):
+            raise
+        _silence_stdout_for_shutdown()
+        rv = 0
     sys.exit(rv)
+
+
+def _silence_stdout_for_shutdown() -> None:
+    """Point stdout at the null device so interpreter shutdown stays quiet (#652).
+
+    Without this, CPython's final flush of the dead pipe prints
+    ``Exception ignored in: <_io.TextIOWrapper name='<stdout>' ...>`` after we have
+    already decided to exit cleanly -- the traceback the issue is about, just moved
+    later. Best-effort: if even the redirect fails there is nothing further to do.
+    """
+    import os
+
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+    except (OSError, ValueError):
+        # stdout may have no fileno (pytest capture) or already be unusable.
+        # Deliberately NOT a bare ``except Exception``: that would also swallow
+        # a NameError from a missing import and keep this helper silently dead.
+        pass
