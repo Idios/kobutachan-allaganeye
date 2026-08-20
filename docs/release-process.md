@@ -160,6 +160,73 @@ CHANGELOG entry: 不要 (内部専用 — <CI ガード / 開発 doc / skill / �
 - **既リリース済みセクション** — `## [Unreleased]` と最新 version セクション以外は走査しない (裁定 D7 の既リリース節不可侵。v0.3.0 の `### Added` には内部用語が 14 箇所あり、遡って直さない方針のため scope を切らないと恒久 red になる)
 - **禁止語のリスト漏れ** — 語彙リストは人手で維持する。新しい内部段階名が生まれても自動では追加されない
 
+## ブランチ保護と required status checks (#947)
+
+CI の起動条件 (workflow の `on:`) と、**red を実際にマージ阻止へ変換する機構** (repository ruleset) は別物である。前者だけでは「赤いまま Merge ボタンを押せる」状態が残るため、両方を揃えて初めてゲートになる。
+
+**ruleset は repo 外設定 (GitHub の Settings > Rules) にあり、リポジトリのファイルとして版管理されない。** そのため本節を SSoT とし、設定を変更したときは本節も同時に更新する。
+
+### 現行の ruleset (2026-08-20 投入)
+
+| 項目 | 値 |
+| --- | --- |
+| ruleset 名 | `required-status-checks` |
+| enforcement | `active` |
+| 対象 ref | **`refs/heads/main` のみ** (下記 §対象を `main` に限る理由 を参照) |
+| rule | `required_status_checks` |
+| strict (branch up-to-date 要求) | `false` (無関係な PR のマージのたびに全 PR の rebase を強いるため) |
+| bypass actors | なし (repository admin も required 緑まで手動マージできない) |
+
+required に指定する check は以下の 8 件。
+
+| check 名 | 定義元 | 役割 |
+| --- | --- | --- |
+| `python` | `.github/workflows/ci.yml` | ruff / pyright / pytest |
+| `gui-frontend` | `.github/workflows/ci.yml` | eslint / tsc / vitest / vite build |
+| `gui-rust` | `.github/workflows/ci.yml` | cargo check |
+| `installer-pester` | `.github/workflows/ci.yml` | installer スクリプトの Pester テスト |
+| `markdownlint` | `.github/workflows/markdownlint.yml` | markdownlint-cli2 |
+| `validate-checklist` | `.github/workflows/pr-checklist.yml` | PR 本文の Self-Test Report / チェックボックス |
+| `feature-announcement` | `.github/workflows/ci.yml` | 出荷 CLI サブコマンドが入口 doc で告知されているか (#944) |
+| `screenshot-freshness` | `.github/workflows/ci.yml` | README スクショが現行 GUI ソースから撮られているか (#944) |
+
+**required に入れる check は「全 PR で必ず report される」ものに限る。** GitHub は workflow が paths filter で丸ごと skip された場合その check を report しないため、条件付き起動の workflow を required にすると、条件に当たらない PR が `Expected — waiting for status` のまま恒久的にマージ不能になる。`markdownlint` を required にするにあたり [`markdownlint.yml`](../.github/workflows/markdownlint.yml) の paths filter を撤去したのはこのため。
+
+### 対象を `main` に限る理由 (実測、2026-08-20)
+
+**`required_status_checks` は PR のマージだけでなく、対象 ref への `git push` すべてに適用される。** `release/*` や `develop-*` を対象に含めるとリリース手順が自分自身をロックする。使い捨て ruleset (対象 `refs/heads/rulesetprobe/*`、required 8 件、後片付け済) で実測した結果は以下のとおり。
+
+| 操作 | `do_not_enforce_on_create` | 結果 |
+| --- | --- | --- |
+| 新規ブランチ作成 (`git push origin <sha>:refs/heads/rulesetprobe/creation`) | `false` | **reject** — `GH013: Repository rule violations found` / `8 of 8 required status checks are expected` |
+| 同上 | `true` | 通る (exit 0) |
+| 既存ブランチへの追加 push | `true` | **reject** (同じ `GH013`)。`do_not_enforce_on_create` は**作成時しか免除しない** |
+
+これが衝突する具体箇所は [`.claude/skills/release/SKILL.md`](../.claude/skills/release/SKILL.md) §Step 4 で、CHANGELOG 見出し日付の commit を「リリース PR の head ブランチへ**直接 commit / push** する。日付のためだけの新しい PR は作らない」と定めている。裁定 D4 により patch release のリリース PR head は `develop-<version>` なので、**`develop-*` を保護すると次の patch release のタグ打ちで即座に発火する**。`main` 以外を対象にすると必ずこの Step と衝突する。
+
+したがって対象は `main` のみとし (Idios 判断 2026-08-20)、`develop-*` / `release/*` は保護しない。**この選択は下記「見ていない集合」の 1 項目目をそのまま受け入れることを意味する。**
+
+### 変更手順 (順序厳守)
+
+1. **先に workflow 側を直す** — 新しい base パターンを足す場合は `ci.yml` / `markdownlint.yml` の `pull_request.branches` を先に更新し、その変更が対象ブランチへマージされていること
+2. **その後に ruleset を更新する** — 逆順にすると、workflow が起動しない組み合わせで check が never-reported になりマージ不能に陥る
+
+### 確認コマンド
+
+```bash
+gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
+```
+
+`[]` が返るなら **保護は 1 つも効いていない** (本節の記述と実態が乖離している)。個別 ruleset の中身は `gh api repos/Idios/kobutachan-allaganeye/rulesets/<id>` で確認する。
+
+### この機構が見ていない集合
+
+- **`develop-*` / `release/*` 宛の PR は 1 本もマージ阻止されない。** 保護対象が `main` だけなので、日常の開発 PR は CI が red のままでも手動マージできる。**この機構が実際にマージを止めるのは「`main` へ入る瞬間」の 1 回だけ**であり、それまでの全 PR で CI は「気づくための信号」に留まる。これは上記 §対象を `main` に限る理由 で意図的に受け入れた縮退である
+- **check が report されたかしか見ない。** paths filter で skip された job の妥当性も、job の中身が実際に何を検査しているかも見ない
+- **required の 8 件以外は red でもマージを止めない。** `hook-test` / `doc-tauri-commands-drift` / `doc-error-hint-drift` / `doc-code-refs` / `shellcheck` / `version-check` / `cargo audit` / `npm audit` / `dependency review` は informational
+- **対象 ref に列挙しないブランチは無保護。** 将来 `hotfix/*` 等を切る場合は本節と workflow の両方を更新しないと素通りする
+- **ruleset は repo 外設定なので、GitHub 側で誰かが無効化しても diff に現れない。** 上記の確認コマンドを `/release` Step 0 で実行することが唯一の検知経路
+
 ## レイヤーリリース受け入れゲート
 
 各リリース (minor / patch) (`release/vX.Y.Z → main`) の実行前に、本節のチェックリストを全件達成する。共通項目はすべてのリリース (minor / patch) に適用、レイヤー固有項目は対応するバージョンで適用する。`/release` skill の Step 0 で本節を参照する (`.claude/skills/release/SKILL.md`)。
@@ -170,6 +237,7 @@ CHANGELOG entry: 不要 (内部専用 — <CI ガード / 開発 doc / skill / �
 
 - [ ] `develop-x.x.0` 上で対象スコープの全 PR がマージ済み
 - [ ] CI 全ジョブ (Python / GUI frontend / GUI Rust / Pester) が**リリース PR の HEAD** (`release/vX.Y.Z` tip) で緑 — develop tip は release ブランチに載せた出荷直前 commit を含まないため基準にしない
+- [ ] required status checks の ruleset が生きている (`gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'` が非空で、[§ブランチ保護と required status checks](#ブランチ保護と-required-status-checks-947) の 8 件を含む) — ruleset は repo 外設定で diff に現れないため、無効化を検知できるのはこの確認だけ (#947)
 - [ ] [バージョン保持箇所](versioning.md#バージョン管理場所)が**全箇所**`x.y.0` に更新されている (`python scripts/check_version_consistency.py` が exit 0)
 - [ ] `CHANGELOG.md` に対象バージョンセクションが存在 (**日付 = タグ打ち日 JST** (§タグ運用) / 主要変更点 / breaking changes)
 - [ ] 対象バージョンセクションの entry が **§CHANGELOG entry の記述規約 に適合**している — 掲載範囲が利用者から見た振る舞いの変化に限られ、3 部構成 (太字機能名 + issue 番号 / 使い方 2-3 行 / 詳細リンク) で書かれ、内部用語が spec 側へ寄せられていること (`python scripts/check_changelog_style.py` が exit 0。ただし同 script は**語彙と節の形しか見ず、entry の欠落や内容の正しさは見ない**ので、読者視点の適合はここで人が確認する)
