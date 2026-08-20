@@ -262,7 +262,7 @@ F-1 (doc-only) / F-2 (code PR) とも 4 行ないし 5 行の記録 slot をす�
 
 したがって **#945 の受け入れ条件のうち「`/release` Step 0a-2 の数値記入 required」と
 「Self-Test Report の Fable 欄 + `validate-checklist` red 実証」の 2 件は本 PR では未達**。
-#978 マージ後に rebase して追補する。
+PR #978 のマージ後に rebase して追補する。
 
 > **Codex adversarial-review [high] が同じ点を指摘した** (「release firing point が未実装で、
 > 受け入れ条件は `allaganeye-fable-consult` が `release` と `review-pr` の**両方**で hit する
