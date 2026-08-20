@@ -1411,7 +1411,7 @@ def _decode_chunk_cpu(
     ``VideoProcessingError`` from ``_resolve_fps_rational`` instead of
     silently degrading to the version-dependent legacy path.  ``probe``
     hard-fails on ``fps <= 0``, so production callers always supply one.
-    See ``docs/video-processing.md`` for the retired env var's name.
+    See ``CHANGELOG.md`` for the retired env var's name.
     """
     if not chunk_timestamps:
         return {}

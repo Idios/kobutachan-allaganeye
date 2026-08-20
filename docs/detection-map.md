@@ -58,7 +58,7 @@
 - **`_filter_and_extract_segments`**: `min_match_duration` (default 300 s) でリザルト画面を backstop 除去する。spec §3.5 でこの duration filter が真の backstop と実証されている。
 - **`_flag_post_match_trailing`**: 試合後 trailing を scorebar 不在 (弱い否定信号) を根拠に判定するが、#805 段階2 で**削除を廃止し `post_match: true` フラグ方式に置換**した (旧 `_drop_post_match_trailing` の `segments[:-1]` 不可逆削除を撤去)。flag された segment は metadata に保持され default split (MP4) からのみ除外されるため、`_has_scorebar_v2` FN 環境でも実試合を silent に削除する事故 (試合 1 本喪失) は構造的に起こらない (削除という操作自体が存在しない)。`_has_scorebar_v2` を直接呼ぶ coupling は維持 (§4)。load-bearing (再編対象)。
 - **GPU Pass1 (`scan_gpu`)**: `--gpu` 経路の主実装。CPU Pass1 と結果 parity が必要 (Codex #8)。load-bearing。
-- **legacy fps filter path**: #576 で新 path を default 化、env var `ALLAGANEYE_DETECT_FPS_FILTER=1` の rollback 専用。v0.3.x で削除予定。cruft。
+- **legacy fps filter path**: #576 で新 path を default 化し、#864 で rollback 用 env var ごと撤去済み。`_decode_chunk_cpu_legacy` / `_decode_chunk_legacy` は現存しない。撤去完了。
 - **`localize_scorebar` (P1)**: 再アーキの分類器核。VTuber 配信の任意 inset 位置に対応する anchor として設計。load-bearing (新基盤)。
 - **`detect_region_*` (S1/S3)**: re-plan R6 で scorebar 帯 anchor を主軸とし S3 を補助に降格。ハーネス実測前は確証が持てないため判定保留。
 - **`consensus_scorebar_localization`**: #822 で `detect_scorebar_band_region` (--vtuber Stage 0) と masked anchor 解決の共有 core として抽出。既存 caller は挙動不変 (unit pin で担保)。
@@ -137,7 +137,6 @@ segments 抽出 (_filter_and_extract_segments)
 ### 5.3 触ってはいけない (Phase 4 以降)
 
 - `_flag_post_match_trailing` (#805 で非破壊化済。§4 の通り v2 coupling 故に L3 再アーキ Phase 1-3 は据え置き)。
-- legacy fps filter path (cruft、#864 で撤去)。
 
 ### 5.4 masked path の現状 (2 層構成、#822)
 
