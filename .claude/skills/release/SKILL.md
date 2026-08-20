@@ -37,11 +37,14 @@ description: deferred issue レビュー → バージョンバンプ → リリ
 Step 0a の全件達成を確認したら、**`Agent(subagent_type=allaganeye-fable-consult)` を起動して
 リリース記述を俯瞰レビューさせる**。本ステップはスキップできない。
 
-**対象** (3 点をまとめて渡す):
+**対象** (2 点をまとめて渡す。**本 step の時点で実在するものだけを挙げてある**):
 
-- `CHANGELOG.md` の対象バージョンセクション — [`docs/release-process.md` §CHANGELOG entry の記述規約](../../../docs/release-process.md) を満たしているか。**この節はそのまま GitHub Release の本文になる**ので、読者 (FF14 プレイヤー) の語彙で書けているか
-- release notes / リリース PR 本文の記述
-- Step 0a の受け入れゲート達成状況 — 「達成」と付けた項目が実際に達成の実質を持つか
+- **`CHANGELOG.md` の `## [Unreleased]` セクションの内容** — [`docs/release-process.md` §CHANGELOG entry の記述規約](../../../docs/release-process.md) を満たしているか。読者 (FF14 プレイヤー) の語彙で書けているか、内部語彙が混入していないか
+- **Step 0a の受け入れゲート達成状況** — 「達成」と付けた項目が実際に達成の実質を持つか
+
+> **release notes を別途渡す必要はない。** [`scripts/extract_release_notes.py`](../../../scripts/extract_release_notes.py) が CHANGELOG の当該セクションを**丸ごと抽出して GitHub Release 本文にする**ので、**CHANGELOG を見ることが release notes を見ることと等しい**。
+>
+> **この時点で存在しないものを対象に挙げない。** 見出しの `## [Unreleased]` → `## [<版>] - YYYY-MM-DD` へのリネームも、リリース PR 本文も **Step 3** で作られる。本 step は Step 0a 直後 (Step 0b より前) に置かれているため、それらはまだ無い。無いものを対象に書くと、実行者が代替物を発明して渡すことになる (#945 Phase 2 の EPT で実際に発生した)。
 
 **観点**: 利用者から見た振る舞いの記述漏れ / 内部語彙の混入 / 既存 doc との矛盾 / スコープ過大。
 コードの技術的欠陥は対象外 (それは Codex、`CLAUDE.md` §「Fable と Codex の棲み分け」)。
