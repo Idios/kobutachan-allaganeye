@@ -31,8 +31,6 @@ const context = {
     },
   },
 };
-// PR_FILES が与えられたときだけ listFiles を生やす。未指定なら github は空のままで、
-// checker 側の「files 取得不可 → semantic 検査 skip」経路を通る (従来テストの挙動を保つ)。
 // PR_FILES 未指定なら「1 file の code PR」を既定にする。#945 で checker が fail-closed に
 // なったため、files を渡さない既存テストが全部 red になるのを避ける (それらは Fable 検査の
 // 対象外を見ているテストであり、file list の可用性を測る意図ではない)。
