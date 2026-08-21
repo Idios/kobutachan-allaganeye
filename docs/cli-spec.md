@@ -581,32 +581,46 @@ timestamp,brightness
 
 verbose モードの traceback は CLI ハンドラが `raise typer.Exit(...) from None` で上位に抜ける直前、元の例外が `sys.exc_info()` に残っている段階で `traceback.format_exception(type(exc), exc, exc.__traceback__)` により生成される。`from None` で traceback 自体を抑制しているわけではなく、典型的なユーザーには邪魔になるため default / -q では出さない設計。
 
-出力例 (ffmpeg 失敗 + `-v`):
+出力例 (ffprobe 失敗 = 動画として読めないファイルを渡した場合 + `-v`):
 
 ```text
-Error: ffmpeg failed
-  command: ffmpeg -i recording.mkv ...
+Error: ffprobe failed
+  command: ...\ffprobe.EXE -v quiet -print_format json -show_format -show_streams broken.mp4
   return_code: 1
   stderr_tail:
-    NAL unit type 12 not supported
 Traceback (most recent call last):
-  File "...\allaganeye\cli.py", line 163, in split
-    run_split(video_path, config, verbose=verbose, quiet=quiet)
+  File "...\allaganeye\video\probe.py", line 70, in probe_video
+    result = subprocess.run(
+             ^^^^^^^^^^^^^^^
   ...
-allaganeye.exceptions.VideoProcessingError: ffmpeg failed
+subprocess.CalledProcessError: Command '[...]' returned non-zero exit status 1.
+
+The above exception was the direct cause of the following exception:
+
+  ...
+  File "...\allaganeye\video\probe.py", line 98, in probe_video
+    raise VideoProcessingError(
+allaganeye.exceptions.VideoProcessingError: ffprobe failed
 ```
+
+> `stderr_tail` がこの例で空なのは、`probe_video` が ffprobe を `-v quiet` で起動して
+> いるため (`allaganeye/video/probe.py`)。`command` / `return_code` / `stderr_tail` の
+> 3 key は `VideoProcessingError` の `context` に入れた分がそのまま `verbose_detail()`
+> で描画される (`allaganeye/exceptions.py`)。ffmpeg 側の失敗はこの 3 key ではなく
+> メッセージ本文に stderr を埋め込む形が多い (例: `ffmpeg split failed for <name>: <stderr>`、
+> `allaganeye/video/splitter.py`)。
 
 出力例 (同じエラー / default):
 
 ```text
-Error: ffmpeg failed
+Error: ffprobe failed
   (Run with -v / --verbose for full details)
 ```
 
 出力例 (同じエラー / `-q`):
 
 ```text
-Error: ffmpeg failed
+Error: ffprobe failed
 ```
 
 ### click-level option-parse error (#440 / PR #632)
