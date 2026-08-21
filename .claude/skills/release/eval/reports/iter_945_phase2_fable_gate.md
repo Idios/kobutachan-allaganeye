@@ -252,7 +252,41 @@ EPT の 2 consecutive clears **後**に Codex へかけたところ、EPT が見
 > しかも「skip する (意図的に安全側)」という**逆の主張**が残っており、
 > 運用者向けの runbook として有害だった。[[feedback_mirroring_impl_copies_latent_bugs]] の
 > 変種 — 未検証の主張が契約 doc に昇格したまま残る。
-> **挙動を変える commit では、その挙動を説明している doc を同じ commit で探して直す。**
+
+| round | verdict | finding | 対応 |
+| --- | --- | --- | --- |
+| 4 | needs-attention | [medium] 孤児化した旧 JSDoc が「skip する」と主張 (置換範囲を関数本体に限ったため上の JSDoc が残った) | 削除 |
+| 5 | needs-attention | [medium] test harness 冒頭に同種の旧コメント 2 行 | 削除 + **repo 全体 sweep** |
+| 6 | **approve** | **No material findings** (私の 4 件の分類も検証され正当と確認) | — |
+
+### round 3-5 は同一クラス 3 連続 — 原因は指摘内容ではなく私の sweep 手順
+
+`file list が取れなければ skip` という**実装と逆の記述**が、SKILL.md → JSDoc →
+test harness と 3 回別々の場所から出た。毎回 fix したが、
+**3 回とも私が「そのとき思いついたファイルを列挙して grep」しており範囲が違っていた**。
+
+round 5 でファイル指定をやめ **repo 全体を grep** した結果、残 hit 4 件はすべて正当
+(履歴記述 2 / 実装と一致 2) で、round 6 が approve。
+
+**教訓 (memory へ)**: 挙動を変えたら doc を同 commit で掃く。ただし
+**grep 範囲を 1 ディレクトリに絞らない** — doc は散文だけでなく**実装ファイルの JSDoc、
+テストのコメント、テスト名**にもある。関数を書き換えるときは
+**その関数の JSDoc が置換範囲に入っているか**確認する (本体だけ置換すると孤児化する)。
+
+### Codex 6 round の性質は 2 相に分かれた
+
+| round | finding | 性質 |
+| --- | --- | --- |
+| 1 | checkbox しか見ない | **設計の穴** |
+| 2 | 行削除 / decoy / silent skip / placeholder | **実装の穴 (high 含む)** |
+| 3-5 | doc と実装の契約不一致 ×3 | **sweep 漏れ** |
+| 6 | なし | approve |
+
+**gate 本体は round 2 で収束**しており、round 3 以降は新しい回避形も設計否定も出ていない。
+
+> **Codex の検証範囲の限界 (round 6 が自己申告)**: `Behavioral test execution was blocked by
+> the environment policy` のため、approve は **read-only の diff 検査と text sweep に基づく**。
+> 挙動は本セッションで実測済み (119 pass + 回避形の注入実証 + 検査を一時無効化して赤を確認)。
 
 ### round 2 [medium] は自分の判断を覆した
 
