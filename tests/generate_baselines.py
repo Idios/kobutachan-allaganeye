@@ -63,6 +63,12 @@ def main() -> None:
             min_match_duration=300.0,
             min_blackout_duration=3.0,
             src_resolution=(meta["width"], meta["height"]),  # scorebar filter (#529)
+            # #864: mirror the production detect_kwargs (split_matches.py).
+            # Omitting these used to silently select the pre-#576 fps-filter
+            # path, so regenerated baselines would not match the shipped one.
+            source_fps=meta["fps"],
+            source_fps_num=meta["fps_num"],
+            source_fps_den=meta["fps_den"],
         )
         elapsed = time.monotonic() - start
 

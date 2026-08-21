@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ビルドした時点で入手できる最新版が入るため、同じ v0.3.x でも検出結果が変わりうる
   状態でした。
 
+### Removed
+
+- **旧検知方式へ戻す環境変数を削除** ([#864](https://github.com/Idios/kobutachan-allaganeye/issues/864)):
+  v0.3.0 で「次の修正版で削除予定」と告知していた `ALLAGANEYE_DETECT_FPS_FILTER` を
+  削除しました。設定しても**何も起こりません** (無視されます) ので、シェルや
+  タスクスケジューラに残している場合は消して構いません。**検出結果は v0.3.0 から
+  変わりません**。詳細は
+  [docs/video-processing.md](docs/video-processing.md) を参照。
+
 ## [0.3.0] - 2026-08-04
 
 L3 (配信形式対応 + 性能改善) リリース。エリアマップ切り抜き (`minimap` CLI + GUI 画面) と

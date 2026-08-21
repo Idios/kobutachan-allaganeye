@@ -1962,6 +1962,88 @@ class TestCaptureRegionsCache:
             "None -- must NOT synthesize FULL_FRAME"
         )
 
+    def test_malformed_capture_regions_warning_names_the_cache_file(
+        self, cache_video, tmp_path, caplog
+    ):
+        """破損 cache の警告に、どの cache ファイルが原因かが出る (#906).
+
+        #879 で path 版から純関数へ抽出した際に、警告文から cache path が落ちた。
+        cache 破損は稀なので診断性のみの問題だが、落ちたままだと「どのファイルを
+        消せばよいか」がログから読めない。
+        """
+        import logging
+
+        from allaganeye.commands.split_matches import _capture_regions_from_cache_data
+
+        cache_path = tmp_path / ".detection_cache.json"
+        malformed_regions = {
+            "coarse": {
+                "x": 0.0,
+                "y": 0.0,
+                "w": 1.0,
+                "h": 1.0,
+                # "confidence" key missing -> invalid CaptureRegion
+                "source": "fallback",
+            },
+            "segments": [],
+            "fallback_reason": None,
+        }
+        self._write_cache(
+            cache_path, cache_video, extra={"capture_regions": malformed_regions}
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+
+        with caplog.at_level(
+            logging.WARNING, logger="allaganeye.commands.split_matches"
+        ):
+            result = _capture_regions_from_cache_data(data, cache_path=cache_path)
+
+        assert result is None
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+        ]
+        assert any(str(cache_path) in m for m in warnings), (
+            f"warning must name the offending cache file {cache_path}, got: {warnings}"
+        )
+
+    def test_malformed_capture_regions_warning_without_path_still_warns(
+        self, cache_video, tmp_path, caplog
+    ):
+        """cache_path を渡さない呼び出しでも警告は出る (#906 後方互換).
+
+        引数は optional なので、path を持たない呼び出し元がいても警告そのものは
+        失われない (path 部分だけが省かれる)。
+        """
+        import logging
+
+        from allaganeye.commands.split_matches import _capture_regions_from_cache_data
+
+        cache_path = tmp_path / ".detection_cache.json"
+        self._write_cache(
+            cache_path,
+            cache_video,
+            extra={
+                "capture_regions": {
+                    "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0},
+                    "segments": [],
+                    "fallback_reason": None,
+                }
+            },
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+
+        with caplog.at_level(
+            logging.WARNING, logger="allaganeye.commands.split_matches"
+        ):
+            result = _capture_regions_from_cache_data(data)
+
+        assert result is None
+        assert any(
+            "capture_regions" in r.getMessage()
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        ), "warning must still be emitted when cache_path is not supplied"
+
     def test_read_cached_capture_regions_null_value_treated_as_absent(
         self, cache_video, tmp_path
     ):
