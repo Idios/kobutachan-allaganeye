@@ -39,7 +39,7 @@ from pathlib import Path
 
 import pytest
 
-from allaganeye.video.areamap import resolve_match_regions
+from allaganeye.video.areamap import _probe_frame_rgb_hires, resolve_match_regions
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -68,12 +68,19 @@ pytestmark = [pytest.mark.slow, pytest.mark.slow_detect]
 # (ledger: tests/baselines/source-videos.sha256.json).
 _KNOWN_MISSING_GT_IDS: dict[str, str] = {}
 
-# GT manifest の形そのものの pin (#992 / Codex adversarial-review finding 2)。
+# GT manifest の形そのものの pin (#992 / Codex adversarial-review round 1 finding 2)。
 # id -> その entry が持つ case の t (sorted)。欠落ファイルの監査は manifest を
 # 正として行うため、**manifest 自体が縮んだら監査対象ごと消える**。entry や case
 # を消しても現状は `next(...)` の StopIteration (メッセージ空) が偶発的に拾うだけで、
 # root 不在の環境では何も拾わない。ここで期待形を独立に pin して、GT を減らす
 # 変更が必ず「pin を書き換える」という明示的な判断を通るようにする。
+#
+# **これは manifest の「形」の pin であって test 被覆の保証ではない** (Codex round 2
+# finding 1)。pin された case が存在し decode できても、その case に assert する
+# test があるとは限らない (例: obs-20260209-mkv t=1106 は bbox null で assert する
+# 対象が無く、module docstring のとおり意図的に slow assertion から外している)。
+# 「pin された全 case に assert がある」ことの強制は本 pin の役目ではなく、
+# 別 issue で追跡する。
 _EXPECTED_GT_CASES: dict[str, tuple[float, ...]] = {
     "obs-20260116-1": (300.0, 700.0),
     "obs-20260118-2": (600.0,),
@@ -191,6 +198,31 @@ def _gt_video_unusable_reason(video_path: Path) -> str | None:
 
 def _gt_video_available(video_entry: dict) -> bool:
     return _gt_video_unusable_reason(_expand_env(video_entry["video"])) is None
+
+
+def _undecodable_gt_case_times(video_entry: dict) -> list[float]:
+    """Pinned case timestamps at which no frame decodes (#992, Codex round 2).
+
+    A stat-only predicate cannot separate a real recording from a non-empty but
+    truncated / garbage file.  Measured: a 5 MB random-bytes `20260116_1.mp4`
+    left both seed-locality cases *and* the availability guard green
+    (`3 passed`) -- the probe returns None and the per-case contract accepts
+    "no proposal", so the GT case was never actually verified.
+
+    Probing one frame per pinned timestamp with the **same probe the production
+    path uses** (`_probe_frame_rgb_hires`, i.e. `resolve_match_regions`'s default)
+    makes "decodable" mean here exactly what it means there.  Measured cost on
+    the real GT set: ~10s for all 7 pinned cases; corrupt input is rejected in
+    ~0.14s.  Only the guard pays this -- the per-case skip predicate stays stat
+    -only, and a corrupt video therefore surfaces as a red guard rather than a
+    green run.
+    """
+    video_path = _expand_env(video_entry["video"])
+    return [
+        t
+        for t in _EXPECTED_GT_CASES.get(video_entry["id"], ())
+        if _probe_frame_rgb_hires(video_path, t) is None
+    ]
 
 
 def _require_gt_video(video_entry: dict) -> Path:
@@ -501,6 +533,10 @@ def test_areamap_gt_video_availability() -> None:
 
     欠落監査の前に GT manifest の形そのものを _EXPECTED_GT_CASES と突合する。
     欠落は manifest を正として見るので、manifest が縮めば監査対象ごと消える。
+
+    最後に pin 済み case の t で 1 フレーム decode できることを確かめる。stat だけ
+    では「非ゼロだが中身が壊れている」を見抜けず、per-case は「提案なしも可」契約
+    なので全緑になってしまう (実測済み)。
     """
     gt = _load_gt()
     manifest_ids = [v["id"] for v in gt["videos"]]
@@ -521,7 +557,9 @@ def test_areamap_gt_video_availability() -> None:
         f"removed (pinned but gone): {sorted(set(_EXPECTED_GT_CASES) - all_ids)}\n"
         "Shrinking the manifest removes GT coverage from the audit itself, so it"
         " must be an explicit decision: update _EXPECTED_GT_CASES in the same"
-        " change and say why in the PR body."
+        " change and say why in the PR body.\n"
+        "NOTE: updating this pin records the manifest's shape -- it does NOT mean"
+        " a test asserts on the case.  Check that yourself when adding one."
     )
 
     actual_cases = {
@@ -578,4 +616,27 @@ def test_areamap_gt_video_availability() -> None:
         f"unusable: {detail}\n"
         "Restore procedure + ledger: docs/testing-guide.md"
         " / tests/baselines/source-videos.sha256.json"
+    )
+
+    # --- Decodability: stat では「非ゼロだが中身が壊れている」を見抜けない ---
+    # ここまでの assert を通った = 存在して非ゼロ、という状態。pin 済み case の t で
+    # 実際に 1 フレーム decode できることまで確かめて初めて「その GT は検証しうる」
+    # と言える (実測: 5MB のランダムバイト列は stat を通り抜けて全緑になった)。
+    # pin 済み = 検証しない判断をした id は probe しない。
+    undecodable = {
+        v["id"]: failed
+        for v in auditable
+        if v["id"] not in missing
+        and v["id"] not in pinned
+        and (failed := _undecodable_gt_case_times(v))
+    }
+    assert not undecodable, (
+        "GT video present but no frame decodes at the pinned case timestamps.\n"
+        f"undecodable (id -> t): {undecodable}\n"
+        "The file is truncated, corrupt, or not a video.  A stat-only check"
+        " cannot see this, and the per-case tests would pass anyway because"
+        ' "no proposal" is acceptable under the best-effort contract -- so this'
+        " GT case would be silently unverified.\n"
+        "Verify the file against tests/baselines/source-videos.sha256.json and"
+        " restore it (docs/testing-guide.md)."
     )
