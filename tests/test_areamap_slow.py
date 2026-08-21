@@ -80,7 +80,7 @@ _KNOWN_MISSING_GT_IDS: dict[str, str] = {}
 # test があるとは限らない (例: obs-20260209-mkv t=1106 は bbox null で assert する
 # 対象が無く、module docstring のとおり意図的に slow assertion から外している)。
 # 「pin された全 case に assert がある」ことの強制は本 pin の役目ではなく、
-# 別 issue で追跡する。
+# #997 で追跡する。
 _EXPECTED_GT_CASES: dict[str, tuple[float, ...]] = {
     "obs-20260116-1": (300.0, 700.0),
     "obs-20260118-2": (600.0,),
