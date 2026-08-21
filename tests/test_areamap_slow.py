@@ -20,10 +20,12 @@ Missing-video policy (#992):
   - Sample root absent -> the tests under that root skip (skipif guards).  The
     availability guard skips only when NO root is present, so a machine with
     just one root still audits that root.
-  - Root present but an individual GT video absent -> that case is skipped
-    (per-case) and the aggregate rate gate scales its requirement to the cases
-    that are actually available.  Skips alone would let a shrinking GT set hide
-    in green, so test_areamap_gt_video_availability pins the missing set.
+  - Root present but an individual GT video absent (or unusable: a directory,
+    a zero-byte placeholder) -> that case is skipped (per-case) and the
+    aggregate rate gate scales its requirement to the cases that are actually
+    available.  Skips alone would let a shrinking GT set hide in green, so
+    test_areamap_gt_video_availability pins both the missing set
+    (_KNOWN_MISSING_GT_IDS) and the manifest shape (_EXPECTED_GT_CASES).
 
 VTuber (masked) cases are skipped when ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER is absent.
 """
@@ -65,6 +67,19 @@ pytestmark = [pytest.mark.slow, pytest.mark.slow_detect]
 # docs/testing-guide.md "サンプル動画/GT データの保全"
 # (ledger: tests/baselines/source-videos.sha256.json).
 _KNOWN_MISSING_GT_IDS: dict[str, str] = {}
+
+# GT manifest の形そのものの pin (#992 / Codex adversarial-review finding 2)。
+# id -> その entry が持つ case の t (sorted)。欠落ファイルの監査は manifest を
+# 正として行うため、**manifest 自体が縮んだら監査対象ごと消える**。entry や case
+# を消しても現状は `next(...)` の StopIteration (メッセージ空) が偶発的に拾うだけで、
+# root 不在の環境では何も拾わない。ここで期待形を独立に pin して、GT を減らす
+# 変更が必ず「pin を書き換える」という明示的な判断を通るようにする。
+_EXPECTED_GT_CASES: dict[str, tuple[float, ...]] = {
+    "obs-20260116-1": (300.0, 700.0),
+    "obs-20260118-2": (600.0,),
+    "masked-a29-m001": (200.0, 400.0),
+    "obs-20260209-mkv": (1106.0, 2354.0),
+}
 
 # ---------------------------------------------------------------------------
 # Helpers (self-contained; tests/ does not import from scripts/)
@@ -144,18 +159,54 @@ def _gt_root_available(video_entry: dict) -> bool:
     )
 
 
+def _gt_video_unusable_reason(video_path: Path) -> str | None:
+    """None when the GT video is usable, otherwise a short reason.
+
+    `Path.exists()` alone is not a sufficient availability predicate (#992,
+    Codex adversarial-review finding 1).  A directory, a placeholder, or a
+    zero-byte file left by an interrupted copy all pass `exists()`; the per-case
+    test would then probe it, get no frames back, and **pass** under the
+    best-effort "no proposal is acceptable" contract.  Measured before the fix:
+    a 0-byte `20260116_1.mp4` turned the 2 seed-locality cases and the
+    availability guard green (`3 passed`) with that GT case never verified.
+
+    NOT covered: a non-empty but truncated / corrupt file.  Detecting that needs
+    the SHA-256 ledger (tests/baselines/source-videos.sha256.json), i.e. a
+    multi-GB read per video per run -- too expensive for a per-run predicate.
+    Use the checksum procedure in docs/testing-guide.md when corruption is
+    suspected.
+    """
+    try:
+        if not video_path.exists():
+            return "not found"
+        if not video_path.is_file():
+            return "not a regular file"
+        size = video_path.stat().st_size
+    except OSError as exc:  # permission / IO error -> treat as unusable
+        return f"stat failed: {exc}"
+    if size == 0:
+        return "zero-byte file"
+    return None
+
+
+def _gt_video_available(video_entry: dict) -> bool:
+    return _gt_video_unusable_reason(_expand_env(video_entry["video"])) is None
+
+
 def _require_gt_video(video_entry: dict) -> Path:
     """Resolve a GT entry's video path, skipping the test when it is absent (#992).
 
     The dir-level skipif guards only prove the sample root exists; an individual
-    video can still be missing (deleted, not yet restored from backup).  That is
-    an environment gap, not a detector regression, so it must skip rather than
-    fail.  test_areamap_gt_video_availability keeps the gap visible.
+    video can still be missing (deleted, not yet restored from backup) or
+    unusable (see `_gt_video_unusable_reason`).  That is an environment gap, not
+    a detector regression, so it must skip rather than fail.
+    test_areamap_gt_video_availability keeps the gap visible.
     """
     video_path = _expand_env(video_entry["video"])
-    if not video_path.exists():
+    reason = _gt_video_unusable_reason(video_path)
+    if reason is not None:
         pytest.skip(
-            f"GT video missing (id={video_entry['id']}): {video_path}."
+            f"GT video unusable ({reason}, id={video_entry['id']}): {video_path}."
             " Restore it (see docs/testing-guide.md)"
             " or record the id + reason in _KNOWN_MISSING_GT_IDS."
         )
@@ -314,11 +365,11 @@ def test_areamap_positive_proposal_rate_obs() -> None:
     available: list[tuple[Path, float]] = []
     missing_ids: list[str] = []
     for video_id, t in obs_positive:
-        video_path = _expand_env(_gt_entry(gt, video_id)["video"])
-        if not video_path.exists():
+        video_entry = _gt_entry(gt, video_id)
+        if not _gt_video_available(video_entry):
             missing_ids.append(video_id)
             continue
-        available.append((video_path, t))
+        available.append((_expand_env(video_entry["video"]), t))
 
     if not available:
         pytest.skip(
@@ -364,11 +415,11 @@ def test_areamap_positive_proposal_rate_masked() -> None:
     available: list[tuple[Path, float]] = []
     missing_ids: list[str] = []
     for video_id, t in masked_positive:
-        video_path = _expand_env(_gt_entry(gt, video_id)["video"])
-        if not video_path.exists():
+        video_entry = _gt_entry(gt, video_id)
+        if not _gt_video_available(video_entry):
             missing_ids.append(video_id)
             continue
-        available.append((video_path, t))
+        available.append((_expand_env(video_entry["video"]), t))
 
     if not available:
         pytest.skip(
@@ -447,12 +498,43 @@ def test_areamap_gt_video_availability() -> None:
     監査対象から外すだけで、**他 root の監査は続ける** -- 「両 root 揃った環境
     でしか動かない guard」にすると、片方しか持たない環境で guard が丸ごと
     no-op になり、まさに埋もれさせたかった欠落を見逃す。
+
+    欠落監査の前に GT manifest の形そのものを _EXPECTED_GT_CASES と突合する。
+    欠落は manifest を正として見るので、manifest が縮めば監査対象ごと消える。
     """
     gt = _load_gt()
-    all_ids = {v["id"] for v in gt["videos"]}
+    manifest_ids = [v["id"] for v in gt["videos"]]
+    all_ids = set(manifest_ids)
     pinned = set(_KNOWN_MISSING_GT_IDS)
 
-    # Manifest 整合性はファイルシステムに依存しないので root の有無に関わらず見る。
+    # --- Manifest 整合性: ファイルシステムに依存しないので root の有無に関わらず見る ---
+    duplicates = sorted({vid for vid in manifest_ids if manifest_ids.count(vid) > 1})
+    assert not duplicates, (
+        f"GT manifest has duplicate ids: {duplicates}."
+        " _gt_entry() silently resolves to the first match, so a duplicate makes"
+        " the per-case tests and this guard disagree about which entry is meant."
+    )
+
+    assert all_ids == set(_EXPECTED_GT_CASES), (
+        "GT manifest id set drifted from _EXPECTED_GT_CASES.\n"
+        f"added (not pinned): {sorted(all_ids - set(_EXPECTED_GT_CASES))}\n"
+        f"removed (pinned but gone): {sorted(set(_EXPECTED_GT_CASES) - all_ids)}\n"
+        "Shrinking the manifest removes GT coverage from the audit itself, so it"
+        " must be an explicit decision: update _EXPECTED_GT_CASES in the same"
+        " change and say why in the PR body."
+    )
+
+    actual_cases = {
+        v["id"]: tuple(sorted(float(c["t"]) for c in v["cases"])) for v in gt["videos"]
+    }
+    expected_cases = {vid: tuple(sorted(ts)) for vid, ts in _EXPECTED_GT_CASES.items()}
+    assert actual_cases == expected_cases, (
+        "GT manifest case timestamps drifted from _EXPECTED_GT_CASES.\n"
+        f"actual:   {actual_cases}\n"
+        f"expected: {expected_cases}\n"
+        "A dropped case is coverage lost -- update the pin deliberately."
+    )
+
     unknown_pins = sorted(pinned - all_ids)
     assert not unknown_pins, (
         f"_KNOWN_MISSING_GT_IDS pins ids that are not in the GT manifest:"
@@ -470,15 +552,22 @@ def test_areamap_gt_video_availability() -> None:
         )
 
     auditable_ids = {v["id"] for v in auditable}
-    missing = {v["id"] for v in auditable if not _expand_env(v["video"]).exists()}
+    unusable = {
+        v["id"]: reason
+        for v in auditable
+        if (reason := _gt_video_unusable_reason(_expand_env(v["video"]))) is not None
+    }
+    missing = set(unusable)
     expected_missing = pinned & auditable_ids
 
     newly_missing = sorted(missing - expected_missing)
     restored = {
         vid: _KNOWN_MISSING_GT_IDS[vid] for vid in sorted(expected_missing - missing)
     }
-    paths = {
-        v["id"]: str(_expand_env(v["video"])) for v in auditable if v["id"] in missing
+    detail = {
+        v["id"]: f"{unusable[v['id']]}: {_expand_env(v['video'])}"
+        for v in auditable
+        if v["id"] in missing
     }
 
     assert missing == expected_missing, (
@@ -486,7 +575,7 @@ def test_areamap_gt_video_availability() -> None:
         f"newly missing (restore, or record in _KNOWN_MISSING_GT_IDS): {newly_missing}\n"
         f"restored but still pinned (drop from _KNOWN_MISSING_GT_IDS): {restored}\n"
         f"audited ids (root present): {sorted(auditable_ids)}\n"
-        f"missing paths: {paths}\n"
+        f"unusable: {detail}\n"
         "Restore procedure + ledger: docs/testing-guide.md"
         " / tests/baselines/source-videos.sha256.json"
     )
