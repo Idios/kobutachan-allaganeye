@@ -29,6 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   変わりません**。詳細は
   [docs/video-processing.md](docs/video-processing.md) を参照。
 
+### Fixed
+
+- **`allaganeye -v` でバージョンが表示されるようになりました**
+  ([#376](https://github.com/Idios/kobutachan-allaganeye/issues/376)):
+  これまで小文字の `-v` は `Error: No such option: -v` になり、大文字の `-V` が
+  必要でした。なお `allaganeye split <動画> -v` の `-v` は従来どおり詳細表示の
+  ままです。詳細は [docs/cli-spec.md](docs/cli-spec.md) を参照。
+- **出力を `| head` などで途中打ち切りしてもエラーで終了しなくなりました**
+  ([#652](https://github.com/Idios/kobutachan-allaganeye/issues/652)):
+  `allaganeye split <動画> -v | head -20` のように出力の先頭だけを見ると、
+  これまでは `OSError: [Errno 22] Invalid argument` とエラーの詳細表示を残して
+  異常終了していました。
+
 ## [0.3.0] - 2026-08-04
 
 L3 (配信形式対応 + 性能改善) リリース。エリアマップ切り抜き (`minimap` CLI + GUI 画面) と
