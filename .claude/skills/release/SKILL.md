@@ -32,6 +32,44 @@ description: deferred issue レビュー → バージョンバンプ → リリ
 
 注意: 本ゲートは Iron Law 1 (受け入れ条件全充足) のリリースレベル展開。`deferred` review (Step 0b / 0c) はゲート §共通項目内の 1 行に対応するため、Step 0b / 0c はゲート確認の延長として扱う。
 
+### Step 0a-2: リリース俯瞰レビュー (allaganeye-fable-consult、必須) (#945)
+
+Step 0a の全件達成を確認したら、**`Agent(subagent_type=allaganeye-fable-consult)` を起動して
+リリース記述を俯瞰レビューさせる**。本ステップはスキップできない。
+
+**対象** (2 点をまとめて渡す。**本 step の時点で実在するものだけを挙げてある**):
+
+- **`CHANGELOG.md` の `## [Unreleased]` セクションの内容** — [`docs/release-process.md` §CHANGELOG entry の記述規約](../../../docs/release-process.md) を満たしているか。読者 (FF14 プレイヤー) の語彙で書けているか、内部語彙が混入していないか
+- **Step 0a の受け入れゲート達成状況** — 「達成」と付けた項目が実際に達成の実質を持つか
+
+> **release notes を別途渡す必要はない。** [`scripts/extract_release_notes.py`](../../../scripts/extract_release_notes.py) が CHANGELOG の当該セクションを**丸ごと抽出して GitHub Release 本文にする**ので、**CHANGELOG を見ることが release notes を見ることと等しい**。
+>
+> **この時点で存在しないものを対象に挙げない。** 見出しの `## [Unreleased]` → `## [<版>] - YYYY-MM-DD` へのリネームも、リリース PR 本文も **Step 3** で作られる。本 step は Step 0a 直後 (Step 0b より前) に置かれているため、それらはまだ無い。無いものを対象に書くと、実行者が代替物を発明して渡すことになる (#945 Phase 2 の EPT で実際に発生した)。
+
+**観点**: 利用者から見た振る舞いの記述漏れ / 内部語彙の混入 / 既存 doc との矛盾 / スコープ過大。
+コードの技術的欠陥は対象外 (それは Codex、`CLAUDE.md` §「Fable と Codex の棲み分け」)。
+
+#### 起動記録 (実施 / 非実施とも必須、数値記入 required)
+
+Step 0a の 3 択と同じ画面に、以下のいずれか 1 行を明記する:
+
+> `fable 俯瞰レビュー: 実施 (finding N 件 / 消化 M 件 / 残 K 件 → Track D PR 本文へ転記)`
+>
+> `fable 俯瞰レビュー: 非実施 (理由: <1 行>)`
+
+**`実施` は N / M / K の数値記入が必須。** 数値を required にしないとこの step は no-op になる —
+Step 0a の判定は「達成 / 未達成 / **該当なし**」の 3 択で、**「該当なし」で通過できてしまう**ため
+(#945 が明示した false-green の制約)。**残 K 件がある場合は Track D の PR 本文へ転記する義務がある。**
+「実施した」とだけ書いて finding をゼロ件のまま放置する経路を塞ぐ。
+
+**Track D = version bump + CHANGELOG を担う直列最後の PR** ([`docs/release-process.md` §Patch release の Track 構造](../../../docs/release-process.md#patch-release-の-track-構造))。本 skill では **Step 2 以降で作るリリース PR** がこれにあたる。転記先を短縮名だけで書くと、Track 構造を知らない実行者が対応表を推測で埋めることになるため定義をここに置く。
+
+**転記先の見出しは Step 3 の PR body テンプレートの `### fable 俯瞰レビュー (Step 0a-2)`** に固定してある。転記義務を課すだけで転記先に置き場所を作らないと、実行者ごとに書式と位置が割れる (#949 で 2 度、本 step で 3 度目に観測したクラス)。**「どこかへ転記せよ」と書く規約は、転記先テンプレートの名前付きスロットと必ず対で用意する。**
+
+> **記録義務は分岐を網羅する**: 実施 / 非実施の両方に定型を置いてある。異常系・非該当だけに
+> 定型を用意すると、正常系のたびに実行者が文言を発明して表記が揺れる
+> (`/review-pr` §「起動記録」と同じ原則)。
+
 ### Step 0b: deferred 全件取得 (M9、F8 教訓)
 
 リリース前に `deferred` ラベル付き issue を全件取得する。**release-blocker label は新設しない** (M8 撤回、2026-05-17 確定) — 取得対象は `deferred` 単独で十分。
@@ -206,6 +244,11 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
     ### deferred issue レビュー結果
     <Step 0c の 3 択分類結果を記載>
+
+    ### fable 俯瞰レビュー (Step 0a-2)
+    <Step 0a-2 の記録行をそのまま転記。残 K 件があれば 1 件 1 行で列挙し、
+     各行に (A) 本 PR 内対応 / (B) 新規 issue / (C) 既存 issue 追記 の処置を付ける。
+     残ゼロなら「残 0 件」と明記する>
 
     ### チェックリスト
     - [ ] バージョン保持フィールドが全て一致 (\`python scripts/check_version_consistency.py --tag v<新バージョン>\` が exit 0)

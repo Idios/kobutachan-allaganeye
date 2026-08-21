@@ -22,23 +22,37 @@ const core = {
   setFailed: (m) => { process.stdout.write('::error::' + m + '\\n'); process.exitCode = 1; },
 };
 const context = {
+  repo: { owner: 'Idios', repo: 'kobutachan-allaganeye' },
   payload: {
     pull_request: {
+      number: 1,
       body: process.env.PR_BODY,
       user: process.env.PR_USER_TYPE ? { type: process.env.PR_USER_TYPE } : undefined,
     },
   },
 };
-checker({ github: {}, context, core }).catch((e) => {
+// PR_FILES 未指定なら「1 file の code PR」を既定にする。#945 で checker が fail-closed に
+// なったため、files を渡さない既存テストが全部 red になるのを避ける (それらは Fable 検査の
+// 対象外を見ているテストであり、file list の可用性を測る意図ではない)。
+const DEFAULT_FILES = [{ filename: 'allaganeye/x.py', status: 'modified' }];
+const listFiles = process.env.PR_FAIL_LIST_FILES
+  ? async () => { throw new Error('simulated API failure'); }
+  : async () => ({ data: process.env.PR_FILES ? JSON.parse(process.env.PR_FILES) : DEFAULT_FILES });
+const github = { rest: { pulls: { listFiles } } };
+checker({ github, context, core }).catch((e) => {
   process.stdout.write('[throw] ' + e.message + '\\n');
   process.exitCode = 2;
 });
 `;
 
-function runCheckerProcess(body, userType) {
+function runCheckerProcess(body, userType, files, opts) {
   const env = { ...process.env, CHECKER_PATH, PR_BODY: body };
   if (userType) env.PR_USER_TYPE = userType;
   else delete env.PR_USER_TYPE;
+  if (files) env.PR_FILES = JSON.stringify(files);
+  else delete env.PR_FILES;
+  if (opts && opts.failListFiles) env.PR_FAIL_LIST_FILES = '1';
+  else delete env.PR_FAIL_LIST_FILES;
   const result = spawnSync(process.execPath, ['-e', CHILD_SOURCE], { env, encoding: 'utf8' });
   return { status: result.status, stdout: result.stdout || '', stderr: result.stderr || '' };
 }
@@ -637,7 +651,7 @@ test('#936: Self-Test Report だけの本文でも gate が有効 (skip しな�
   assert.equal(result.unchecked, 1);
 });
 
-test('#936 D9: 実テンプレートは 23 box 中 12 box のみが gate 対象', () => {
+test('#936 D9: 実テンプレートは 24 box 中 13 box のみが gate 対象', () => {
   // 実物の `.github/pull_request_template.md` を通した end-to-end の blast radius 固定。
   // 内訳: 受け入れ条件 2 + Self-Test Report 10 = 12 (required)
   //       Iron Law 1 が 2 / Iron Law 3 が 2 / Iron Law 4 が 1 / 関連ドキュメント 6 = 11 (非対象)
@@ -646,11 +660,15 @@ test('#936 D9: 実テンプレートは 23 box 中 12 box のみが gate 対象'
   // 2026-08-11 (#952): 関連ドキュメント へ「CHANGELOG entry の要否を判断した」を
   // 1 box 追加したため総数 22 -> 23。**gate 対象は 12 のまま**であることが重要で、
   // これは新 box が counting 対象外の節に入った証拠になる (D9 の範囲を広げていない)。
+  //
+  // 2026-08-20 (#945): Self-Test Report へ「Fable 俯瞰レビュー」を 1 box 追加したため
+  // 総数 23 -> 24、**gate 対象も 12 -> 13** に増えた。#952 の追加とは逆に、
+  // こちらは counting 対象節に入れるのが目的なので gate 対象が増えるのが正しい。
   const template = fs.readFileSync(TEMPLATE_PATH, 'utf8');
   const totalUnchecked = (template.match(/- \[ \]/g) || []).length;
   const result = countAcceptanceCriteriaCheckboxes(template);
-  assert.equal(totalUnchecked, 23, 'テンプレート全体の - [ ] 総数');
-  assert.equal(result.unchecked, 12, 'gate 対象となる - [ ] の数 (受け入れ条件 2 + Self-Test 10)');
+  assert.equal(totalUnchecked, 24, 'テンプレート全体の - [ ] 総数');
+  assert.equal(result.unchecked, 13, 'gate 対象となる - [ ] の数 (受け入れ条件 2 + Self-Test 11)');
 });
 
 test('#936: `*` / `+` / 番号付き list marker の checkbox も数える (false-green 修正)', () => {
@@ -1085,4 +1103,163 @@ test('indented backtick fence (0-3 space indent within list) is stripped', () =>
   assert.equal(result.unchecked, 0);
   assert.equal(result.checked, 1);
   assert.equal(result.hasAnySection, true);
+});
+
+// --- #945: Fable 行の semantic 検査 (Codex adversarial-review round 1-2 対応) --------
+//
+// checkbox の消化だけを見る gate は「レビューを実行せずに緑」を防げない。
+// 走査は **Self-Test Report 節の task 行だけ**に限定する — 本文全体を見る実装では、
+// 行の削除・節外の decoy 行・分割で無効化できた (round 2 [high])。
+
+const { validateFableRow, countAcceptanceCriteriaCheckboxes: countCB } = require('./check-pr-checklist.js');
+
+const ROW_UNRUN = '- [x] Fable 俯瞰レビュー (#945): 非実施 (理由: doc-only でない)';
+const ROW_RUN = '- [x] Fable 俯瞰レビュー (#945): 実施 (finding 2 件 / 消化 2 件 / 残 0 件)';
+const DOC_ONLY_FILES = [{ filename: 'docs/a.md', status: 'modified' }];
+const CODE_FILES = [
+  { filename: 'allaganeye/export/pool.py', status: 'modified' },
+  { filename: 'docs/cli-spec.md', status: 'modified' },
+];
+const SPEC_ADDED_FILES = [
+  { filename: 'allaganeye/export/pool.py', status: 'modified' },
+  { filename: 'docs/superpowers/specs/2026-08-21-x.md', status: 'added' },
+];
+
+/** Self-Test 節の task 行だけを渡す (checker 本体と同じ経路で抽出する) */
+function rowsFromBody(body) {
+  return countCB(body).selfTestRows;
+}
+function bodyWith(rows) {
+  return ['#### Self-Test Report (machine-verified)', '', '- [x] `ruff check .`', ...rows, ''].join('\n');
+}
+
+test('#945 semantic: doc-only PR で `非実施` は red', () => {
+  const r = validateFableRow(rowsFromBody(bodyWith([ROW_UNRUN])), DOC_ONLY_FILES);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /doc-only/);
+});
+
+test('#945 semantic: spec 新規追加 PR で `非実施` は red (code file 混在でも (b) で発火)', () => {
+  const r = validateFableRow(rowsFromBody(bodyWith([ROW_UNRUN])), SPEC_ADDED_FILES);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /specs\/plans/);
+});
+
+test('#945 semantic: 通常の code PR で `非実施` は green (対照)', () => {
+  assert.equal(validateFableRow(rowsFromBody(bodyWith([ROW_UNRUN])), CODE_FILES).ok, true);
+});
+
+test('#945 semantic: `実施` + 実数 3 件は green / 数値不足は red', () => {
+  assert.equal(validateFableRow(rowsFromBody(bodyWith([ROW_RUN])), DOC_ONLY_FILES).ok, true);
+  const short = '- [x] Fable 俯瞰レビュー (#945): 実施 (finding 2 件)';
+  assert.equal(validateFableRow(rowsFromBody(bodyWith([short])), DOC_ONLY_FILES).ok, false);
+});
+
+// --- round 2 [high]: 行の削除 / 節外 decoy / 重複 -----------------------------------
+
+test('#945 bypass: Fable 行を削除すると red (不在は緑にしない)', () => {
+  const r = validateFableRow(rowsFromBody(bodyWith([])), DOC_ONLY_FILES);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /ありません/);
+});
+
+test('#945 bypass: Self-Test 節の外に置いた行は数えない (decoy 無効)', () => {
+  // 節の外に準拠行を置き、節内には置かない → 不在として red になるべき。
+  const body = [
+    '#### Self-Test Report (machine-verified)',
+    '',
+    '- [x] `ruff check .`',
+    '',
+    '#### 関連ドキュメント / マトリクス更新',
+    '',
+    ROW_RUN, // 節外の decoy
+    '',
+  ].join('\n');
+  const r = validateFableRow(rowsFromBody(body), DOC_ONLY_FILES);
+  assert.equal(r.ok, false, '節外 decoy では通らない');
+  assert.match(r.reason, /ありません/);
+});
+
+test('#945 bypass: 節内に 2 本あると red (準拠 decoy + 非準拠の併置)', () => {
+  const r = validateFableRow(rowsFromBody(bodyWith([ROW_RUN, ROW_UNRUN])), DOC_ONLY_FILES);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /2 本/);
+});
+
+// --- round 2 [low]: placeholder 判定の範囲 ------------------------------------------
+
+test('#945: placeholder トークンが残っていれば red、山括弧だけなら green', () => {
+  const unfilled = '- [x] Fable 俯瞰レビュー (#945): 実施 (finding N 件 / 消化 M 件 / 残 K 件)';
+  assert.equal(validateFableRow(rowsFromBody(bodyWith([unfilled])), DOC_ONLY_FILES).ok, false);
+
+  // 正当な回答に山括弧が入っても弾かない (false-red 回避)
+  const withAngle =
+    '- [x] Fable 俯瞰レビュー (#945): 実施 (finding 1 件 / 消化 1 件 / 残 0 件) 詳細 <https://example.com/x>';
+  assert.equal(validateFableRow(rowsFromBody(bodyWith([withAngle])), DOC_ONLY_FILES).ok, true);
+});
+
+test('#945: `未実施` / `未実行` は専用メッセージで red', () => {
+  for (const w of ['未実施', '未実行']) {
+    const r = validateFableRow(rowsFromBody(bodyWith([`- [x] Fable 俯瞰レビュー (#945): ${w} (理由: x)`])), DOC_ONLY_FILES);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /語彙は/);
+  }
+});
+
+test('#945: スキップ / N/A 等の語彙も red', () => {
+  for (const w of ['スキップ', 'N/A', '省略']) {
+    const r = validateFableRow(rowsFromBody(bodyWith([`- [x] Fable 俯瞰レビュー (#945): ${w}`])), DOC_ONLY_FILES);
+    assert.equal(r.ok, false, `${w} は red`);
+  }
+});
+
+// --- corpus: 実テンプレート ---------------------------------------------------------
+
+test('#945 corpus: 実テンプレートは Self-Test 節に Fable 行を 1 本だけ持つ', () => {
+  const tpl = fs.readFileSync(TEMPLATE_PATH, 'utf8');
+  const fableRows = countCB(tpl).selfTestRows.filter((r) => /Fable[ \t\u3000]*俯瞰レビュー/.test(r));
+  assert.equal(fableRows.length, 1, '節内にちょうど 1 本');
+});
+
+test('#945 corpus: 実テンプレートの未記入行は red (placeholder のまま [x] にしただけでは通らない)', () => {
+  const tpl = fs.readFileSync(TEMPLATE_PATH, 'utf8').replace('- [ ] Fable', '- [x] Fable');
+  const r = validateFableRow(countCB(tpl).selfTestRows, DOC_ONLY_FILES);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /未記入/);
+});
+
+// --- fail-closed: files が取れない場合 ----------------------------------------------
+
+test('#945 fail-closed: listFiles が失敗すると exit 1 (silent skip しない)', () => {
+  const body = bodyWith([ROW_UNRUN]);
+  const boom = runCheckerProcess(body, undefined, undefined, { failListFiles: true });
+  assert.equal(boom.status, 1, 'API 失敗は red');
+  assert.match(boom.stdout, /取得できませんでした/);
+});
+
+test('#945 fail-closed: 生 exit code — doc-only PR の誤った `非実施` で red / 正しい `実施` で green', () => {
+  const body = bodyWith([ROW_UNRUN]);
+  const red = runCheckerProcess(body, undefined, DOC_ONLY_FILES);
+  assert.equal(red.status, 1);
+  assert.match(red.stdout, /::error::/);
+
+  const green = runCheckerProcess(bodyWith([ROW_RUN]), undefined, DOC_ONLY_FILES);
+  assert.equal(green.status, 0);
+});
+
+test('#945 regression: bot PR は fail-closed の影響を受けない (Dependabot が落ちない)', () => {
+  // fail-closed 化で「全 PR が listFiles 成功に依存する」ようになったが、
+  // bot 例外 (Self-Test 節を持たない bot PR) は file list 検査より**手前**で return する。
+  // 順序が入れ替わると Dependabot が本 gate で落ちるので pin する。
+  const body = '## 受け入れ条件\n\n- [x] ok\n';
+  const r = runCheckerProcess(body, 'Bot', undefined, { failListFiles: true });
+  assert.equal(r.status, 0, 'bot PR は listFiles 失敗でも緑');
+  assert.match(r.stdout, /Bot-authored PR/);
+});
+
+test('#945 regression: 人間 PR は listFiles 失敗で red (fail-closed が効いている対照)', () => {
+  const body = '#### Self-Test Report (machine-verified)\n\n- [x] ruff\n';
+  const r = runCheckerProcess(body, undefined, undefined, { failListFiles: true });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /取得できませんでした/);
 });

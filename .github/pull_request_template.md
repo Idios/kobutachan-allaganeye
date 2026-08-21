@@ -76,6 +76,14 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre
 該当しない場合は `[x]` + 「N/A: <理由>」 を付記 (例: `[x] cargo check — N/A: gui/src-tauri/ 変更なし`)。
 未実施の場合は `[ ]` のままで CI fail させる (Iron Law 6 違反として明示)。
 (Refs #635) checkbox convention: 本節は machine-verified 限定なので全件 [x]、未実施は [ ] のまま CI fail させて自覚を促す。詳細は docs/l2-workflow.md §「Self-Test Report 規約」
+
+Fable 俯瞰レビュー (#945) の起動条件 — 次のいずれかに該当したら「実施」:
+  (a) doc-only PR (docs/** / *.md のみで code file 変更ゼロ)
+  (b) docs/superpowers/specs/** または docs/superpowers/plans/** への新規ファイル追加を含む
+該当時は「実施 (finding N 件 / 消化 M 件 / 残 K 件)」を **実数で** 記入する (N/M/K のままは CI red)。
+非該当時は「非実施 (理由: 2 条件のどちらに非該当か)」。
+起動条件は CI が変更ファイル一覧と突き合わせて検査する — 該当 PR で「非実施」と書くと red。
+詳細は .claude/skills/review-pr/SKILL.md §「optional 俯瞰レビュー」
 -->
 
 - [ ] `ruff check .` (python-core 変更時)
@@ -88,6 +96,7 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre
 - [ ] `cd gui && npm run build` (gui-frontend 変更時)
 - [ ] `cargo check --manifest-path gui/src-tauri/Cargo.toml` (gui-rust 変更時)
 - [ ] `Invoke-Pester -Path scripts/tests/` (installer-pester 変更時、Windows 上で)
+- [ ] Fable 俯瞰レビュー (#945): <上のコメントの起動条件を見て「実施 (finding N 件 / 消化 M 件 / 残 K 件)」または「非実施 (理由: ...)」に置き換える>
 
 #### 関連ドキュメント / マトリクス更新
 

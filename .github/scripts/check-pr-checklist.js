@@ -234,6 +234,7 @@ function scanRequiredSections(body) {
   let found = false;
   let selfTestFound = false; // Self-Test Report 節が存在したか (fail-closed の判定に使う)
   let selfTestItems = 0; // Self-Test Report 節内の checkbox 件数 (0 件も red にする)
+  const selfTestRows = []; // Self-Test Report 節内の task 行本文 (#945 の Fable 行走査に使う)
   let unchecked = 0;
   let checked = 0;
 
@@ -377,7 +378,10 @@ function scanRequiredSections(body) {
         // 判定すると、`## Self-Test Report` 配下に `### Acceptance criteria` を入れ子にした本文で
         // 件数が 0 になり、全部 [x] なのに fail-closed が red にする false-red が出る
         // (Codex adversarial-review round 2 [medium]、renderer 実測で確認)。
-        if (sectionStack.some((frame) => frame.kind === 'selfTest')) selfTestItems += 1;
+        if (sectionStack.some((frame) => frame.kind === 'selfTest')) {
+          selfTestItems += 1;
+          selfTestRows.push(content);
+        }
       }
       continue;
     }
@@ -386,7 +390,7 @@ function scanRequiredSections(body) {
     if (!inListContext) lastListIndent = null;
   }
 
-  return { unchecked, checked, found, selfTestFound, selfTestItems };
+  return { unchecked, checked, found, selfTestFound, selfTestItems, selfTestRows };
 }
 
 /**
@@ -395,7 +399,7 @@ function scanRequiredSections(body) {
  * 参照があるため #936 の scope 拡大後も維持している。
  */
 function countAcceptanceCriteriaCheckboxes(body) {
-  const { unchecked, checked, found, selfTestFound, selfTestItems } =
+  const { unchecked, checked, found, selfTestFound, selfTestItems, selfTestRows } =
     scanRequiredSections(body);
   return {
     unchecked,
@@ -403,7 +407,128 @@ function countAcceptanceCriteriaCheckboxes(body) {
     hasAnySection: found,
     hasSelfTestSection: selfTestFound,
     selfTestItems,
+    selfTestRows,
   };
+}
+
+const FABLE_LABEL_RE = /Fable[ 	　]*俯瞰レビュー/;
+// 未記入 placeholder の検出は **既知のトークンのみ**を見る。
+// 「山括弧が 1 組でもあれば未記入」とすると、正当な回答に含まれる <URL> や型名まで
+// 弾いて false-red になる (Codex adversarial-review round 2 [low])。
+const FABLE_PLACEHOLDER_RE = /finding[ 	]*N|消化[ 	]*M|残[ 	]*K|理由:[ 	]*\.\.\.|置き換える/;
+
+function isDocPath(p) {
+  // `.claude/skills/**/*.md` のような**振る舞いを規定する prompt** も documentation 側に含める。
+  // Fable の担当は「文書・方針・プロセス」(CLAUDE.md §Fable と Codex の棲み分け) であり、
+  // skill prompt の改訂はまさにその対象。したがって拡張子 .md は一律 doc として扱う (#945 で明示)。
+  return p.startsWith('docs/') || p.toLowerCase().endsWith('.md');
+}
+
+function isSpecOrPlanPath(p) {
+  return p.startsWith('docs/superpowers/specs/') || p.startsWith('docs/superpowers/plans/');
+}
+
+/** 起動条件: (a) doc-only PR / (b) specs・plans への新規ファイル追加 */
+function launchConditionApplies(files) {
+  if (!Array.isArray(files) || files.length === 0) return false;
+  const docOnly = files.every((f) => isDocPath(f.filename));
+  const addedSpecOrPlan = files.some((f) => f.status === 'added' && isSpecOrPlanPath(f.filename));
+  return docOnly || addedSpecOrPlan;
+}
+
+/**
+ * Fable 俯瞰レビュー行の semantic 検査 (#945)。
+ *
+ * **走査対象は Self-Test Report 節の task 行だけ** (`selfTestRows`)。本文全体から
+ * 最初に見つかった 1 行を見る実装では、節の外に準拠した decoy 行を置いたり、
+ * 行ごと削除したりで gate を無効化できた (Codex adversarial-review round 2 [high])。
+ * 節内に**ちょうど 1 本**を必須とし、不在・重複・未記入はすべて red にする。
+ *
+ * `files` は「完全に取得できた変更ファイル一覧」。取得できなかった場合は **fail-closed**
+ * (呼び出し側が red にする)。required status check で silent skip は false-green だから
+ * (同 round 2 [medium])。
+ *
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+function validateFableRow(selfTestRows, files) {
+  const rows = (selfTestRows || []).filter((r) => FABLE_LABEL_RE.test(r));
+
+  // 行の不在は **起動条件に該当する PR でのみ** red。該当しない PR にまで行の存在を
+  // 強制すると、Fable と無関係な PR が本欄の有無で落ちる。
+  // 該当 PR での削除は塞がる = round 2 [high] の bypass は閉じている。
+  if (rows.length === 0) {
+    if (launchConditionApplies(files)) {
+      return {
+        ok: false,
+        reason:
+          'Fable 俯瞰レビューの起動条件に該当する PR ですが、Self-Test Report 節に ' +
+          '`Fable 俯瞰レビュー` の行がありません。テンプレートの行を削除・改変しないでください ' +
+          '(節の外に置いた行は数えません)。',
+      };
+    }
+    return { ok: true };
+  }
+  if (rows.length > 1) {
+    return {
+      ok: false,
+      reason: `Self-Test Report 節に \`Fable 俯瞰レビュー\` の行が ${rows.length} 本あります。1 本にしてください。`,
+    };
+  }
+  const row = rows[0];
+
+  if (FABLE_PLACEHOLDER_RE.test(row)) {
+    return {
+      ok: false,
+      reason:
+        'Fable 俯瞰レビュー行が未記入です (テンプレートの placeholder が残っています)。' +
+        '`実施 (finding <実数> 件 / 消化 <実数> 件 / 残 <実数> 件)` か `非実施 (理由: ...)` に置き換えてください。',
+    };
+  }
+
+  if (/未実施|未実行/.test(row)) {
+    return {
+      ok: false,
+      reason:
+        'Fable 俯瞰レビュー行に `未実施` / `未実行` と書かれています。' +
+        '本欄の語彙は `実施` または `非実施` の 2 つだけです (`非実施` は起動条件に該当しなかったことを意味します)。',
+    };
+  }
+
+  const declaredHijisshi = /非実施/.test(row);
+  const declaredJisshi = !declaredHijisshi && /実施/.test(row);
+  if (!declaredJisshi && !declaredHijisshi) {
+    return { ok: false, reason: 'Fable 俯瞰レビュー行が `実施` / `非実施` のどちらでもありません。' };
+  }
+
+  if (declaredJisshi) {
+    const nums = row.match(/(?:finding|消化|残)[^0-9]{0,8}(\d+)[ 	]*件/g) || [];
+    if (nums.length < 3) {
+      return {
+        ok: false,
+        reason:
+          '`実施` と記入されていますが finding / 消化 / 残 の 3 数値が整数で揃っていません。' +
+          '実際にレビューを実行して実数を記入してください。',
+      };
+    }
+    return { ok: true };
+  }
+
+  // 非実施 — 起動条件に該当していないことを変更ファイルで裏取りする (files は完全前提)
+  const docOnly = files.every((f) => isDocPath(f.filename));
+  const addedSpecOrPlan = files.some((f) => f.status === 'added' && isSpecOrPlanPath(f.filename));
+  if (docOnly || addedSpecOrPlan) {
+    const which = [docOnly ? '(a) doc-only PR' : null, addedSpecOrPlan ? '(b) specs/plans への新規追加' : null]
+      .filter(Boolean)
+      .join(' / ');
+    return {
+      ok: false,
+      reason:
+        `Fable 俯瞰レビューの起動条件 ${which} に該当していますが \`非実施\` と記入されています。` +
+        '`Agent(subagent_type=allaganeye-fable-consult)` を実行し ' +
+        '`実施 (finding N 件 / 消化 M 件 / 残 K 件)` を実数で記入してください。',
+    };
+  }
+  return { ok: true };
 }
 
 // async は actions/github-script@v7 caller (`await checker({github, context, core})`) との
@@ -412,7 +537,7 @@ async function checkPrChecklist({ github, context, core }) {
   const pr = context.payload.pull_request;
   const body = pr.body || '';
   const isBot = Boolean(pr.user && pr.user.type === 'Bot');
-  const { unchecked, checked, hasSelfTestSection, selfTestItems } =
+  const { unchecked, checked, hasSelfTestSection, selfTestItems, selfTestRows } =
     countAcceptanceCriteriaCheckboxes(body);
 
   if (unchecked > 0) {
@@ -450,8 +575,54 @@ async function checkPrChecklist({ github, context, core }) {
     return;
   }
 
+  // #945: Fable 行の semantic 検査。checkbox の消化だけでは「実行せずに緑」を防げない。
+  // **files が完全に取れなければ fail-closed**。required status check で silent skip は
+  // false-green (Codex adversarial-review round 2 [medium])。workflow 側で
+  // `permissions: pull-requests: read` を宣言済み。
+  let files = null;
+  let fileError = null;
+  try {
+    if (!github || !github.rest || !github.rest.pulls || !context.repo || !pr.number) {
+      fileError = 'GitHub API client unavailable';
+    } else {
+      const params = {
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        pull_number: pr.number,
+        per_page: 100,
+      };
+      if (typeof github.paginate === 'function') {
+        files = await github.paginate(github.rest.pulls.listFiles, params);
+      } else {
+        const res = await github.rest.pulls.listFiles(params);
+        const page = (res && res.data) || [];
+        // paginate 不可 + 1 page 満杯 = 続きがあるかもしれない。部分リストで判定しない。
+        if (page.length >= params.per_page) fileError = 'file list may be truncated (no paginate)';
+        else files = page;
+      }
+    }
+  } catch (e) {
+    fileError = e.message;
+  }
+  if (!files || files.length === 0) {
+    core.setFailed(
+      `PR の変更ファイル一覧を取得できませんでした (${fileError || 'empty file list'})。` +
+        'Fable 俯瞰レビュー欄の検査が成立しないため fail-closed で落としています。' +
+        'job を再実行するか、workflow の `permissions: pull-requests: read` を確認してください。'
+    );
+    return;
+  }
+  const fable = validateFableRow(selfTestRows, files);
+  if (!fable.ok) {
+    core.setFailed(
+      `${fable.reason} 詳細は .claude/skills/review-pr/SKILL.md §「optional 俯瞰レビュー」を参照。`
+    );
+    return;
+  }
+
   core.info(`All ${checked} required checklist item(s) are checked.`);
 }
 
 module.exports = checkPrChecklist;
 module.exports.countAcceptanceCriteriaCheckboxes = countAcceptanceCriteriaCheckboxes;
+module.exports.validateFableRow = validateFableRow;
