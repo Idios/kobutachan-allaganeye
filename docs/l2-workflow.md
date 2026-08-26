@@ -322,7 +322,20 @@ node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result <job-id>
 - **取り込み未済 commit あり、touched files 交差あり**: `git merge origin/<base>` (または rebase) で取り込み → Iron Law 6 自動チェック (`ruff` / `pyright` / `pytest` / `npm run lint`/`typecheck`/`test`/`build` / `cargo check` 等、変更 path に応じて) を再実行 → PR 作成
 - **並行 PR 検出**: 各 PR の状態 (open / merged) を確認。重複なら計画見直し or `AskUserQuestion` でユーザー判断
 
-確認結果は **PR テンプレート §「ベース同期確認」** (4 項目を plain bullet で) に記録する。validate-checklist は plain bullet を無視するため CI ゲートは増設しないが、レビュー時に `/review-pr` Step 2 が `gh pr view` 経由で機械的に再確認するため、握り潰しは禁止。
+確認結果は **PR テンプレート §「ベース同期確認」** (4 項目 + 宣言フィールド 2 件を plain bullet で) に記録する。`validate-checklist` は checkbox しか数えないため 4 項目側は CI 対象外だが、レビュー時に `/review-pr` Step 2 が `gh pr view` 経由で機械的に再確認するため、握り潰しは禁止。
+
+**宣言フィールド 2 件は `validate-preflight-freshness` job が機械検査する** (#946、`.github/scripts/check-preflight-freshness.js`)。「plain bullet だから CI ゲート対象外」は本節に限り**成り立たない**ので注意する。
+
+```text
+- Pre-flight 時点の同 issue open PR: #938, #940   ← Step 0 / Step 4 の生の観測結果 (無ければ なし)
+- Pre-flight 時点の同 base open PR: なし
+```
+
+job は PR 作成時点 (T0 = `pull_request.created_at`) で open だった PR 集合を `created_at` / `closed_at` から**再構成**し、宣言に無い PR が 1 件でもあれば fail する。Pre-flight 実行から PR 作成までの間に別 worktree が PR を出したケースが、ここで機械的に捕まる。
+
+> **`- PR 作成時の base HEAD:` 欄はこの検査には使われない。** 事象 E2 (PR #939) では Pre-flight から PR 作成までの 66 分間に base HEAD が 1 度も動いていないため、**base OID の一致比較は false-green** になる。捕まえられるのは open PR 集合の再サンプリングだけで、OID 欄は別目的 (取り込み判断の記録) として残している。
+
+gate が見ていない集合 (自己申告ゆえの後追い記入 / `Refs #N` を書かない PR での same-issue 側 no-op / 宣言が superset の場合は通す片側検査、等) は `.github/scripts/check-preflight-freshness.js` 冒頭の docstring が SSoT。
 
 ### Red Flags
 
