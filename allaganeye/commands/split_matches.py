@@ -1608,6 +1608,43 @@ def _split_and_write_metadata(
     typer.echo(f"Metadata: {Path(os.path.abspath(metadata_path))}")
 
 
+def _output_file_field(path: Path, output_dir: Path) -> str:
+    """Serialise ``matches[].output_file`` **relative to the metadata.json directory**.
+
+    ``metadata.json`` is written to ``output_dir / "metadata.json"``, and the JSON
+    Schema documents ``output_file`` as "MP4 filename relative to the metadata.json
+    directory". The two producers hand this function different shapes:
+
+    * ``split`` passes what :func:`split_video` returned, i.e. ``output_dir /
+      match_NNN.mp4`` -- carrying the output directory, absolute whenever ``-o``
+      was absolute
+    * ``detect`` passes bare placeholder names (``match_NNN.mp4``) that are
+      *already* relative to ``output_dir``
+
+    Serialising both with ``Path.as_posix`` verbatim (#463 .. #933) made the two
+    producers disagree: ``detect`` wrote ``match_001.mp4`` while ``split -o E:/out``
+    wrote ``E:/out/match_001.mp4``, so the same field meant different things
+    depending on which command produced the file. The absolute form also breaks the
+    moment the output folder is moved or read on another machine -- the same
+    relative/absolute round-trip failure ``source`` had in #930. Anchoring on
+    ``output_dir`` here gives both producers one shape (#934).
+
+    Paths that do not live under ``output_dir`` keep a ``..``-prefixed relative form
+    rather than being silently shortened to their basename: shortening would point
+    the reader at a sibling file that does not exist. :func:`split_video` always
+    writes inside ``output_dir``, so that branch is not reachable from the CLI.
+    """
+    try:
+        return path.relative_to(output_dir).as_posix()
+    except ValueError:
+        pass
+    if path.is_absolute():
+        return Path(os.path.relpath(path, os.path.abspath(output_dir))).as_posix()
+    # Relative and not under ``output_dir``: already anchored on it (detect's
+    # placeholders). Leave it alone rather than re-anchoring it on the cwd.
+    return path.as_posix()
+
+
 def _build_metadata_payload(
     *,
     video_path: Path,
@@ -1722,7 +1759,7 @@ def _build_metadata_payload(
                     # Anything other than "fl_match" is normalized to "unknown"
                     # -- matches the prior dict.get fallback semantics.
                     "type": "fl_match" if b.get("type") == "fl_match" else "unknown",
-                    "output_file": f.as_posix(),
+                    "output_file": _output_file_field(f, config.output_dir),
                 }
                 for i, (b, f) in enumerate(zip(boundaries, output_files, strict=True))
             ]

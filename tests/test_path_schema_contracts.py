@@ -8,17 +8,30 @@ PR #930 で修正した 3 件のバグ (出力パス表示の相対化 / ``--nam
 要因分析 (session ``pensive-satoshi-3397b0``) の F6「機械可読ファイルの中の散文が最も
 強く偽の安心を生む」/ F7「標準 fixture がきれいな入力しか供給しない」に対応する。
 
-**棚卸ししたのは下記 :data:`PROSE_CONTRACTS` の 8 件だけで、これ以外は未検査である。**
+**検査しているのは下記 :data:`PROSE_CONTRACTS` の 9 件だけで、これ以外は未検査である。**
 意図的に検査しないと判断したものは :data:`UNCHECKED_PROSE` に理由付きで列挙してある
-(空白を「検査した結果ゼロ」と読み違えないため)。棚卸し自体が人手なので、棚卸し漏れは
-構造的に検査外である。
+(空白を「検査した結果ゼロ」と読み違えないため)。
 
-issue #934 は対象を「7 件」と書いているが、実際に棚卸しすると **8 件**になった。増えた
-1 件は ``detection-window-ordered`` (completed >= started) で、``detection_completed_at``
-の description が **書式の主張 (ISO 8601 UTC) と順序の主張 (elapsed = completed - started)
-の 2 つ**を 1 文に抱えているため、フィールド単位で数えると 1 件、契約単位で数えると 2 件に
-なる。片方だけ検査して「completed_at は検査済み」とすると順序の主張が無検査のまま残るので、
-契約単位で分けた。
+issue #934 は対象を「7 件」と書いているが、実際に棚卸しすると **9 件**になった:
+
+* ``detection-window-ordered`` (completed >= started) -- ``detection_completed_at`` の
+  description が **書式の主張 (ISO 8601 UTC) と順序の主張 (elapsed = completed - started)
+  の 2 つ**を 1 文に抱えている。フィールド単位で数えると 1 件、契約単位では 2 件。片方だけ
+  検査して「completed_at は検査済み」とすると順序の主張が無検査のまま残るので分けた
+* ``warnings-always-emitted`` -- 下記の sweep で見つけた棚卸し漏れ
+
+**棚卸し漏れへの対策**: 「棚卸しが人手だから漏れは構造的に検査外」で終わらせず、
+:func:`test_no_unclassified_contract_prose` が schema 全体を走査し、契約を示唆する語
+(:data:`CONTRACT_SIGNAL_WORDS`) を含む description が :data:`PROSE_CONTRACTS` か
+:data:`UNCHECKED_PROSE` のどちらかに必ず現れることを強制する。schema に契約めいた散文を
+足して分類し忘れたら red になる。**ただしこれは完全性の保証ではない** -- signal word に
+引っかからない言い回しの契約は依然として検査外で、そこがこの gate の限界である
+(実際、この sweep を入れた時点で未分類が 10 件見つかった)。
+
+もう 1 つの false-green 対策が :func:`test_fixture_is_not_vacuous` である。契約の checker は
+``matches`` / ``gaps`` / ``output_file`` を走査するループを含むので、fixture が痩せると
+「正常系は通る」側が空ループで緑になる。実際、当初の fixture は ``gaps=[]`` で
+``gap-interval-ordered`` が 1 度も比較していなかった。
 
 ISO 8601 の 3 件を ``format`` + ``format_assertion`` で schema 側へ機械化できるかは
 issue の作業項目だったので実測した。結論は **入れない**:
@@ -55,6 +68,7 @@ import typer
 from typer.testing import CliRunner
 
 from allaganeye.commands.split_matches import (
+    _output_file_field,
     _build_metadata_payload,
     _build_system_info,
 )
@@ -222,6 +236,19 @@ def _violate_output_file_relative(payload: dict[str, Any]) -> None:
     payload["matches"][0]["output_file"] = "../escaped.mp4"
 
 
+def _check_warnings_always_emitted(payload: dict[str, Any]) -> None:
+    _require(
+        isinstance(payload.get("warnings"), list),
+        "warnings-always-emitted",
+        "New writers always emit a warnings array (possibly empty); "
+        f"got {payload.get('warnings')!r}",
+    )
+
+
+def _violate_warnings_always_emitted(payload: dict[str, Any]) -> None:
+    del payload["warnings"]
+
+
 #: 棚卸しした散文契約。**これ以外は未検査** (:data:`UNCHECKED_PROSE` も参照)。
 PROSE_CONTRACTS: tuple[ProseContract, ...] = (
     ProseContract(
@@ -282,6 +309,13 @@ PROSE_CONTRACTS: tuple[ProseContract, ...] = (
         check=_check_output_file_relative,
         violate=_violate_output_file_relative,
     ),
+    ProseContract(
+        id="warnings-always-emitted",
+        schema_pointer=("properties", "warnings"),
+        statement="New writers always emit an array (possibly empty)",
+        check=_check_warnings_always_emitted,
+        violate=_violate_warnings_always_emitted,
+    ),
 )
 
 #: 散文だが **意図的に検査しない** もの。空白を「検査した結果ゼロ」と読み違えないため
@@ -302,11 +336,61 @@ UNCHECKED_PROSE: dict[tuple[str, ...], str] = {
     ("properties", "schema_version"): (
         "const: '1' で JSON Schema 側が既に機械化済み。散文ではない"
     ),
-    ("properties", "capture_regions"): (
-        "「Missing entry for a match = not cropped」は不在の意味付けであり、"
-        "違反状態を構成できない (不在は常に valid)"
+    ("properties", "minimap_regions"): (
+        "「Missing entry for a match = not cropped」「Field absent = minimap crop never ran」は"
+        "**不在の意味付け**であり、違反状態を構成できない (不在は常に valid)"
+    ),
+    ("$defs", "DetectionParams", "properties", "vtuber"): (
+        "「the VTuber path never auto-triggers, so request equals resolved」は"
+        "detector の振る舞いについての主張で、payload 単体からは検証できない。"
+        "pin するなら detector 側のテストになるので本ファイルの守備範囲外"
+    ),
+    ("$defs", "Match"): (
+        "「JSON Schema is the strict writer contract / reader-side passthrough は zod」は"
+        "schema と zod の分担の説明。writer 側は additionalProperties: false が既に機械化しており、"
+        "reader 側 (zod passthrough) は gui/src の TS テストの守備範囲"
+    ),
+    ("$defs", "MetadataWarning"): (
+        "「readers must accept unknown codes」は **reader の義務**であり、"
+        "writer が出す payload では違反状態を構成できない"
+    ),
+    ("$defs", "CaptureRegion", "properties", "source"): (
+        "「Documented values」+「Free string: readers must accept unknown values」= "
+        "意図的な open enum。閉じた集合として検査すると将来の detector 追加で false-red になる"
+    ),
+    ("$defs", "CaptureRegions"): (
+        "coarse がどの検出器由来かの説明 (OBS は FULL_FRAME 等) は検出経路の記述であり、"
+        "payload の形の契約ではない。検出経路の pin は tests/test_capture_region.py 側"
+    ),
+    (): (
+        "root の description は「refine 系の意味制約は zod / InputFileError が持つ」という"
+        "**分担の宣言**。そこで名指しされている制約 (end_time >= start_time 等) は"
+        "PROSE_CONTRACTS 側で個別に検査しているので、root 自体は再検査しない"
+    ),
+    ("properties", "gaps"): (
+        "「>= 5 minutes」は producer 側の閾値 (min_gap=300.0) であり、正は detector の"
+        "gap 抽出とそのテスト。payload から再 assert すると同じ閾値が 2 箇所になる"
+    ),
+    ("$defs", "Gap"): ("properties/gaps と同一の主張 (min_gap=300.0) の再掲。同上"),
+    ("$defs", "Match", "properties", "start_time"): (
+        "「>= 0」は minimum: 0 で JSON Schema 側が既に機械化済み。散文ではない"
     ),
 }
+
+#: 散文が契約を含むことを示唆する語。この語を含む description は
+#: :data:`PROSE_CONTRACTS` か :data:`UNCHECKED_PROSE` のどちらかに必ず現れねばならない
+#: (:func:`test_no_unclassified_contract_prose`)。
+#: ``>=`` は単語境界を持たないので regex ではなく部分文字列で照合する。
+CONTRACT_SIGNAL_WORDS: tuple[str, ...] = (
+    "absolute",
+    "relative",
+    "must ",
+    "always ",
+    "never ",
+    ">=",
+    "iso 8601",
+    "utc",
+)
 
 
 def _resolve_pointer(
@@ -349,8 +433,16 @@ def _build_payload(tmp_path: Path) -> dict[str, Any]:
         effective_interval=2.0,
         config=config,
         boundaries=boundaries,
-        output_files=[Path("match_001.mp4"), Path("match_002.mp4")],
-        gaps=[],
+        # **production と同じ形**を渡す。``split_video`` は ``output_dir / match_NNN.mp4``
+        # を返すのであって、bare filename ではない。ここで bare を渡すと
+        # output-file-relative の checker が「既に整形済みの入力」しか見ず、writer が
+        # ディレクトリ付き / 絶対パスを書いても緑のままになる (Codex adversarial-review
+        # [high]、要因分析 F7 の「きれいな入力しか供給しない fixture」そのもの)。
+        output_files=[tmp_path / "match_001.mp4", tmp_path / "match_002.mp4"],
+        # gaps を空にすると gap-interval-ordered の「正常系は通る」側が空ループになり、
+        # 何も検査しないまま緑になる (vacuous pass)。非空を渡し、下の
+        # _assert_fixture_is_not_vacuous でその前提が将来も崩れないよう固定する。
+        gaps=[{"start": 1200.0, "end": 1500.0, "duration": 300.0}],
         system_info=system_info,
     )
     return dict(payload)
@@ -359,6 +451,28 @@ def _build_payload(tmp_path: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 棚卸しが schema と乖離していないか
 # ---------------------------------------------------------------------------
+
+
+def test_fixture_is_not_vacuous(tmp_path: Path) -> None:
+    """fixture が各 checker の走査対象を **実際に持っている** ことを固定する。
+
+    契約の checker は ``matches`` / ``gaps`` / ``output_file`` を走査するループを含む。
+    走査対象が空だと checker は 1 度も比較せずに return し、「正常系は通る」側のテストが
+    **何も検査しないまま緑**になる (vacuous pass)。fixture の内容は将来の編集で簡単に
+    痩せるので、痩せた瞬間にここで落ちるようにしておく。
+
+    実際、当初の fixture は ``gaps=[]`` で gap-interval-ordered が空ループだった。
+    """
+    payload = _build_payload(tmp_path)
+    assert payload["matches"], "matches が空だと match 系 checker が空ループになる"
+    assert payload["gaps"], "gaps が空だと gap-interval-ordered が空ループになる"
+    assert all("output_file" in m for m in payload["matches"]), (
+        "output_file が無いと output-file-relative が continue で素通りする"
+    )
+    for field in ("detected_at", "detection_started_at", "detection_completed_at"):
+        assert field in payload, (
+            f"{field} が無いと UTC checker が早期 return して何も検査しない"
+        )
 
 
 def test_every_contract_pointer_resolves_in_the_schema() -> None:
@@ -383,13 +497,57 @@ def test_contract_ids_are_unique() -> None:
     assert len(ids) == len(set(ids)), f"contract id が重複している: {ids}"
 
 
+def _iter_descriptions(
+    node: Any, pointer: tuple[str, ...] = ()
+) -> list[tuple[tuple[str, ...], str]]:
+    out: list[tuple[tuple[str, ...], str]] = []
+    if isinstance(node, dict):
+        description = node.get("description")
+        if isinstance(description, str):
+            out.append((pointer, description))
+        for key, value in node.items():
+            if key != "description":
+                out.extend(_iter_descriptions(value, (*pointer, key)))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            out.extend(_iter_descriptions(value, (*pointer, str(i))))
+    return out
+
+
+def test_no_unclassified_contract_prose() -> None:
+    """契約を示唆する語を含む description が、必ずどちらかに分類されている。
+
+    棚卸しが人手であること自体は消せないが、**漏れを人手のままにしない**ことはできる。
+    schema に契約めいた散文を足したのに :data:`PROSE_CONTRACTS` にも
+    :data:`UNCHECKED_PROSE` にも入れなかったら、ここで落ちる。
+
+    これは「棚卸しが完全である」ことの保証ではない。:data:`CONTRACT_SIGNAL_WORDS` に
+    引っかからない言い回しの契約は依然として検査外であり、**それがこの gate の限界**である。
+    """
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    classified = {c.schema_pointer for c in PROSE_CONTRACTS} | set(UNCHECKED_PROSE)
+    unclassified: list[str] = []
+    for pointer, description in _iter_descriptions(schema):
+        lowered = description.lower()
+        if not any(word in lowered for word in CONTRACT_SIGNAL_WORDS):
+            continue
+        if pointer in classified:
+            continue
+        unclassified.append(f"{'/'.join(pointer) or '<root>'}: {description[:100]}")
+    assert not unclassified, (
+        "契約を示唆する散文が棚卸しにも「検査しない」判断にも入っていない:\n"
+        + "\n".join(f"- {u}" for u in unclassified)
+        + "\nPROSE_CONTRACTS に追加するか、UNCHECKED_PROSE に理由付きで記録すること。"
+    )
+
+
 def test_inventory_size_is_pinned() -> None:
     """棚卸しの件数を固定する。
 
     増減させるときは module docstring の「8 件」も同時に直すこと。数だけ動いて散文が
     据え置かれると、doc が「棚卸し済み」と主張する範囲と実体が静かにズレる。
     """
-    assert len(PROSE_CONTRACTS) == 8, [c.id for c in PROSE_CONTRACTS]
+    assert len(PROSE_CONTRACTS) == 9, [c.id for c in PROSE_CONTRACTS]
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +621,50 @@ def test_writer_absolutizes_a_relative_argv_source(tmp_path: Path, monkeypatch) 
     )
     assert os.path.isabs(payload["source"]), payload["source"]
     assert_prose_contracts(dict(payload))
+
+
+def test_output_file_field_normalizes_every_producer_shape(tmp_path: Path) -> None:
+    """2 つの producer が渡す形をすべて「metadata.json からの相対」へ揃える (#934)。
+
+    ``split`` は ``split_video`` の戻り値 (``output_dir / match_NNN.mp4``、``-o`` が
+    絶対なら絶対) を渡し、``detect`` は bare な placeholder を渡す。素の ``as_posix``
+    では前者だけがディレクトリ付き / 絶対になり、**同じフィールドが producer によって
+    別の意味になる**。
+    """
+    out_dir = tmp_path / "out"
+    assert _output_file_field(out_dir / "match_001.mp4", out_dir) == "match_001.mp4"
+    assert _output_file_field(Path("out/match_001.mp4"), Path("out")) == "match_001.mp4"
+    assert (
+        _output_file_field(Path("./out/match_001.mp4"), Path("./out"))
+        == "match_001.mp4"
+    )
+    # detect の placeholder は既に output_dir 相対。cwd に再アンカーしない。
+    assert _output_file_field(Path("match_001.mp4"), Path("out")) == "match_001.mp4"
+
+
+def test_output_file_field_does_not_shorten_out_of_tree_paths(tmp_path: Path) -> None:
+    """``output_dir`` の外は basename へ縮めない。
+
+    縮めると「存在しない兄弟ファイル」を指す値になり、読み手からは正常に見える。
+    CLI からは到達しない枝だが、縮める実装に変えられたらここで落ちる。
+    """
+    out_dir = tmp_path / "out"
+    outside = tmp_path / "elsewhere" / "match_001.mp4"
+    result = _output_file_field(outside, out_dir)
+    assert result != "match_001.mp4"
+    assert ".." in result, result
+
+
+def test_split_and_detect_agree_on_output_file_shape(tmp_path: Path) -> None:
+    """絶対 ``-o`` の split と detect の placeholder が同じ形になる。
+
+    #934 の起点。修正前は detect が ``match_001.mp4``、``split -o E:/out`` が
+    ``E:/out/match_001.mp4`` を書いており、同じフィールドの意味が producer 依存だった。
+    """
+    out_dir = tmp_path / "out"
+    split_shape = _output_file_field(out_dir / "match_001.mp4", out_dir)
+    detect_shape = _output_file_field(Path("match_001.mp4"), out_dir)
+    assert split_shape == detect_shape == "match_001.mp4"
 
 
 def test_source_absolute_contract_would_catch_the_930_regression(

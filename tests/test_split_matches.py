@@ -289,10 +289,18 @@ def test_match_list_handles_missing_type_key(
 def test_metadata_output_file_uses_posix_separator(
     mock_probe, mock_detect, mock_split, tmp_path
 ):
-    """metadata.json output_file uses POSIX '/' separator on all platforms (#371).
+    """metadata.json output_file never carries a Windows separator (#371 / #934).
 
     JSON is a cross-platform data-interchange format; backslashes in paths
     break Linux/macOS consumers of metadata.json (e.g. the L2/L3 pipeline).
+
+    #934 で ``output_file`` は **metadata.json と同ディレクトリからの相対**になった
+    ため、CLI 経路では区切りを含まない bare filename になる。#371 の主張 (backslash が
+    混ざらない) はそのまま成立するが、「``/`` を含む」という当時の assert は
+    **output_dir を値に埋め込んでいたバグの副産物**だったので落とす。区切りを含む値が
+    posix 化されること自体は
+    ``tests/test_path_schema_contracts.py::test_output_file_field_does_not_shorten_out_of_tree_paths``
+    が直接 pin している。
     """
     nested = tmp_path / "sub" / "output"
     mock_probe.return_value = PROBE_RESULT
@@ -310,8 +318,10 @@ def test_metadata_output_file_uses_posix_separator(
         assert "\\" not in m["output_file"], (
             f"output_file must not contain backslashes: {m['output_file']!r}"
         )
-        assert "/" in m["output_file"], (
-            f"output_file must contain forward slashes: {m['output_file']!r}"
+        # #934: 出力先が nested (tmp/sub/output) でも値は bare filename になる。
+        assert m["output_file"] == Path(m["output_file"]).name, (
+            f"output_file must be relative to the metadata.json directory: "
+            f"{m['output_file']!r}"
         )
 
 
@@ -6527,7 +6537,9 @@ def test_build_metadata_payload_no_post_match_is_bitexact(tmp_path):
             "duration": 600.0,
             "duration_display": _format_duration(600.0),
             "type": "fl_match",
-            "output_file": (tmp_path / "match_001.mp4").as_posix(),
+            # #934: metadata.json ディレクトリ (= output_dir) からの相対。
+            # 修正前は output_dir 込みの as_posix をそのまま書いていた。
+            "output_file": "match_001.mp4",
         },
         {
             "index": 2,
@@ -6538,7 +6550,7 @@ def test_build_metadata_payload_no_post_match_is_bitexact(tmp_path):
             "duration": 590.0,
             "duration_display": _format_duration(590.0),
             "type": "unknown",
-            "output_file": (tmp_path / "match_002.mp4").as_posix(),
+            "output_file": "match_002.mp4",
         },
     ]
 
