@@ -109,6 +109,42 @@ jobs:
       - name: Test (exclude tests/hooks/ — runs in hook-test job)
         run: pytest --ignore=tests/hooks/
 
+  # #934: path sandbox の **Windows 固有の解決** を CI で踏むための狭い job。
+  #
+  # 上の `python` job は ubuntu なので、`E:foo` (drive-relative) や `..\x.mp4`
+  # (backslash 区切り) が出力先の外を指すかどうかは **一度も Windows の意味論で
+  # 評価されない**。`\` も `:` も POSIX では正当なファイル名文字なので、ubuntu 上では
+  # 「出力先の中に留まる」側だけが踏まれ、Windows 側の解決が壊れても緑のままになる。
+  # 本 project は Windows 向けに配布する CLI で、ここは #930 で実際にデータ損失を
+  # 出した書込 sandbox と同じ経路なので、その差分だけを Windows で回す。
+  #
+  # **全スイートは回さない** — ffmpeg / GPU を要する経路は既存の job と実機検証の
+  # 担当であり、ここを太らせると Windows runner の待ち時間だけが増える。
+  # `export_cli` を除外しているのは、CLI 経路が encoder 列挙で ffmpeg を要求するため
+  # (この job は ffmpeg を入れない)。resolver 層の path 判定はすべて含まれている。
+  python-windows-path-sandbox:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]" -c constraints.txt
+
+      # shell: bash を明示する。既定の pwsh は native command の stderr を
+      # NativeCommandError へ包み、exit 0 でも $? を false にすることがある
+      # (docs/l2-workflow.md / PowerShell の既知の罠)。
+      - name: Test (path sandbox / metadata contracts only)
+        shell: bash
+        run: pytest tests/test_export_pool.py tests/test_path_schema_contracts.py -q -k "not export_cli"
+
   hook-test:
     runs-on: ubuntu-latest
     steps:
