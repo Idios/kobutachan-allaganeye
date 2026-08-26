@@ -89,6 +89,7 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
    ```markdown
    ## acceptance_criteria_status
    | # | 条件 | 実証 | 判定 |
+   | --- | --- | --- | --- |
 
    ## findings_table
    | # | 摘出内容 | 出所 | 処置 | 根拠 |
@@ -98,16 +99,23 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
     空でもセクション自体は必須記載 (ambiguous_judgments と同じ規約)>
 
    ## ambiguous_judgments
-   - <subagent が auto 判断できなかった点。空でもセクション自体は必須記載>
+   - <subagent が auto 判断できなかった点を 1 件 1 行。**空なら箇条書き行を 1 行も書かず、見出しだけを残す**
+     (findings_table のゼロ件がデータ行 0 行なのと対応する。`- (なし)` のような自由文は書かない)>
 
    ## recommendation
-   <LGTM / fix-required / divergent>
+   <LGTM / fix-required / divergent。決定規則: findings_table のデータ行が 0 行 かつ
+    受け入れ条件が全件実証済なら `LGTM` / findings が 1 件以上なら `fix-required` /
+    同一 topic が round を跨いで再出現しているなら `divergent`。
+    **収束判定は controller が findings 件数で行う** (Step 3.1) ため、本フィールドは
+    controller の判定を上書きしない — 食い違ったら controller 側が正>
 
    ## meta
    - mergeStateStatus: <CLEAN/BEHIND/...>
    - 並行 PR: <検出ゼロ / [#X handled]>
    - CI status: <green/failing/pending>
    - Codex 出力読み取り: <成功 (job <job-id> の result 全文を finding の入力にした) / 失敗 (理由: <1 行>、stdout の範囲のみで triage) / 非起動 (理由: <起動条件のどれに不該当か>)>
+     <非起動 の理由は `/review-pr` を読まずとも書けるよう、代表形をここに置く:
+      `条件1 touched <N> file / <M> lines・条件2 再発 root cause <K> 件・条件3 core 変更対象ファイル 該当 0`>
    ```
 
 8. **Codex review を起動した場合は、finding を `/review-pr` §「Codex 出力の読み取り」の手順で保存済み全文から取り込む。** stdout に見えた分だけで triage しない。`## meta` の `Codex 出力読み取り` 行は**省略不可**で、`失敗` と `非起動` は**理由も必須** (省略はいずれも parse error)。`非起動` の理由には `/review-pr` の「起動記録 (該当時 / 不該当時とも必須)」の非対象行の内容を畳んでよい — **この行以外に Codex 関連の slot を新設しない**
@@ -157,7 +165,7 @@ Step 4.2 の summary テンプレートも区切り行を持っており、**同
 | --- | --- | --- |
 | 1 | 全 finding に classification がある | **通る**。データ行が 0 行なので「classification を欠く行」も 0 行 |
 | 2 | (B) 主張行には trigger 根拠列がある | **通る**。(B) 行が 0 行 |
-| 3 | 「無視」「観察のみ」「スコープ対象外」を単独で含む行がない | **通る**。ヘッダ行にこれらの語は含まれない (`なし` 等の自由文を書くとここに触れうるので書かない) |
+| 3 | 「無視」「観察のみ」「スコープ対象外」を単独で含む行がない | **通る**。ヘッダ行にこれらの語は含まれない (`なし` 等の自由文は本 item ではなく **item 1** で落ちる。帰属は上の誤り表が正) |
 | 4 | 必須セクションが存在する | **通る (条件付き)**。ゼロ件でも `## findings_table` / `## ambiguous_judgments` を**両方**置くこと。どちらかを省けば本 item で parse error |
 | 5 | (A) 強優先方針違反検出 | **通る**。分類対象の finding が 0 件 |
 | 6 | `## meta` に `Codex 出力読み取り` 行がある | **通る (条件付き)**。findings 件数とは独立だが、`## meta` に当該行が無ければ本 item で parse error。Codex 非起動なら `非起動 (理由: ...)` で理由括弧まで必須 |

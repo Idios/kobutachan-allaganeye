@@ -81,6 +81,12 @@ Step 0a の全件達成を確認したら、**`Agent(subagent_type=allaganeye-fa
 走るので、「Step 0a の 3 択と同じ画面」のような指定は、記録を書く時点で既に閉じている画面を指す。
 記録先は**永続する成果物の名前付きスロット**で指定する (転記先の見出しを固定してあるのと同じ方式)。
 
+**ただし転記先の PR 本文は Step 3-6 まで存在しない。** 生成時刻が転記先の生成時刻より前なので、
+**その間の保管場所も指定する**: 本 step で生成した 1 行を **TodoWrite / セッションの plan に逐語で退避**し、
+Step 3-6 で PR body を組むときにそこから貼る。保管場所を決めないと、
+「揮発的な画面に書くな」という規約と「まだ書き込む先が無い」という物理状況が衝突し、
+実行者ごとに保管手段を発明することになる。
+
 **`実施` は N / M / K の数値記入が必須。** 数値を required にしないとこの step は no-op になる —
 Step 0a の判定は「達成 / 未達成 / **該当なし**」の 3 択で、**「該当なし」で通過できてしまう**ため
 (#945 が明示した false-green の制約)。**残 K 件がある場合は Track D の PR 本文へ転記する義務がある。**
@@ -183,6 +189,10 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
    ```bash
    # Step 0c-2 で解決した $PREV_TAG をそのまま使う (定義は Step 0c-2 の 1 箇所だけ)。
+   # **shell を跨ぐと変数は消える。** 空のまま `git log ..HEAD` を実行すると空の範囲を
+   # exit 0 で返す (= 沈黙した false-green) ので、必ず非空を確認してから使う。
+   # 別 shell なら Step 0c-2 と同一の 1 行で再解決してから下を実行する。
+   [ -n "$PREV_TAG" ] || { echo "PREV_TAG が空です (Step 0c-2 の定義を再実行してください)" >&2; exit 1; }
    git log "$PREV_TAG"..HEAD --oneline
    ```
 
@@ -210,7 +220,9 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    > | 条件 | `<hop1 head>` |
    > | --- | --- |
    > | 通常 | `release/v<新バージョン>` |
-   > | spec が「`release/vX.Y.Z` 統合ブランチを作らない」と裁定 (例: v0.3.1 の裁定 D4) | **`claude/<slug>`** (Track D の通常作業ブランチ) |
+   > | spec が「`release/vX.Y.Z` 統合ブランチを作らない」と裁定 (例: v0.3.1 の裁定 D4) | **`claude/v<新バージョン のドットを - に置換>-release-track-d`** (例: v0.3.1 → `claude/v0-3-1-release-track-d`) |
+   >
+   > **`claude/<slug>` のような名前空間だけの指定にしない。** この値は Step 3-2 / 3-5 / 3-6 と Step 4 の表の 4 箇所で**同一**でなければならないので、構成規則まで固定する。
    >
    > **hop 1 を省く変種ではない。** 裁定が出ている場合でも hop 1 の PR 自体は作る (head が `claude/<slug>` になるだけ) し、**hop 2 は変わらず必要**。「release ブランチを作らない = PR は 1 本」と読み違えない。
    >
@@ -239,7 +251,7 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    pyright --pythonpath "$(dirname "$(git rev-parse --git-common-dir)")/.venv/Scripts/python.exe"
    ```
 
-   いずれか失敗したら修正してから以下に進む。**この時点ではまだ何も編集していない** (作業ツリーは clean) ので、次の branch 作成が安全に行える
+   いずれか失敗したら修正してから以下に進む。**修正した場合は、その修正を分岐元ブランチ上で commit (または `git stash`) してから 3-2 へ進み、3-1 を回し直して緑を確認する。** 3-1 の修正も編集であり、そのまま 3-2 の `git pull` に入ると 3-2 が防ごうとしている dirty tree の状態になる (checkout 失敗 / pull の merge 中断 / 編集の巻き戻し)。**「3-1 が全部緑だった」場合にのみ作業ツリーは clean** で、次の branch 作成が無条件に安全になる
 
 2. **hop 1 の head ブランチ (`<hop1 head>`、Step 2-5 で決めた変数) を作成する**（Step 2-4 の表の**分岐元**から分岐。PR の `--base` とは別物なので取り違えない）。**バージョン編集より前**に行う:
 
@@ -413,7 +425,7 @@ gh pr create --base release/v<新バージョン> --title "docs: set CHANGELOG d
 
 この PR も required status check 8 件を満たす必要がある。**CI 1 サイクル分（十数分）をタグ打ち当日の所要時間に見込んでおくこと。** PR 本文は通常どおり Self-Test Report を埋める（`validate-checklist` が required なので、未消化 checkbox があるとマージできない）。
 
-> **実行順序の制約**: Step 4 は**リリース PR をマージする前**に実行する。`main` は保護ブランチ（`release/vX.Y.Z → main` のマージのみ受け付ける、[`docs/release-process.md`](../../../docs/release-process.md) §ルール 1）なので、マージ後に日付だけ直そうとしても直接 commit できない。**Step 4 → リリース PR マージ → タグ打ちを同じ JST 日のうちに終える**のが正しい順序で、v0.3.0 もこの順で確定させている。
+> **実行順序の制約** (hop 数 = 1 の構成、= minor / major と `develop-<新バージョン>` を持たない patch): Step 4 は**リリース PR をマージする前**に実行する。**hop 数 = 2 の構成では本文は hop 2 の PR に読み替える** — hop 1 は既にマージされていてよく、その場合の手順は上記 §「hop 1 マージ後・hop 2 前に日付ドリフトを見つけた場合」が正である。`main` は保護ブランチ（`release/vX.Y.Z → main` のマージのみ受け付ける、[`docs/release-process.md`](../../../docs/release-process.md) §ルール 1）なので、マージ後に日付だけ直そうとしても直接 commit できない。**Step 4 → リリース PR マージ → タグ打ちを同じ JST 日のうちに終える**のが正しい順序で、v0.3.0 もこの順で確定させている。
 >
 > なお基準日を省いた `python scripts/check_version_consistency.py --tag v<新バージョン>` は、日付欄の**存在**しか見ない（値は比較しない）。Step 3 のバンプ時点ではタグを打つ日が未確定なので、そちらでは省略形で構わない。
 
