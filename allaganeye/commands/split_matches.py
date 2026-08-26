@@ -1639,7 +1639,17 @@ def _output_file_field(path: Path, output_dir: Path) -> str:
     except ValueError:
         pass
     if path.is_absolute():
-        return Path(os.path.relpath(path, os.path.abspath(output_dir))).as_posix()
+        try:
+            return Path(os.path.relpath(path, os.path.abspath(output_dir))).as_posix()
+        except ValueError:
+            # Windows raises when the two paths sit on different drives -- there is
+            # no relative form to return. Not reachable from the CLI (``split_video``
+            # builds its paths from ``output_dir``), but by the time this runs the
+            # MP4s are already on disk, so aborting the metadata write would lose the
+            # split. Fall back to the absolute path: it does not satisfy the
+            # "relative to the metadata.json directory" contract, but it is at least
+            # resolvable, and it is the pre-#934 behaviour.
+            return path.as_posix()
     # Relative and not under ``output_dir``: already anchored on it (detect's
     # placeholders). Leave it alone rather than re-anchoring it on the cwd.
     return path.as_posix()

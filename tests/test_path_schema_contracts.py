@@ -655,6 +655,25 @@ def test_output_file_field_does_not_shorten_out_of_tree_paths(tmp_path: Path) ->
     assert ".." in result, result
 
 
+def test_output_file_field_survives_cross_drive_relpath_failure(tmp_path: Path) -> None:
+    """``os.path.relpath`` の ValueError (Windows の異ドライブ) で落ちない。
+
+    この分岐は CLI からは到達しない (``split_video`` は ``output_dir`` からパスを組む)
+    が、ここが走る時点で **MP4 は既にディスク上にある**。metadata の書き込みで例外を
+    上げると分割結果ごと失う。``relpath`` を直接 monkeypatch して発火させるので、
+    Windows でなくても検証できる (実ドライブに依存すると ubuntu CI で skip になる)。
+    """
+    out_dir = tmp_path / "out"
+    target = tmp_path / "match_001.mp4"
+
+    def _raise(*_args: object, **_kwargs: object) -> str:
+        raise ValueError("path is on mount 'D:', start on mount 'C:'")
+
+    with patch("allaganeye.commands.split_matches.os.path.relpath", _raise):
+        result = _output_file_field(target, out_dir)
+    assert result == target.as_posix()
+
+
 def test_split_and_detect_agree_on_output_file_shape(tmp_path: Path) -> None:
     """絶対 ``-o`` の split と detect の placeholder が同じ形になる。
 
