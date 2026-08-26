@@ -1265,25 +1265,46 @@ test('#945 regression: 人間 PR は listFiles 失敗で red (fail-closed が効
 });
 
 // ---------------------------------------------------------------------------
-// [runner coverage] この workflow が `.github/scripts/` の pin test を取りこぼさないこと (#946)
+// [runner coverage] workflow が `.github/scripts/` の pin test を取りこぼさないこと (#946)
 //
 // **この test の置き場所は意図的である。** 以前 `check-pr-checklist-test.yml` は
 // `check-pr-checklist.test.js` だけを名指しで実行しており、#999 が追加した
 // `check-preflight-freshness.test.js` (47 test) は CI で 1 度も走っていなかった
-// (ローカルの glob 実行 `node --test .github/scripts/*.test.js` は 166 pass、
-//  CI が実際に回していた単一ファイル形は 119 pass。差の 47 が死んでいた)。
-// checker を壊しても CI は緑のままになる false-green だったので、
+// (ローカルで見ていた glob 形は 166 pass、CI が実際に回していた単一ファイル形は 119 pass。
+//  差の 47 が死んでいた)。checker を壊しても CI は緑のままになる false-green だったので、
 // **単一ファイル形に戻された場合でも走る唯一のファイル** = 本ファイルに coverage 検査を置く。
 // 別ファイルに置くと、まさに塞ぎたい退行 (run 行の単一ファイル固定) で検査自身が走らなくなる。
+//
+// ## この検査が見ていない集合 (false-green)
+//
+// - workflow の解釈は **YAML parser ではなく正規表現の近似**である (stdlib に YAML parser が無い)。
+//   近似がずれて「0 件」を返すと検査が空回りして緑になるため、`paths` ブロック数・`files=(...)`
+//   行数・発見できた test ファイル数を **すべて件数で assert** して、空振りを red 側へ倒している
+//   (Codex adversarial-review [medium])
+// - `runs-on` / `node-version` / job 名は検査しない。実行系の同一性までは pin しない
+// - 「その test が意味のある assert をしているか」は見ない。見るのは **実行されるかどうか**だけ
 // ---------------------------------------------------------------------------
 
 const SCRIPTS_DIR = __dirname;
 const RUNNER_WORKFLOW = path.join(__dirname, '..', 'workflows', 'check-pr-checklist-test.yml');
 
-/** `*` = セパレータを跨がない / `**` = 跨ぐ、の最小 glob 照合。 */
+/**
+ * glob を正規表現へ落とす。`*` = セパレータを跨がない / `**` = 跨ぐ。
+ *
+ * `**` の直後にセパレータが続く形 (`a/ **\/ *.js`) は **0 段も含む**。ここを素朴に `.*` + `/` と
+ * すると `.github/scripts/**` + `/` + `*.test.js` が「必ず 1 段以上ネストしている」ことを要求し、
+ * 直下のファイルが漏れる。漏れた側は「対象外」= 検査が緩む方向なので必ず塞ぐ
+ * (Codex adversarial-review [medium] の機構部分。指摘された `.github/scripts/**` 単体では
+ *  実測上この問題は起きないが、`**​/` を含む形では実際に起きる)。
+ */
 function globToRegExp(pattern) {
   let out = '';
   for (let i = 0; i < pattern.length; i += 1) {
+    if (pattern.startsWith('**/', i)) {
+      out += '(?:[^/]*\\/)*'; // 0 段以上
+      i += 2;
+      continue;
+    }
     const ch = pattern[i];
     if (ch === '*') {
       if (pattern[i + 1] === '*') {
@@ -1293,20 +1314,63 @@ function globToRegExp(pattern) {
         out += '[^/]*';
       }
     } else {
-      out += ch.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+      out += ch.replace(/[.+?^${}()|[\]\\/]/g, '\\$&');
     }
   }
   return new RegExp(`^${out}$`);
 }
 
-/** `.github/scripts/` 配下の test ファイルを repo 相対 posix path で列挙する。 */
-function discoverTestFiles() {
-  return fs
-    .readdirSync(SCRIPTS_DIR)
-    .filter((name) => /\.test\.[cm]?js$/.test(name))
-    .sort()
-    .map((name) => `.github/scripts/${name}`);
+/** `.github/scripts/` 配下を **再帰的に** 走査し、repo 相対 posix path を返す。 */
+function walkScripts(dir = SCRIPTS_DIR, prefix = '.github/scripts') {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const rel = `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) out.push(...walkScripts(path.join(dir, entry.name), rel));
+    else out.push(rel);
+  }
+  return out.sort();
 }
+
+const TEST_FILE_RE = /\.test\.[cm]?js$/;
+const SOURCE_FILE_RE = /\.[cm]?js$/;
+
+const discoverTestFiles = () => walkScripts().filter((f) => TEST_FILE_RE.test(f));
+const discoverCheckerFiles = () =>
+  walkScripts().filter((f) => SOURCE_FILE_RE.test(f) && !TEST_FILE_RE.test(f));
+
+/** workflow の `paths:` ブロックを列挙する (pull_request / push の 2 個を期待)。 */
+function parsePathsBlocks(workflowText) {
+  return [...workflowText.matchAll(/^\s*paths:\s*$((?:\r?\n\s*-\s*\S.*)+)/gm)].map((m) =>
+    [...m[1].matchAll(/^\s*-\s*(.+?)\s*$/gm)].map((x) => x[1].replace(/^['"]|['"]$/g, ''))
+  );
+}
+
+/** workflow の実行対象 glob (`files=(...)`) を取り出す。 */
+function parseRunnerPatterns(workflowText) {
+  const lines = [...workflowText.matchAll(/^\s*files=\((.*)\)\s*$/gm)].map((m) => m[1]);
+  assert.equal(lines.length, 1, `files=(...) 行が ${lines.length} 本あります (1 本を期待)`);
+  return lines[0]
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((p) => p.replace(/^['"]|['"]$/g, ''));
+}
+
+test('[runner coverage] glob 変換器が ** の 0 段ネストを取りこぼさない', () => {
+  const deep = globToRegExp('.github/scripts/**/*.test.js');
+  assert.ok(deep.test('.github/scripts/a.test.js'), '直下のファイルが漏れています');
+  assert.ok(deep.test('.github/scripts/sub/a.test.js'), 'ネストしたファイルが漏れています');
+  assert.ok(!deep.test('.github/scripts/a.js'), '非 test ファイルを拾っています');
+  assert.ok(!deep.test('.github/other/a.test.js'), 'ディレクトリ外を拾っています');
+
+  const dirGlob = globToRegExp('.github/scripts/**');
+  assert.ok(dirGlob.test('.github/scripts/a.js'));
+  assert.ok(dirGlob.test('.github/scripts/sub/a.js'));
+  assert.ok(!dirGlob.test('.github/scriptsx/a.js'), 'セパレータ境界を跨いでいます');
+
+  const single = globToRegExp('.github/scripts/*.js');
+  assert.ok(single.test('.github/scripts/a.js'));
+  assert.ok(!single.test('.github/scripts/sub/a.js'), '* が / を跨いでいます');
+});
 
 test('[runner coverage] pin test ファイルが 2 本以上見つかる (glob が空振りしていない)', () => {
   const files = discoverTestFiles();
@@ -1318,70 +1382,75 @@ test('[runner coverage] pin test ファイルが 2 本以上見つかる (glob �
   assert.ok(files.includes('.github/scripts/check-preflight-freshness.test.js'));
 });
 
-test('[runner coverage] workflow の run 行が全 test ファイルを対象にしている', () => {
+test('[runner coverage] workflow の実行対象 glob が全 test ファイルを覆っている', () => {
   const wf = fs.readFileSync(RUNNER_WORKFLOW, 'utf8');
-  const runLines = wf
-    .split(/\r?\n/)
-    .map((line) => line.match(/^\s*run:\s*(node\s+--test\s+.+?)\s*$/))
-    .filter(Boolean)
-    .map((m) => m[1]);
-  assert.equal(runLines.length, 1, `node --test の run 行が ${runLines.length} 本あります`);
-
-  const patterns = runLines[0]
-    .replace(/^node\s+--test\s+/, '')
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((p) => p.replace(/\\/g, '/').replace(/^['"]|['"]$/g, ''));
+  const patterns = parseRunnerPatterns(wf);
+  assert.ok(patterns.length >= 1, '実行対象の glob が 1 本もありません');
   const matchers = patterns.map(globToRegExp);
 
-  for (const file of discoverTestFiles()) {
+  const files = discoverTestFiles();
+  assert.ok(files.length >= 2, 'test ファイルの発見に失敗しています (検査が空回りします)');
+  for (const file of files) {
     assert.ok(
       matchers.some((re) => re.test(file)),
-      `${file} が workflow の run 行 (${runLines[0]}) の対象外です。` +
-        '単一ファイル固定に戻すと新しい pin test が CI で走らなくなります (#946)。'
+      `${file} が workflow の実行対象 (${patterns.join(' ')}) から漏れています。` +
+        '単一ファイル固定や平坦な glob へ戻すと新しい pin test が CI で走らなくなります (#946)。'
     );
   }
 });
 
-test('[runner coverage] workflow の paths filter が全 test ファイルを対象にしている', () => {
+test('[runner coverage] 実行対象 glob が 3 拡張子 x 再帰を覆っている (将来の置き方も先回りで塞ぐ)', () => {
   const wf = fs.readFileSync(RUNNER_WORKFLOW, 'utf8');
-  // `on:` の pull_request / push それぞれの paths ブロックを個別に取り出す。
-  const blocks = [...wf.matchAll(/^\s*paths:\s*$((?:\r?\n\s*-\s*.+)+)/gm)].map((m) =>
-    [...m[1].matchAll(/^\s*-\s*['"]?(.+?)['"]?\s*$/gm)].map((x) => x[1])
+  const matchers = parseRunnerPatterns(wf).map(globToRegExp);
+  // 実在しない「将来ありうる置き方」を代表点で当てる。ここを緩めると、
+  // 新しい test を足した PR がその PR 自身では red にならず、静かに実行対象から外れる。
+  for (const hypothetical of [
+    '.github/scripts/new-checker.test.js',
+    '.github/scripts/new-checker.test.cjs',
+    '.github/scripts/new-checker.test.mjs',
+    '.github/scripts/checkers/new-checker.test.js',
+    '.github/scripts/a/b/deep.test.js',
+  ]) {
+    assert.ok(
+      matchers.some((re) => re.test(hypothetical)),
+      `${hypothetical} が実行対象から漏れます (job は起動するが test は走らない false-green)。`
+    );
+  }
+});
+
+test('[runner coverage] glob が空振りしたときに緑にせず落とす guard がある', () => {
+  const wf = fs.readFileSync(RUNNER_WORKFLOW, 'utf8');
+  assert.match(wf, /nullglob/, 'nullglob 無しだと未展開の glob 文字列が node へ渡ります');
+  assert.match(wf, /globstar/, 'globstar 無しだと ** が再帰しません');
+  assert.match(
+    wf,
+    /\$\{#files\[@\]\}\s*-eq\s*0[\s\S]{0,200}?exit 1/,
+    '対象 0 件を fail-closed で落とす guard がありません (空振りを緑にしない)'
   );
+});
+
+test('[runner coverage] workflow の paths filter が全 test ファイル / checker 本体を覆っている', () => {
+  const wf = fs.readFileSync(RUNNER_WORKFLOW, 'utf8');
+  const blocks = parsePathsBlocks(wf);
   assert.equal(blocks.length, 2, `paths ブロックが ${blocks.length} 個です (pull_request / push)`);
 
-  const files = discoverTestFiles();
+  const files = [...discoverTestFiles(), ...discoverCheckerFiles()];
+  assert.ok(files.length >= 4, `対象ファイルが ${files.length} 本しか見つかりません`);
+
   for (const [i, patterns] of blocks.entries()) {
+    const where = i === 0 ? 'pull_request' : 'push';
+    assert.ok(patterns.length >= 1, `${where} の paths が空です`);
     const matchers = patterns.map(globToRegExp);
     for (const file of files) {
       assert.ok(
         matchers.some((re) => re.test(file)),
-        `${file} が ${i === 0 ? 'pull_request' : 'push'} の paths filter (${patterns.join(', ')}) ` +
-          'の対象外です。trigger から漏れると checker を壊しても job が起動しません (#946)。'
+        `${file} が ${where} の paths filter (${patterns.join(', ')}) から漏れています。` +
+          'trigger から漏れると checker を壊しても job が起動しません (#946)。'
       );
     }
-  }
-});
-
-test('[runner coverage] workflow から呼ばれる checker 本体も paths filter に含まれる', () => {
-  const wf = fs.readFileSync(RUNNER_WORKFLOW, 'utf8');
-  const blocks = [...wf.matchAll(/^\s*paths:\s*$((?:\r?\n\s*-\s*.+)+)/gm)].map((m) =>
-    [...m[1].matchAll(/^\s*-\s*['"]?(.+?)['"]?\s*$/gm)].map((x) => x[1])
-  );
-  const checkers = fs
-    .readdirSync(SCRIPTS_DIR)
-    .filter((name) => /\.[cm]?js$/.test(name) && !/\.test\.[cm]?js$/.test(name))
-    .map((name) => `.github/scripts/${name}`);
-  assert.ok(checkers.length >= 2, `checker 本体が ${checkers.length} 本しかありません`);
-
-  for (const patterns of blocks) {
-    const matchers = patterns.map(globToRegExp);
-    for (const file of checkers) {
-      assert.ok(
-        matchers.some((re) => re.test(file)),
-        `${file} を変更しても job が起動しません (paths: ${patterns.join(', ')})。`
-      );
-    }
+    assert.ok(
+      matchers.some((re) => re.test('.github/workflows/check-pr-checklist-test.yml')),
+      `${where} の paths filter が workflow 自身を含んでいません (自己変更で起動しない)。`
+    );
   }
 });

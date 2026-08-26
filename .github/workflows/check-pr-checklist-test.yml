@@ -5,9 +5,16 @@ name: .github/scripts unit tests
 # **単一ファイル固定にしない。** 以前この workflow は `check-pr-checklist.test.js` だけを
 # `paths` filter と `run` の両方で名指ししており、#999 で追加された
 # `check-preflight-freshness.test.js` (47 test) が **CI で 1 度も実行されていなかった**。
-# checker を壊しても緑のままになる false-green だったため、対象を `.github/scripts/**` /
-# `*.test.js` の集合で表現する形に改めた。この意図は
-# `check-pr-checklist.test.js` の `[runner coverage]` test で pin してある。
+# checker を壊しても緑のままになる false-green だったため、対象を「`.github/scripts/` 配下の
+# test ファイル全体」という集合で表現する形に改めた。
+#
+# 実行対象は **再帰 (globstar) + 3 拡張子** で拾う。`.github/scripts/*.test.js` の平坦な glob だと
+# `.github/scripts/checkers/foo.test.js` のような素直な置き方が「job は起動するが実行はされない」
+# = 同じ false-green を別形で再導入する (Codex adversarial-review [medium])。
+# `nullglob` で 1 本も拾えなかった場合は「対象なし」で緑にせず **fail-closed** で落とす。
+#
+# この意図は `check-pr-checklist.test.js` の `[runner coverage]` test 群で pin してある
+# (patterns / paths filter / 空振り guard の 3 点)。
 
 on:
   pull_request:
@@ -29,4 +36,14 @@ jobs:
         with:
           node-version: '20'
       - name: Run .github/scripts unit tests
-        run: node --test .github/scripts/*.test.js
+        shell: bash
+        run: |
+          shopt -s globstar nullglob
+          files=(.github/scripts/**/*.test.js .github/scripts/**/*.test.cjs .github/scripts/**/*.test.mjs)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::.github/scripts 配下に test ファイルが 1 本もありません (glob の空振りを緑にしない)"
+            exit 1
+          fi
+          printf 'running %d test file(s):\n' "${#files[@]}"
+          printf '  %s\n' "${files[@]}"
+          node --test "${files[@]}"
