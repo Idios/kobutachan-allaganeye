@@ -626,3 +626,7 @@ async function checkPrChecklist({ github, context, core }) {
 module.exports = checkPrChecklist;
 module.exports.countAcceptanceCriteriaCheckboxes = countAcceptanceCriteriaCheckboxes;
 module.exports.validateFableRow = validateFableRow;
+// #946: `check-preflight-freshness.js` が「GitHub が隠す範囲」の判定を共有するために使う。
+// 同じ近似を 2 本持つと、片方だけ renderer 実測に追従して乖離する (#967 が潰した乖離 14 件と
+// 同じ構図)。判定は 1 箇所に置く。
+module.exports.stripInlineComments = stripInlineComments;

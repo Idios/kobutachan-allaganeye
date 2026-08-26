@@ -55,7 +55,9 @@ heading 名は `pr-checklist.yml` workflow の section-aware regex と完全一�
 #### ベース同期確認 (Pre-flight、`docs/l2-workflow.md` §「PR 作成 Pre-flight」)
 
 <!--
-plain bullet `-` で記述する (validate-checklist は `[x]` 化を要求しない、CI ゲート増設なし)。
+plain bullet `-` で記述する (validate-checklist は `[x]` 化を要求しない)。
+ただし **下 2 行の宣言フィールドは `check-preflight-freshness` job が機械検査する** (#946)。
+plain bullet だから CI 対象外、ではない。未記入・placeholder 放置は fail-closed で red になる。
 PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre-flight」参照):
 1. `git fetch origin <base>` で base 最新化
 2. `git log HEAD..origin/<base> --oneline` で取り込み未済 commit 列挙
@@ -68,6 +70,18 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre
 - PR head の base 取り込み: 取り込み不要 (base 進行なし) / merge 済み (commit `<sha>`) / rebase 済み
 - 直近マージ PR の影響: なし / [#N] (touched files 交差: `<path>` → 確認済み)
 - 並行 PR 確認 (`gh pr list --search "<元issue#>" --state all`): なし / [#N] (理由: 別スコープ並走 / 重複なし)
+
+<!--
+下 2 行は Step 0 / Step 4 で **実際に観測した open PR 集合**をそのまま書き写す欄で、
+CI が PR 作成時点 (T0) の集合を再サンプリングして差分を取る (#946)。
+上の「並行 PR 確認」行との分担: あちらは `--state all` の結果に対する**判断**
+(別スコープ並走 / 重複なし) を書く欄、こちらは判断前の**生の観測結果**を書く欄。
+重複記入ではなく、判断の入力と出力を分けている。
+書式: `#938, #940` (無ければ `なし`)。`[#N,...]` を残したまま提出すると red になる。
+-->
+
+- Pre-flight 時点の同 issue open PR: [#N,...] (または なし)
+- Pre-flight 時点の同 base open PR: [#N,...] (または なし)
 
 #### Self-Test Report (machine-verified — 全件 `[x]` で validate-checklist 通過)
 
