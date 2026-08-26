@@ -396,7 +396,7 @@ PR 作成前のローカル自動チェックは、変更ファイル path に�
 
 | 種別 | 判定パターン | 実行する自動チェック |
 | --- | --- | --- |
-| **python-core** | `allaganeye/**/*.py`, `tests/**/*.py`, `pyproject.toml` | `ruff check .` / `ruff format --check .` / `pyright` / `pytest` (slow 除外) |
+| **python-core** | `allaganeye/**/*.py`, `tests/**/*.py`, `pyproject.toml` | `ruff check .` / `ruff format --check .` / `pyright --pythonpath .venv/Scripts/python.exe` / `pytest` (slow 除外)。`pyright` の `--pythonpath` を省略すると PATH の python を解析対象にして false-red になる ([#974](https://github.com/Idios/kobutachan-allaganeye/issues/974)、呼び方の正は [docs/developer-setup.md](developer-setup.md) §4) |
 | **gui-frontend** | `gui/src/**`, `gui/package.json`, `gui/tsconfig.json`, `gui/vite.config.ts`, `gui/eslint.config.js` | `cd gui && npm run lint` / `npm run typecheck` / `npm test` / `npm run build` |
 | **gui-rust** | `gui/src-tauri/**` | `cargo check --manifest-path gui/src-tauri/Cargo.toml` |
 | **installer-pester** | `scripts/**/*.ps1`, `scripts/tests/**` | `Invoke-Pester -Path scripts/tests/` (Windows 上で) |
