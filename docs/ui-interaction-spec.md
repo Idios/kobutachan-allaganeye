@@ -10,7 +10,7 @@
 >
 > **検査されない範囲**: `の` で束縛されていない backtick (散文・UI ラベル・CSS 値・状態名) は検査対象外で、記述内容の正しさも見ない。詳細は `scripts/check_doc_code_refs.py` の docstring §「この gate が見ていない集合」を参照。
 >
-> **同一セル内で同じファイルの symbol を続けて挙げるときは、先頭だけ束縛形にして後続は bare backtick で書く** ([#960](https://github.com/Idios/kobutachan-allaganeye/issues/960))。同じリンクを 3 連続で並べるとセルが読めなくなるためで、**後続分が検査対象から外れることを承知のうえでの trade-off** である (例: §2.5.9 の `PROGRESS_COMPLETE` は束縛し、同じ `export.ts` の `EXPORT_ERROR` / `CANCEL_CONFIRMED` は bare のまま)。bare にした symbol は追加時に手で実在確認すること。
+> **同一セル内で同じファイルの symbol を続けて挙げるときは、可読性が落ちる手前まで束縛形にする** ([#960](https://github.com/Idios/kobutachan-allaganeye/issues/960))。束縛した分だけ検査対象が増えるので束縛が原則だが、同じリンクを 3 連続以上並べるとセルが読めなくなるため、そこからは bare backtick にしてよい (実例: §1.2 の `loadErrorState` / `addErrorState` は 2 連続なので両方束縛、§2.5.9 は `PROGRESS_COMPLETE` を束縛して `EXPORT_ERROR` / `CANCEL_CONFIRMED` は bare)。**bare にした分は検査対象から外れる**ので、追加・改名時は手で実在確認すること。
 
 ## 1. 共通原則
 
@@ -946,7 +946,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | --- | --- |
 | 種類 | button ([ExportScreen.tsx](../gui/src/screens/ExportScreen.tsx) の `styles.primaryButton`、`aria-label="書き出し開始"`)。`!completed && !error` でのみ render |
 | 状態 | `idle` (label `⬦ 書き出し開始`) / `running` (label `書き出し中…`、disabled) / `cancelling` (label `中断中…`、disabled) / `disabled` (`!videoSource`) |
-| 遷移トリガー | `onClick` → `handleStartExport()` → `dispatch(START_CLICKED)` (idle→running) → 単発 `invoke('start_export', ...)` → Python subprocess が N 並列 ffmpeg を spawn → 各試合の進捗は `export-progress` イベントで per-match state を直接更新 (reducer は経由しない) → 終了時 (1 件以上成功) に [export.ts](../gui/src/screens/reducers/export.ts) の `PROGRESS_COMPLETE` / 全失敗で `EXPORT_ERROR` / cancel で `CANCEL_CONFIRMED` |
+| 遷移トリガー | `onClick` → `handleStartExport()` → `dispatch(START_CLICKED)` (idle→running) → 単発 `invoke('start_export', ...)` → Python subprocess が N 並列 ffmpeg を spawn → 各試合の進捗は `export-progress` イベントで per-match state を直接更新 (reducer は経由しない) → 終了時 (cancel でも全失敗でもない、それ以外すべて) に [export.ts](../gui/src/screens/reducers/export.ts) の `PROGRESS_COMPLETE` / 全失敗で `EXPORT_ERROR` / cancel で `CANCEL_CONFIRMED` |
 | store mutation | `appStateStore.lastExportOutputDir` (`handleStartExport` 冒頭で `setLastExportOutputDir(outDir)`、minimap 画面の出力先 default 引き継ぎ用、[#893](https://github.com/Idios/kobutachan-allaganeye/issues/893))。metadata 側は無変更。ほかに `matchStates` / `exportStartMs` / `nowMs` / 内部 phase (local state) が更新 |
 | 例外 / edge case | `!metadata` または `!videoSource` で early return。ad-hoc exclude (`excludedIndexes`) のみ Python 側 `--exclude` に渡して除外。永続 skip (`type_override === 'skip'`) と `post_match: true` は `--exclude` に載らず、`--stdin` metadata 経由で Python 側 filter (`export.py` の `type_override == "skip"` / `post_match` 無条件 skip) が除外する。単発 `invoke('start_export', ...)` で Python subprocess を起動、Python pool が N 並列で ffmpeg を spawn。§1.2 disabled 理由: sample mode は「サンプル動画では保存できません」/ `!videoSource` は「動画ファイルが選択されていません。drop 画面に戻って選択してください」/ running / cancelling は当該ボタン非表示で代替。([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で sample mode 対応実装済) |
 

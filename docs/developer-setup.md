@@ -393,18 +393,21 @@ pytest tests/test_detector.py
 ruff check .
 ruff format --check .
 
-# 型チェック (解析対象の環境を明示する。理由は下の注記)
-pyright --pythonpath .venv/Scripts/python.exe     # Windows
-pyright --pythonpath .venv/bin/python             # macOS / Linux
+# 型チェック (venv の python 経由で回す。理由は下の注記)
+python -m pyright
 ```
 
 > **`ruff format --check` は必ず `.` を付けて repo 全体で回す (#907)**: 触ったファイルだけを指定すると、subagent や別 PR が入れた変更を取りこぼして CI の Format check だけが赤になります。CI (`.github/workflows/ci.yml`) も `ruff format --check .` で全 repo を見ます。
 >
 > **版がずれていると同じコマンドでも結果が変わります。** `ruff` / `pyright` は `pyproject.toml` の dev extras で上限付きに pin してあるので、pin を更新したら `pip install -e ".[dev]" -c constraints.txt --upgrade` を実行してから回してください (§パッケージのインストール の注記参照)。
 >
-> **`pyright` は `--pythonpath` を省略しないでください (#974)**: `pyright` は**解析対象の環境を PATH 上の `python` から解決**します。`.venv` を PATH に載せていない状態で引数なしで回すと、venv の site-packages を見ずに大量の `reportMissingImports` を出します (venv を見ていない状態の再現として、存在しない interpreter を `--pythonpath` に渡して実測すると `183 errors, 4 warnings`。うち `Import "pytest" could not be resolved` 等。**pyright は解決できない interpreter を渡しても hard fail せず false-red になる**ので、`.venv` を持たない worktree で相対パスのまま回すと同じ症状が出る)。**CI は PATH の python へ直接 install するのでこの問題が起きず、ローカルだけが赤くなります。** `--pythonpath` で venv を明示すれば PATH の状態によらず `0 errors, 0 warnings, 0 informations` になります。
+> **`pyright` は `python -m` 経由で回してください (#974)**: `pyright` は**解析対象の環境を実行時の `python` から解決**します。素の `pyright` は **PATH 上の** `python` を見るため、venv を activate していない状態で回すと venv の site-packages を見ずに大量の `reportMissingImports` を出します (実測: `183 errors, 4 warnings`。うち `Import "pytest" could not be resolved` 等)。`python -m pyright` なら **その python 自身**が解析対象になるので、venv を activate していれば必ず一致します。
 >
-> `python -m pyright` (venv の python 経由) でも解決されますが、**venv を activate していない状態でも確実に効くのは `--pythonpath` の方**なので、doc としてはそちらを正とします。
+> **CI は PATH の python へ直接 install するのでこの問題が起きず、ローカルだけが赤くなります。** そのため CI (`.github/workflows/ci.yml`) は素の `pyright` のままで正しく、ここを揃える必要はありません。
+>
+> **`pyright` は解決できない interpreter を渡しても hard fail せず、ただ赤くなります。** 赤の理由が画面に出ないので、`reportMissingImports` が大量に出たら**まず環境の解決を疑ってください** (型エラーを直そうとしても直りません)。
+>
+> **worktree では `--pythonpath .venv/...` のような相対パスを使わないでください。** `.claude/worktrees/<name>/` に `.venv` は存在せず (venv は repo root にのみ作る)、相対パスで指すと**存在しない interpreter を渡すことになり、この症状をそのまま再現します** (本 repo の worktree で実測: 相対パス指定 = `183 errors` / `exit 1`、`python -m pyright` = `0 errors` / `exit 0`)。activate せずに回す必要があるときだけ、`--pythonpath` に **repo root の `.venv` を絶対パスで**渡してください。
 >
 > なお **`pyright --version` の一致確認ではこの問題を検出できません**。版が pin どおりでも、解析対象の環境はそれとは別に解決されるためです。
 
