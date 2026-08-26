@@ -215,7 +215,9 @@ GUI は読み取った未知フィールドを書き戻しで保持する義務�
 
 - detect + split を一気通貫 (後方互換)
 - probe → detect → split (ffmpeg -c copy) → `metadata.json` atomic write
-- `matches[].output_file` は実際に書き出された MP4 のパス。**`post_match: true` の match は MP4 を生成せず `output_file` を持たない** (metadata には保持)
+- `matches[].output_file` は実際に書き出された MP4 の**ファイル名**。`metadata.json` は `<output_dir>/metadata.json` に置かれるので、値は**同ディレクトリからの相対** (`match_NNN.mp4`) であり、`-o` に絶対パスを渡しても変わらない ([#934](https://github.com/Idios/kobutachan-allaganeye/issues/934))。**`post_match: true` の match は MP4 を生成せず `output_file` を持たない** (metadata には保持)
+
+> **#934 以前の挙動**: `split` は `split_video` の戻り値 (`<output_dir>/match_NNN.mp4`) をそのまま書いていたため、`-o` が絶対なら絶対パスが、既定 (`./output`) なら `output/match_NNN.mp4` が記録されていた。`detect` は当時から bare な placeholder を書いていたので、**同じフィールドの意味が producer によって食い違っていた**。絶対パスの `metadata.json` は出力フォルダを移動 / 別 PC で開くと解決に失敗する (`source` が #930 で抱えていたのと同じ相対・絶対 round-trip の問題)。読み手は旧形式もそのまま読めるので再検知は不要。
 
 ### `allaganeye split --from-metadata <metadata.json>`
 

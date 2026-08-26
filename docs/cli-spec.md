@@ -254,7 +254,7 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 | `duration` | float | 試合時間（秒） |
 | `duration_display` | string | 試合時間の表示形式 |
 | `type` | string | セグメントの種別（`"fl_match"` / `"unknown"`） |
-| `output_file` | string | 出力ファイルパス（POSIX 区切り、例: `output/match_001.mp4`）。Windows 実行時も `/` で記録される |
+| `output_file` | string | 出力 MP4 のファイル名（`metadata.json` と同じディレクトリからの相対、例: `match_001.mp4`）。区切りを含む場合も POSIX 区切り (`/`) で記録される。`-o` に何を渡しても値は変わらない ([#934](https://github.com/Idios/kobutachan-allaganeye/issues/934)。それ以前は `split -o <絶対パス>` が絶対パスを書いており、detect の書式と食い違っていた) |
 
 **gaps[]:**
 

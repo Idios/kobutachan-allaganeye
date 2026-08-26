@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`metadata.json` に記録される出力ファイル名が、出力先の指定によらず同じ形になりました**
+  ([#934](https://github.com/Idios/kobutachan-allaganeye/issues/934)):
+  これまで `allaganeye split -o <出力先>` に**絶対パス**を渡すと、`metadata.json` の
+  `output_file` にその絶対パスがそのまま書き込まれていました (`allaganeye detect` は
+  `match_001.mp4` のようなファイル名だけを書くため、**同じ項目の意味がコマンドによって
+  食い違う**状態でした)。絶対パスが書かれた `metadata.json` は、出力フォルダを移動したり
+  別の PC で開いたりすると正しく読めなくなります。今後はどちらのコマンドでも
+  `match_001.mp4` のように **`metadata.json` と同じフォルダからのファイル名**で記録します。
+  既存の `metadata.json` はそのまま読めます (再検知は不要です)。詳細は
+  [docs/metadata-spec.md](docs/metadata-spec.md) を参照。
 - **`allaganeye -v` でバージョンが表示されるようになりました**
   ([#376](https://github.com/Idios/kobutachan-allaganeye/issues/376)):
   これまで小文字の `-v` は `Error: No such option: -v` になり、大文字の `-V` が
