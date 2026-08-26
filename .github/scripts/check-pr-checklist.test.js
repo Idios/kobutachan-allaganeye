@@ -1263,3 +1263,125 @@ test('#945 regression: 人間 PR は listFiles 失敗で red (fail-closed が効
   assert.equal(r.status, 1);
   assert.match(r.stdout, /取得できませんでした/);
 });
+
+// ---------------------------------------------------------------------------
+// [runner coverage] この workflow が `.github/scripts/` の pin test を取りこぼさないこと (#946)
+//
+// **この test の置き場所は意図的である。** 以前 `check-pr-checklist-test.yml` は
+// `check-pr-checklist.test.js` だけを名指しで実行しており、#999 が追加した
+// `check-preflight-freshness.test.js` (47 test) は CI で 1 度も走っていなかった
+// (ローカルの glob 実行 `node --test .github/scripts/*.test.js` は 166 pass、
+//  CI が実際に回していた単一ファイル形は 119 pass。差の 47 が死んでいた)。
+// checker を壊しても CI は緑のままになる false-green だったので、
+// **単一ファイル形に戻された場合でも走る唯一のファイル** = 本ファイルに coverage 検査を置く。
+// 別ファイルに置くと、まさに塞ぎたい退行 (run 行の単一ファイル固定) で検査自身が走らなくなる。
+// ---------------------------------------------------------------------------
+
+const SCRIPTS_DIR = __dirname;
+const RUNNER_WORKFLOW = path.join(__dirname, '..', 'workflows', 'check-pr-checklist-test.yml');
+
+/** `*` = セパレータを跨がない / `**` = 跨ぐ、の最小 glob 照合。 */
+function globToRegExp(pattern) {
+  let out = '';
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      if (pattern[i + 1] === '*') {
+        out += '.*';
+        i += 1;
+      } else {
+        out += '[^/]*';
+      }
+    } else {
+      out += ch.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+    }
+  }
+  return new RegExp(`^${out}$`);
+}
+
+/** `.github/scripts/` 配下の test ファイルを repo 相対 posix path で列挙する。 */
+function discoverTestFiles() {
+  return fs
+    .readdirSync(SCRIPTS_DIR)
+    .filter((name) => /\.test\.[cm]?js$/.test(name))
+    .sort()
+    .map((name) => `.github/scripts/${name}`);
+}
+
+test('[runner coverage] pin test ファイルが 2 本以上見つかる (glob が空振りしていない)', () => {
+  const files = discoverTestFiles();
+  assert.ok(
+    files.length >= 2,
+    `.github/scripts/ の test ファイルが ${files.length} 本しか見つかりません: ${files.join(', ')}`
+  );
+  assert.ok(files.includes('.github/scripts/check-pr-checklist.test.js'));
+  assert.ok(files.includes('.github/scripts/check-preflight-freshness.test.js'));
+});
+
+test('[runner coverage] workflow の run 行が全 test ファイルを対象にしている', () => {
+  const wf = fs.readFileSync(RUNNER_WORKFLOW, 'utf8');
+  const runLines = wf
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*run:\s*(node\s+--test\s+.+?)\s*$/))
+    .filter(Boolean)
+    .map((m) => m[1]);
+  assert.equal(runLines.length, 1, `node --test の run 行が ${runLines.length} 本あります`);
+
+  const patterns = runLines[0]
+    .replace(/^node\s+--test\s+/, '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((p) => p.replace(/\\/g, '/').replace(/^['"]|['"]$/g, ''));
+  const matchers = patterns.map(globToRegExp);
+
+  for (const file of discoverTestFiles()) {
+    assert.ok(
+      matchers.some((re) => re.test(file)),
+      `${file} が workflow の run 行 (${runLines[0]}) の対象外です。` +
+        '単一ファイル固定に戻すと新しい pin test が CI で走らなくなります (#946)。'
+    );
+  }
+});
+
+test('[runner coverage] workflow の paths filter が全 test ファイルを対象にしている', () => {
+  const wf = fs.readFileSync(RUNNER_WORKFLOW, 'utf8');
+  // `on:` の pull_request / push それぞれの paths ブロックを個別に取り出す。
+  const blocks = [...wf.matchAll(/^\s*paths:\s*$((?:\r?\n\s*-\s*.+)+)/gm)].map((m) =>
+    [...m[1].matchAll(/^\s*-\s*['"]?(.+?)['"]?\s*$/gm)].map((x) => x[1])
+  );
+  assert.equal(blocks.length, 2, `paths ブロックが ${blocks.length} 個です (pull_request / push)`);
+
+  const files = discoverTestFiles();
+  for (const [i, patterns] of blocks.entries()) {
+    const matchers = patterns.map(globToRegExp);
+    for (const file of files) {
+      assert.ok(
+        matchers.some((re) => re.test(file)),
+        `${file} が ${i === 0 ? 'pull_request' : 'push'} の paths filter (${patterns.join(', ')}) ` +
+          'の対象外です。trigger から漏れると checker を壊しても job が起動しません (#946)。'
+      );
+    }
+  }
+});
+
+test('[runner coverage] workflow から呼ばれる checker 本体も paths filter に含まれる', () => {
+  const wf = fs.readFileSync(RUNNER_WORKFLOW, 'utf8');
+  const blocks = [...wf.matchAll(/^\s*paths:\s*$((?:\r?\n\s*-\s*.+)+)/gm)].map((m) =>
+    [...m[1].matchAll(/^\s*-\s*['"]?(.+?)['"]?\s*$/gm)].map((x) => x[1])
+  );
+  const checkers = fs
+    .readdirSync(SCRIPTS_DIR)
+    .filter((name) => /\.[cm]?js$/.test(name) && !/\.test\.[cm]?js$/.test(name))
+    .map((name) => `.github/scripts/${name}`);
+  assert.ok(checkers.length >= 2, `checker 本体が ${checkers.length} 本しかありません`);
+
+  for (const patterns of blocks) {
+    const matchers = patterns.map(globToRegExp);
+    for (const file of checkers) {
+      assert.ok(
+        matchers.some((re) => re.test(file)),
+        `${file} を変更しても job が起動しません (paths: ${patterns.join(', ')})。`
+      );
+    }
+  }
+});

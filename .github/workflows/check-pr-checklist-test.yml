@@ -1,16 +1,23 @@
-name: check-pr-checklist unit tests
+name: .github/scripts unit tests
+
+# `.github/scripts/` 配下の checker すべての pin test を回す (#946)。
+#
+# **単一ファイル固定にしない。** 以前この workflow は `check-pr-checklist.test.js` だけを
+# `paths` filter と `run` の両方で名指ししており、#999 で追加された
+# `check-preflight-freshness.test.js` (47 test) が **CI で 1 度も実行されていなかった**。
+# checker を壊しても緑のままになる false-green だったため、対象を `.github/scripts/**` /
+# `*.test.js` の集合で表現する形に改めた。この意図は
+# `check-pr-checklist.test.js` の `[runner coverage]` test で pin してある。
 
 on:
   pull_request:
     paths:
-      - '.github/scripts/check-pr-checklist.js'
-      - '.github/scripts/check-pr-checklist.test.js'
+      - '.github/scripts/**'
       - '.github/workflows/check-pr-checklist-test.yml'
   push:
     branches: [main, "develop-*"]
     paths:
-      - '.github/scripts/check-pr-checklist.js'
-      - '.github/scripts/check-pr-checklist.test.js'
+      - '.github/scripts/**'
       - '.github/workflows/check-pr-checklist-test.yml'
 
 jobs:
@@ -21,5 +28,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Run check-pr-checklist unit tests
-        run: node --test .github/scripts/check-pr-checklist.test.js
+      - name: Run .github/scripts unit tests
+        run: node --test .github/scripts/*.test.js
