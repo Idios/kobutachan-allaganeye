@@ -241,6 +241,8 @@ $ python -c "import importlib.metadata as m; print(m.version('pyright'))"
 
 つまり `importlib.metadata` で確認しても runtime の版は保証されません。**`pyright --version` の出力が pin と一致すること**を確認してください。上記の環境変数を設定している場合は、CI (未設定) と結果が食い違います。
 
+> **版の一致は解析対象の環境を保証しません (#974)。** `pyright` は解析する環境を PATH 上の `python` から**別に**解決するため、版が pin どおりでも `.venv` を見ずに `reportMissingImports` を量産することがあります。ゲートを回すときは §ローカルで回すチェック の `--pythonpath` 付きの形を使ってください。
+
 ### Windows: `pyright` の install が MAX_PATH で失敗する場合 (#907)
 
 `pyright` は typeshed の stub を大量に同梱しており、パスの深いところへ入れると **Windows の MAX_PATH** に当たって install が失敗します。エラーは次の形で出ます。
@@ -391,13 +393,20 @@ pytest tests/test_detector.py
 ruff check .
 ruff format --check .
 
-# 型チェック
-pyright
+# 型チェック (解析対象の環境を明示する。理由は下の注記)
+pyright --pythonpath .venv/Scripts/python.exe     # Windows
+pyright --pythonpath .venv/bin/python             # macOS / Linux
 ```
 
 > **`ruff format --check` は必ず `.` を付けて repo 全体で回す (#907)**: 触ったファイルだけを指定すると、subagent や別 PR が入れた変更を取りこぼして CI の Format check だけが赤になります。CI (`.github/workflows/ci.yml`) も `ruff format --check .` で全 repo を見ます。
 >
 > **版がずれていると同じコマンドでも結果が変わります。** `ruff` / `pyright` は `pyproject.toml` の dev extras で上限付きに pin してあるので、pin を更新したら `pip install -e ".[dev]" -c constraints.txt --upgrade` を実行してから回してください (§パッケージのインストール の注記参照)。
+>
+> **`pyright` は `--pythonpath` を省略しないでください (#974)**: `pyright` は**解析対象の環境を PATH 上の `python` から解決**します。`.venv` を PATH に載せていない状態で引数なしで回すと、venv の site-packages を見ずに大量の `reportMissingImports` を出します (実測: 存在しない interpreter を渡すと `183 errors, 4 warnings`、うち `Import "pytest" could not be resolved` 等)。**CI は PATH の python へ直接 install するのでこの問題が起きず、ローカルだけが赤くなります。** `--pythonpath` で venv を明示すれば PATH の状態によらず `0 errors, 0 warnings, 0 informations` になります。
+>
+> `python -m pyright` (venv の python 経由) でも解決されますが、**venv を activate していない状態でも確実に効くのは `--pythonpath` の方**なので、doc としてはそちらを正とします。
+>
+> なお **`pyright --version` の一致確認ではこの問題を検出できません**。版が pin どおりでも、解析対象の環境はそれとは別に解決されるためです。
 
 ### Windows: Pester v5 (scripts/ 用 PowerShell ユニットテスト)
 

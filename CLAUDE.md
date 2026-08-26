@@ -40,7 +40,7 @@ pytest tests/test_detector.py   # 単体テスト
 # Lint / 型チェック
 ruff check .
 ruff format --check .
-pyright
+pyright --pythonpath .venv/Scripts/python.exe   # 引数なしだと PATH の python を解析対象にして false-red (#974)
 bash scripts/check-markdownlint.sh   # markdownlint (CI と同 version で全 .md チェック、--fix で自動修正)
 # violation の fix recipe / ignore pattern 規約は docs/markdownlint-guide.md を参照
 
