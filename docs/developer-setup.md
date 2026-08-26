@@ -393,21 +393,33 @@ pytest tests/test_detector.py
 ruff check .
 ruff format --check .
 
-# 型チェック (venv の python 経由で回す。理由は下の注記)
-python -m pyright
+# 型チェック (--pythonpath で解析対象を明示する。理由は下の注記)
+pyright --pythonpath "$(dirname "$(git rev-parse --git-common-dir)")/.venv/Scripts/python.exe"
 ```
 
 > **`ruff format --check` は必ず `.` を付けて repo 全体で回す (#907)**: 触ったファイルだけを指定すると、subagent や別 PR が入れた変更を取りこぼして CI の Format check だけが赤になります。CI (`.github/workflows/ci.yml`) も `ruff format --check .` で全 repo を見ます。
 >
 > **版がずれていると同じコマンドでも結果が変わります。** `ruff` / `pyright` は `pyproject.toml` の dev extras で上限付きに pin してあるので、pin を更新したら `pip install -e ".[dev]" -c constraints.txt --upgrade` を実行してから回してください (§パッケージのインストール の注記参照)。
 >
-> **`pyright` は `python -m` 経由で回してください (#974)**: `pyright` は**解析対象の環境を実行時の `python` から解決**します。素の `pyright` は **PATH 上の** `python` を見るため、venv を activate していない状態で回すと venv の site-packages を見ずに大量の `reportMissingImports` を出します (実測: `183 errors, 4 warnings`。うち `Import "pytest" could not be resolved` 等)。`python -m pyright` なら **その python 自身**が解析対象になるので、venv を activate していれば必ず一致します。
+> **`pyright` は `--pythonpath` を省略しないでください (#974)**: `pyright` は解析対象の環境を **PATH 上の `python`** から解決します。venv を activate していない状態で回すと venv の site-packages を見ず、大量の `reportMissingImports` を出します (実測: `183 errors, 4 warnings`。うち `Import "pytest" could not be resolved` 等)。
 >
-> **CI は PATH の python へ直接 install するのでこの問題が起きず、ローカルだけが赤くなります。** そのため CI (`.github/workflows/ci.yml`) は素の `pyright` のままで正しく、ここを揃える必要はありません。
+> **どの呼び方が効くかは実測した。** `--pythonpath --verbose` で pyright が実際に採った search path を見た結果:
+>
+> | 呼び方 | cwd | 解析対象 |
+> | --- | --- | --- |
+> | `pyright` (素) | どこでも | PATH の `python`。activate 依存で不定 |
+> | `python -m pyright` | worktree | **venv ではない** (system python の site-packages が出た)。wrapper は `sys.executable` を pyright へ渡さないので、`python -m` にしても解析対象は変わらない |
+> | `pyright --pythonpath .venv/Scripts/python.exe` | repo root | venv ✓ (`exit 0`) |
+> | 同上 | worktree | **`183 errors` / `exit 1`** — worktree に `.venv` は無い |
+> | `pyright --pythonpath <repo root の .venv を絶対パスで>` | どこでも | venv ✓ (`exit 0`) |
+>
+> したがって **`--pythonpath` が唯一の確実な指定手段**で、`python -m pyright` はこの問題を解決しません。§4 に載せた `git rev-parse --git-common-dir` から解決する形は、repo root でも worktree でも同じ venv を指すので copy-paste でそのまま使えます (両方で `exit 0` を実測)。
+>
+> **worktree で相対パスを使わないでください。** `.claude/worktrees/<name>/` に `.venv` は存在しません (venv は repo root にのみ作る)。相対指定は**存在しない interpreter を渡すこと**になり、この症状をそのまま再現します。
 >
 > **`pyright` は解決できない interpreter を渡しても hard fail せず、ただ赤くなります。** 赤の理由が画面に出ないので、`reportMissingImports` が大量に出たら**まず環境の解決を疑ってください** (型エラーを直そうとしても直りません)。
 >
-> **worktree では `--pythonpath .venv/...` のような相対パスを使わないでください。** `.claude/worktrees/<name>/` に `.venv` は存在せず (venv は repo root にのみ作る)、相対パスで指すと**存在しない interpreter を渡すことになり、この症状をそのまま再現します** (本 repo の worktree で実測: 相対パス指定 = `183 errors` / `exit 1`、`python -m pyright` = `0 errors` / `exit 0`)。activate せずに回す必要があるときだけ、`--pythonpath` に **repo root の `.venv` を絶対パスで**渡してください。
+> **CI は PATH の python へ直接 install するのでこの問題が起きず、ローカルだけが赤くなります。** そのため CI (`.github/workflows/ci.yml`) は素の `pyright` のままで正しく、ここを揃える必要はありません。
 >
 > なお **`pyright --version` の一致確認ではこの問題を検出できません**。版が pin どおりでも、解析対象の環境はそれとは別に解決されるためです。
 

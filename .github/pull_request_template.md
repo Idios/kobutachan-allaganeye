@@ -102,7 +102,7 @@ Fable 俯瞰レビュー (#945) の起動条件 — 次のいずれかに該当�
 
 - [ ] `ruff check .` (python-core 変更時)
 - [ ] `ruff format --check .` (python-core 変更時)
-- [ ] `python -m pyright` (python-core 変更時。素の `pyright` は venv 未 activate だと false-red、#974)
+- [ ] `pyright --pythonpath <repo root の .venv の python>` (python-core 変更時。`--pythonpath` 省略は false-red、#974)
 - [ ] `pytest` (python-core 変更時、slow 除外)
 - [ ] `cd gui && npm run lint` (gui-frontend 変更時)
 - [ ] `cd gui && npm run typecheck` (gui-frontend 変更時)

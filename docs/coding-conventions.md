@@ -14,7 +14,7 @@
 ```bash
 ruff check .
 ruff format --check .
-python -m pyright   # 素の `pyright` は venv 未 activate だと false-red (#974、docs/developer-setup.md §4 参照)
+pyright --pythonpath "$(dirname "$(git rev-parse --git-common-dir)")/.venv/Scripts/python.exe"   # --pythonpath 必須 (#974、docs/developer-setup.md §4 参照)
 
 # Markdown (Node.js 必須、ローカル実行は任意)
 npx -y markdownlint-cli2@0.18.1

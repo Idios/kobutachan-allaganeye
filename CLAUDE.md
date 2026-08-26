@@ -40,7 +40,9 @@ pytest tests/test_detector.py   # 単体テスト
 # Lint / 型チェック
 ruff check .
 ruff format --check .
-python -m pyright   # 素の `pyright` は PATH の python を解析対象にするため、venv 未 activate だと false-red (#974)
+# 型チェック。--pythonpath 必須 (素の pyright も python -m pyright も PATH の python を見るため false-red、#974)
+# git 解決形にすると repo root / worktree の両方で効く (worktree に .venv は無い)
+pyright --pythonpath "$(dirname "$(git rev-parse --git-common-dir)")/.venv/Scripts/python.exe"
 bash scripts/check-markdownlint.sh   # markdownlint (CI と同 version で全 .md チェック、--fix で自動修正)
 # violation の fix recipe / ignore pattern 規約は docs/markdownlint-guide.md を参照
 

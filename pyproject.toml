@@ -74,7 +74,7 @@ dev = [
     # 既に解いているのと同じ「ローカル・CI 同版」規律を lint 全体へ広げる。
     # 更新手順: 本行を書き換え -> `pip install -e ".[dev]" --upgrade` ->
     # **`ruff --version` / `pyright --version` が本 pin と一致することを確認**
-    # -> `ruff check .` / `ruff format --check .` / `python -m pyright` を repo 全体で
+    # -> `ruff check .` / `ruff format --check .` / `pyright --pythonpath ...` を repo 全体で
     # 回して緑を確認 -> commit。取り込みタイミングを計画的に選ぶのが目的。
     #
     # version 確認を省かないこと: pyright の PyPI パッケージは wrapper で、
