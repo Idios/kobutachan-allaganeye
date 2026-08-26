@@ -92,6 +92,8 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
 
    ## findings_table
    | # | 摘出内容 | 出所 | 処置 | 根拠 |
+   <finding 1 件につき 1 行。**ゼロ件ならヘッダ行だけを残してデータ行を 1 行も書かない**。
+    空でもセクション自体は必須記載 (ambiguous_judgments と同じ規約)>
 
    ## ambiguous_judgments
    - <subagent が auto 判断できなかった点。空でもセクション自体は必須記載>
@@ -112,6 +114,31 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
 #### Step 2.2 Findings parse + 握り潰し防止 validation
 
 Agent tool の戻り値 markdown から `## findings_table` セクションの表行を抽出。各行を `{round, n, finding, source, classification, rationale}` として `findings_history[round]` に蓄積。
+
+#### findings ゼロ件の記法 (#995)
+
+**ゼロ件は例外ではなく通常経路である** (§4.1 が「Round 1 で 0 findings (即収束)」を想定ケースとして
+扱っている)。記法を定義しないと実行者ごとに割れ、正しい return が parse error 扱いになる。
+
+- **正**: `## findings_table` セクションを置き、**ヘッダ行 (`| # | 摘出内容 | 出所 | 処置 | 根拠 |`) だけ**を返す。データ行は 1 行も書かない
+- **誤**: `| - | なし | - | - | - |` のようなプレースホルダ行を置く → 処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれでもないため **validation item 1 で parse error**
+- **誤**: `## findings_table` セクション自体を省く → **従来どおり parse error** (ゼロ件とセクション欠落は別事象。セクションが無い return は「表を作り忘れた / 別書式で返した」と区別できない)
+- `なし` / `N/A` / `該当なし` 等の自由文をセクション本文に置くのも不可 (item 3 の握り潰しキーワード検査と衝突しうる)
+
+> **記録義務は分岐を網羅する** (`/review-pr` §「起動記録」、#945)。異常系・非ゼロ件だけに定型を
+> 用意すると、正常系 (ゼロ件) のたびに実行者が文言を発明して表記が揺れる。本節はその原則の適用で、
+> `## ambiguous_judgments` の「空でもセクション自体は必須記載」と同じ書式・同じ理由である。
+
+**下記 validation item 1-6 に対するゼロ件記法の当たり方** (各項目 1 件ずつ):
+
+| item | 検査内容 | ヘッダ行のみの return での判定 |
+| --- | --- | --- |
+| 1 | 全 finding に classification がある | **通る**。データ行が 0 行なので「classification を欠く行」も 0 行 |
+| 2 | (B) 主張行には trigger 根拠列がある | **通る**。(B) 行が 0 行 |
+| 3 | 「無視」「観察のみ」「スコープ対象外」を単独で含む行がない | **通る**。ヘッダ行にこれらの語は含まれない (`なし` 等の自由文を書くとここに触れうるので書かない) |
+| 4 | `ambiguous_judgments` セクションが存在する | **通る**。本記法は findings_table のみを対象とし、`ambiguous_judgments` は従来どおり空でも必須記載 |
+| 5 | (A) 強優先方針違反検出 | **通る**。分類対象の finding が 0 件 |
+| 6 | `## meta` に `Codex 出力読み取り` 行がある | **通る**。findings 件数と独立した別セクションの検査 |
 
 **抽出時の必須 validation (握り潰し防止)**:
 
@@ -181,7 +208,7 @@ Iron Law 3 と CLAUDE.md plugin override 規約は「user の明示判断が最�
 1. 該当 path:line を Read で内容確認
 2. Edit で修正
 3. 変更 path に応じた local check (Iron Law 6 サブ条 = `docs/l2-workflow.md` §「PR 作成 path 別自動チェック」):
-   - Python (`*.py`): `ruff check . && ruff format --check . && pyright && pytest`
+   - Python (`*.py`): `ruff check . && ruff format --check . && pyright --pythonpath "$(dirname "$(git rev-parse --git-common-dir)")/.venv/Scripts/python.exe" && pytest` (`--pythonpath` 省略は false-red、#974。macOS / Linux は `.venv/bin/python`)
    - GUI (`gui/src/**`, `gui/src-tauri/**`): `npm run lint && npm run typecheck && npm test && npm run build && cargo check`
    - Markdown (`docs/**.md`, `*.md`): `bash scripts/check-markdownlint.sh` (violation fix recipe は [`docs/markdownlint-guide.md`](../../../docs/markdownlint-guide.md) §typical fixes を参照、M10)
 4. **1 round = 1 commit** で集約: 全 (A) を 1 つの commit にまとめる (round 単位の atomicity を確保、Round 別 SHA を summary コメントで参照しやすくするため)。message テンプレ: `fix(round-N): <要約> (Refs #<元 issue>)`。例外として、push 失敗で reset → 再 commit が必要な場合のみ複数 commit になる可能性を許容

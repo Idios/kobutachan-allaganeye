@@ -1290,7 +1290,7 @@ skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` **Final
 | --- | --- | --- |
 | 起動タイミング | PR 作成**直前** (Step 0-4 通過後) | `/review-pr` 段階の **deep-dive** (Step 5a) |
 | Codex command | `adversarial-review` subcommand (approve させない姿勢、tier 1 = companion script) | `review` subcommand (code quality 一般、同) |
-| 必須 / オプション | **必須** (Pre-flight ゲート) | optional (起動条件: 大規模 PR / 過去 root cause 複数 / L1 core) |
+| 必須 / オプション | **必須** (Pre-flight ゲート) | optional (起動条件 3 件: 条件 1 大規模 PR / 条件 2 **再発 root cause** 複数 / 条件 3 **core 変更対象ファイル**。定義の正は [`.claude/skills/review-pr/SKILL.md`](../.claude/skills/review-pr/SKILL.md) §「core 変更対象ファイル」 と §「root cause の 2 用法」) |
 | 直前 stage | Step 4 並行 PR 重複再確認 | superpowers subagent 実装 + reachability 確認 |
 
 ### 並列ではなく直列にする理由
