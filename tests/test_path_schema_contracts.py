@@ -80,7 +80,6 @@ from allaganeye.video.detector import MatchBoundary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = REPO_ROOT / "schemas" / "metadata.schema.json"
-IS_WINDOWS = os.name == "nt"
 
 runner = CliRunner()
 
@@ -713,7 +712,6 @@ def _export_match() -> ExportMatch:
 DIRTY_PATTERNS_REJECTED: tuple[tuple[str, str], ...] = (
     ("parent-traversal", "../victim.mp4"),
     ("nested-parent-traversal", "sub/../../victim.mp4"),
-    ("backslash-traversal", "..\\victim.mp4"),
     ("empty-string", ""),
     ("dot-only", "."),
 )
@@ -738,6 +736,35 @@ def test_resolver_rejects_dirty_pattern(
         )
 
 
+def test_backslash_traversal_never_escapes_the_output_dir(tmp_path: Path) -> None:
+    """``..\\victim.mp4`` は **どのプラットフォームでも出力先の外へ出ない**。
+
+    ``\\`` は Windows では区切りだが POSIX では正当なファイル名文字なので、
+    「常に exit 5」は正しい期待値ではない (POSIX では 1 個の変な名前のファイルとして
+    output_dir の中に留まるのが正しい)。プラットフォームで期待値を分けて skip すると、
+    Python の CI job は ubuntu なので **この経路は CI で一度も検証されない**
+    (既存の ``test_pool_rejects_backslash_traversal_pattern`` がその形)。
+
+    そこで期待値を「拒否される」ではなく **不変条件**「拒否されるか、さもなくば
+    output_dir の中に留まる」として書く。両プラットフォームで実行でき、どちらでも
+    脱出を許さないことを実際に確かめられる。
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    source = tmp_path / "sample.mkv"
+    source.write_bytes(b"SRC")
+    victim = tmp_path / "victim.mp4"
+    victim.write_bytes(b"VICTIM")
+    try:
+        resolved = resolve_export_output_path(
+            _export_match(), "..\\victim.mp4", output_dir=out_dir, source_video=source
+        )
+    except ConfigValidationError:
+        return  # Windows: 区切りとして解釈され脱出扱いで拒否される
+    assert resolved.resolve().is_relative_to(out_dir.resolve()), resolved
+    assert victim.read_bytes() == b"VICTIM"
+
+
 def test_resolver_rejects_absolute_pattern(tmp_path: Path) -> None:
     out_dir = tmp_path / "out"
     out_dir.mkdir()
@@ -750,12 +777,17 @@ def test_resolver_rejects_absolute_pattern(tmp_path: Path) -> None:
         )
 
 
-@pytest.mark.skipif(not IS_WINDOWS, reason="drive-relative パスは Windows 固有の構文")
-def test_resolver_rejects_drive_relative_pattern(tmp_path: Path) -> None:
-    """``E:foo`` は「E: ドライブの current directory 相対」であって出力先の中ではない。
+def test_drive_relative_pattern_never_escapes_the_output_dir(tmp_path: Path) -> None:
+    """``D:victim.mp4`` は「D: ドライブの current directory 相対」= 出力先の外。
 
-    CI (ubuntu) では skip されるため、**この経路は Windows でしか検証されない**。
-    POSIX では ``E:foo`` は単なるファイル名で、出力先の中に留まるのが正しい挙動である。
+    backslash と同じ理由でプラットフォームごとに期待値が違う (POSIX では ``:`` は
+    正当なファイル名文字なので、単に変な名前のファイルとして中に留まるのが正しい)。
+    ここでも「拒否される」ではなく不変条件「拒否されるか、さもなくば output_dir の中に
+    留まる」を assert し、**skip せずに両プラットフォームで走らせる**。
+
+    **限界を明記しておく**: Python の CI job は ubuntu なので、CI 上で実際に踏まれるのは
+    「POSIX では脱出しない」側だけである。Windows 固有の drive-relative 解決が将来壊れても
+    CI は緑のままになる。この経路は現状 Windows のローカル実行でしか検証されない。
     """
     out_dir = tmp_path / "out"
     out_dir.mkdir()
@@ -763,13 +795,16 @@ def test_resolver_rejects_drive_relative_pattern(tmp_path: Path) -> None:
     source.write_bytes(b"SRC")
     drive = str(out_dir)[0]
     other = "D" if drive.upper() != "D" else "C"
-    with pytest.raises(ConfigValidationError):
-        resolve_export_output_path(
+    try:
+        resolved = resolve_export_output_path(
             _export_match(),
             f"{other}:victim.mp4",
             output_dir=out_dir,
             source_video=source,
         )
+    except ConfigValidationError:
+        return  # Windows: drive-relative として解決され脱出扱いで拒否される
+    assert resolved.resolve().is_relative_to(out_dir.resolve()), resolved
 
 
 def test_resolver_rejects_pattern_hitting_source_video(tmp_path: Path) -> None:
