@@ -27,7 +27,12 @@
 //
 // - **宣言フィールドは自己申告**。「#938 も宣言済み」と後から書けば緑になる。ただし宣言した
 //   時点で「見落とし」ではなくなり、握り潰しには PR body の改竄が必要 = **監査可能**である
-//   (これが `PreToolUse` hook 案より弱くない根拠。hook 案は bypass 4 経路がある — #946 参照)
+//   (これが `PreToolUse` hook 案より弱くない根拠。hook 案は bypass 4 経路がある — #946 参照)。
+//   **「監査可能」は宣言が 1 箇所に定まっていて初めて成立する。** 本文のどこかに decoy 宣言を
+//   仕込んで可視のテンプレート欄を `なし` のまま残せると、レビュアが見る欄と gate が読む欄が
+//   食い違い監査可能性そのものが壊れる。そのため宣言は **行頭の list item に限り**、同じ label が
+//   2 本以上あれば採用せず fail-closed にする (Codex adversarial-review [high])。
+//   fenced code block / HTML コメントの中身は読まない (doc の記入例の貼り付けを宣言に昇格させない)
 // - **宣言が実集合の superset でも通す**。Pre-flight 後に閉じた PR を宣言に残したケースを
 //   false-red にしないための意図的な片側検査であり、「実在しない PR 番号を並べて緑にする」
 //   経路は塞いでいない
@@ -39,16 +44,21 @@
 //   求めないため。bot PR 自身は他 PR の実集合には引き続き現れる
 // - **API 失敗は fail-closed**。retry を尽くして取れなければ落とす。fail-open にすると
 //   権限剥奪や rate limit で **常時 no-op** になり、gate が静かに死ぬ
-// - closed PR の走査には**ページ上限**がある。上限に達したら「取り切れなかった」として
-//   fail-closed にする (部分リストで「差分なし」と判定しない)
+// - 走査には**ページ上限**がある。上限に達したら「取り切れなかった」として fail-closed に
+//   する (部分リストで「差分なし」と判定しない)
+// - `pulls.list` の応答も untrusted 境界として扱い、`number` / `created_at` / `closed_at` /
+//   `updated_at` / `base.ref` が壊れていたら **候補を捨てずに落とす**。filter で捨てると
+//   競合 PR が実集合から消えて緑になる (Codex adversarial-review [medium])
+// - **`Refs` の抽出は fence / コメントを区別しない** (宣言側とは非対称)。誤って多く拾う方向は
+//   「宣言すべき PR が増える」= false-red 側なので、意図的に緩いままにしている
 
 'use strict';
 
 const SAME_ISSUE_LABEL = 'Pre-flight 時点の同 issue open PR';
 const SAME_BASE_LABEL = 'Pre-flight 時点の同 base open PR';
 
-/** closed PR 走査のページ上限。超えたら fail-closed (部分リストで緑にしない)。 */
-const MAX_CLOSED_PAGES = 20;
+/** PR 走査のページ上限。超えたら fail-closed (部分リストで緑にしない)。 */
+const MAX_PAGES = 20;
 const PER_PAGE = 100;
 /** API 失敗時の明示的な retry。fail-open にはしない。 */
 const RETRY_DELAYS_MS = [250, 500];
@@ -64,6 +74,51 @@ function normalizeLine(line) {
 }
 
 /**
+ * fenced code block / HTML コメントの中身を落とし、**GitHub 上で可視な行だけ**を返す。
+ *
+ * これが無いと `docs/l2-workflow.md` の記入例をそのまま PR 本文へ貼った本文が
+ * 「`#938, #940` を宣言済み」と読まれて緑になる (false-green)。blockquote は可視なので
+ * 落とさない — 引用された宣言は「書いてある」ものとして扱う。
+ *
+ * **これは Markdown parser ではなく近似である** (`check-pr-checklist.js` と同じ方針)。
+ * 誤りの向きは false-red 側に倒す: 判断が付かない行は「宣言ではない」= fail-closed になる。
+ */
+function visibleLines(body) {
+  const out = [];
+  let fence = null; // { char, len }
+  let inComment = false;
+  for (const rawLine of String(body || '').split(/\r?\n/)) {
+    const line = rawLine.replace(/^(\s*>)+\s?/, ''); // blockquote prefix を剥がす
+    if (inComment) {
+      if (line.includes('-->')) inComment = false;
+      continue;
+    }
+    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (fenceMatch) {
+      const char = fenceMatch[1][0];
+      const len = fenceMatch[1].length;
+      if (fence === null) {
+        fence = { char, len };
+        continue;
+      }
+      // 閉じ fence は同じ文字で開き以上の長さ、かつ info string を持たない。
+      if (char === fence.char && len >= fence.len && fenceMatch[2].trim() === '') {
+        fence = null;
+        continue;
+      }
+    }
+    if (fence !== null) continue;
+    if (/^\s*<!--/.test(line) && !line.includes('-->')) {
+      inComment = true;
+      continue;
+    }
+    if (/^\s*<!--.*-->\s*$/.test(line)) continue;
+    out.push(line);
+  }
+  return out;
+}
+
+/**
  * 宣言行 (`- <label>: <value>`) を読む。
  *
  * @returns {{found: boolean, valid: boolean, numbers: number[], raw: string, reason: string}}
@@ -71,52 +126,105 @@ function normalizeLine(line) {
  *   未編集の placeholder (`[#N,...] (または なし)`) と空値は **invalid** = fail-closed。
  */
 function parseDeclaredPrSet(body, label) {
-  const lines = String(body || '').split(/\r?\n/);
   const normalizedLabel = normalizeLine(label);
-  for (const rawLine of lines) {
+  // **行頭アンカー + 重複拒否** (Codex adversarial-review [high])。
+  // 部分一致の先勝ちにすると、本文のどこかに decoy 宣言を 1 行仕込んで可視のテンプレート欄を
+  // `なし` のまま残す、という緑化が通ってしまう。宣言は「行頭の list item」に限り、
+  // 同じ label が 2 本以上見つかったら採用せず fail-closed にする。
+  const matches = [];
+  for (const rawLine of visibleLines(body)) {
     const line = normalizeLine(rawLine);
-    const idx = line.indexOf(normalizedLabel);
-    if (idx < 0) continue;
-    const after = line.slice(idx + normalizedLabel.length);
+    const head = line.match(/^\s*(?:[-*+]\s*)?/)[0];
+    if (!line.startsWith(head + normalizedLabel)) continue;
+    const after = line.slice(head.length + normalizedLabel.length);
     const m = after.match(/^\s*:\s*(.*)$/);
     if (!m) continue;
-    const raw = m[1].trim();
-    // placeholder 検出: `#N` (リテラルの N) / `または` を含む形はテンプレート未編集とみなす。
-    if (/#N\b/i.test(raw) || raw.includes('または')) {
-      return {
-        found: true,
-        valid: false,
-        numbers: [],
-        raw,
-        reason: 'テンプレートの placeholder が未編集のまま残っています',
-      };
-    }
-    const numbers = [...raw.matchAll(/#(\d+)/g)].map((x) => Number(x[1]));
-    const unique = [...new Set(numbers)].sort((a, b) => a - b);
-    if (unique.length > 0) return { found: true, valid: true, numbers: unique, raw, reason: '' };
-    const stripped = raw.replace(/[[\]()（）`\s]/g, '');
-    if (/^(なし|無し|none|n\/a)$/i.test(stripped)) {
-      return { found: true, valid: true, numbers: [], raw, reason: '' };
-    }
+    matches.push(m[1].trim());
+  }
+
+  if (matches.length === 0) {
+    return { found: false, valid: false, numbers: [], raw: '', reason: '宣言行が見つかりません' };
+  }
+  if (matches.length > 1) {
+    return {
+      found: true,
+      valid: false,
+      numbers: [],
+      raw: matches.join(' | '),
+      reason: `宣言行が ${matches.length} 本あります (どれが正か決まらないため採用しません)`,
+    };
+  }
+
+  const raw = matches[0];
+  // placeholder 検出: `#N` (リテラルの N) / `または` を含む形はテンプレート未編集とみなす。
+  if (/#N\b/i.test(raw) || raw.includes('または')) {
     return {
       found: true,
       valid: false,
       numbers: [],
       raw,
-      reason: raw === '' ? '値が空です' : `値 "${raw}" を PR 番号の列挙として読めません`,
+      reason: 'テンプレートの placeholder が未編集のまま残っています',
     };
   }
-  return { found: false, valid: false, numbers: [], raw: '', reason: '宣言行が見つかりません' };
+  // 数字量詞は上限付き。PR 本文は誰でも書けるため、入れ子量詞の backtracking で
+  // job を張り付かせられないようにする。
+  const numbers = [...raw.matchAll(/#(\d{1,7})/g)].map((x) => Number(x[1]));
+  const unique = [...new Set(numbers)].sort((a, b) => a - b);
+  if (unique.length > 0) return { found: true, valid: true, numbers: unique, raw, reason: '' };
+  const stripped = raw.replace(/[[\]()（）`\s]/g, '');
+  if (/^(なし|無し|none|n\/a)$/i.test(stripped)) {
+    return { found: true, valid: true, numbers: [], raw, reason: '' };
+  }
+  return {
+    found: true,
+    valid: false,
+    numbers: [],
+    raw,
+    reason: raw === '' ? '値が空です' : `値 "${raw}" を PR 番号の列挙として読めません`,
+  };
 }
 
-/** `Refs #862` / `Refs: #862, #934` 形から issue 番号を抽出する (重複は畳む)。 */
+/**
+ * `Refs #862` / `Refs: #862, #934` 形から issue 番号を抽出する (重複は畳む)。
+ *
+ * 数字量詞に上限を置いているのは ReDoS 対策。`(?:#\d+[\s,、]*)+` の形は入れ子量詞なので、
+ * 数万桁の数字列を含む本文で backtracking が二次オーダーに膨らみ job を張り付かせられる。
+ * issue 番号は 7 桁で十分。
+ */
 function extractReferencedIssues(body) {
   const text = String(body || '');
   const out = [];
-  for (const m of text.matchAll(/\brefs\b\s*:?\s*((?:#\d+[\s,、]*)+)/gi)) {
-    for (const n of m[1].matchAll(/#(\d+)/g)) out.push(Number(n[1]));
+  for (const m of text.matchAll(/\brefs\b\s*:?\s*((?:#\d{1,7}[\s,、]*)+)/gi)) {
+    for (const n of m[1].matchAll(/#(\d{1,7})/g)) out.push(Number(n[1]));
   }
   return [...new Set(out)];
+}
+
+/**
+ * `pulls.list` の応答 1 件を検証する。**壊れた候補を黙って捨てない** (Codex [medium])。
+ *
+ * 候補側の malformed を filter で落とすと、競合 PR が実集合から消えて緑になる
+ * (schema drift / 応答の切り詰め / proxy の書き換えで起きうる false-green)。
+ * 呼び出し側は throw させて fail-closed に倒す。
+ *
+ * @returns {string|null} 問題があれば理由、無ければ null
+ */
+function validateCandidate(pr) {
+  if (!pr || typeof pr !== 'object') return 'PR オブジェクトではありません';
+  if (!Number.isInteger(pr.number)) return `number が整数ではありません (${pr && pr.number})`;
+  if (!Number.isFinite(Date.parse(pr.created_at))) {
+    return `#${pr.number}: created_at を解釈できません (${pr.created_at})`;
+  }
+  if (pr.closed_at != null && !Number.isFinite(Date.parse(pr.closed_at))) {
+    return `#${pr.number}: closed_at を解釈できません (${pr.closed_at})`;
+  }
+  if (!Number.isFinite(Date.parse(pr.updated_at))) {
+    return `#${pr.number}: updated_at を解釈できません (${pr.updated_at})`;
+  }
+  if (!pr.base || typeof pr.base.ref !== 'string' || pr.base.ref === '') {
+    return `#${pr.number}: base.ref がありません`;
+  }
+  return null;
 }
 
 /** title / body に `#<n>` の独立した言及があるか (`#86` が `#862` に誤ヒットしない)。 */
@@ -182,28 +290,36 @@ async function collectCandidatePrs({ github, context, core, t0Iso }) {
     );
 
   const collected = [];
+  const push = (data) => {
+    for (const pr of data) {
+      const problem = validateCandidate(pr);
+      if (problem) throw new Error(`pulls.list の応答を検証できませんでした — ${problem}`);
+      collected.push(pr);
+    }
+  };
 
-  for (let page = 1; page <= MAX_CLOSED_PAGES; page += 1) {
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
     const res = await listPrs({ state: 'open', sort: 'created', direction: 'desc', page });
     const data = (res && res.data) || [];
-    collected.push(...data);
+    push(data);
     if (data.length < PER_PAGE) break;
-    if (page === MAX_CLOSED_PAGES) {
-      throw new Error(`open PR が ${MAX_CLOSED_PAGES} ページを超えました (走査打ち切り)`);
+    if (page === MAX_PAGES) {
+      throw new Error(`open PR が ${MAX_PAGES} ページを超えました (走査打ち切り)`);
     }
   }
 
-  for (let page = 1; page <= MAX_CLOSED_PAGES; page += 1) {
+  // closed は `updated_at` 降順に走査し、`updated_at < T0` に達したら打ち切る。
+  // `closed_at <= updated_at` なので、T0 より後に閉じた PR は必ずこの範囲に入る。
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
     const res = await listPrs({ state: 'closed', sort: 'updated', direction: 'desc', page });
     const data = (res && res.data) || [];
-    collected.push(...data);
+    push(data);
     if (data.length < PER_PAGE) break;
-    const last = data[data.length - 1];
-    const lastUpdated = Date.parse(last && last.updated_at);
-    if (Number.isFinite(lastUpdated) && lastUpdated < t0) break;
-    if (page === MAX_CLOSED_PAGES) {
+    const lastUpdated = Date.parse(data[data.length - 1].updated_at);
+    if (lastUpdated < t0) break;
+    if (page === MAX_PAGES) {
       throw new Error(
-        `closed PR を ${MAX_CLOSED_PAGES} ページ走査しても T0 (${t0Iso}) に到達しませんでした`
+        `closed PR を ${MAX_PAGES} ページ走査しても T0 (${t0Iso}) に到達しませんでした`
       );
     }
   }

@@ -147,6 +147,125 @@ test('parseDeclaredPrSet: 値が空でも invalid (なし と書かせる)', () 
   assert.equal(r.valid, false);
 });
 
+test('parseDeclaredPrSet: fenced code block 内の記入例は宣言として読まない', () => {
+  // docs/l2-workflow.md の記入例をそのまま本文へ貼ると偽の宣言になる false-green を塞ぐ。
+  const body = [
+    '## 概要',
+    '',
+    '```text',
+    `- ${SAME_ISSUE_LABEL}: #938, #940`,
+    `- ${SAME_BASE_LABEL}: なし`,
+    '```',
+    '',
+    `- ${SAME_ISSUE_LABEL}: なし`,
+    `- ${SAME_BASE_LABEL}: なし`,
+  ].join('\n');
+  assert.deepEqual(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).numbers, []);
+});
+
+test('parseDeclaredPrSet: fence 内にしか宣言が無ければ found=false (fail-closed)', () => {
+  const body = ['```', `- ${SAME_ISSUE_LABEL}: なし`, '```'].join('\n');
+  assert.equal(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).found, false);
+});
+
+test('parseDeclaredPrSet: HTML コメント内の記入例は宣言として読まない', () => {
+  const body = [
+    '<!--',
+    `- ${SAME_ISSUE_LABEL}: #938`,
+    '-->',
+    `- ${SAME_ISSUE_LABEL}: なし`,
+  ].join('\n');
+  assert.deepEqual(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).numbers, []);
+});
+
+test('parseDeclaredPrSet: blockquote 内の宣言は読む (GitHub 上で可視なので対象)', () => {
+  const body = `> - ${SAME_ISSUE_LABEL}: #938\n`;
+  assert.deepEqual(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).numbers, [938]);
+});
+
+test('parseDeclaredPrSet: 宣言行が 2 本あれば invalid (decoy 先勝ちを塞ぐ)', () => {
+  // Codex adversarial-review [high]: 先頭に decoy 宣言を置き、可視のテンプレート欄は
+  // なし のまま残すと、先勝ちの実装では decoy 側が採用されて緑になる。
+  const body = [
+    `> - ${SAME_ISSUE_LABEL}: #938`,
+    '',
+    `- ${SAME_ISSUE_LABEL}: なし`,
+    `- ${SAME_BASE_LABEL}: なし`,
+  ].join('\n');
+  const r = parseDeclaredPrSet(body, SAME_ISSUE_LABEL);
+  assert.equal(r.found, true);
+  assert.equal(r.valid, false, '重複宣言は fail-closed にする');
+  assert.match(r.reason, /2/);
+});
+
+test('parseDeclaredPrSet: 行頭に無い label の言及は宣言として読まない', () => {
+  // 散文中の言及 (「... の Pre-flight 時点の同 issue open PR: #938 を参照」) を宣言に
+  // 昇格させると、本文のどこにでも decoy を置けてしまう。
+  const body = [
+    `本文で ${SAME_ISSUE_LABEL}: #938 と書いても宣言にはならない`,
+    `- ${SAME_ISSUE_LABEL}: なし`,
+  ].join('\n');
+  const r = parseDeclaredPrSet(body, SAME_ISSUE_LABEL);
+  assert.equal(r.valid, true);
+  assert.deepEqual(r.numbers, []);
+});
+
+test('[fail-closed] 重複宣言を含む本文は exit 1', () => {
+  const r = runChecker({
+    body: [
+      `- ${SAME_ISSUE_LABEL}: #938`,
+      `- ${SAME_ISSUE_LABEL}: なし`,
+      `- ${SAME_BASE_LABEL}: なし`,
+      'Refs #862',
+    ].join('\n'),
+    pool: { open: [], closed: [] },
+  });
+  assert.equal(r.status, 1, `decoy 宣言で緑にできてはならない\n${r.stdout}`);
+});
+
+test('[fail-closed] pulls.list の候補に壊れた timestamp があれば exit 1', () => {
+  // Codex adversarial-review [medium]: 候補側の malformed を黙って捨てると、
+  // 競合 PR が実集合から消えて false-green になる。
+  const r = runChecker({
+    body: bodyWith({ issueDecl: 'なし', baseDecl: 'なし' }),
+    pool: {
+      open: [
+        {
+          number: 944,
+          created_at: 'not-a-date',
+          closed_at: null,
+          updated_at: '2026-08-02T13:00:00Z',
+          base: { ref: 'release/v0.3.0' },
+          title: 'x',
+          body: '',
+        },
+      ],
+      closed: [],
+    },
+  });
+  assert.equal(r.status, 1, `候補の malformed を握り潰すと実集合から PR が消える\n${r.stdout}`);
+});
+
+test('[fail-closed] pulls.list の候補に base.ref が無ければ exit 1', () => {
+  const r = runChecker({
+    body: bodyWith({ issueDecl: 'なし', baseDecl: 'なし' }),
+    pool: {
+      open: [
+        {
+          number: 944,
+          created_at: '2026-08-02T13:00:00Z',
+          closed_at: null,
+          updated_at: '2026-08-02T13:00:00Z',
+          title: 'x',
+          body: '',
+        },
+      ],
+      closed: [],
+    },
+  });
+  assert.equal(r.status, 1, `base.ref 欠落は same-base 集合から黙って落ちる\n${r.stdout}`);
+});
+
 test('parseDeclaredPrSet: 同 base 行と同 issue 行を取り違えない', () => {
   const body = bodyWith({ issueDecl: 'なし', baseDecl: '#938' });
   assert.deepEqual(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).numbers, []);
@@ -165,6 +284,15 @@ test('extractReferencedIssues: Refs 記法から issue 番号を拾う', () => {
 
 test('extractReferencedIssues: Refs が無ければ空 (same-issue 検査は no-op になる)', () => {
   assert.deepEqual(extractReferencedIssues('## 概要\n\nrelease PR\n'), []);
+});
+
+test('extractReferencedIssues: 巨大な数字列でも線形時間で返る (ReDoS 耐性)', () => {
+  // PR 本文は誰でも書ける。入れ子量詞が数字列で backtracking すると job が張り付く。
+  const body = `Refs #${'9'.repeat(50000)}`;
+  const started = process.hrtime.bigint();
+  extractReferencedIssues(body);
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(elapsedMs < 1000, `extractReferencedIssues took ${elapsedMs}ms`);
 });
 
 // ---------------------------------------------------------------------------
@@ -193,6 +321,17 @@ test('reconstructOpenAt: T0 時点で open だった PR を拾う (事象 E2 の
     reconstructOpenAt(prs, T0, 939).map((p) => p.number),
     [938],
     'T0 より後に merge された PR も「T0 時点では open」なので検査対象'
+  );
+});
+
+test('reconstructOpenAt: 境界の等値 — created_at == T0 は含め closed_at == T0 は除く', () => {
+  const prs = [
+    { number: 901, created_at: T0, closed_at: null },
+    { number: 902, created_at: '2026-08-02T13:00:00Z', closed_at: T0 },
+  ];
+  assert.deepEqual(
+    reconstructOpenAt(prs, T0, 939).map((p) => p.number),
+    [901]
   );
 });
 
