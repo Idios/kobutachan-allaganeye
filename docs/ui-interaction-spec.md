@@ -306,7 +306,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 
 **目的**: `start_detect` (#569) に渡す検知パラメータを GUI 上で調整。値は `appStateStore.detectionParams` に保存され、`reset()` まで session 中保持される (localStorage 永続化なし、再起動時は default に戻る)。
 
-**スコープ (3 パラメータ)**: `blackout_threshold` / `workers` / `gpu`。`--no-audio` は audio module frozen (#327、`allaganeye/audio/__init__.py` の `AUDIO_FROZEN`) のため UI 不公開、#327 解凍後に再追加する。
+**スコープ (3 パラメータ)**: `blackout_threshold` / `workers` / `gpu`。`--no-audio` は audio module frozen (#327、`allaganeye/audio/__init__.py` の `AUDIO_FROZEN`) のため UI 不公開。解凍は #865 で「期限なし凍結」に決着しており、再追加の予定はない（方針が変われば再検討）。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -374,7 +374,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
   - 各 input: `<label htmlFor>` (slider / numeric) で関連付け、tri-state は `aria-label="gpu mode"` + `role="radio"`
   - リセット button: `aria-label` で disabled 理由 (default 値) を明示
 - Tab order: header toggle → (展開時) blackout slider → workers numeric → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ
-- **`--no-audio` UI 不採用**: `allaganeye/audio/__init__.py` の `AUDIO_FROZEN` により audio module は frozen 状態 (#327、`split_matches.py` の `_run_audio_scan` が live probe して skip) のため `--no-audio` flag は実質 no-op。GUI 側でのみ控え (Rust `DetectParams.no_audio` field 自体は #569 で実装済み、#327 解凍時に再公開)
+- **`--no-audio` UI 不採用**: `allaganeye/audio/__init__.py` の `AUDIO_FROZEN` により audio module は frozen 状態 (#327、`split_matches.py` の `_run_audio_scan` が live probe して skip) のため `--no-audio` flag は実質 no-op。GUI 側でのみ控え (Rust `DetectParams.no_audio` field 自体は #569 で実装済み。再公開は解凍が前提だが、#865 で期限なし凍結に決着済み)
 
 ### §2.2 detecting
 

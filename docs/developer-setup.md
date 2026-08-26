@@ -443,7 +443,7 @@ allaganeye split <video_path> --dry-run       # 検知のみ、分割しない
 allaganeye split <video_path> --gpu           # GPU アクセラレーション検知
 allaganeye split <video_path> --workers 8     # ワーカー数指定
 allaganeye split <video_path> --no-cache      # キャッシュ無視で再検知
-allaganeye split <video_path> --no-audio      # 音声昇格の無効化フラグ（#327 で凍結中のため現在は常にスキップ）
+allaganeye split <video_path> --no-audio      # 音声昇格の無効化フラグ（#327 で凍結、#865 で期限なし凍結が正式方針。常にスキップ）
 allaganeye split <video_path> -v              # verbose 出力
 allaganeye split <video_path> -q              # 進捗抑制
 

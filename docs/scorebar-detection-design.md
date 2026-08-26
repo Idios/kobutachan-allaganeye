@@ -66,11 +66,20 @@ ROI brightness ∈ (20, 140)          ... 暗転・白飛びを排除
 
 ### 閾値の根拠
 
-| 定数 | 値 | FL 実測 | 非FL 実測 | マージン |
-| --- | --- | --- | --- | --- |
-| `_SCOREBAR_CHANNEL_STD_THRESHOLD` | 15.0 | 26-48 | lobby ~5, queue ~8.8 | 6.2 (queue→thr) |
-| `_SCOREBAR_MIN_SECONDARY_STD` | 12.0 | 26-48（全チャンネル） | ローディング 2nd ch < 5 | 7.0 (non-FL→thr) |
-| `_SCOREBAR_EDGE_THRESHOLD` | 8.0 | 20-60（バンド境界） | グラデーション < 5 | 3.0 (gradient→thr) |
+> **以下 2 表は閾値の「現在値」を持たない**（#913 / #818 doc SSoT 規約）。値の正は実装の
+> module-level 定数 1 箇所のみで、表に載るのは **校正当時の実測記録と採用理由**である。
+> 行ごとの分類は下記 §表の分類方針 を参照。
+> （本 § より前の擬似コードと §背景 には現在値と一致する数値が残っている。そちらは
+> アルゴリズムの説明であって値の正ではない — 突合するなら実装を読むこと。）
+
+| 定数 | FL 実測 | 非FL 実測 | 校正当時のマージン |
+| --- | --- | --- | --- |
+| [detector.py](../allaganeye/video/detector.py) の `_SCOREBAR_CHANNEL_STD_THRESHOLD` | 26-48 | lobby ~5, queue ~8.8 | 6.2 (queue→閾値) |
+| [detector.py](../allaganeye/video/detector.py) の `_SCOREBAR_MIN_SECONDARY_STD` | 26-48（全チャンネル） | ローディング 2nd ch < 5 | 7.0 (non-FL→閾値) |
+| [detector.py](../allaganeye/video/detector.py) の `_SCOREBAR_EDGE_THRESHOLD` | 20-60（バンド境界） | グラデーション < 5 | 3.0 (gradient→閾値) |
+
+「マージン」列は**校正を行った時点の値に対する余裕**であり、実装値を変えたら当然ズレる。
+現在値との突合が要るときは実装を読むこと（この列を根拠に現在の余裕を語ってはならない）。
 
 ## 将来の進化パス
 
@@ -106,15 +115,31 @@ OR 結合により、1080p OBS validated set は Primary で完結 (FP 耐性保
 
 ### 閾値定数 (V2 動的検出)
 
-| 定数 | 値 | 役割 |
+こちらも値は持たない。正は同名の module-level 定数。
+
+| 定数 | 役割と採用理由 |
+| --- | --- |
+| [detector.py](../allaganeye/video/detector.py) の `_SCOREBAR_SCAN_Y_START` / [detector.py](../allaganeye/video/detector.py) の `_SCOREBAR_SCAN_Y_END` | 画面上部 scan ROI |
+| [detector.py](../allaganeye/video/detector.py) の `_SCOREBAR_SCAN_SAT_THRESHOLD` | saturated pixel 閾値。lobby 背景の実測 66-79 を超え、scorebar バンドの実測 >= 150 を下回る中間に置く |
+| [detector.py](../allaganeye/video/detector.py) の `_SCOREBAR_SCAN_VAL_THRESHOLD` | 暗フレーム排除 |
+| [detector.py](../allaganeye/video/detector.py) の `_SCOREBAR_SCAN_COL_RATIO` | 列のうち saturated が占める割合の下限。超えた列を qualifying とする |
+| [detector.py](../allaganeye/video/detector.py) の `_SCOREBAR_SCAN_MIN_WIDTH_PX` | scorebar と認める最小幅。実測 1080p 712+ / 4K DVR 613+ を通し、lobby 409 の FP を排除する |
+| [detector.py](../allaganeye/video/detector.py) の `_SCOREBAR_SCAN_MAX_WIDTH_PX` | scorebar と認める最大幅 (#803)。実測上限 1080p OBS ~1090px / 4K DVR ~620px に対し、post-match の全幅近い彩度バンド (実測 ~1912px) を排除する。probe 幅 1920px に対する割合として決めた |
+| [detector.py](../allaganeye/video/detector.py) の `_SCOREBAR_SCAN_MAX_GAP_PX` | scorebar 中央 timer/score 部のギャップを bridge する許容幅 |
+
+### 表の分類方針 (#913)
+
+doc SSoT 規約 (#818。同じ仕様値を複数 doc に書かない／管轄が重なる場合は**実装を canonical** とする) に従い、上 2 表の各セルを次の 3 種に分類し、**仕様主張だけを参照化**した。
+
+| 分類 | 扱い | 上表での該当 |
 | --- | --- | --- |
-| `_SCOREBAR_SCAN_Y_START` / `_Y_END` | 0 / 45 | 画面上部 scan ROI |
-| `_SCOREBAR_SCAN_SAT_THRESHOLD` | 80.0 | saturated pixel 閾値 (lobby 背景 66-79 を超え、scorebar バンド >= 150 の中間) |
-| `_SCOREBAR_SCAN_VAL_THRESHOLD` | 60.0 | 暗フレーム排除 |
-| `_SCOREBAR_SCAN_COL_RATIO` | 0.30 | 行の 30% 以上が saturated であれば該当列を qualifying |
-| `_SCOREBAR_SCAN_MIN_WIDTH_PX` | 500 | scorebar と認める最小幅 (1080p 712+, 4K DVR 613+, lobby 409 FP 排除) |
-| `_SCOREBAR_SCAN_MAX_WIDTH_PX` | 1440 | scorebar と認める最大幅 (#803)。1080p OBS の実測上限 ~1090px / 4K DVR ~620px に対し、post-match の全幅近い彩度バンド (実測 ~1912px) を排除する。1440 = probe 幅 1920px の 75% |
-| `_SCOREBAR_SCAN_MAX_GAP_PX` | 80 | scorebar 中央 timer/score 部のギャップを bridge |
+| **仕様主張**（「この定数の値は X である」） | 実装が正。doc からは**値を削除**し、定数名 + 実装リンクで突合先を一意にする | 旧「値」列（両表とも削除済み） |
+| **検証当時の実測記録**（「FL では 26-48 だった」） | doc が正。実装からは復元できない一次データなので**残す** | 「FL 実測」「非FL 実測」列、役割欄の実測値 |
+| **採用理由**（「lobby 背景を超え scorebar バンドを下回る中間に置く」） | doc が正。**残す**。値が変わっても理由は生き続ける | 「役割と採用理由」列 |
+
+「校正当時のマージン」列だけは実測記録と仕様主張の**混合**（当時の値に依存する派生量）なので、当時の記録であることを明示したうえで残している。
+
+突合先が一意であることの担保は機械側にもある: 上表の `[detector.py](../allaganeye/video/detector.py) の \`定数名\`` 形は `scripts/check_doc_code_refs.py` の symbol 検査対象で、定数が改名・削除されたら CI が赤くなる。
 
 ### 検証サマリー
 

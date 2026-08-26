@@ -52,7 +52,7 @@ allaganeye split <video_path> -o <dir>  # 出力先指定
 allaganeye split <video_path> --gpu     # GPU アクセラレーション検知
 allaganeye split <video_path> --workers 8  # ワーカー数指定
 allaganeye split <video_path> --no-cache   # キャッシュ無視で再検知
-allaganeye split <video_path> --no-audio   # 音声昇格の無効化フラグ（#327 で凍結中のため現在は常にスキップ）
+allaganeye split <video_path> --no-audio   # 音声昇格の無効化フラグ（#327 で凍結、#865 で期限なし凍結が正式方針。常にスキップされ本フラグは無効）
 allaganeye split <video_path> --quiet      # 進捗抑制（出力ファイルのみ）
 allaganeye split <video_path> -v           # verbose（環境情報・パイプライン統計を表示、#336）
 allaganeye --version                       # バージョン表示（短縮形: -V、#337）
@@ -153,12 +153,14 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 8. `filter_blackouts_with_scorebar()` で各暗転領域の前後フレームのスコアバー有無を判定し、暗転を分類（`match_boundary` / `in_match` / `non_fl`）。V2 検出 (`_has_scorebar_v2`) は 1920x1080 リサイズ後に **two-path OR semantics** で GC 紋章 3 点 AND 判定 (#307, #522): **Primary=absolute `_EMBLEM_POSITIONS`** (pre-#522 validated)、**Rescue=dynamic span (`_find_scorebar_horizontal_range`) + `_EMBLEM_RELATIVE_POSITIONS` 相対比**。Primary pass で short-circuit、両 path fail で False。`raw_rgb` None / opencv 未インストール時のみ None → V1 (`_has_scorebar`, channel-std + edge) フォールバック。1080p OBS validated set の挙動を完全保持しつつ 4K Game DVR の HUD スケール差異は Rescue で救済
 9. `non_fl`（非FL暗転）と短い `in_match`（試合内暗転）を除外。隣接する `match_boundary` ペア間の短いギャップをマージ
 
-**音声昇格**（#288。**現在は凍結中 #327**: `AUDIO_FROZEN=True` のため `--no-audio` の値に関わらずスキャンは常にスキップされ、verbose では `audio=frozen` と表示される #384。以下は解凍時の挙動）
+**音声昇格**（#288。**期限を定めない凍結が正式方針**（#865、2026-08-26 確定）: `AUDIO_FROZEN=True` のため `--no-audio` の値に関わらずスキャンは常にスキップされ、verbose では `audio=frozen` と表示される #384。以下は解凍時の挙動）
+
+> **凍結継続の決着**（#865）: 「解凍 / Q3 手順での撤去 / 凍結継続」の 3 択を比較したうえで**凍結継続**を選んだ。凍結中の実行時コストはゼロ（スキャンは無条件スキップ、`--no-audio` は無効、verbose 表示のみ）である一方、撤去は patch release で CLI 表面（`--no-audio`）と `scipy` 依存を落とす破壊的変更になる。**再評価の期日は設けない**。次の自然な契機は二信号検出の再アーキで、その帰趨が複合信号統合（下記 (B) 条件）の要否を決める。解凍時の検討材料は `allaganeye/audio/__init__.py` の `AUDIO_FROZEN` 付近に集約してある（根拠 issue #327 が closed で、open issue の台帳から辿れないため）。撤去する場合の 3 手順は同ファイル冒頭 docstring に記載。
 
 - `audio/scan.py` で動画全域の音声から Fanfare ピーク（log-mel 相関 sim ≥ 0.65）を抽出
 - `in_match` 分類された暗転のうち、暗転終了後 0-60s 以内に Fanfare ピークがあるものを `match_boundary` に昇格
 - スコアバー残像で誤分類された試合境界（例: 2026-04-08 57:53）を救済
-- 既知の制約: Fanfare は試合中にも弱いピーク（sim 0.65-0.75）を出すため、本条件のみでは偽陽性が混入しうる。WR 参照は #306 で同梱済み（`war_room.npz`）。解凍時に WR→Fanfare 間隔による (B) 条件を追加して偽陽性を除去する計画（#327 の解凍判断と合わせて再評価）
+- 既知の制約: Fanfare は試合中にも弱いピーク（sim 0.65-0.75）を出すため、本条件のみでは偽陽性が混入しうる。WR 参照は #306 で同梱済み（`war_room.npz`）。解凍時に WR→Fanfare 間隔による (B) 条件を追加して偽陽性を除去する計画（解凍の可否は #865 で「期限なし凍結」に決着済み。上記 blockquote を参照）
 
 **フィルタリング・抽出**
 10. `min(min_blackout_duration, _REFINED_MIN_BLACKOUT)` 未満の短い暗転を除外（リスポーン暗転の誤判定防止）
