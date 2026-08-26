@@ -1420,8 +1420,21 @@ test('[runner coverage] 実行対象 glob が 3 拡張子 x 再帰を覆って�
 
 test('[runner coverage] glob が空振りしたときに緑にせず落とす guard がある', () => {
   const wf = fs.readFileSync(RUNNER_WORKFLOW, 'utf8');
-  assert.match(wf, /nullglob/, 'nullglob 無しだと未展開の glob 文字列が node へ渡ります');
-  assert.match(wf, /globstar/, 'globstar 無しだと ** が再帰しません');
+  // **`shopt` 行に scope を絞る。** 本文全体を検索すると、workflow 冒頭の説明コメントが
+  // `nullglob` / `globstar` に言及しているだけで緑になる (実測: `shopt -s globstar nullglob` を
+  // `shopt -s globstar` に書き換えても全 test が pass した)。source-scan guard の典型的な
+  // false-green で、statement に scope を絞らないと検出力を持たない。
+  const shoptLines = [...wf.matchAll(/^\s*shopt\s+-s\s+(.+?)\s*$/gm)].map((m) => m[1]);
+  assert.equal(shoptLines.length, 1, `shopt -s 行が ${shoptLines.length} 本あります (1 本を期待)`);
+  const shoptOpts = shoptLines[0].split(/\s+/);
+  assert.ok(
+    shoptOpts.includes('nullglob'),
+    `shopt -s に nullglob がありません (${shoptLines[0]})。未展開の glob 文字列が node へ渡ります`
+  );
+  assert.ok(
+    shoptOpts.includes('globstar'),
+    `shopt -s に globstar がありません (${shoptLines[0]})。** が再帰しません`
+  );
   assert.match(
     wf,
     /\$\{#files\[@\]\}\s*-eq\s*0[\s\S]{0,200}?exit 1/,
