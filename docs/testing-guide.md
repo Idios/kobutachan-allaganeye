@@ -121,9 +121,34 @@ primary 8/8 で ~30s。cumulative sample-dir tests (~90s) と合わせて音声�
 | 項目 | 決定 |
 | --- | --- |
 | 対象 | **検証依存セット (48 ファイル、~632 GiB)** = GT/baseline 台帳が参照する全動画 (下表)。台帳外の自録画・再生成可能な検知/分割出力・重複 zip は対象外 |
-| 先 (第 2 系統) | `F:\allaganeye-backup\` (E: とは別物理ディスクの内蔵 HDD) へ robocopy cold copy。恒久策 (外付け HDD or クラウド cold storage) は後日追加予定 |
+| 先 (第 2 系統) | `F:\allaganeye-backup\` (E: とは別物理ディスクの内蔵 HDD) へ robocopy cold copy |
+| 先 (第 3 系統) | 筐体外の系統を 1 つ追加する。方式 (外付け HDD / クラウド cold storage / 併用) の選定・購入・初回コピーは Idios 判断 |
 | 周期 | 定期実行ではなく**新規 baseline/GT 動画の追加時に都度コピー + 台帳更新**。release gate 時に checksum 照合で健全性を確認 |
 | 台帳 | [`tests/baselines/source-videos.sha256.json`](../tests/baselines/source-videos.sha256.json) に全対象の SHA-256 + size を記録 (repo = GitHub 側にも残る)。ドライブ故障後の復元・再入手時の同一性検証に使う |
+
+#### 実施状況
+
+上表は **2026-07-07 に決めた方針**であって現状ではない。現状は次のとおり:
+
+| 系統 | 状態 |
+| --- | --- |
+| 第 2 系統 (`F:`) | **完了** (#869) |
+| 第 3 系統 (筐体外) | **未着手**。[#882](https://github.com/Idios/kobutachan-allaganeye/issues/882) で追跡中 |
+
+`F:` は `E:` と**同一筐体内の内蔵 HDD** なので、ディスク単体故障には耐えるが **PC 全損・ランサム・盗難に対しては現状 2 系統とも無防備**である。第 3 系統はその穴を塞ぐためのもので、未着手である以上その穴は今も開いている。
+
+#### 台帳と原本の照合記録
+
+**台帳 = 実在保証ではない。** これまでに実行した突合の結果を、実施時期つきで残しておく。
+
+| 系統 | 照合の実施時期 | 結果 |
+| --- | --- | --- |
+| E: 原本 | 2026-08-21 | 48 entry 中 **8 本が欠落** (すべて `obs-baseline-manual-split` の手動分割 MP4)。うち 1 本は [#992](https://github.com/Idios/kobutachan-allaganeye/issues/992) で復元済みのため、記録時点の欠落は **7 本**。扱いは [#998](https://github.com/Idios/kobutachan-allaganeye/issues/998) で追跡中 |
+| F: バックアップ (第 2 系統) | [#869](https://github.com/Idios/kobutachan-allaganeye/issues/869) の初回コピー時 (方針決定は 2026-07-07)。**以降は再照合していない** | 全件照合で **fail=0/48**。#992 の復元は実際にここを復元元として使えた |
+
+欠落している 7 本は**どのテスト / GT manifest からも参照されていない** (参照元は台帳自身と `docs/superpowers/` 配下の記録のみ) ため、現時点でテストが赤くなることはない。台帳から落とすか E: へ復元するかの判断は #998 で行う。
+
+> 上表は**突合を実行した時点の記録**であり、この doc を読んだ時点の状態ではない。現在の状態が要るときは台帳を使って実際に突合すること。
 
 ### 検証依存セット (対象一覧)
 

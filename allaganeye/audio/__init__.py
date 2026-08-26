@@ -45,6 +45,31 @@ from allaganeye.audio.scan import scan_fanfare_hits
 # Fanfare scan alone produces false positives (#303); the module is
 # frozen until compound-signal integration is ready.  Set to False
 # to re-enable audio promotion as the default behaviour.
+#
+# **Indefinite freeze is the standing decision** (#865, 2026-08-26). The three
+# options -- unfreeze / remove per the Q3 steps above / keep frozen -- were
+# weighed and "keep frozen" was chosen: the module costs nothing at runtime
+# (the scan is skipped unconditionally, `--no-audio` is inert, verbose prints
+# `audio=frozen`), whereas removing it would be a **breaking change shipped in
+# a patch release** -- it retires the `--no-audio` CLI surface, and dropping
+# `scipy` (a benefit in itself) would change the distributed dependency set.
+# There is **no scheduled review date**; the next natural trigger is the
+# two-signal detection re-architecture (see
+# `docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md` and
+# `docs/detection-map.md`), whose outcome decides whether the compound-signal
+# integration below ever lands.
+#
+# Material for a future unfreeze, kept here because #327 is closed and the
+# ledger of open issues cannot reach it:
+#
+# * the (B) condition -- gate a Fanfare peak on the preceding War Room peak,
+#   using the bundled `refs/war_room.npz` (#306), to drop the in-match false
+#   positives that make the Fanfare-only rule unusable (#303)
+# * the 2026-06-10 audit items P2-1 (corroboration) and P2-5 (memory), see
+#   `docs/audits/2026-06-10-full-audit.md`
+#
+# CLAUDE.md section "音声昇格" carries the same decision for readers who never
+# open this file.
 AUDIO_FROZEN: Final[bool] = True
 
 __all__ = [

@@ -57,7 +57,7 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 | `--no-cache` | `false` | キャッシュされた検知結果を無視して再検知する |
 | `--vtuber` | `false` | VTuber 配信録画向けの timeline 検出を有効化する (#895)。`--vtuber` 指定時は暗転起点ではなく「試合中である」証拠 (scorebar presence AND 画面運動) の timeline から試合区間を抽出する (V0-V4)。OBS/masked path は非接触。縮退 4 trigger (V0 anchor 失敗 / UNKNOWN 過半 / V2 無結果 / V4 が全 segment を drop) で従来 band-crop blackout path へ fall back (floor 保証)。cache key は `vtuber_algo` (`_VTUBER_ALGO_VERSION`) で管理し、アルゴリズム変更時に bump する (**値の正は実装 `allaganeye/commands/split_matches.py` 側。本 doc は値を複製しない**)。cache ヒット時 (`--vtuber` 影響 run のみ) verbose に `vtuber_algo=N` トークンを表示 |
 | `--keep-trailing` | `false` | default は試合後 trailing を `post_match: true` フラグ化して metadata に保持し、default split (MP4) から除外する (#805 段階2 で不可逆削除を廃止)。本フラグ指定時は flagging を skip し、trailing を通常 match として MP4 分割・保持する (#797 probe 無効化)。段階2 で `post_match_trailing_dropped` warning は emit されなくなった (flag が代替) |
-| `--no-audio` | `false` | 音声ベースの試合境界昇格（Fanfare スキャン）を無効化する。**現在は音声モジュールが凍結中（#327）のため、本フラグの値に関わらずスキャンは常にスキップされる。verbose 出力では `audio=frozen` と表示される (#384)** |
+| `--no-audio` | `false` | 音声ベースの試合境界昇格（Fanfare スキャン）を無効化する。**音声モジュールは凍結されており（#327 で凍結、#865 で期限を定めない凍結が正式方針）、本フラグの値に関わらずスキャンは常にスキップされる。verbose 出力では `audio=frozen` と表示される (#384)** |
 | `--masked` | `false` | チャット欄マスク画像が全画面に合成された録画向け。mask のない領域を自動検出して再検知する。暗転が一部見つかる場合でも本フラグ指定でこの経路を強制する。**`--vtuber` と同時指定は排他エラー (exit 5)** |
 | `--dry-run` | `false` | 検知のみ実行し分割しない（検知結果はキャッシュに保存される） |
 | `-v`, `--verbose` | `false` | 詳細出力（メタデータ詳細、gap 情報）。**`-q` と同時指定は排他エラー (exit 5) (#419)** |
