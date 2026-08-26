@@ -241,7 +241,7 @@ $ python -c "import importlib.metadata as m; print(m.version('pyright'))"
 
 つまり `importlib.metadata` で確認しても runtime の版は保証されません。**`pyright --version` の出力が pin と一致すること**を確認してください。上記の環境変数を設定している場合は、CI (未設定) と結果が食い違います。
 
-> **版の一致は解析対象の環境を保証しません (#974)。** `pyright` は解析する環境を PATH 上の `python` から**別に**解決するため、版が pin どおりでも `.venv` を見ずに `reportMissingImports` を量産することがあります。ゲートを回すときは §4 開発用コマンド の `--pythonpath` 付きの形を使ってください。
+> **版の一致は解析対象の環境を保証しません (#974)。** `pyright` は解析する環境を PATH 上の `python` から**別に**解決するため、版が pin どおりでも `.venv` を見ずに `reportMissingImports` を量産することがあります。ゲートを回すときは §4 開発用コマンド の `python -m pyright` を使ってください (activate せずに回す必要があるときだけ、`--pythonpath` に repo root の `.venv` を**絶対パスで**渡します)。
 
 ### Windows: `pyright` の install が MAX_PATH で失敗する場合 (#907)
 
