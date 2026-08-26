@@ -101,7 +101,15 @@ function normalizeLine(line) {
  * - **行頭** `<!--` は HTML block なので `-->` まで丸ごと不可視。読み飛ばす
  *
  * **これは Markdown parser ではなく近似である** (`check-pr-checklist.js` と同じ方針)。
- * 判断が付かない行は「宣言ではない」= fail-closed 側に倒す。
+ * 判断が付かない行は「宣言ではない」= fail-closed 側に倒す。既知の近似:
+ *
+ * - blockquote prefix を先に剥がすため、**引用の中で開いた fence が引用の外まで残る**。
+ *   GitHub は引用境界で fence を閉じるので、その後ろの宣言行は本来可視。ここでは
+ *   「宣言が見つからない」= red に倒れる (`check-pr-checklist.js` は quote 深さを追って
+ *   この差を吸収しているが、本 gate は宣言 2 行を読むだけなので同じ精度を必要としない)
+ * - indented code block (4 space) / HTML block type 1・type 6 は解釈しない。テンプレートの
+ *   宣言行はいずれの文脈にも置かれないため、実害は「宣言でない行を宣言と読む」方向のみで、
+ *   それは重複検出か値の parse 失敗で fail-closed に落ちる
  */
 function visibleLines(body) {
   const out = [];
