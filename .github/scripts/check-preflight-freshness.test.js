@@ -178,6 +178,59 @@ test('parseDeclaredPrSet: HTML コメント内の記入例は宣言として読�
   assert.deepEqual(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).numbers, []);
 });
 
+// GitHub の実レンダリングを oracle にした期待値 (`gh api markdown --input`、mode=gfm)。
+// 実測結果:
+//   `- decl C: <!-- #938 -->none`  → `<li>decl C: none</li>`      = #938 は不可視
+//   `- decl E: none <!-- #555 -->` → `<li>decl E: none </li>`     = #555 は不可視
+//   `note <!--` + 次行の list item → `<p>note &lt;!--</p>` + `<li>...` = **次行は可視**
+// 行中で開いたまま閉じないコメントは後続行を飲み込まない (#967 が同じ実測を記録している)。
+test('parseDeclaredPrSet: 閉じた inline コメント内の PR 番号は宣言に数えない', () => {
+  // レビュアが「なし」と読む欄で gate だけ #938 を宣言済みと判定すると、
+  // superset 扱いで緑になり実在の衝突が隠れる (可視性の分裂 = false-green)。
+  const body = `- ${SAME_ISSUE_LABEL}: <!-- #938 -->なし\n`;
+  assert.deepEqual(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).numbers, []);
+});
+
+test('parseDeclaredPrSet: 行末の閉じた inline コメントも数えない', () => {
+  const body = `- ${SAME_ISSUE_LABEL}: なし <!-- #555 -->\n`;
+  assert.deepEqual(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).numbers, []);
+});
+
+test('parseDeclaredPrSet: 行中で開いた未閉鎖コメントは後続行を飲み込まない', () => {
+  // GitHub 実測で次行は可視。ここで飲み込むと「可視なのに数えない」= #967 が潰した
+  // false-green の再導入になる。可視だから読む、が正しい。
+  const body = ['note <!--', `- ${SAME_ISSUE_LABEL}: #938`, '-->'].join('\n');
+  assert.deepEqual(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).numbers, [938]);
+});
+
+test('parseDeclaredPrSet: 閉じ忘れ fence 以降は読まない (誤りは fail-closed 側へ)', () => {
+  // lexer desync は「実コードを空白化して 0 件 = 緑」になりうる (memory: guard_lexer_desync)。
+  // ここでは宣言が見つからない = fail-closed に倒れることを固定する。
+  const body = ['```', 'まだ閉じていない', `- ${SAME_ISSUE_LABEL}: なし`].join('\n');
+  assert.equal(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).found, false);
+});
+
+test('parseDeclaredPrSet: tilde fence は backtick では閉じない', () => {
+  const body = ['~~~', '```', `- ${SAME_ISSUE_LABEL}: #938`, '~~~'].join('\n');
+  assert.equal(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).found, false);
+});
+
+test('parseDeclaredPrSet: info string 付き fence は閉じ fence にならない', () => {
+  const body = ['```text', `- ${SAME_ISSUE_LABEL}: #938`, '```js', '```'].join('\n');
+  assert.equal(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).found, false);
+});
+
+test('parseDeclaredPrSet: fence 内で開いた HTML コメントは fence の外へ漏れない', () => {
+  const body = [
+    '```',
+    '<!-- 未閉鎖のコメント',
+    '```',
+    `- ${SAME_ISSUE_LABEL}: なし`,
+    `- ${SAME_BASE_LABEL}: なし`,
+  ].join('\n');
+  assert.equal(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).valid, true);
+});
+
 test('parseDeclaredPrSet: blockquote 内の宣言は読む (GitHub 上で可視なので対象)', () => {
   const body = `> - ${SAME_ISSUE_LABEL}: #938\n`;
   assert.deepEqual(parseDeclaredPrSet(body, SAME_ISSUE_LABEL).numbers, [938]);

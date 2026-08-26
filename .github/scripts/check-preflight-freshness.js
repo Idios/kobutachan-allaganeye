@@ -32,7 +32,10 @@
 //   仕込んで可視のテンプレート欄を `なし` のまま残せると、レビュアが見る欄と gate が読む欄が
 //   食い違い監査可能性そのものが壊れる。そのため宣言は **行頭の list item に限り**、同じ label が
 //   2 本以上あれば採用せず fail-closed にする (Codex adversarial-review [high])。
-//   fenced code block / HTML コメントの中身は読まない (doc の記入例の貼り付けを宣言に昇格させない)
+//   fenced code block / HTML コメント (行頭ブロック・行中の閉じたもの) の中身は読まない。
+//   **「読む / 読まない」の境界は推測ではなく `gh api markdown` の実測に合わせてある** —
+//   詳細と実測結果は `visibleLines` の docstring を参照。判定関数は `check-pr-checklist.js` と
+//   共有する (近似を 2 本持つと片方だけ実測に追従して乖離する)
 // - **宣言が実集合の superset でも通す**。Pre-flight 後に閉じた PR を宣言に残したケースを
 //   false-red にしないための意図的な片側検査であり、「実在しない PR 番号を並べて緑にする」
 //   経路は塞いでいない
@@ -54,6 +57,9 @@
 
 'use strict';
 
+// 「GitHub が隠す範囲」の判定は `check-pr-checklist.js` と共有する (下記 `visibleLines` 参照)。
+const { stripInlineComments } = require('./check-pr-checklist.js');
+
 const SAME_ISSUE_LABEL = 'Pre-flight 時点の同 issue open PR';
 const SAME_BASE_LABEL = 'Pre-flight 時点の同 base open PR';
 
@@ -74,14 +80,28 @@ function normalizeLine(line) {
 }
 
 /**
- * fenced code block / HTML コメントの中身を落とし、**GitHub 上で可視な行だけ**を返す。
+ * fenced code block / HTML コメントの中身を落とし、**GitHub 上で可視な文字列だけ**を返す。
  *
  * これが無いと `docs/l2-workflow.md` の記入例をそのまま PR 本文へ貼った本文が
  * 「`#938, #940` を宣言済み」と読まれて緑になる (false-green)。blockquote は可視なので
  * 落とさない — 引用された宣言は「書いてある」ものとして扱う。
  *
+ * **行中の閉じたコメントの除去は `check-pr-checklist.js` の `stripInlineComments` を共有する。**
+ * 同じ近似を 2 本持つと片方だけ renderer 実測に追従して乖離するため (#967 が潰した乖離 14 件と
+ * 同じ構図)、「GitHub が隠す範囲」の判定は 1 箇所に置く。
+ *
+ * 期待値は `gh api markdown` (mode=gfm) の実測に合わせてある:
+ *
+ * - `- decl: <!-- #938 -->なし` → `<li>decl: なし</li>` = **`#938` は不可視**。数えない。
+ *   数えると、レビュアが「なし」と読む欄で gate だけ `#938` 宣言済みと判定し、superset 扱いで
+ *   緑になる (可視性の分裂)
+ * - `note <!--` の**次行**の list item → `<p>note &lt;!--</p>` + `<li>...` = **可視**。読む。
+ *   行中で開いたまま閉じないコメントは後続行を飲み込まない。ここで飲み込むと「可視なのに
+ *   数えない」= #967 が潰した false-green の再導入になる
+ * - **行頭** `<!--` は HTML block なので `-->` まで丸ごと不可視。読み飛ばす
+ *
  * **これは Markdown parser ではなく近似である** (`check-pr-checklist.js` と同じ方針)。
- * 誤りの向きは false-red 側に倒す: 判断が付かない行は「宣言ではない」= fail-closed になる。
+ * 判断が付かない行は「宣言ではない」= fail-closed 側に倒す。
  */
 function visibleLines(body) {
   const out = [];
@@ -108,12 +128,12 @@ function visibleLines(body) {
       }
     }
     if (fence !== null) continue;
-    if (/^\s*<!--/.test(line) && !line.includes('-->')) {
-      inComment = true;
+    // 行頭 `<!--` は HTML block。`-->` まで不可視。
+    if (/^\s*<!--/.test(line)) {
+      if (!line.includes('-->')) inComment = true;
       continue;
     }
-    if (/^\s*<!--.*-->\s*$/.test(line)) continue;
-    out.push(line);
+    out.push(stripInlineComments(line).content);
   }
   return out;
 }
