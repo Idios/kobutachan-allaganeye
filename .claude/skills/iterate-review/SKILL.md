@@ -92,7 +92,9 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
 
    ## findings_table
    | # | 摘出内容 | 出所 | 処置 | 根拠 |
-   <finding 1 件につき 1 行。**ゼロ件ならヘッダ行だけを残してデータ行を 1 行も書かない**。
+   | --- | --- | --- | --- | --- |
+   <finding 1 件につき 1 行。**ゼロ件なら見出し + ヘッダ行 + 区切り行の 3 行だけを返し、
+    データ行を 1 行も書かない** — literal の正は Step 2.2 §「findings ゼロ件の記法」。
     空でもセクション自体は必須記載 (ambiguous_judgments と同じ規約)>
 
    ## ambiguous_judgments
@@ -120,32 +122,52 @@ Agent tool の戻り値 markdown から `## findings_table` セクションの�
 **ゼロ件は例外ではなく通常経路である** (§4.1 が「Round 1 で 0 findings (即収束)」を想定ケースとして
 扱っている)。記法を定義しないと実行者ごとに割れ、正しい return が parse error 扱いになる。
 
-- **正**: `## findings_table` セクションを置き、**ヘッダ行 (`| # | 摘出内容 | 出所 | 処置 | 根拠 |`) だけ**を返す。データ行は 1 行も書かない
-- **誤**: `| - | なし | - | - | - |` のようなプレースホルダ行を置く → 処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれでもないため **validation item 1 で parse error**
-- **誤**: `## findings_table` セクション自体を省く → **従来どおり parse error** (ゼロ件とセクション欠落は別事象。セクションが無い return は「表を作り忘れた / 別書式で返した」と区別できない)
-- `なし` / `N/A` / `該当なし` 等の自由文をセクション本文に置くのも不可 (item 3 の握り潰しキーワード検査と衝突しうる)
+**正 — この 3 行をそのままコピーして返す** (`## findings_table` の literal はここ 1 箇所だけが正。
+テンプレート L93 付近の記述もこのブロックを指す):
+
+```markdown
+## findings_table
+| # | 摘出内容 | 出所 | 処置 | 根拠 |
+| --- | --- | --- | --- | --- |
+```
+
+**区切り行 (`| --- | ... |`) は必須**で、**データ行として数えない**。区切り行が無いと GFM の表として
+成立せず、「markdown 表形式で返せ」という要求 (Step 2.1 の subagent 契約) と矛盾する。
+Step 4.2 の summary テンプレートも区切り行を持っており、**同一 skill 内で表記を割らない**。
+
+誤りの形と、それを落とす validation item:
+
+| 誤った return | 落ちる item |
+| --- | --- |
+| `\| - \| なし \| - \| - \| - \|` のようなプレースホルダ **データ行** | **item 1** (処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれでもない) |
+| `なし` / `N/A` / `該当なし` 等の**自由文**をセクション本文に置く | **item 1** (`\|` で始まらない非空行は表行として読めないため。下記 item 1 の後半を参照) |
+| `## findings_table` セクション**自体を省く** | **item 4** (必須セクションの存在検査。ゼロ件とセクション欠落は別事象で、セクションが無い return は「表を作り忘れた / 別書式で返した」と区別できない) |
 
 > **記録義務は分岐を網羅する** (`/review-pr` §「起動記録」、#945)。異常系・非ゼロ件だけに定型を
 > 用意すると、正常系 (ゼロ件) のたびに実行者が文言を発明して表記が揺れる。本節はその原則の適用で、
 > `## ambiguous_judgments` の「空でもセクション自体は必須記載」と同じ書式・同じ理由である。
 
-**下記 validation item 1-6 に対するゼロ件記法の当たり方** (各項目 1 件ずつ):
+**下記 validation item 1-6 に対するゼロ件記法の当たり方** (各項目 1 件ずつ)。
+**前提: return 全体が Step 2.1 の final message テンプレート (`## acceptance_criteria_status` /
+`## findings_table` / `## ambiguous_judgments` / `## recommendation` / `## meta`) を備えていること。**
+本表は「ゼロ件記法がこの item を壊さないか」を見るものであって、「findings_table セクション単体で
+足りる」という意味ではない (item 4 / 6 は別セクションの存在を見る):
 
 | item | 検査内容 | ヘッダ行のみの return での判定 |
 | --- | --- | --- |
 | 1 | 全 finding に classification がある | **通る**。データ行が 0 行なので「classification を欠く行」も 0 行 |
 | 2 | (B) 主張行には trigger 根拠列がある | **通る**。(B) 行が 0 行 |
 | 3 | 「無視」「観察のみ」「スコープ対象外」を単独で含む行がない | **通る**。ヘッダ行にこれらの語は含まれない (`なし` 等の自由文を書くとここに触れうるので書かない) |
-| 4 | `ambiguous_judgments` セクションが存在する | **通る**。本記法は findings_table のみを対象とし、`ambiguous_judgments` は従来どおり空でも必須記載 |
+| 4 | 必須セクションが存在する | **通る (条件付き)**。ゼロ件でも `## findings_table` / `## ambiguous_judgments` を**両方**置くこと。どちらかを省けば本 item で parse error |
 | 5 | (A) 強優先方針違反検出 | **通る**。分類対象の finding が 0 件 |
-| 6 | `## meta` に `Codex 出力読み取り` 行がある | **通る**。findings 件数と独立した別セクションの検査 |
+| 6 | `## meta` に `Codex 出力読み取り` 行がある | **通る (条件付き)**。findings 件数とは独立だが、`## meta` に当該行が無ければ本 item で parse error。Codex 非起動なら `非起動 (理由: ...)` で理由括弧まで必須 |
 
 **抽出時の必須 validation (握り潰し防止)**:
 
-1. **全 finding に classification がある**: 各行の処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれか。`(A)*` は ambiguous_judgments セクションとの cross-reference が必須 (subagent が自動判断できなかった finding に使用、`ambiguous` 単独記載は禁止)。空欄 / 「観察のみ」 / 「対象外」/ `ambiguous` 単独等は **parse error**。Round 2+ で `handoff_state` に既登録の topic が再度 findings_table に含まれる場合も **parse error** (= subagent が exclusion を尊重していない)
+1. **全 finding に classification がある / セクション内に表行以外の本文を置かない**: `## findings_table` セクション内の**非空行は、見出し行 (`##` で始まる) か、ヘッダ行・区切り行・データ行 (いずれもパイプ文字で始まる)** でなければならない。パイプ文字で始まらない非空行 (`なし` / `N/A` / `該当なし` / 説明文 等) があれば **parse error** — 自由文を許すと「ゼロ件」と「表を書かずに散文で済ませた」が区別できなくなる。データ行については、各行の処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれか。`(A)*` は ambiguous_judgments セクションとの cross-reference が必須 (subagent が自動判断できなかった finding に使用、`ambiguous` 単独記載は禁止)。空欄 / 「観察のみ」 / 「対象外」/ `ambiguous` 単独等は **parse error**。Round 2+ で `handoff_state` に既登録の topic が再度 findings_table に含まれる場合も **parse error** (= subagent が exclusion を尊重していない)
 2. **(B) 主張行には trigger 根拠列がある**: rationale 列に「別領域・別機能 AND 1 セッション超 AND 受け入れ条件検証破綻」3 条件への該当言及があるか。1 条件のみの (B) は **parse error** (= subagent が誤分類)
 3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**。**検査範囲は `## findings_table` / `## ambiguous_judgments` の行に限る** (item 1 / 2 / 4 / 5 と同じスコープ)。`## meta` の状態記録行 (`Codex 出力読み取り: 非起動 (理由: ...)` 等) は**対象外** — 記録義務を課した行が握り潰し検出に巻き込まれると、正しく申告するほど parse error になる
-4. **`ambiguous_judgments` セクションが存在する** (空でもセクション自体は必須): 不在は parse error
+4. **必須セクションが存在する** (空でもセクション自体は必須): `## findings_table` / `## ambiguous_judgments` の**いずれかが不在なら parse error**。**`## findings_table` をこの item に含めるのが要点** — 含めないと、セクションごと落とした return が「データ行 0 行」と同じ観測値になり、item 1 / 2 / 5 を空虚に通過して「(A)/(B)/(C) all 0 = 収束」→ LGTM summary 投稿まで静かに通る (不在が『違反ゼロ』と同じ観測値になる検査は false-green を生む)
 5. **(A) 強優先方針違反検出**: `latent issue / CI failure / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述` 等の典型 (A) trigger を含む finding が (A) 以外 ((A)* / (B) / (C)) に分類されている場合は **parse error**
 6. **`## meta` に `Codex 出力読み取り` 行がある** (#949): `成功` / `失敗 (理由: ...)` / `非起動 (理由: ...)` のいずれかで始まること。行の不在は **parse error**。**`失敗` と `非起動` はどちらも理由が必須**で、理由括弧を欠いたものは parse error (根拠は「読んだ」「読めなかった」「起動していない」を事後に区別できなくすることであり、この理屈は 2 分岐に等しく効く。片方だけを名指しすると、名指しされていない側が緩いと読める抜け道になる)。`非起動` の理由は `/review-pr` Step 5a §「起動記録 (該当時 / 不該当時とも必須)」の非対象行と同一内容でよい (**同 record の専用スロットは増やさず本行に畳む**)。畳んだ完成形の例:
 

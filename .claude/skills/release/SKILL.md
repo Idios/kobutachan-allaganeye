@@ -45,6 +45,7 @@ description: deferred issue レビュー → バージョンバンプ → リリ
 | 上記以外の項目 | **達成が必要** | Step 0a |
 
 - Step 0a では上記 3 項目を **「Track D で達成予定」**として記録し、中断しない。それ以外の項目に未達があれば従来どおり中断する
+- **上記 3 項目は Step 0a の項目 2 (bulk 確認) の母集団から除外する。** サンプル選定 (先頭 1 件) の対象にもしないし、「全件 OK」を選んだときの一括「達成」記録の対象にもしない。除外しないと、bulk の記録規約 (全項目を「達成」として記録) と本節の記録規約 (「Track D で達成予定」) が同じ項目に対して衝突する。**本節の記録が優先**する
 - **再評価点は Step 3 のバンプ・CHANGELOG 改名を終えた直後** (Step 3 の検証コマンドが exit 0 になった時点)。ここで 3 項目を再確認し、1 件でも未達ならリリース PR を作らない
 - minor / major release ではこの例外を使わない (Track 構造の適用対象外。[`docs/release-process.md` §適用条件](../../../docs/release-process.md#適用条件))
 
@@ -69,11 +70,16 @@ Step 0a の全件達成を確認したら、**`Agent(subagent_type=allaganeye-fa
 
 #### 起動記録 (実施 / 非実施とも必須、数値記入 required)
 
-Step 0a の 3 択と同じ画面に、以下のいずれか 1 行を明記する:
+以下のいずれか 1 行を、**本 step の直後にユーザーへ提示し、かつ Track D PR 本文の
+`### fable 俯瞰レビュー (Step 0a-2)` スロットへ転記する** (転記先は Step 3-6 の PR body テンプレートに定義済み)。
 
 > `fable 俯瞰レビュー: 実施 (finding N 件 / 消化 M 件 / 残 K 件 → Track D PR 本文へ転記)`
 >
 > `fable 俯瞰レビュー: 非実施 (理由: <1 行>)`
+
+**記録の置き場所を揮発的な対話画面で指定しない。** 本 step は Step 0a の全件達成確認が**終わった後**に
+走るので、「Step 0a の 3 択と同じ画面」のような指定は、記録を書く時点で既に閉じている画面を指す。
+記録先は**永続する成果物の名前付きスロット**で指定する (転記先の見出しを固定してあるのと同じ方式)。
 
 **`実施` は N / M / K の数値記入が必須。** 数値を required にしないとこの step は no-op になる —
 Step 0a の判定は「達成 / 未達成 / **該当なし**」の 3 択で、**「該当なし」で通過できてしまう**ため
@@ -149,8 +155,10 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
   ```bash
   # 前タグを解決する。プレースホルダのままにしない (#962 項目 2)。
-  # 同じ定義を Step 2-2 のコミット分析も使う — 片方だけ変えると区間がズレる。
-  PREV_TAG=$(git describe --tags --abbrev=0)
+  # **この 1 行が `PREV_TAG` の唯一の定義**で、Step 2-2 のコミット分析はこれを参照する
+  # (定義を 2 箇所に写すと片方だけ変わって区間がズレる)。
+  # タグが 1 つも無い repo では describe が失敗するので fallback を持つ。
+  PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "HEAD~50")
 
   # リリース区間の diff から issue 参照マーカーを抽出
   git log "$PREV_TAG"..HEAD -p -- '*.py' '*.md' '*.rs' '*.ts' | grep -oE '(wired in|Refs|TODO\() ?#[0-9]+'
@@ -174,7 +182,8 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 2. 前回リリースタグ以降のコミットを分析:
 
    ```bash
-   git log $(git describe --tags --abbrev=0 2>/dev/null || echo "HEAD~50")..HEAD --oneline
+   # Step 0c-2 で解決した $PREV_TAG をそのまま使う (定義は Step 0c-2 の 1 箇所だけ)。
+   git log "$PREV_TAG"..HEAD --oneline
    ```
 
 3. バージョン種別を決定（引数指定 or 上記「自動判定ルール」）
@@ -193,10 +202,17 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
    | hop | head | base | 作る Step | 実例 (v0.2.1) |
    | --- | --- | --- | --- | --- |
-   | **hop 1** | `release/v<新バージョン>` | `develop-<新バージョン>` | Step 3-6 | [#773](https://github.com/Idios/kobutachan-allaganeye/pull/773) |
+   | **hop 1** | **`<hop1 head>`** | `develop-<新バージョン>` | Step 3-6 | [#773](https://github.com/Idios/kobutachan-allaganeye/pull/773) |
    | **hop 2** | `develop-<新バージョン>` | `main` | **Step 3-7** (下記) | [#774](https://github.com/Idios/kobutachan-allaganeye/pull/774) |
 
-   > **hop 1 を省く変種がある。** patch release の spec が「`release/vX.Y.Z` 統合ブランチを作らない」と裁定している場合 (例: v0.3.1 の裁定 D4)、version bump は Track D の通常 PR として直接 `develop-<新バージョン>` へ入る。このとき **hop 1 = その Track D PR** であり、**hop 2 は変わらず必要**。「release ブランチを作らない = PR は 1 本」と読み違えない。
+   > **`<hop1 head>` はここで 1 度だけ決める変数**で、Step 3-2 / 3-5 / 3-6 と Step 4 の表はすべてこの変数を指す。ブランチ名を各所にリテラルで書くと、下記の変種が効くのが 1 箇所だけになり、後続 step が古い名前を持ち続ける:
+   >
+   > | 条件 | `<hop1 head>` |
+   > | --- | --- |
+   > | 通常 | `release/v<新バージョン>` |
+   > | spec が「`release/vX.Y.Z` 統合ブランチを作らない」と裁定 (例: v0.3.1 の裁定 D4) | **`claude/<slug>`** (Track D の通常作業ブランチ) |
+   >
+   > **hop 1 を省く変種ではない。** 裁定が出ている場合でも hop 1 の PR 自体は作る (head が `claude/<slug>` になるだけ) し、**hop 2 は変わらず必要**。「release ブランチを作らない = PR は 1 本」と読み違えない。
    >
    > **タグを打つのは hop 2 のマージ後、`main` の HEAD に対して**である ([`docs/release-process.md` §タグ運用](../../../docs/release-process.md#タグ運用))。hop 1 のマージ時点でタグを打たない。
 
@@ -225,15 +241,15 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
    いずれか失敗したら修正してから以下に進む。**この時点ではまだ何も編集していない** (作業ツリーは clean) ので、次の branch 作成が安全に行える
 
-2. **リリースブランチを作成する**（Step 2-4 の表の**分岐元**から分岐。PR の `--base` とは別物なので取り違えない）。**バージョン編集より前**に行う:
+2. **hop 1 の head ブランチ (`<hop1 head>`、Step 2-5 で決めた変数) を作成する**（Step 2-4 の表の**分岐元**から分岐。PR の `--base` とは別物なので取り違えない）。**バージョン編集より前**に行う:
 
    ```bash
    git checkout <分岐元ブランチ>
    git pull
-   git checkout -b release/v<新バージョン>
+   git checkout -b <hop1 head>
    ```
 
-   > **`release/vX.Y.Z` を作らない裁定 (例 v0.3.1 の D4) が出ている patch release では、本手順を飛ばす。** その場合 version bump は Track D の通常作業ブランチ (`claude/<slug>`) 上で行い、base は `develop-<新バージョン>` になる。どちらの形でも「**編集前にブランチを確定させる**」という本 step の目的は変わらない。
+   > **裁定で `release/vX.Y.Z` を作らない場合も本手順は飛ばさない。** `<hop1 head>` が `claude/<slug>` に解決されるだけで、コマンド列は同一である。どちらの形でも「**編集前にブランチを確定させる**」という本 step の目的は変わらない。
 
 3. [`docs/versioning.md`](../../../docs/versioning.md) §バージョン管理場所 に挙がっている**全フィールド**の version を新バージョンへ更新する（フィールド一覧の機械可読な正は [`scripts/check_version_consistency.py`](../../../scripts/check_version_consistency.py) の `VERSION_LOCATIONS`、#911）。1 ファイルが複数フィールドを持つことがある（ファイル数 < フィールド数）ので、ファイル単位で数えて満足しないこと。lockfile (`gui/package-lock.json` / `gui/src-tauri/Cargo.lock`) は **該当フィールドの直接編集を既定**とする（バンプでは version 以外を動かさないため。依存そのものを更新したい場合はパッケージマネージャを使い、バンプとは別コミットに分ける）。このとき**旧バージョン文字列の一括置換はしない** — lockfile には依存由来の部分一致（`0.3.0` に対する `30.3.0` 等）が多数あり誤爆する。該当フィールドの行だけをピンポイントで直す。更新できたら必ず検証する:
 
@@ -284,10 +300,10 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    バージョン保持ファイル以外の差分（Step 3-1 で直した lint 等）が残っている場合は、
    バンプと混ぜず別コミットに分ける（このコミットは version bump 単独に保つ）
 
-5. リリースブランチを push:
+5. hop 1 の head ブランチを push:
 
    ```bash
-   git push -u origin release/v<新バージョン>
+   git push -u origin <hop1 head>
    ```
 
 6. リリース PR を作成（`--base` は Step 2-4 の表の**リリース PR の宛先**。minor / major では **`main`** であって分岐元の develop ではない。Windows + Git Bash での日本語本文破損回避のため `printf | --body-file -` 方式）:
@@ -363,8 +379,9 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
 | head ブランチ | 保護 | 載せ方 |
 | --- | --- | --- |
-| `release/v<新バージョン>`（minor / major） | **あり** | **専用の PR を 1 本作って merge する**（下記手順） |
-| `develop-<新バージョン>`（patch、裁定 D4） | なし | 直接 commit / push してよい |
+| `<hop1 head>` = `release/v<新バージョン>`（通常） | **あり** | **専用の PR を 1 本作って merge する**（下記手順） |
+| `<hop1 head>` = `claude/<slug>`（`release/*` を作らない裁定のとき） | なし | 直接 commit / push してよい |
+| `develop-<新バージョン>`（hop 1 マージ後、hop 2 の head） | なし | 直接 commit / push してよい (下記 §hop 1 マージ後) |
 
 #### hop 1 マージ後・hop 2 前に日付ドリフトを見つけた場合 (#962 項目 6)
 
