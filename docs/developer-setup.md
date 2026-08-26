@@ -241,6 +241,8 @@ $ python -c "import importlib.metadata as m; print(m.version('pyright'))"
 
 つまり `importlib.metadata` で確認しても runtime の版は保証されません。**`pyright --version` の出力が pin と一致すること**を確認してください。上記の環境変数を設定している場合は、CI (未設定) と結果が食い違います。
 
+> **版の一致は解析対象の環境を保証しません (#974)。** `pyright` は解析する環境を PATH 上の `python` から**別に**解決するため、版が pin どおりでも `.venv` を見ずに `reportMissingImports` を量産することがあります。ゲートを回すときは **§4 開発用コマンド に載せたコマンドをそのまま**使ってください (どの呼び方が実際に venv を解決するかは §4 の注記に実測表があります)。
+
 ### Windows: `pyright` の install が MAX_PATH で失敗する場合 (#907)
 
 `pyright` は typeshed の stub を大量に同梱しており、パスの深いところへ入れると **Windows の MAX_PATH** に当たって install が失敗します。エラーは次の形で出ます。
@@ -391,13 +393,37 @@ pytest tests/test_detector.py
 ruff check .
 ruff format --check .
 
-# 型チェック
-pyright
+# 型チェック (--pythonpath で解析対象を明示する。理由は下の注記)
+# git 解決形なので repo root でも worktree でも同じ venv を指す
+pyright --pythonpath "$(dirname "$(git rev-parse --git-common-dir)")/.venv/Scripts/python.exe"   # Windows
+pyright --pythonpath "$(dirname "$(git rev-parse --git-common-dir)")/.venv/bin/python"             # macOS / Linux
 ```
 
 > **`ruff format --check` は必ず `.` を付けて repo 全体で回す (#907)**: 触ったファイルだけを指定すると、subagent や別 PR が入れた変更を取りこぼして CI の Format check だけが赤になります。CI (`.github/workflows/ci.yml`) も `ruff format --check .` で全 repo を見ます。
 >
 > **版がずれていると同じコマンドでも結果が変わります。** `ruff` / `pyright` は `pyproject.toml` の dev extras で上限付きに pin してあるので、pin を更新したら `pip install -e ".[dev]" -c constraints.txt --upgrade` を実行してから回してください (§パッケージのインストール の注記参照)。
+>
+> **`pyright` は `--pythonpath` を省略しないでください (#974)**: `pyright` は解析対象の環境を **PATH 上の `python`** から解決します。venv を activate していない状態で回すと venv の site-packages を見ず、大量の `reportMissingImports` を出します (実測: `183 errors, 4 warnings`。うち `Import "pytest" could not be resolved` 等)。
+>
+> **どの呼び方が効くかは実測した。** `--pythonpath --verbose` で pyright が実際に採った search path を見た結果:
+>
+> | 呼び方 | cwd | 解析対象 |
+> | --- | --- | --- |
+> | `pyright` (素) | どこでも | PATH の `python`。activate 依存で不定 |
+> | `python -m pyright` | worktree | **venv ではない** (system python の site-packages が出た)。wrapper は `sys.executable` を pyright へ渡さないので、`python -m` にしても解析対象は変わらない |
+> | `pyright --pythonpath .venv/Scripts/python.exe` | repo root | venv ✓ (`exit 0`) |
+> | 同上 | worktree | **`183 errors` / `exit 1`** — worktree に `.venv` は無い |
+> | `pyright --pythonpath <repo root の .venv を絶対パスで>` | どこでも | venv ✓ (`exit 0`) |
+>
+> したがって **`--pythonpath` が唯一の確実な指定手段**で、`python -m pyright` はこの問題を解決しません。§4 に載せた `git rev-parse --git-common-dir` から解決する形は、repo root でも worktree でも同じ venv を指すので copy-paste でそのまま使えます (両方で `exit 0` を実測)。
+>
+> **worktree で相対パスを使わないでください。** `.claude/worktrees/<name>/` に `.venv` は存在しません (venv は repo root にのみ作る)。相対指定は**存在しない interpreter を渡すこと**になり、この症状をそのまま再現します。
+>
+> **`pyright` は解決できない interpreter を渡しても hard fail せず、ただ赤くなります。** 赤の理由が画面に出ないので、`reportMissingImports` が大量に出たら**まず環境の解決を疑ってください** (型エラーを直そうとしても直りません)。
+>
+> **CI は PATH の python へ直接 install するのでこの問題が起きず、ローカルだけが赤くなります。** そのため CI (`.github/workflows/ci.yml`) は素の `pyright` のままで正しく、ここを揃える必要はありません。
+>
+> なお **`pyright --version` の一致確認ではこの問題を検出できません**。版が pin どおりでも、解析対象の環境はそれとは別に解決されるためです。
 
 ### Windows: Pester v5 (scripts/ 用 PowerShell ユニットテスト)
 

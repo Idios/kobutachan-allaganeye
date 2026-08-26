@@ -14,7 +14,7 @@
 ```bash
 ruff check .
 ruff format --check .
-pyright
+pyright --pythonpath "$(dirname "$(git rev-parse --git-common-dir)")/.venv/Scripts/python.exe"  # macOS / Linux は .venv/bin/python   # --pythonpath 必須 (#974、docs/developer-setup.md §4 参照)
 
 # Markdown (Node.js 必須、ローカル実行は任意)
 npx -y markdownlint-cli2@0.18.1
