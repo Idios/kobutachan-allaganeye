@@ -411,6 +411,30 @@ Codex CLI が rate-limit / quota / network / auth 等で fail した場合、Cla
 - Plan・general-purpose 等その他は model 未指定（メイン inherit）を既定とし、明らかに定型のみ `sonnet` 明示。Plan（高難度）を惰性で haiku に落とさない。
 - fork はモデル上書き不可で常に親（メイン）を継承する。
 
+### Claude 利用不可時の fallback（DeepSeek）
+
+Claude の usage limit 等で **Claude Code 本体が使えない間**は、人間（Idios）が手動で DeepSeek に切り替えて開発を継続する。設計 spec は [`docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md`](docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md)。
+
+**fallback 対応表**（左 = 通常時、右 = fallback 時）:
+
+| 用途 | fallback 先 | 実行手段 |
+| --- | --- | --- |
+| メイン / Claude Opus（高難度調査・コーディング・doc 作成） | DeepSeek V4 Pro | Zed 上で DeepSeek が主エージェント役（人間介在） |
+| 全体レビュー・相談（Fable） | Codex & DeepSeek V4 Pro の**並列独立クロスレビュー** → 主エージェントが突合（異モデル視点は Codex 側のみ） | Codex（§Codex 運用、Claude と独立）+ DeepSeek V4 Pro（俯瞰役を代行） |
+| 中難度定型（Sonnet） | DeepSeek V4 Flash | Zed 上で DeepSeek V4 Flash が作業（人間介在） |
+| 低難度定型（Haiku） | DeepSeek V4 Flash | 同上 |
+| 技術レビュー・相談（Codex） | Codex（レビュアは不変） | fallback 時は companion script ではなく `codex` CLI 直呼び（CLI の version 整合が別途必要）。Codex も usage limit の場合は Claude Fable / DeepSeek V4 Pro |
+
+**正直な制約**:
+
+- **DeepSeek は Claude Code の subagent になれない**（`.claude/agents/*.md` の `model:` は Claude エイリアスのみ）。fallback は hook で強制できず、**Idios の手動切替 + 記録義務**で運用する。
+- fallback 時の skill 実行は **DeepSeek が `.claude/skills/*/SKILL.md` を read して手順を手動追従**する形。Claude Code のスラッシュコマンド（`/review-pr` 等）は DeepSeek から invoke 不可。`Agent` subagent / `AskUserQuestion` / superpowers plugin skill は Zed 等価物（`spawn_agent` / 散文での確認 / 直接レビュー）へ置換する。
+- **Codex を DeepSeek から呼べるかは terminal 権限に依存**する。権限があれば `codex` CLI を直接実行できる（Codex 本体は Claude と独立）。無い場合は既存 tier 3（Idios 手動 invoke）に落ちる。
+
+**fallback notice（記録義務、C6 同型）**: Claude fallback で作成した成果物には以下を明示し、Claude/Opus/Fable レビュー済との誤認を防ぐ。
+
+> **Claude fallback notice**: 本成果物は Claude usage limit のため DeepSeek <V4 Pro | V4 Flash> で作成しました。Claude 復旧後の再レビューを推奨します。
+
 ## CLAUDE.md 継続改善
 
 ユーザーから「CLAUDE.md に追記して」等の指示があった場合、このファイルを即座に更新する。

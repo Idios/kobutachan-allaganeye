@@ -1248,6 +1248,54 @@ skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` **Final
 - 重要 PR (release 直前 / 大規模 refactor) で Codex fallback が trigger した場合、user に AskUserQuestion で「Codex 復旧待ち / Claude fallback で push」の 3 択を提示
 - fallback report には「fallback で実行済」を明示することで、後日 Codex 復旧時に再 review が要否を判断可能にする
 
+## Claude fallback（DeepSeek、Claude usage limit 発動時）
+
+Claude Code 本体が usage limit / 障害等で使えない間は、Idios が手動で DeepSeek（Zed）に切り替えて開発を継続する。用途別モデルルーティングの fallback 層。対応表と実行メカニズムは [`docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md`](docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md) が正。CLAUDE.md §モデルルーティング に要約あり。
+
+### 発動条件
+
+Claude Code が rate-limit / quota / usage limit 等で主エージェント・subagent のいずれも起動できない状態（Codex は独立ツールのため影響を受けない）。
+
+### 実行メカニズム（正直な制約）
+
+- DeepSeek は Claude Code の subagent になれないため、fallback は **Idios の手動切替**で運用する（hook 強制不可）。
+- fallback 時の skill 実行は **DeepSeek が `.claude/skills/*/SKILL.md` を read して手順を手動追従**する形。Claude Code のスラッシュコマンド（`/review-pr` 等）は invoke 不可。
+- Claude Code 固有機構の置換:
+
+| Claude Code 固有機構 | fallback（Zed + DeepSeek）での置換 |
+| --- | --- |
+| `Agent` tool（subagent dispatch） | Zed の `spawn_agent`（**model 指定不可** → 委譲先モデルは Idios が手動で選ぶ） |
+| `AskUserQuestion` | 散文での確認依頼 |
+| `superpowers:requesting-code-review` | DeepSeek 自身が code review を直接実施 |
+| `/review-pr` 等のスラッシュコマンド | SKILL.md を read して手動追従 |
+| `codex-companion.mjs` | `codex` CLI 直呼び（terminal 権限依存） |
+
+### Fable fallback（並列独立 + 主エージェント突合）
+
+全体レビュー（Fable 役）は fallback 時、**Codex（技術/adversarial。レビュアは不変だが、invocation は companion script ではなく `codex` CLI 直呼び）と DeepSeek V4 Pro（俯瞰役を代行）を並列独立に実行**し、主エージェント（= DeepSeek V4 Pro）が両者の指摘を突合・トリアージする。Codex は DeepSeek から `codex` CLI を直接呼べる場合のみ agent 実行でき、呼べない場合は既存 tier 3（Idios 手動 invoke）に落ちる。Codex 自身が usage limit の場合は、Claude 稼働時は既存 C6、Claude も不可時は DeepSeek V4 Pro が技術レビューを直接代行する。
+
+### Fallback 実行時の必須記載（Iron Law 5 整合、C6 と同型）
+
+Claude fallback で作成した成果物（PR 本文 / spec / doc / 実装）には以下を**必ず明示**し、Claude/Opus/Fable レビュー済との誤認を防ぐ:
+
+```text
+> **Claude fallback notice**: 本成果物は Claude usage limit のため
+> DeepSeek <V4 Pro | V4 Flash> で作成しました。
+> Claude 復旧後の再レビューを推奨します。
+```
+
+### 復旧後手順
+
+- Claude 復旧後、fallback notice 付きの成果物は Idios が「再レビュー要否」を判断する。
+- 重要 PR / 不可逆操作に関わる成果物は、Claude（Opus / Fable）復旧後に再レビューしてから merge する。
+
+### Fallback の限界（明示）
+
+- DeepSeek 俯瞰レビューと主エージェントは同モデル（V4 Pro）のため、自己レビューに近く bias 構造が同じになる。異モデル視点は Codex 側のみが提供する。
+- 重要 PR / 不可逆操作に関わる成果物は、Claude 復旧後に Opus / Fable で再レビューするまで merge しない。
+- fallback notice に使用モデル（V4 Pro / V4 Flash）を残すことで、後日 Claude 復旧時の再レビュー要否を判断可能にする。
+- Codex 自身も usage limit になりうる。その場合、Claude 稼働時は既存 C6 が Codex を代替し、Claude も不可時はクロスレビューが DeepSeek 単独に縮退する（2026-08-28 実測）。
+
 ## subagent + Codex 直列構成 (C5)
 
 大規模実装 / 重要 PR では superpowers `subagent-driven-development` (Claude 内 fresh subagent) と Codex review (GPT-5.4) を **直列**で組み合わせる。並列ではなく直列にする理由: Codex 自身に fix させない (Iron Law 3 / 5 整合)。agent からの Codex 実行は §Step 5 の invocation path (3-tier、#795) と同じく companion script 直接呼び出し (`codex-companion.mjs review`)。slash `/codex:review` は `disable-model-invocation: true` のため Idios 専用 (本 § の Flow 図・表では `codex:review` を出所 label / subcommand 名として用いる)。
