@@ -1250,7 +1250,7 @@ skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` **Final
 
 ## Claude fallback（DeepSeek、Claude usage limit 発動時）
 
-Claude Code 本体が usage limit / 障害等で使えない間は、Idios が手動で DeepSeek（Zed）に切り替えて開発を継続する。用途別モデルルーティングの fallback 層。対応表と実行メカニズムは [`docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md`](docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md) が正。CLAUDE.md §モデルルーティング に要約あり。
+Claude Code 本体が usage limit / 障害等で使えない間は、Idios が手動で DeepSeek（Zed）に切り替えて開発を継続する。用途別モデルルーティングの fallback 層。対応表と実行メカニズムは [`docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md`](superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md) が正。CLAUDE.md §モデルルーティング に要約あり。
 
 ### 発動条件
 
