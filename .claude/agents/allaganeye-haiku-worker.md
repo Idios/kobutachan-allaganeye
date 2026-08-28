@@ -18,3 +18,7 @@ model: haiku
 - スコープ外の変更は禁止（Iron Law 3）
 - サブエージェントの起動（Agent tool）は行わない
 - 不明点があれば主エージェントに報告して終了する
+
+## モデル非依存のロール仕様（fallback 用）
+
+本文（対象・制約）はモデル非依存のロール定義であり、Claude 利用不可時の fallback では **DeepSeek V4 Flash** が本ファイルを読んで同じロールを代行する。`model:` frontmatter は Claude Code 用であり、fallback では無視される。対応表・実行メカニズムは CLAUDE.md §モデルルーティング および `docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md` を参照。
