@@ -244,7 +244,7 @@ Iron Law 3 と CLAUDE.md plugin override 規約は「user の明示判断が最�
 2. ambiguous_judgments の処置は subagent が挙げた選択肢のみ提示。controller が独自に「本 PR 内修正」「scope 拡大」を**追加しない**
 3. scope 拡大が本当に必要 (連続して同種 finding が出る等) と思ったら、user に AskUserQuestion で問う前に **`/scope-guard` skill** を呼び、scope 拡大の妥当性を独立判定する
 4. user が `Other` 経由で「本 PR 内修正したい」と明示した場合のみ scope 拡大に倒す
-5. 「Round N で同 root cause を 1 件本 PR 内修正した」は Round N+1 で sweep の根拠に**ならない**。各 finding は独立に subagent recommended に従う
+5. 「Round N で同じ **sweep root cause** ((b)、`/review-pr` §「root cause の 2 用法」) を 1 件本 PR 内修正した」は Round N+1 で sweep の根拠に**ならない**。各 finding は独立に subagent recommended に従う
 
 関連 PR: #732 (commit `8eff1d2`, `ee77e37` が scope creep 該当)。
 
