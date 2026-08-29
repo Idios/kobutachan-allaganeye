@@ -28,7 +28,7 @@ description: deferred issue レビュー → バージョンバンプ → リリ
    - §共通項目 は minor / patch の**両方**に適用される（裁定 D5）。patch だからと本ゲートごと省略しない
 2. 各項目について「達成 / 未達成 / 該当なし」を 1 件ずつ確認する。3 件以上の bulk 確認になる場合は **Step 0c の [§bulk 件数の運用](#bulk-件数の運用-iron-law-2-整合) と同じ規約**に従う (サンプル 1 件提示 + 3 択)。本 step 固有の差分は選択肢の意味だけで、件数の閾値・サンプルの選び方・「個別調整」選択時の挙動は同じ:
    - 件数 ≤2: 1 件ずつ AskUserQuestion で個別確認
-   - 件数 ≥3: サンプル **1 件** (下記 §Track 構造の除外を適用した**後の母集団**の並び順で先頭のもの) を提示 + 「全件 OK (= 全件 達成) / 個別調整 / 中止」の 3 択
+   - 件数 ≥3: サンプル **1 件** (下記 §Track 構造の除外を適用した**後の母集団**の先頭。**並び順は [`docs/release-process.md` §レイヤーリリース受け入れゲート §共通項目](../../../docs/release-process.md) の記載順**) を提示 + 「全件 OK (= 全件 達成) / 個別調整 / 中止」の 3 択
    - **「個別調整」選択時は 1 件ずつの確認に進む** (Step 0c と同じ挙動)。「全件 OK」で通した場合、全項目を「達成」として記録する
 3. 1 件でも未達成があれば本スキルは中断し、ユーザーに残タスクの優先処理を依頼 (ただし下記 **Track 構造の patch release** の例外を先に読むこと)
 4. 全件達成を確認してから Step 0b へ進む。**Track 構造の patch release では「全件達成」を「除外 3 項目を『Track D で達成予定』と記録し、残り全件が達成」と読み替える** (下記例外節)。読み替えないと、定義上到達しない条件を待って Step 0b / Step 0a-2 が永久に起動しない
@@ -325,11 +325,18 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    # git add は cwd 側の repo に効くので、Step 3-3 でバンプしたのと同じツリーを
    # cwd にすること (worktree 作業中なら worktree root)。--list-paths の出力自体は
    # repo root 相対の固定文字列で cwd には依存しない
-   git add -- $(python scripts/check_version_consistency.py --list-paths)
+   # **`--list-paths` に CHANGELOG.md は含まれない** (実測: pyproject.toml / tauri.conf.json /
+   # Cargo.toml / package.json / package-lock.json / Cargo.lock の 6 ファイルのみ)。
+   # 3-3 で改名した CHANGELOG.md を明示的に足さないと、節見出しが unstaged のまま残り、
+   # CHANGELOG 抜きの PR が出来て release.yml の version-check がタグ push 時に落ちる。
+   git add -- $(python scripts/check_version_consistency.py --list-paths) CHANGELOG.md
    git commit -m "chore: bump version to <新バージョン> [<session-id>]"
 
-   # commit 後に stage 漏れを検出する。合格条件 = 出力に「バージョン保持ファイルが
-   # 1 つも現れない」こと。出力が空である必要はない (他ファイルの残留は可)
+   # commit 後に stage 漏れを検出する。合格条件 = 出力に **3-3 で編集したファイル
+   # (バージョン保持 6 ファイル + CHANGELOG.md) が 1 つも現れない**こと。
+   # 出力が空である必要はない (無関係な残留は可)。
+   # 「バージョン保持ファイルが出ないこと」だけを条件にすると、外延を外部スクリプトに
+   # 委ねているぶん CHANGELOG の漏れを見逃す
    git status --short
    ```
 

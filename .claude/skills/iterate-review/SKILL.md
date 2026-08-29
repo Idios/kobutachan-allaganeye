@@ -179,15 +179,22 @@ Step 4.2 の summary テンプレートも区切り行を**持っている**。*
 | 6 | (A) 強優先方針違反検出 | **通る**。分類対象の finding が 0 件 |
 | 7 | `## meta` に `Codex 出力読み取り` 行がある | **通る (条件付き)**。findings 件数とは独立だが、`## meta` に当該行が無ければ本 item で parse error。Codex 非起動なら `非起動 (理由: ...)` で理由括弧まで必須。禁止語彙は item 7 本文の 3 行が正 (ここには写さない) |
 
-**セクションの定義 (item 1 / 3 / 4 / 6 が共有するスコープ)**: 「セクション」とは **`##` 見出し行から
-次の `##` 見出し行の直前まで**を指す (次の見出し行はそのセクションに含まない)。範囲を持つ検査を
-複数置くなら、その範囲の定義は 1 箇所に書く。
+**セクションの定義**: 「セクション」とは **`##` 見出し行から次の `##` 見出し行の直前まで**を指す
+(次の見出し行はそのセクションに含まない)。**この定義を共有する item の roster も本節が正**で、
+**item 1 / 2 / 3 / 4** が `## findings_table` / `## ambiguous_judgments` に scope される
+(item 5 は `acceptance_criteria_status` × `findings_table` の横断、item 6 は `findings_table` 内の分類、
+item 7 は `## meta` を見るので、いずれも別 scope)。**roster を各 item の本文へ再掲しない** —
+再掲すると membership が割れる (定義だけを 1 箇所にしても roster が複数箇所にあれば同じことが起きる)。
+
+**return 全体の空白の扱い**: セクション間の空行・末尾改行・インデントは**有意ではない**。
+検査はいずれも非空行に対して行う。**dispatch prompt の `__ITERATE_REVIEW_SUBAGENT_MODE__` marker は
+return に echo しない** (marker は入力側の契約)。
 
 **抽出時の必須 validation (握り潰し防止)**:
 
 1. **全 finding に classification がある / セクション内に表行以外の本文を置かない**: `## findings_table` セクション内の**非空行は、見出し行 (`##` で始まる) か、ヘッダ行・区切り行・データ行 (いずれもパイプ文字で始まる)** でなければならない。パイプ文字で始まらない非空行 (`なし` / `N/A` / `該当なし` / 説明文 等) があれば **parse error** — 自由文を許すと「ゼロ件」と「表を書かずに散文で済ませた」が区別できなくなる。データ行については、各行の処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれか。`(A)*` は ambiguous_judgments セクションとの cross-reference が必須 (subagent が自動判断できなかった finding に使用、`ambiguous` 単独記載は禁止)。空欄 / 「観察のみ」 / 「対象外」/ `ambiguous` 単独等は **parse error**。Round 2+ で `handoff_state` に既登録の topic が再度 findings_table に含まれる場合も **parse error** (= subagent が exclusion を尊重していない)
 2. **(B) 主張行には trigger 根拠列がある**: rationale 列に「別領域・別機能 AND 1 セッション超 AND 受け入れ条件検証破綻」3 条件への該当言及があるか。1 条件のみの (B) は **parse error** (= subagent が誤分類)
-3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**。**検査範囲は `## findings_table` / `## ambiguous_judgments` の行に限る** (item 1 / 2 / 4 / 6 と同じスコープ)。`## meta` の状態記録行 (`Codex 出力読み取り: 非起動 (理由: ...)` 等) は**対象外** — 記録義務を課した行が握り潰し検出に巻き込まれると、正しく申告するほど parse error になる
+3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**。**検査範囲は `## findings_table` / `## ambiguous_judgments` の行に限る** (roster の正は上記 §セクションの定義)。`## meta` の状態記録行 (`Codex 出力読み取り: 非起動 (理由: ...)` 等) は**対象外** — 記録義務を課した行が握り潰し検出に巻き込まれると、正しく申告するほど parse error になる
 4. **必須セクションが存在する** (空でもセクション自体は必須): `## findings_table` / `## ambiguous_judgments` の**いずれかが不在なら parse error**。**`## findings_table` をこの item に含めるのが要点** — 含めないと、セクションごと落とした return が「データ行 0 行」と同じ観測値になり、item 1 / 2 / 6 を空虚に通過して「(A)/(B)/(C) all 0 = 収束」→ LGTM summary 投稿まで静かに通る (不在が『違反ゼロ』と同じ観測値になる検査は false-green を生む)
 5. **受け入れ条件の未達が findings に反映されている**: `## acceptance_criteria_status` に `×` / `partial` / 未実証の行があるなら、**その各行に対応する `(A)` finding が `## findings_table` に存在しなければ parse error**。
    **これが無いと「受け入れ条件が落ちているのに findings ゼロ」= 収束 → LGTM が通る** (Codex adversarial-review [high])。
@@ -237,7 +244,7 @@ Round N findings:
 - (A): <件数>
 - (B): <件数>
 - (C): <件数>
-- 受け入れ条件 (Step 3): <全 ○ / 部分 / 全 ×>
+- 受け入れ条件 (Step 3): <全 ○ / partial あり / 全 ×>
 - ambiguous_judgments: <件数> (詳細は別途展開)
 
 選択:
