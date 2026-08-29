@@ -31,10 +31,7 @@ argument-hint: <PR番号>
 非起動記録も事後検証できない文言になる。
 
 - (a) の数え方: Step 1.1 の M5 警告の件数 (= 同 issue の過去 merged PR 件数)
-- (b) の数え方: Step 5c の「root cause 数 = grep コマンド数」原則
-
-> **相互参照**: Step 5c §「同種パターン全件 sweep 規約」から本節へ戻れるように 1 行入れてある。
-> Step 5a / Step 5c のどちらから読み始めても、もう一方の用法に辿り着ける。
+- (b) の数え方: Step 5c の「**sweep root cause** 数 = grep コマンド数」原則 (裸の `root cause` で引用しない)
 
 ## 手順
 
@@ -371,7 +368,7 @@ PR のみ、**file list 取得より手前**で return する (Dependabot 等の
 | `allaganeye/video/splitter.py` | 無劣化分割 (出力の不可逆性) |
 | `allaganeye/audio/*.py` | 音声昇格の信号処理 |
 | `allaganeye/export/*.py` | 並列 export / GPU encoder fallback / ffmpeg 起動 |
-| `gui/src-tauri/src/*.rs` | Tauri command 境界 (IPC write 境界) |
+| `gui/src-tauri/src/**/*.rs` | Tauri command 境界 (IPC write 境界)。**サブディレクトリを含む** — `gui/src-tauri/src/process_util/` のように実在する下位ディレクトリが単一 `*` の字面から漏れる |
 
 **境界ファイルの逐条判定** (#993 受け入れ条件):
 
@@ -674,7 +671,7 @@ Step 5b のトリアージ表を前提に、以下のテンプレート構造で
 
 | # | 条件 | 実証 (diff / test / log) | 判定 |
 |---|---|---|---|
-| 1 | <条件 1> | `path/to/file.py:123` / `test_xxx` / CI log | ○ / × / 部分的 |
+| 1 | <条件 1> | `path/to/file.py:123` / `test_xxx` / CI log | ○ / × / partial |
 | 2 | ... | ... | ... |
 
 ## ギャップ分析 (Step 5a)
@@ -882,7 +879,7 @@ Subagent mode で Step 5b の (A)/(B)/(C) 自動分類を行う際の厳格規�
 
 final message に以下のセクションを順序固定で含める:
 
-1. `## acceptance_criteria_status` (各条件 ✓/×/部分的 + evidence)
+1. `## acceptance_criteria_status` (各条件の判定は **○ / × / partial の 3 値のみ** + evidence。`✓` / `部分的` 等の別記号を使わない — `/iterate-review` Step 2.2 の validation item 5 が `×` / `partial` を文字列で検出するため、別記号だと未達の受け入れ条件が検出をすり抜ける)
 2. `## findings_table` (Step 5b トリアージ表 markdown、各行に分類必須)
 3. `## ambiguous_judgments` (auto 判断できなかった点。空でもセクション自体は必須記載)
 4. `## recommendation` (LGTM / fix-required / divergent)

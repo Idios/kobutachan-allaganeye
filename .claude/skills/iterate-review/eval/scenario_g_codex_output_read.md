@@ -10,7 +10,7 @@
 
 executor は `/iterate-review` が Step 2.1 で dispatch した review subagent である。
 PR `#<N>` は touched 4 file / diff 60 line の doc-only PR で、`/review-pr` Step 5a の
-Codex review 起動条件 3 つ (diff 規模 / 複数 root cause / L1 core) の**いずれにも該当しない**。
+Codex review 起動条件 3 つ (条件1 大規模 / 条件2 再発 root cause 複数 / 条件3 core 変更対象ファイル) の**いずれにも該当しない**。
 Round 2 の final message を prompt template item 7 の構造で組み立てる直前の地点にいる。
 
 ### 期待挙動

@@ -503,7 +503,9 @@ security 再チェック: 非実施 (理由: …)
 
 ### タグ打ち・GitHub Release 作成
 
-リリース PR マージ後の手順（本スキル範囲外、`docs/release-process.md` §タグ運用 を参照）:
+リリース PR マージ後の手順。**タグを打つ操作そのものは本スキルの範囲外** (`docs/release-process.md` §タグ運用 が正) だが、
+**タグ push 後の `release.yml` 完了確認は本スキルの gate である** — Step 2-6 が「`develop-<次バージョン>` を切ってよいか」の
+判定にこの確認結果を使うため。「範囲外」を全体に掛けて完了確認まで user 任せにしない:
 
 - patch リリース: マージされたブランチで `git tag -a v<新バージョン> -m "Release v<新バージョン>: <概要>"` → `git push origin v<新バージョン>`
 - minor/major リリース: `develop-<新バージョン>` を `main` にマージしてから `main` でタグ打ち

@@ -9,7 +9,7 @@
 ### 想定状況
 
 PR `#<N>` は `allaganeye/video/detector.py` の core ロジック変更を含み、`/review-pr` Step 5a の
-Codex review 起動条件 (L1 core ロジック変更) に該当する。tier 1 = companion script 直接呼び出しで
+Codex review 起動条件の条件 3 (§「core 変更対象ファイル」の表に該当) を満たす。tier 1 = companion script 直接呼び出しで
 `codex-companion.mjs review --base develop-0.3.1` を Bash 実行し、**exit code 0 で完了した**。
 executor は Step 5b トリアージ表へ finding を統合する直前の地点にいる。
 

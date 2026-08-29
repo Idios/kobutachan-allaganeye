@@ -135,7 +135,7 @@ Agent tool の戻り値 markdown から `## findings_table` セクションの�
 扱っている)。記法を定義しないと実行者ごとに割れ、正しい return が parse error 扱いになる。
 
 **正 — この 3 行をそのままコピーして返す** (`## findings_table` の literal はここ 1 箇所だけが正。
-テンプレート L93 付近の記述もこのブロックを指す):
+Step 2.1 prompt template item 7 の記述もこのブロックを指す — **行番号ではなく名前で参照する**):
 
 ```markdown
 ## findings_table
@@ -146,8 +146,7 @@ Agent tool の戻り値 markdown から `## findings_table` セクションの�
 **区切り行 (`| --- | ... |`) は必須**で、**データ行として数えない**。区切り行が無いと GFM の表として
 成立せず、「markdown 表形式で返せ」という要求 (Step 2.1 の subagent 契約) と矛盾する。
 Step 4.2 の summary テンプレートも区切り行を**持っている**。**ここで揃えるのは「区切り行の有無」という軸だけ**で、
-区切り行の字面 (`| --- |` と `|---|` のパディング差) は揃えていない — 軸を書かずに
-「表記を割らない」と主張すると、別の軸に反例が同じファイル内で見つかる。
+区切り行の字面 (`| --- |` と `|---|` のパディング差) は揃えていない。
 
 誤りの形と、それを落とす validation item:
 
@@ -197,7 +196,7 @@ Step 4.2 の summary テンプレートも区切り行を**持っている**。*
 
    > **理由の literal の正は prompt template 側 (Step 2.1 の `## meta` に置いた代表形) 1 箇所**で、
    > 上の行はそれを scenario 値で埋めた例にすぎない。**同じ literal の worked example を 2 箇所に持たない** —
-   > 持つと片方だけ古くなる (実際に `single root cause` / `non-L1-core` という旧語彙が残っていた)。
+   > 持つと片方だけ古くなる。
    >
    > **`非起動` の理由に `single root cause` / 裸の `root cause` / `non-L1-core` が含まれていたら parse error にする。**
    > `/review-pr` は 3 条件を 1 つずつ実測値付きで書くことを要求しており、旧語彙は「どの条件が
@@ -263,7 +262,7 @@ Iron Law 3 と CLAUDE.md plugin override 規約は「user の明示判断が最�
    - Markdown (`docs/**.md`, `*.md`): `bash scripts/check-markdownlint.sh` (violation fix recipe は [`docs/markdownlint-guide.md`](../../../docs/markdownlint-guide.md) §typical fixes を参照、M10)
 4. **1 round = 1 commit** で集約: 全 (A) を 1 つの commit にまとめる (round 単位の atomicity を確保、Round 別 SHA を summary コメントで参照しやすくするため)。message テンプレ: `fix(round-N): <要約> (Refs #<元 issue>)`。例外として、push 失敗で reset → 再 commit が必要な場合のみ複数 commit になる可能性を許容
 
-> **M5 同 issue 過去 PR 警告の併走**: `/review-pr` Step 1.1 で同 issue 過去 merged PR が ≥1 件検出された場合、その警告は subagent の Step 5b 表冒頭に転記されて return される。controller (本 skill) は Step 2.2 parse 後の Step 2.3 Round summary 提示時に user に再度明示する (root cause sweep 重点確認の促し)。
+> **M5 同 issue 過去 PR 警告の併走**: `/review-pr` Step 1.1 で同 issue 過去 merged PR が ≥1 件検出された場合、その警告は subagent の Step 5b 表冒頭に転記されて return される。controller (本 skill) は Step 2.2 parse 後の Step 2.3 Round summary 提示時に user に再度明示する (**再発 root cause** ((a)、`/review-pr` §「root cause の 2 用法」) の重点確認の促し。ここは過去 merged PR 単位の話で、Step 5c の sweep root cause ((b)) ではない)。
 
 #### Step 2.5 (B) findings handoff (新規 issue 起票、限定例外パス)
 
