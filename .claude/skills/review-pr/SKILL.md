@@ -412,22 +412,29 @@ PR のみ、**file list 取得より手前**で return する (Dependabot 等の
   **1 件以上なら該当ファイルを角括弧で列挙する** (どのファイルで成立したかが分からないと、
   表を編集したときに過去の判定を再現できない)。**列挙の並び順は `gh pr view <PR#> --json files` の
   返却順**、path は **repo 相対**、区切りは**半角カンマ + 空白**に固定する (並び順を決めないと、同じ PR を
-  2 回記録したときに文字列が変わり「再現できる」という根拠が崩れる)
+  2 回記録したときに文字列が変わり「再現できる」という根拠が崩れる)。**この取得が打ち切られたら
+  記録も判定も fail-closed にする** — `pulls.listFiles` の件数上限に達したかどうかの扱いは
+  §「file list 取得の打ち切り」の規定に従う。部分リストで数えた `該当 <J> 件` は
+  「全数走査した」という記録の意味を持たない
 - **対象分岐のみ**: 末尾に `→ 成立: 条件 ...` を足し、**成立した条件を全て**書く。
   起動条件は OR (「いずれかを満たす」) なので複数同時成立しうる。最初に満たした 1 条件だけを
   書くと、その条件が後で表から外れたときに「もう起動対象ではない」と誤読される。
   **区切りは半角カンマ + 空白 (`条件 1, 2, 3`) に固定する** — 理由部の条件間区切りが `・` なので、
   ここも `・` にすると列挙が入れ子になって境界が読めなくなる
 
-**実例は単数成立・複数成立の両方を示す** (片方しか示さないと、示していない側が毎回作文になる):
+**実例は単数成立・複数成立の両方を示す** (片方しか示さないと、示していない側が毎回作文になる)。
+**数値とファイル名は明らかに架空のものにしてある** — 具体的な実例をそのまま流用されると、
+本来 `該当 <J> 件` を数え直すべきところで実例の値が書き写され、記録が実態とズレるため:
 
 ```text
 # 1 条件だけ成立した場合
-Codex review 起動: 対象 (理由: 条件1 touched 3 file / 180 lines・条件2 再発 root cause 1 件・条件3 core 変更対象ファイル 該当 3 件 [allaganeye/video/capture_region.py, allaganeye/video/scorebar.py, allaganeye/export/ffmpeg_runner.py] → 成立: 条件 3)
+Codex review 起動: 対象 (理由: 条件1 touched 4 file / 210 lines・条件2 再発 root cause 1 件・条件3 core 変更対象ファイル 該当 2 件 [allaganeye/video/EXAMPLE_a.py, allaganeye/export/EXAMPLE_b.py] → 成立: 条件 3)
 
 # 複数条件が同時成立した場合
-Codex review 起動: 対象 (理由: 条件1 touched 20 file / 640 lines・条件2 再発 root cause 3 件・条件3 core 変更対象ファイル 該当 2 件 [allaganeye/video/detector.py, gui/src-tauri/src/export.rs] → 成立: 条件 1, 2, 3)
+Codex review 起動: 対象 (理由: 条件1 touched 18 file / 520 lines・条件2 再発 root cause 2 件・条件3 core 変更対象ファイル 該当 1 件 [allaganeye/video/EXAMPLE_c.py] → 成立: 条件 1, 2, 3)
 ```
+
+**上の数値・ファイル名は骨格を示すためだけのもので、当該 PR で必ず数え直す。**
 
 > **なぜ非対象分岐と同じく 3 条件すべてを書くのか**: 片側だけ全条件列挙にすると、
 > 事後監査の対称性が崩れる (非対象は 3 条件ぶんの根拠が残るのに、対象は 1 条件しか残らない)。
@@ -725,7 +732,7 @@ Step 5b のトリアージ表を前提に、以下のテンプレート構造で
 
 ### 推奨フロー
 - **(A) 修正依頼が残っている場合**: `/iterate-review $ARGUMENTS` で review-fix ループを起動し、最終 summary コメントを 1 個投稿してマージ準備まで自動化
-- **(A) 課題ゼロかつ受け入れ条件 ✓**: ユーザーが `gh pr merge $ARGUMENTS --squash` で squash merge → 紐づく issue は `/close-issue <issue#>` でクローズ
+- **(A) 課題ゼロかつ受け入れ条件が全件 `○`**: ユーザーが `gh pr merge $ARGUMENTS --squash` で squash merge → 紐づく issue は `/close-issue <issue#>` でクローズ
 - **発散・スコープ問題が疑われる場合**: scope-guard skill / 設計再検討
 ```
 
@@ -879,7 +886,7 @@ Subagent mode で Step 5b の (A)/(B)/(C) 自動分類を行う際の厳格規�
 
 final message に以下のセクションを順序固定で含める:
 
-1. `## acceptance_criteria_status` (各条件の判定は **○ / × / partial の 3 値のみ** + evidence。`✓` / `部分的` 等の別記号を使わない — `/iterate-review` Step 2.2 の validation item 5 が `×` / `partial` を文字列で検出するため、別記号だと未達の受け入れ条件が検出をすり抜ける)
+1. `## acceptance_criteria_status` (各条件の判定は **○ / × / partial / n-a の 4 値のみ** + evidence。`✓` / `部分的` 等の別記号を使わない — `/iterate-review` Step 2.2 の validation item 5 が `×` / `partial` を文字列で検出するため、別記号だと未達の受け入れ条件が検出をすり抜ける。**`n-a` は「受け入れ条件が適用不能」= 孤立 PR (§A、issue 未紐付け) 専用**で、その場合は 1 行だけ置き、実証列に代替判定根拠を書く。**適用不能を表す値を用意しないと、§A の指示 (「該当なし」と明記せよ) が subagent mode では書きようがなくなる** — 列挙型は fallback 節が生む状態まで数えて定義する)
 2. `## findings_table` (Step 5b トリアージ表 markdown、各行に分類必須)
 3. `## ambiguous_judgments` (auto 判断できなかった点。空でもセクション自体は必須記載)
 4. `## recommendation` (LGTM / fix-required / divergent)

@@ -84,14 +84,17 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
    - **(B) は厳格 3 条件 AND 必須**: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻`。**サイズ単独 / scope-out 単独 / 受け入れ条件直結性単独では (B) 化不可**
    - **(C) は同テーマ既存 issue が存在する場合のみ**
    - 判定に迷う finding は `(A)*` と記載し、ambiguous_judgments に詳述する (`ambiguous` 単独記載は禁止。`(A)*` が正式記法 = §G.2.1 item 5 準拠)
-7. final message は以下の構造で return:
+7. final message は以下の構造で return する。**下の ```markdown fence は提示のためのもので、return には含めない** (fence 込みで返すか裸で返すかが割れると、セクション終端の判定まで揺れる):
 
    ```markdown
    ## acceptance_criteria_status
    | # | 条件 | 実証 | 判定 |
    | --- | --- | --- | --- |
    | 1 | <元 issue の受け入れ条件を逐語> | `path:line` / `test_name` / CI job 名 | ○ |
-   <条件 1 件につき 1 行。判定は ○ / × / partial の 3 値のみ (他の記号を使わない)。
+   <条件 1 件につき 1 行。判定は **○ / × / partial の 3 値のみ** (他の記号を使わない)。**この 3 値が本 skill 全体の正**で、
+    controller 側の Round summary (Step 2.3) と Final summary (Step 4.2) も同じ記号を使う —
+    `✓` 等の別記号を view ごとに使うと写像規則が必要になり、片方の view にだけ
+    「他の記号を使わない」と書いた形は、書かれていない view を緩いと読ませる抜け道になる。
     受け入れ条件を持たない issue なら、判定列 `○` の 1 行に
     「受け入れ条件なし (issue に `## 受け入れ条件` 節が存在しない)」と書く — セクションは空にしない>
 
@@ -174,7 +177,11 @@ Step 4.2 の summary テンプレートも区切り行を**持っている**。*
 | 4 | 必須セクションが存在する | **通る (条件付き)**。ゼロ件でも `## findings_table` / `## ambiguous_judgments` を**両方**置くこと。どちらかを省けば本 item で parse error |
 | 5 | 受け入れ条件の未達が findings に反映されている | **通る (条件付き)**。`## acceptance_criteria_status` が全件実証済であることが前提。`×` / `partial` が 1 行でもあるのに findings 0 件なら parse error |
 | 6 | (A) 強優先方針違反検出 | **通る**。分類対象の finding が 0 件 |
-| 7 | `## meta` に `Codex 出力読み取り` 行がある | **通る (条件付き)**。findings 件数とは独立だが、`## meta` に当該行が無ければ本 item で parse error。Codex 非起動なら `非起動 (理由: ...)` で理由括弧まで必須。旧語彙 (`single root cause` / `non-L1-core`) は parse error |
+| 7 | `## meta` に `Codex 出力読み取り` 行がある | **通る (条件付き)**。findings 件数とは独立だが、`## meta` に当該行が無ければ本 item で parse error。Codex 非起動なら `非起動 (理由: ...)` で理由括弧まで必須。禁止語彙は item 7 本文の 3 行が正 (ここには写さない) |
+
+**セクションの定義 (item 1 / 3 / 4 / 6 が共有するスコープ)**: 「セクション」とは **`##` 見出し行から
+次の `##` 見出し行の直前まで**を指す (次の見出し行はそのセクションに含まない)。範囲を持つ検査を
+複数置くなら、その範囲の定義は 1 箇所に書く。
 
 **抽出時の必須 validation (握り潰し防止)**:
 
@@ -198,7 +205,17 @@ Step 4.2 の summary テンプレートも区切り行を**持っている**。*
    > 上の行はそれを scenario 値で埋めた例にすぎない。**同じ literal の worked example を 2 箇所に持たない** —
    > 持つと片方だけ古くなる。
    >
-   > **`非起動` の理由に `single root cause` / 裸の `root cause` / `non-L1-core` が含まれていたら parse error にする。**
+   > **`非起動` の理由が下記のいずれかに当たったら parse error にする。**
+   >
+   > - `single root cause` を含む
+   > - `non-L1-core` を含む
+   > - `root cause` が出現するのに、その直前が `再発` **でない** (= 修飾語の無い裸の用法)
+   >
+   > 3 番目は「裸の」を判定可能な形に落としたもの。**単純な部分文字列一致で `root cause` を
+   > 禁止すると、正の代表形が含む `条件2 再発 root cause <K> 件` 自身に当たって、
+   > 指示どおり書いた return が parse error になる** (禁止語彙 gate は、正の literal に対して
+   > 緑になること (positive fixture) と旧語彙に対して赤になること (negative fixture) の
+   > 両方を確認してから置く)。禁止リストの正は本 3 行だけで、他所は名前で参照する
    > `/review-pr` は 3 条件を 1 つずつ実測値付きで書くことを要求しており、旧語彙は「どの条件が
    > どう不成立だったか」を事後に復元できない (= 監査不能な skip)。
    >
@@ -220,7 +237,7 @@ Round N findings:
 - (A): <件数>
 - (B): <件数>
 - (C): <件数>
-- 受け入れ条件 (Step 3): <全 ✓ / 部分 / 全 ×>
+- 受け入れ条件 (Step 3): <全 ○ / 部分 / 全 ×>
 - ambiguous_judgments: <件数> (詳細は別途展開)
 
 選択:
@@ -413,12 +430,12 @@ PR は <R> ラウンドの review-fix で収束。全 findings 解消完了。
 
 | # | 条件 | 実証 | 判定 |
 |---|---|---|---|
-| 1 | <条件> | `path:line` / `test_name` / CI log | ✓ |
+| 1 | <条件> | `path:line` / `test_name` / CI log | ○ |
 
 ## Final State
 
-- CI: ✓ green (last commit `<SHA[:7]>`)
-- 受け入れ条件: 全 ✓
+- CI: green (last commit `<SHA[:7]>`)
+- 受け入れ条件: 全 ○
 - (A) 残: 0 / (B) handoff: <#N1, #N2 or なし> / (C) handoff: <#M1 or なし>
 - 並行 PR: <検出ゼロ / [#X handled]>
 - base sync: <CLEAN / 取り込み済み>
