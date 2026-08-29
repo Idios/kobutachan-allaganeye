@@ -886,7 +886,8 @@ Subagent mode で Step 5b の (A)/(B)/(C) 自動分類を行う際の厳格規�
 
 final message に以下のセクションを順序固定で含める:
 
-1. `## acceptance_criteria_status` (各条件の判定は **○ / × / partial / n-a の 4 値のみ** + evidence。`✓` / `部分的` 等の別記号を使わない — `/iterate-review` Step 2.2 の validation item 5 が `×` / `partial` を文字列で検出するため、別記号だと未達の受け入れ条件が検出をすり抜ける。**`n-a` は「受け入れ条件が適用不能」= 孤立 PR (§A、issue 未紐付け) 専用**で、その場合は 1 行だけ置き、実証列に代替判定根拠を書く。**適用不能を表す値を用意しないと、§A の指示 (「該当なし」と明記せよ) が subagent mode では書きようがなくなる** — 列挙型は fallback 節が生む状態まで数えて定義する)
+1. `## acceptance_criteria_status` (各条件の判定は **○ / × / partial / n-a の 4 値のみ** + evidence。`✓` / `部分的` 等の別記号を使わない — `/iterate-review` Step 2.2 の validation item 5 が `×` / `partial` を文字列で検出するため、別記号だと未達の受け入れ条件が検出をすり抜ける。**`n-a` は「受け入れ条件が適用不能」= 孤立 PR (§A、issue 未紐付け) 専用**で、その場合は 1 行だけ置き、実証列に代替判定根拠を書く。**実証列の粒度は通常経路と同じ**にする — 「PR 本文の目的と一致」のような
+   印象コメントではなく、**根拠にした位置参照を具体的に挙げる** (例: `PR 本文 §目的 ↔ docs/testing-guide.md:120-140 の差分 / Step 5 doc 整合性 OK / Step 5a ギャップ分析 finding 0`)。通常経路で粒度を具体列挙している欄は、fallback 経路でも同じ粒度で埋める。**適用不能を表す値を用意しないと、§A の指示 (「該当なし」と明記せよ) が subagent mode では書きようがなくなる** — 列挙型は fallback 節が生む状態まで数えて定義する)
 2. `## findings_table` (Step 5b トリアージ表 markdown、各行に分類必須)
 3. `## ambiguous_judgments` (auto 判断できなかった点。空でもセクション自体は必須記載)
 4. `## recommendation` (LGTM / fix-required / divergent)

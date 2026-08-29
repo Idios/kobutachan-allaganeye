@@ -91,7 +91,16 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
    | # | 条件 | 実証 | 判定 |
    | --- | --- | --- | --- |
    | 1 | <元 issue の受け入れ条件を逐語> | `path:line` / `test_name` / CI job 名 | ○ |
-   <条件 1 件につき 1 行。判定は **○ / × / partial の 3 値のみ** (他の記号を使わない)。**この 3 値が本 skill 全体の正**で、
+   <条件 1 件につき 1 行。判定は **○ / × / partial の 3 値のみ** (他の記号を使わない)。
+    **受け入れ条件がゼロになる原因は 2 通りあり、どちらもセクションを空にせず 1 行を置く**
+    (原因の分岐を数えずに定型文を 1 つしか置かないと、書かれていない分岐で実行者が文言を発明する):
+
+    | 原因 | 条件列に書く literal | 判定 |
+    | --- | --- | --- |
+    | issue はあるが `## 受け入れ条件` 節が無い | `受け入れ条件なし (issue に \`## 受け入れ条件\` 節が存在しない)` | `○` |
+    | PR に紐づく issue that が無い (孤立 PR、`/review-pr` §A fallback) | `受け入れ条件なし (PR に紐づく issue が存在しない = 孤立 PR、§A fallback 適用)` | `○` |
+
+    いずれも実証列には代替判定根拠を書く。**この 3 値が本 skill 全体の正**で、
     controller 側の Round summary (Step 2.3) と Final summary (Step 4.2) も同じ記号を使う —
     `✓` 等の別記号を view ごとに使うと写像規則が必要になり、片方の view にだけ
     「他の記号を使わない」と書いた形は、書かれていない view を緩いと読ませる抜け道になる。
@@ -180,11 +189,26 @@ Step 4.2 の summary テンプレートも区切り行を**持っている**。*
 | 7 | `## meta` に `Codex 出力読み取り` 行がある | **通る (条件付き)**。findings 件数とは独立だが、`## meta` に当該行が無ければ本 item で parse error。Codex 非起動なら `非起動 (理由: ...)` で理由括弧まで必須。禁止語彙は item 7 本文の 3 行が正 (ここには写さない) |
 
 **セクションの定義**: 「セクション」とは **`##` 見出し行から次の `##` 見出し行の直前まで**を指す
-(次の見出し行はそのセクションに含まない)。**この定義を共有する item の roster も本節が正**で、
-**item 1 / 2 / 3 / 4** が `## findings_table` / `## ambiguous_judgments` に scope される
-(item 5 は `acceptance_criteria_status` × `findings_table` の横断、item 6 は `findings_table` 内の分類、
-item 7 は `## meta` を見るので、いずれも別 scope)。**roster を各 item の本文へ再掲しない** —
-再掲すると membership が割れる (定義だけを 1 箇所にしても roster が複数箇所にあれば同じことが起きる)。
+(次の見出し行はそのセクションに含まない)。
+
+**item ごとの検査対象 roster (本節が正)**。**「scope を共有する item の集合」ではなく
+`(item, 対象セクション, 期待する行形式)` の三つ組で定義する** — 同じセクションを見る item でも
+期待する行形式が違うため、集合に畳むと「同じ検査を両セクションに適用する」と読まれて衝突する
+(実際 `## ambiguous_judgments` は `-` 始まりの箇条書きが正なので、findings_table 用の
+「パイプ始まりでなければ parse error」を当てると 1 件でも書いた時点で必ず落ちる):
+
+| item | 対象セクション | 期待する行形式 |
+| --- | --- | --- |
+| 1 | `## findings_table` **のみ** | 見出し行 / パイプ始まりの表行 |
+| 2 | `## findings_table` のデータ行 | (B) 行の根拠列 |
+| 3 | `## findings_table` + `## ambiguous_judgments` | 行形式は問わない (キーワード grep のみ) |
+| 4 | `## findings_table` + `## ambiguous_judgments` | セクションの**存在**のみ |
+| 5 | `## acceptance_criteria_status` × `## findings_table` の横断 | 判定列と finding の対応 |
+| 6 | `## findings_table` のデータ行 | 処置列の分類 |
+| 7 | `## meta` | 状態語 + 理由括弧 + 語彙 |
+
+**この表を各 item の本文へ再掲しない** — 再掲すると membership が割れる
+(定義だけを 1 箇所にしても roster が複数箇所にあれば同じことが起きる)。
 
 **return 全体の空白の扱い**: セクション間の空行・末尾改行・インデントは**有意ではない**。
 検査はいずれも非空行に対して行う。**dispatch prompt の `__ITERATE_REVIEW_SUBAGENT_MODE__` marker は
@@ -194,7 +218,7 @@ return に echo しない** (marker は入力側の契約)。
 
 1. **全 finding に classification がある / セクション内に表行以外の本文を置かない**: `## findings_table` セクション内の**非空行は、見出し行 (`##` で始まる) か、ヘッダ行・区切り行・データ行 (いずれもパイプ文字で始まる)** でなければならない。パイプ文字で始まらない非空行 (`なし` / `N/A` / `該当なし` / 説明文 等) があれば **parse error** — 自由文を許すと「ゼロ件」と「表を書かずに散文で済ませた」が区別できなくなる。データ行については、各行の処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれか。`(A)*` は ambiguous_judgments セクションとの cross-reference が必須 (subagent が自動判断できなかった finding に使用、`ambiguous` 単独記載は禁止)。空欄 / 「観察のみ」 / 「対象外」/ `ambiguous` 単独等は **parse error**。Round 2+ で `handoff_state` に既登録の topic が再度 findings_table に含まれる場合も **parse error** (= subagent が exclusion を尊重していない)
 2. **(B) 主張行には trigger 根拠列がある**: rationale 列に「別領域・別機能 AND 1 セッション超 AND 受け入れ条件検証破綻」3 条件への該当言及があるか。1 条件のみの (B) は **parse error** (= subagent が誤分類)
-3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**。**検査範囲は `## findings_table` / `## ambiguous_judgments` の行に限る** (roster の正は上記 §セクションの定義)。`## meta` の状態記録行 (`Codex 出力読み取り: 非起動 (理由: ...)` 等) は**対象外** — 記録義務を課した行が握り潰し検出に巻き込まれると、正しく申告するほど parse error になる
+3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**。**検査範囲は上記 §セクションの定義 の roster に従う** (ここに再掲しない)。roster に無いセクション — とりわけ `## meta` の状態記録行 (`Codex 出力読み取り: 非起動 (理由: ...)` 等) は**対象外**である。記録義務を課した行が握り潰し検出に巻き込まれると、正しく申告するほど parse error になるため
 4. **必須セクションが存在する** (空でもセクション自体は必須): `## findings_table` / `## ambiguous_judgments` の**いずれかが不在なら parse error**。**`## findings_table` をこの item に含めるのが要点** — 含めないと、セクションごと落とした return が「データ行 0 行」と同じ観測値になり、item 1 / 2 / 6 を空虚に通過して「(A)/(B)/(C) all 0 = 収束」→ LGTM summary 投稿まで静かに通る (不在が『違反ゼロ』と同じ観測値になる検査は false-green を生む)
 5. **受け入れ条件の未達が findings に反映されている**: `## acceptance_criteria_status` に `×` / `partial` / 未実証の行があるなら、**その各行に対応する `(A)` finding が `## findings_table` に存在しなければ parse error**。
    **これが無いと「受け入れ条件が落ちているのに findings ゼロ」= 収束 → LGTM が通る** (Codex adversarial-review [high])。
