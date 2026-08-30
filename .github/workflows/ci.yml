@@ -145,12 +145,18 @@ jobs:
       # shell: bash を明示する。既定の pwsh は native command の stderr を
       # NativeCommandError へ包み、exit 0 でも $? を false にすることがある
       # (docs/l2-workflow.md / PowerShell の既知の罠)。
-      # `check_doc_code_refs` の MAX_PATH 回避 (#965) は Windows 固有で、
-      # ubuntu では `_extended` が no-op になるため ubuntu の python job では
-      # 検証できない。ここに入れないと「実装を revert しても全 CI が緑」になる。
+      # `check_doc_code_refs` の MAX_PATH 回避 (#965) を足したのも同じ理由で、
+      # `_extended` は ubuntu で no-op になる。ただし **この job だけが唯一の
+      # 検知手段ではない**: 述語の経路を固定する spy テスト (長いパスを作らない)
+      # は ubuntu の python job でも実際に走る。ここでしか踏めないのは
+      # 「260 文字超で実際に stat / read が落ちる」ことに依存する end-to-end 側。
+      #
+      # `-rs` を付けているのは、runner が `LongPathsEnabled=1` だと症状自体が
+      # 再現せず該当テストが self-skip するため。理由を出さないと **gate が
+      # 縮退したことがログ上 `s` の 1 文字と区別できない**。
       - name: Test (path sandbox / metadata contracts / doc-code-refs)
         shell: bash
-        run: pytest tests/test_export_pool.py tests/test_path_schema_contracts.py tests/scripts/test_check_doc_code_refs.py -q -k "not export_cli"
+        run: pytest tests/test_export_pool.py tests/test_path_schema_contracts.py tests/scripts/test_check_doc_code_refs.py -q -rs -k "not export_cli"
 
   hook-test:
     runs-on: ubuntu-latest
