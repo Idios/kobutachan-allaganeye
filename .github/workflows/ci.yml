@@ -145,15 +145,20 @@ jobs:
       # shell: bash を明示する。既定の pwsh は native command の stderr を
       # NativeCommandError へ包み、exit 0 でも $? を false にすることがある
       # (docs/l2-workflow.md / PowerShell の既知の罠)。
-      # `check_doc_code_refs` の MAX_PATH 回避 (#965) を足したのも同じ理由で、
-      # `_extended` は ubuntu で no-op になる。ただし **この job だけが唯一の
-      # 検知手段ではない**: 述語の経路を固定する spy テスト (長いパスを作らない)
-      # は ubuntu の python job でも実際に走る。ここでしか踏めないのは
-      # 「260 文字超で実際に stat / read が落ちる」ことに依存する end-to-end 側。
+      # `check_doc_code_refs` (#965) をここに足しているが、**MAX_PATH の gate と
+      # しては期待しないこと**。2026-08-30 実測: GitHub の windows-latest は
+      # `LongPathsEnabled=1` で、260 文字超でも素の `os.stat` が成功する。つまり
+      # **症状自体が再現せず、MAX_PATH 系のテストは self-skip するか vacuous になる**。
+      # 実際に revert を捕まえているのは述語の経路を固定する spy テストで、そちらは
+      # 長いパスを作らないので ubuntu の python job でも走る。
       #
-      # `-rs` を付けているのは、runner が `LongPathsEnabled=1` だと症状自体が
-      # 再現せず該当テストが self-skip するため。理由を出さないと **gate が
-      # 縮退したことがログ上 `s` の 1 文字と区別できない**。
+      # それでもここに入れるのは、**Windows 固有の破綻を踏むため**。実例として
+      # `os.name` を patch した状態の `Path()` が Windows 版 Python 3.11 で
+      # `NotImplementedError` になり、pytest ごと INTERNALERROR で落ちた
+      # (ubuntu では緑だった)。
+      #
+      # `-rs` は縮退を可視化するため。理由を出さないと **gate が no-op になった
+      # ことがログ上 `s` の 1 文字と区別できない**。
       - name: Test (path sandbox / metadata contracts / doc-code-refs)
         shell: bash
         run: pytest tests/test_export_pool.py tests/test_path_schema_contracts.py tests/scripts/test_check_doc_code_refs.py -q -rs -k "not export_cli"
