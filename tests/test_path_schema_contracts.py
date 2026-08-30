@@ -1343,46 +1343,141 @@ def test_colon_stays_legal_off_windows(tmp_path: Path):
 
 _RESOLVER_NAMES = ("resolve_output_path", "resolve_output_paths")
 _RESOLVER_HOME = "test_path_schema_contracts.py"
+_POOL_MODULE = "allaganeye.export.pool"
 
 
-def _test_modules_importing_resolver() -> list[str]:
-    """`test_*.py` のうち resolver を import しているものを返す。"""
+def _module_uses_resolver(source: str) -> bool:
+    """``source`` が resolver に到達する形を含むか。
+
+    **2 経路を見る。** 名前 import だけを見ると、module alias 経由の呼び出し
+    (``from allaganeye.export import pool as pool_module`` ->
+    ``pool_module.resolve_output_paths(...)``) が素通りする。この import 形は
+    実際に ``tests/test_export_pool.py`` で使われているので、片方だけの検査では
+    guard が緑のまま集約が崩れる (Codex adversarial-review [medium])。
+
+    1. ``from allaganeye.export.pool import resolve_output_path(s)`` -- 名前 import
+    2. ``allaganeye.export.pool`` への alias + ``<alias>.resolve_output_path(s)``
+       への attribute access
+    """
     import ast
 
-    tests_dir = Path(__file__).parent
-    hits: list[str] = []
-    for path in sorted(tests_dir.glob("test_*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.ImportFrom)
-                and node.module == "allaganeye.export.pool"
+    tree = ast.parse(source)
+    aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module == _POOL_MODULE and any(
+                a.name in _RESOLVER_NAMES for a in node.names
             ):
-                if any(alias.name in _RESOLVER_NAMES for alias in node.names):
-                    hits.append(path.name)
-                    break
-    return hits
+                return True
+            if node.module == "allaganeye.export":
+                for a in node.names:
+                    if a.name == "pool":
+                        aliases.add(a.asname or a.name)
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                # ``import allaganeye.export.pool`` without asname binds
+                # ``allaganeye``; only the aliased form gives a short name.
+                if a.name == _POOL_MODULE and a.asname:
+                    aliases.add(a.asname)
+    if not aliases:
+        return False
+    return any(
+        isinstance(node, ast.Attribute)
+        and node.attr in _RESOLVER_NAMES
+        and isinstance(node.value, ast.Name)
+        and node.value.id in aliases
+        for node in ast.walk(tree)
+    )
+
+
+def _test_modules_using_resolver() -> list[str]:
+    """``test_*.py`` のうち resolver に到達しているものを返す。"""
+    tests_dir = Path(__file__).parent
+    return [
+        path.name
+        for path in sorted(tests_dir.glob("test_*.py"))
+        if _module_uses_resolver(path.read_text(encoding="utf-8"))
+    ]
 
 
 def test_resolver_contract_tests_live_in_one_module() -> None:
-    """resolver を import する test module は本ファイルだけであること。
+    """resolver に到達する test module は本ファイルだけであること。
 
-    caller ごとの *routing* テスト (pool / minimap) は resolver を import せず、
+    caller ごとの *routing* テスト (pool / minimap) は resolver を直接叩かず、
     それぞれの entry point (``export_matches`` / minimap CLI) 経由で叩く。だから
-    「import しているか」で集約の崩れを判定できる。routing テストを書くのに
-    resolver の import が要るなら、それは routing ではなく resolver 契約であり、
+    「resolver に到達しているか」で集約の崩れを判定できる。routing テストを書くのに
+    resolver への直接到達が要るなら、それは routing ではなく resolver 契約であり、
     本ファイルへ移すべきものである。
     """
-    got = _test_modules_importing_resolver()
+    got = _test_modules_using_resolver()
     assert got == [_RESOLVER_HOME], (
-        f"resolver 契約テストの集約が崩れている。resolver を import している "
+        f"resolver 契約テストの集約が崩れている。resolver に到達している "
         f"test module: {got}。{_RESOLVER_HOME} 以外に resolver 契約テストを置くと、"
         "同じ述語が 2 箇所で pin され片方だけが更新される (#934 P1-3 が解消した drift)。"
-        "caller の routing を検査したいなら resolver を直接 import せず entry point 経由で叩く。"
+        "caller の routing を検査したいなら resolver を直接叩かず entry point 経由にする。"
     )
 
 
 def test_resolver_home_is_this_module() -> None:
     """guard 自身が空振りしていないこと (home の名前が実ファイルと一致するか)。"""
     assert Path(__file__).name == _RESOLVER_HOME
-    assert _RESOLVER_HOME in _test_modules_importing_resolver()
+    assert _RESOLVER_HOME in _test_modules_using_resolver()
+
+
+@pytest.mark.parametrize(
+    ("label", "source"),
+    [
+        (
+            "name-import",
+            "from allaganeye.export.pool import resolve_output_paths\n",
+        ),
+        (
+            "singular-name-import",
+            "from allaganeye.export.pool import resolve_output_path\n",
+        ),
+        (
+            "module-alias-from",
+            "from allaganeye.export import pool as pool_module\n"
+            "pool_module.resolve_output_paths([])\n",
+        ),
+        (
+            "module-alias-import",
+            "import allaganeye.export.pool as p\np.resolve_output_path(None)\n",
+        ),
+        (
+            "module-no-alias-from",
+            "from allaganeye.export import pool\npool.resolve_output_paths([])\n",
+        ),
+    ],
+)
+def test_guard_detects_every_resolver_reach_shape(label: str, source: str) -> None:
+    """negative fixture: guard が実際に拾えることを形ごとに固定する。
+
+    ここを持たないと、guard の走査が片方の形しか見ていなくても「集約は崩れていない」
+    という緑が出続ける。最初の実装は名前 import しか見ておらず、module alias 経由を
+    素通りしていた (Codex adversarial-review [medium]) -- しかもその import 形は
+    ``tests/test_export_pool.py`` に実在していたので、bypass は仮想ではなかった。
+    """
+    assert _module_uses_resolver(source), label
+
+
+@pytest.mark.parametrize(
+    ("label", "source"),
+    [
+        ("no-import", "x = 1\n"),
+        (
+            "pool-alias-without-resolver-use",
+            "from allaganeye.export import pool as pool_module\n"
+            "pool_module.export_matches([])\n",
+        ),
+        ("other-name-from-pool", "from allaganeye.export.pool import ExportMatch\n"),
+        ("prose-only", '"""mentions resolve_output_paths in a docstring only"""\n'),
+    ],
+)
+def test_guard_does_not_fire_on_routing_shapes(label: str, source: str) -> None:
+    """positive fixture: routing テストや散文で false-red にならないこと。
+
+    guard を厳しくしすぎて「pool module を alias import しただけ」で落ちると、
+    routing テスト (集約先の外に置くのが正しいもの) が書けなくなる。
+    """
+    assert not _module_uses_resolver(source), label
