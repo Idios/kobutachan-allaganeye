@@ -25,8 +25,8 @@ from allaganeye.export.pool import (
     _format_start_for_filename,
     _identity_key,
     export_matches,
-    resolve_export_output_path,
-    resolve_export_output_paths,
+    resolve_output_path,
+    resolve_output_paths,
 )
 from allaganeye.export.schema import ExportError, ExportResult
 
@@ -438,10 +438,10 @@ def test_pool_accepts_subdirectory_pattern(tmp_path: Path):
     assert summary.success == 1
 
 
-def test_resolve_export_output_path_returns_path_inside_output_dir(tmp_path: Path):
+def test_resolve_output_path_returns_path_inside_output_dir(tmp_path: Path):
     """Worker-level primitive: accepted patterns resolve under -o."""
     out_dir = tmp_path / "out"
-    got = resolve_export_output_path(
+    got = resolve_output_path(
         ExportMatch(index=3, start=65.0, end=75.0, type_label="match"),
         "{idx:03}_{type}_{start}.mp4",
         output_dir=out_dir,
@@ -450,11 +450,11 @@ def test_resolve_export_output_path_returns_path_inside_output_dir(tmp_path: Pat
     assert got == out_dir / "003_match_01-05.mp4"
 
 
-def test_resolve_export_output_path_rejects_escape(tmp_path: Path):
+def test_resolve_output_path_rejects_escape(tmp_path: Path):
     """Worker-level primitive rejects on its own (callers that skip the CLI
     preflight -- GUI / future callers -- are still covered)."""
     with pytest.raises(ConfigValidationError) as exc:
-        resolve_export_output_path(
+        resolve_output_path(
             ExportMatch(index=1, start=0.0, end=10.0, type_label="match"),
             "../victim.mp4",
             output_dir=tmp_path / "out",
@@ -464,16 +464,14 @@ def test_resolve_export_output_path_rejects_escape(tmp_path: Path):
 
 
 @pytest.mark.parametrize("pattern", ["", ".", "./"])
-def test_resolve_export_output_path_rejects_output_dir_itself(
-    tmp_path: Path, pattern: str
-):
+def test_resolve_output_path_rejects_output_dir_itself(tmp_path: Path, pattern: str):
     """A pattern that renders to nothing resolves to -o itself (a directory).
 
     ``output_dir / ""`` is ``output_dir``, which is not a writable file
     target -- reject it instead of handing a directory path to ffmpeg.
     """
     with pytest.raises(ConfigValidationError):
-        resolve_export_output_path(
+        resolve_output_path(
             ExportMatch(index=1, start=0.0, end=10.0, type_label="match"),
             pattern,
             output_dir=tmp_path / "out",
@@ -515,13 +513,13 @@ def _assert_each_passes_containment(
     to reject is the shared identity.
     """
     for m in matches:
-        resolve_export_output_path(m, pattern, output_dir=out_dir, source_video=source)
+        resolve_output_path(m, pattern, output_dir=out_dir, source_video=source)
 
 
-def test_resolve_export_output_paths_returns_one_path_per_match(tmp_path: Path):
+def test_resolve_output_paths_returns_one_path_per_match(tmp_path: Path):
     """Reverse pin: distinct names are returned in order, unresolved."""
     out_dir = tmp_path / "out"
-    got = resolve_export_output_paths(
+    got = resolve_output_paths(
         _matches(3),
         "{idx:03}_{type}.mp4",
         output_dir=out_dir,
@@ -534,9 +532,9 @@ def test_resolve_export_output_paths_returns_one_path_per_match(tmp_path: Path):
     ]
 
 
-def test_resolve_export_output_paths_accepts_empty_match_list(tmp_path: Path):
+def test_resolve_output_paths_accepts_empty_match_list(tmp_path: Path):
     assert (
-        resolve_export_output_paths(
+        resolve_output_paths(
             [],
             "{idx:03}.mp4",
             output_dir=tmp_path / "out",
@@ -549,7 +547,7 @@ def test_resolve_export_output_paths_accepts_empty_match_list(tmp_path: Path):
 @pytest.mark.skipif(
     sys.platform != "win32", reason="path identity is case-insensitive on Windows only"
 )
-def test_resolve_export_output_paths_rejects_case_only_identity_collision(
+def test_resolve_output_paths_rejects_case_only_identity_collision(
     tmp_path: Path,
 ):
     """``Clip.mp4`` and ``clip.mp4`` are two strings for one file (NTFS)."""
@@ -559,7 +557,7 @@ def test_resolve_export_output_paths_rejects_case_only_identity_collision(
     _assert_each_passes_containment(matches, "{type}.mp4", out_dir, source)
 
     with pytest.raises(ConfigValidationError) as exc:
-        resolve_export_output_paths(
+        resolve_output_paths(
             matches, "{type}.mp4", output_dir=out_dir, source_video=source
         )
     assert exc.value.exit_code == 5
@@ -568,7 +566,7 @@ def test_resolve_export_output_paths_rejects_case_only_identity_collision(
     assert "clip.mp4" in str(exc.value)
 
 
-def test_resolve_export_output_paths_rejects_dotdot_identity_collision(tmp_path: Path):
+def test_resolve_output_paths_rejects_dotdot_identity_collision(tmp_path: Path):
     """``sub/../clip.mp4`` stays inside -o and *is* ``clip.mp4``.
 
     Windows normalises the ``..`` even though ``sub`` never exists, so the
@@ -581,16 +579,16 @@ def test_resolve_export_output_paths_rejects_dotdot_identity_collision(tmp_path:
     _assert_each_passes_containment(matches, "{type}.mp4", out_dir, source)
 
     with pytest.raises(ConfigValidationError) as exc:
-        resolve_export_output_paths(
+        resolve_output_paths(
             matches, "{type}.mp4", output_dir=out_dir, source_video=source
         )
     assert exc.value.exit_code == 5
 
 
-def test_resolve_export_output_paths_rejects_exact_string_collision(tmp_path: Path):
+def test_resolve_output_paths_rejects_exact_string_collision(tmp_path: Path):
     """Regression: the pre-existing identical-string case still fails."""
     with pytest.raises(ConfigValidationError) as exc:
-        resolve_export_output_paths(
+        resolve_output_paths(
             _matches(2),
             "{type}.mp4",  # no {idx}: both render "match.mp4"
             output_dir=tmp_path / "out",
@@ -599,7 +597,7 @@ def test_resolve_export_output_paths_rejects_exact_string_collision(tmp_path: Pa
     assert exc.value.exit_code == 5
 
 
-def test_resolve_export_output_paths_allows_identity_pairs_once_idx_disambiguates(
+def test_resolve_output_paths_allows_identity_pairs_once_idx_disambiguates(
     tmp_path: Path,
 ):
     """Control: the ``{type}`` values above are not illegal in themselves.
@@ -609,7 +607,7 @@ def test_resolve_export_output_paths_allows_identity_pairs_once_idx_disambiguate
     caused by the shared identity and not by the token's content.
     """
     out_dir = tmp_path / "out"
-    got = resolve_export_output_paths(
+    got = resolve_output_paths(
         _pair("Clip", "clip"),
         "{idx:03}_{type}.mp4",
         output_dir=out_dir,
@@ -681,7 +679,7 @@ def _assert_os_treats_as_one_file(tmp_path: Path, a: str, b: str) -> None:
 @pytest.mark.parametrize(
     "second", ["clip.mp4.", "clip.mp4 "], ids=["trailing-dot", "trailing-space"]
 )
-def test_resolve_export_output_paths_rejects_win32_folded_identity_collision(
+def test_resolve_output_paths_rejects_win32_folded_identity_collision(
     tmp_path: Path, second: str
 ):
     """A trailing dot / space is dropped by Win32 but kept by ``PurePath``."""
@@ -696,9 +694,7 @@ def test_resolve_export_output_paths_rejects_win32_folded_identity_collision(
     _assert_os_treats_as_one_file(tmp_path, "clip.mp4", second)
 
     with pytest.raises(ConfigValidationError) as exc:
-        resolve_export_output_paths(
-            matches, "{type}", output_dir=out_dir, source_video=source
-        )
+        resolve_output_paths(matches, "{type}", output_dir=out_dir, source_video=source)
     assert exc.value.exit_code == 5
     assert "'clip.mp4'" in str(exc.value)
     assert repr(second) in str(exc.value)
@@ -708,12 +704,12 @@ def test_resolve_export_output_paths_rejects_win32_folded_identity_collision(
     sys.platform == "win32", reason="trailing dots/spaces are significant on POSIX"
 )
 @pytest.mark.parametrize("second", ["clip.mp4.", "clip.mp4 "], ids=["dot", "space"])
-def test_resolve_export_output_paths_keeps_trailing_dot_pair_legal_on_posix(
+def test_resolve_output_paths_keeps_trailing_dot_pair_legal_on_posix(
     tmp_path: Path, second: str
 ):
     """Over-rejection guard: POSIX really does have two files here."""
     out_dir = tmp_path / "out"
-    got = resolve_export_output_paths(
+    got = resolve_output_paths(
         _pair("clip.mp4", second),
         "{type}",
         output_dir=out_dir,
@@ -725,7 +721,7 @@ def test_resolve_export_output_paths_keeps_trailing_dot_pair_legal_on_posix(
 @pytest.mark.skipif(
     sys.platform != "win32", reason="Win32 strips trailing dots/spaces; POSIX does not"
 )
-def test_resolve_export_output_paths_keeps_dots_only_component_distinct(
+def test_resolve_output_paths_keeps_dots_only_component_distinct(
     tmp_path: Path,
 ):
     """A component that is *only* dots must not be folded to nothing.
@@ -735,7 +731,7 @@ def test_resolve_export_output_paths_keeps_dots_only_component_distinct(
     ffmpeg fails loudly -- there is no silent overwrite to prevent here.
     """
     out_dir = tmp_path / "out"
-    got = resolve_export_output_paths(
+    got = resolve_output_paths(
         _pair("...", "clip"),
         "{type}",
         output_dir=out_dir,
@@ -858,7 +854,7 @@ def test_render_rejects_alternate_data_stream_syntax(
     monkeypatch.setattr(pool_module, "_IS_WINDOWS", True)
     m = ExportMatch(index=0, start=0.0, end=10.0, type_label=type_label)
     with pytest.raises(ConfigValidationError) as exc:
-        resolve_export_output_path(
+        resolve_output_path(
             m, "{type}", output_dir=tmp_path / "out", source_video=tmp_path / "in.mp4"
         )
     assert exc.value.exit_code == 5
@@ -868,7 +864,7 @@ def test_render_rejects_alternate_data_stream_syntax(
 @pytest.mark.skipif(
     sys.platform != "win32", reason="':' is a legal filename character on POSIX"
 )
-def test_resolve_export_output_paths_rejects_ads_identity_collision(tmp_path: Path):
+def test_resolve_output_paths_rejects_ads_identity_collision(tmp_path: Path):
     """``clip.mp4`` and ``clip.mp4::$DATA`` are one file with two resolved keys.
 
     Both halves of that premise are pinned against the real OS below, and the
@@ -887,7 +883,7 @@ def test_resolve_export_output_paths_rejects_ads_identity_collision(tmp_path: Pa
     shutil.rmtree(probe)
 
     with pytest.raises(ConfigValidationError) as exc:
-        resolve_export_output_paths(
+        resolve_output_paths(
             _pair("clip.mp4", "clip.mp4::$DATA"),
             "{type}",
             output_dir=tmp_path / "out",
@@ -902,7 +898,7 @@ def test_resolve_export_output_paths_rejects_ads_identity_collision(tmp_path: Pa
 def test_colon_stays_legal_off_windows(tmp_path: Path):
     """Over-rejection guard: POSIX filenames may contain ``:``."""
     out_dir = tmp_path / "out"
-    got = resolve_export_output_paths(
+    got = resolve_output_paths(
         _pair("a:b", "c:d"),
         "{type}",
         output_dir=out_dir,

@@ -74,7 +74,7 @@ from allaganeye.commands.split_matches import (
 )
 from allaganeye.config import SplitConfig
 from allaganeye.exceptions import ConfigValidationError
-from allaganeye.export.pool import ExportMatch, resolve_export_output_path
+from allaganeye.export.pool import ExportMatch, resolve_output_path
 from allaganeye.export.schema import ExportSummary
 from allaganeye.video.detector import MatchBoundary
 
@@ -731,7 +731,7 @@ def test_resolver_rejects_dirty_pattern(
     source = tmp_path / "sample.mkv"
     source.write_bytes(b"SRC")
     with pytest.raises(ConfigValidationError):
-        resolve_export_output_path(
+        resolve_output_path(
             _export_match(), pattern, output_dir=out_dir, source_video=source
         )
 
@@ -756,7 +756,7 @@ def test_backslash_traversal_never_escapes_the_output_dir(tmp_path: Path) -> Non
     victim = tmp_path / "victim.mp4"
     victim.write_bytes(b"VICTIM")
     try:
-        resolved = resolve_export_output_path(
+        resolved = resolve_output_path(
             _export_match(), "..\\victim.mp4", output_dir=out_dir, source_video=source
         )
     except ConfigValidationError:
@@ -772,7 +772,7 @@ def test_resolver_rejects_absolute_pattern(tmp_path: Path) -> None:
     source.write_bytes(b"SRC")
     victim = tmp_path / "victim.mp4"
     with pytest.raises(ConfigValidationError):
-        resolve_export_output_path(
+        resolve_output_path(
             _export_match(), str(victim), output_dir=out_dir, source_video=source
         )
 
@@ -796,7 +796,7 @@ def test_drive_relative_pattern_never_escapes_the_output_dir(tmp_path: Path) -> 
     drive = str(out_dir)[0]
     other = "D" if drive.upper() != "D" else "C"
     try:
-        resolved = resolve_export_output_path(
+        resolved = resolve_output_path(
             _export_match(),
             f"{other}:victim.mp4",
             output_dir=out_dir,
@@ -814,7 +814,7 @@ def test_resolver_rejects_pattern_hitting_source_video(tmp_path: Path) -> None:
     source = out_dir / "sample.mkv"
     source.write_bytes(b"SRC")
     with pytest.raises(ConfigValidationError):
-        resolve_export_output_path(
+        resolve_output_path(
             _export_match(), "sample.mkv", output_dir=out_dir, source_video=source
         )
     assert source.read_bytes() == b"SRC"
@@ -833,7 +833,7 @@ def test_resolver_allows_non_ascii_filename(tmp_path: Path) -> None:
     out_dir.mkdir()
     source = tmp_path / "sample.mkv"
     source.write_bytes(b"SRC")
-    resolved = resolve_export_output_path(
+    resolved = resolve_output_path(
         _export_match(), "試合_{idx:03}.mp4", output_dir=out_dir, source_video=source
     )
     assert resolved.parent == out_dir
@@ -847,7 +847,7 @@ def test_resolver_rejects_non_ascii_pattern_that_escapes(tmp_path: Path) -> None
     source = tmp_path / "sample.mkv"
     source.write_bytes(b"SRC")
     with pytest.raises(ConfigValidationError):
-        resolve_export_output_path(
+        resolve_output_path(
             _export_match(), "../試合.mp4", output_dir=out_dir, source_video=source
         )
 
@@ -865,7 +865,7 @@ def test_dirty_pattern_check_does_not_depend_on_tmp_path_being_absolute(
     source.write_bytes(b"SRC")
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ConfigValidationError):
-        resolve_export_output_path(
+        resolve_output_path(
             _export_match(),
             "../victim.mp4",
             output_dir=Path("out"),  # 相対

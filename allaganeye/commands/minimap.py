@@ -27,7 +27,7 @@ from allaganeye.export.encoder import enumerate_h264_encoders
 from allaganeye.export.pool import (
     ExportMatch,
     export_matches,
-    resolve_export_output_paths,
+    resolve_output_paths,
 )
 from allaganeye.export.schema import ExportSummary, ProgressEvent
 from allaganeye.export.wire import WireWriter
@@ -341,7 +341,7 @@ def register(app: typer.Typer) -> None:
         # (".." / 絶対パス / drive 相対 / metadata 由来の {type} 値)。minimap は
         # crop 付き再エンコードなので escape すると ffmpeg が無関係のファイルを
         # truncate してから失敗し、0 byte (moov atom not found) を残す。判定は
-        # pattern 文字列ではなく解決後のパスで行う (resolve_export_output_paths)。
+        # pattern 文字列ではなく解決後のパスで行う (resolve_output_paths)。
         # ここ (preflight) は write-back / mkdir / ffmpeg より前に落とすため、
         # export_matches 側の同じ検査は preflight を通らない caller (GUI 等) 向けの
         # 最終防壁。どちらも省略しない。
@@ -361,7 +361,7 @@ def register(app: typer.Typer) -> None:
             for idx, start_t, end_t, type_label in filtered_tuples
         ]
         try:
-            resolve_export_output_paths(
+            resolve_output_paths(
                 export_matches_list,
                 name_pattern,
                 output_dir=eff_output_dir,

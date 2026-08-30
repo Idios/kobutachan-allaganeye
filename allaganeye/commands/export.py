@@ -29,7 +29,7 @@ from allaganeye.export.encoder import enumerate_h264_encoders
 from allaganeye.export.pool import (
     ExportMatch,
     export_matches,
-    resolve_export_output_paths,
+    resolve_output_paths,
 )
 from allaganeye.export.schema import ExportSummary, ProgressEvent
 from allaganeye.export.wire import WireWriter
@@ -363,7 +363,7 @@ def register(app: typer.Typer) -> None:
             # text yet denote one file (letter case on Windows, a '..' segment)
             # passed both checks and both got written -- one silently lost. The
             # batch resolver keys on the resolved path for both.
-            resolve_export_output_paths(
+            resolve_output_paths(
                 filtered,
                 name_pattern,
                 output_dir=output_dir,
