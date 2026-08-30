@@ -970,11 +970,13 @@ def test_exists_finds_a_file_behind_max_path(tmp_path: Path) -> None:
         target.write_text("# b\n", encoding="utf-8")
 
     assert len(str(target)) > 260, f"deep path is only {len(str(target))} chars"
-    if os.name == "nt":
-        assert not target.exists(), (
-            "素の Path.exists() が True を返した = この環境では MAX_PATH 症状が "
-            "再現していない。本 test は修正の証拠になっていないので、"
-            "再現条件 (パス長 / longpath 設定) を見直すこと"
+    if os.name == "nt" and target.exists():
+        # `LongPathsEnabled=1` の環境では素の Path.exists() も成功するので、
+        # 症状自体が再現しない。**赤ではなく skip にする**: 設定差で suite が
+        # 赤くなると、本物の退行と区別が付かなくなる。
+        pytest.skip(
+            "素の Path.exists() が True = この環境では MAX_PATH 症状が再現しない "
+            "(LongPathsEnabled=1 等)。本 test は修正の証拠にならないので skip する"
         )
     assert guard._exists(target) is True
     assert guard._is_file(target) is True
@@ -991,3 +993,89 @@ def test_exists_still_reports_missing_files_behind_max_path(tmp_path: Path) -> N
     assert len(str(missing)) > 260
     assert guard._exists(missing) is False
     assert guard._is_file(missing) is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="MAX_PATH は Windows 固有")
+def test_symbol_ref_into_a_deep_target_stays_exit1_not_exit2(tmp_path: Path) -> None:
+    """symbol 参照先が 260 文字超でも exit 1 (局所) のままで、exit 2 に悪化しないこと.
+
+    **実在判定だけを拡張パスへ寄せて読み込みを素のままにすると、ここが exit 2 になる。**
+    ``_is_file`` が「ある」と答えた直後に ``read_text`` が ``FileNotFoundError`` を投げ、
+    ``GuardStructureError`` -> exit 2 で**他の検査結果ごと捨てられる**。局所的な
+    false-red より悪い (本物の drift があってもその診断が失われる)。
+
+    fallback code review (Codex usage limit 時の C6) が case C/D として実測した退行で、
+    ここはその再発防止 pin である。
+    """
+    _make_repo(tmp_path)
+    deep = _make_deep_dir(tmp_path)
+    src = deep / "deepfile.rs"
+    src_ext = "\\\\?\\" + os.path.abspath(str(src))
+    with open(src_ext, "w", encoding="utf-8") as f:
+        f.write("pub fn real_symbol_here() {}\n")
+    assert len(str(src)) > 260
+
+    docs = tmp_path / "docs"
+    rel = os.path.relpath(str(src), str(docs)).replace("\\", "/")
+    (docs / "a.md").write_text(
+        f"# a\n\n[deepfile.rs]({rel}) の `no_such_symbol_xyz` を参照する。\n",
+        encoding="utf-8",
+    )
+
+    result = _run_on(tmp_path)
+    out = result.stdout + result.stderr
+    assert result.returncode == guard.EXIT_DRIFT, (
+        f"exit {result.returncode} (期待 {guard.EXIT_DRIFT})。"
+        "exit 2 なら読み込み側が MAX_PATH で落ちて全体 abort している\n" + out
+    )
+    assert "no_such_symbol_xyz" in out, (
+        "違反した symbol 名が出力に現れない = 診断が失われている\n" + out
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="MAX_PATH は Windows 固有")
+def test_read_goes_through_the_extended_path(tmp_path: Path) -> None:
+    """``_read`` 自体が 260 文字超のファイルを読めること (#965).
+
+    上の end-to-end pin だけだと、``_read`` を直さずに ``check_symbol_refs`` 側で
+    例外を握り潰す実装でも緑になりうる。読み込みの述語を直接固定する。
+    """
+    deep = _make_deep_dir(tmp_path)
+    target = deep / "c.md"
+    with open("\\\\?\\" + os.path.abspath(str(target)), "w", encoding="utf-8") as f:
+        f.write("deep content\n")
+    assert len(str(target)) > 260
+    assert guard._read(target) == "deep content\n"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="MAX_PATH は Windows 固有")
+def test_deep_repo_root_is_structural_not_green(tmp_path: Path) -> None:
+    """repo root 自体が深い場合は exit 2 (loud failure) であって緑ではないこと.
+
+    #965 が直したのは「root から辿った**参照先**が 260 文字超」という形で、
+    **root そのものが深い場合は走査の入口の ``Path.glob`` が 0 件を返す**。
+    docstring の `## この gate が見ていない集合` はこれを射程外と宣言しているが、
+    その宣言が成り立つのは **緑ではなく exit 2 で落ちる**限りにおいてである。
+    ここが exit 0 に退行したら、走査ゼロ件が「違反ゼロ件」として通ってしまう。
+    """
+    root = _make_deep_dir(tmp_path)
+    docs = root / "docs"
+    os.makedirs("\\\\?\\" + os.path.abspath(str(docs)), exist_ok=True)
+    with open(
+        "\\\\?\\" + os.path.abspath(str(docs / "a.md")), "w", encoding="utf-8"
+    ) as f:
+        f.write("# a\n")
+    assert len(str(root)) > 260
+
+    # `LongPathsEnabled=1` の機では glob が通り、そもそも残余の限界が存在しない。
+    # 「exit 2 で落ちる」を別の理由 (arch doc 欠損) で満たして緑にしないよう、
+    # 前提の有無をここで実測してから分岐する。
+    if list(root.glob(guard._DOC_GLOB)):
+        pytest.skip("この機では長い root でも glob が通る (残余の限界が無い)")
+
+    result = _run_on(root)
+    assert result.returncode == guard.EXIT_STRUCTURAL, (
+        f"exit {result.returncode}。exit 0 なら走査ゼロ件が緑で通っている\n"
+        + result.stdout
+        + result.stderr
+    )

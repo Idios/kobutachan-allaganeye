@@ -37,14 +37,21 @@ N つに限られる」という網羅宣言が、`gui/src-tauri/src/**/*.rs` �
 
 ## パス長 (#965)
 
-実在判定は ``\\?\`` 拡張パス経由で行う (``_extended`` / ``_exists`` / ``_is_file``)。
-Windows の ``os.stat`` は 260 文字を超えるパスに対し、ファイルが実在していても
-``FileNotFoundError`` を返す。素の ``Path.exists()`` だと、深い場所へ checkout した
-repo で **実在するリンク先を「存在しない」と報告して exit 1** になっていた
-(2026-08-08 実測: 278 文字のパスで 9 本が false-red)。
+**参照先ファイルへのアクセスは実在判定も読み込みも** ``\\?\`` 拡張パス経由で行う
+(``_extended`` / ``_exists`` / ``_is_file`` / ``_read``)。Windows の ``os.stat`` は 260
+文字を超えるパスに対し、ファイルが実在していても ``FileNotFoundError`` を返す。素の
+``Path.exists()`` だと、深い場所へ checkout した repo で **実在するリンク先を「存在
+しない」と報告して exit 1** になっていた (2026-08-08 実測: 278 文字のパスで 9 本が
+false-red)。
+
+**判定と読み込みを別の表現で行ってはいけない。** ``_is_file`` だけを拡張パスへ寄せて
+``_read`` を素のままにすると、「ある」と答えた直後の読み込みが失敗し、局所的な exit 1
+が ``GuardStructureError`` 経由の **exit 2 (全検査 abort) へ悪化する**。本物の drift が
+あってもその診断ごと失われるので、元の false-red より有害になる。
 
 **UNC は ``\\?\UNC\server\share`` 形**で、素朴に ``\\?\`` を前置すると解決できない
-ため分岐している。Windows 以外では no-op。
+ため分岐している。``\\.\`` (device namespace) は UNC ではないのでそのまま返す。
+Windows 以外では no-op。
 
 この変換は **false-red を消すだけで、検査を緩めない**。「実在しないものは False」を
 `tests/scripts/test_check_doc_code_refs.py` が対で固定しており、`_exists` が常に True を
@@ -82,6 +89,13 @@ repo で **実在するリンク先を「存在しない」と報告して exit 
 * **`#` コメント言語の文字列** — `.yml` / `.py` 等では文字列中の `#` 以降も
   コメントとして除去する。C2 が false-red 側に倒れることはあっても、
   false-green にはならない。
+* **repo root 自体が長い場合の走査** — §パス長 の対処は「repo root から辿った
+  **参照先**が 260 文字を超える」場合を扱う (#965 で報告された形)。**repo root
+  そのものが深いと、走査の入口である `Path.glob` が 0 件を返す** (2026-08-30 実測:
+  root 290 文字で `docs/*.md` が 0 件、同じファイルを拡張パスで開くと成功する)。
+  この場合は「走査対象の doc が 0 件」で **exit 2 になり、検査は緑を返さない**。
+  false-green ではなく loud failure なので射程外にしている。閾値はおおよそ root
+  230 文字前後 (root + `docs/` + doc のファイル名長に依存する)。
 
 Refs: https://github.com/Idios/kobutachan-allaganeye/issues/912
 Refs: https://github.com/Idios/kobutachan-allaganeye/issues/910
@@ -563,8 +577,17 @@ def declared_argv_builders(doc_text: str) -> list[str]:
 
 
 def _read(path: Path) -> str:
+    """読み込みも MAX_PATH 回避形で行う (#965)。
+
+    **実在判定だけを拡張パスへ寄せて読み込みを素のままにすると悪化する。**
+    ``_is_file`` が「ある」と答えた直後に ``read_text`` が ``FileNotFoundError`` を
+    投げ、**exit 1 (局所的な false-red) が exit 2 (構造エラーで全体 abort) になる**。
+    しかもその時点で他の検査結果はすべて捨てられるので、本物の drift があっても
+    その診断が失われる。判定と読み込みは同じパス表現で行う。
+    """
     try:
-        return path.read_text(encoding="utf-8")
+        with open(_extended(path), encoding="utf-8") as f:
+            return f.read()
     except OSError as exc:  # pragma: no cover - I/O 障害
         raise GuardStructureError(f"読み込めない: {path} ({exc})") from exc
 
@@ -601,6 +624,13 @@ def _extended(path: Path) -> str:
         return str(path)
     resolved = os.path.abspath(str(path))
     if resolved.startswith("\\\\?\\"):
+        return resolved
+    if resolved.startswith("\\\\.\\"):
+        # device namespace。UNC ではないのでそのまま返す。``abspath`` は末尾が
+        # 予約デバイス名のパス (``C:/x/NUL`` 等) をこの形へ書き換えるので、
+        # ``\\`` 始まりを一律 UNC 扱いすると ``\\?\UNC\.\NUL`` という無効な形を
+        # 作る。結果は「実在しない」に倒れて害は無いが、コードが意図と違うことを
+        # 言っている状態になる。
         return resolved
     if resolved.startswith("\\\\"):  # UNC: \\server\share\...
         return "\\\\?\\UNC" + resolved[1:]
