@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""doc -> code 参照が silent に壊れていないかを検査する (#912 / #910)。
+r"""doc -> code 参照が silent に壊れていないかを検査する (#912 / #910)。
 
 `.github/workflows/ci.yml` の `doc-code-refs` job から引数なしで呼ばれる。
 標準ライブラリのみを使う (CI job に pip install を持たせないため)。
@@ -34,6 +34,21 @@ exit code:
 N つに限られる」という網羅宣言が、`gui/src-tauri/src/**/*.rs` の実態と一致する
 こと (#912)。宣言した以上「網羅が壊れたら気づく」機構が要る。壊れた SSoT は
 散在していた頃より有害になりうるため。
+
+## パス長 (#965)
+
+実在判定は ``\\?\`` 拡張パス経由で行う (``_extended`` / ``_exists`` / ``_is_file``)。
+Windows の ``os.stat`` は 260 文字を超えるパスに対し、ファイルが実在していても
+``FileNotFoundError`` を返す。素の ``Path.exists()`` だと、深い場所へ checkout した
+repo で **実在するリンク先を「存在しない」と報告して exit 1** になっていた
+(2026-08-08 実測: 278 文字のパスで 9 本が false-red)。
+
+**UNC は ``\\?\UNC\server\share`` 形**で、素朴に ``\\?\`` を前置すると解決できない
+ため分岐している。Windows 以外では no-op。
+
+この変換は **false-red を消すだけで、検査を緩めない**。「実在しないものは False」を
+`tests/scripts/test_check_doc_code_refs.py` が対で固定しており、`_exists` が常に True を
+返す実装 (= 検査の no-op 化) では緑にならない。
 
 ## この gate が見ていない集合
 
@@ -75,6 +90,7 @@ Refs: https://github.com/Idios/kobutachan-allaganeye/issues/910
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from collections.abc import Iterator
@@ -562,6 +578,45 @@ def _docs(repo_root: Path) -> list[Path]:
     return docs
 
 
+def _extended(path: Path) -> str:
+    r"""Windows の MAX_PATH を回避する拡張パス形式へ変換する (#965)。
+
+    Windows の ``os.stat`` は 260 文字 (MAX_PATH) を超えるパスに対し、**ファイルが
+    実在していても** ``FileNotFoundError`` を返す。``Path.exists()`` / ``Path.is_file()``
+    は内部で ``os.stat`` を呼ぶので、深い場所へ checkout した repo でこの guard を
+    ローカル実行すると、実在するリンク先を「存在しない」と報告して exit 1 になる
+    (2026-08-08 実測: 278 文字のパスで実在する 9 本のリンクが red になった)。
+
+    ``\\?\`` を前置すると Win32 が MAX_PATH 検査を省くので実在判定が正しく返る。
+
+    **UNC パスは別形式**である。``\\server\share\x`` に素朴に ``\\?\`` を足すと
+    ``\\?\\\server\share\x`` になって解決できない。正しくは
+    ``\\?\UNC\server\share\x`` で、この分岐を持たないと UNC 上で**実在するのに
+    存在しないと報告する**という、直そうとした症状を別経路でそのまま再現する。
+
+    Windows 以外では no-op (POSIX に MAX_PATH 相当の制約は無い)。相対パスは
+    ``os.path.abspath`` で絶対化する — 拡張パス形式は相対パスを受け付けない。
+    """
+    if os.name != "nt":
+        return str(path)
+    resolved = os.path.abspath(str(path))
+    if resolved.startswith("\\\\?\\"):
+        return resolved
+    if resolved.startswith("\\\\"):  # UNC: \\server\share\...
+        return "\\\\?\\UNC" + resolved[1:]
+    return "\\\\?\\" + resolved
+
+
+def _exists(path: Path) -> bool:
+    """MAX_PATH を回避した ``Path.exists()`` 相当 (#965)。"""
+    return os.path.exists(_extended(path))
+
+
+def _is_file(path: Path) -> bool:
+    """MAX_PATH を回避した ``Path.is_file()`` 相当 (#965)。"""
+    return os.path.isfile(_extended(path))
+
+
 def check_link_targets(repo_root: Path) -> list[Violation]:
     """C1: 相対リンク先が実在すること。"""
     violations: list[Violation] = []
@@ -571,7 +626,7 @@ def check_link_targets(repo_root: Path) -> list[Violation]:
         for lineno, line in iter_prose_lines(text):
             for target in link_targets(line):
                 checked += 1
-                if not (doc.parent / target).exists():
+                if not _exists(doc.parent / target):
                     violations.append(
                         Violation(
                             "link",
@@ -596,7 +651,7 @@ def check_symbol_refs(repo_root: Path) -> list[Violation]:
                 checked += 1
                 location = f"{doc.relative_to(repo_root).as_posix()}:{lineno}"
                 path = doc.parent / target.split("#", 1)[0]
-                if not path.is_file():
+                if not _is_file(path):
                     violations.append(
                         Violation("symbol", location, f"参照先が存在しない: {target}")
                     )
@@ -622,14 +677,14 @@ def check_symbol_refs(repo_root: Path) -> list[Violation]:
 def check_spawn_coverage(repo_root: Path) -> list[Violation]:
     """C3: §2.3 の GUI -> CLI spawn 網羅宣言が実態と一致すること。"""
     doc_path = repo_root / _ARCH_DOC
-    if not doc_path.is_file():
+    if not _is_file(doc_path):
         raise GuardStructureError(f"{_ARCH_DOC} が存在しない。")
     doc_text = _read(doc_path)
     declared, declared_count = declared_spawn_sites(doc_text)
     location = _ARCH_DOC
 
     lib_path = repo_root / "gui/src-tauri/src/lib.rs"
-    if not lib_path.is_file():
+    if not _is_file(lib_path):
         raise GuardStructureError(f"{lib_path} が存在しない。")
     lib_source = _read(lib_path)
 
@@ -673,7 +728,7 @@ def check_spawn_coverage(repo_root: Path) -> list[Violation]:
     # `fn build_cli_command(spec: &AllaganeyeCommand)` を別 module へ置くだけで、
     # 5 サイトの集合を一切変えずに 6 本目の spawn を生やせてしまう。
     rust_paths = sorted(
-        {p for pattern in _RUST_GLOBS for p in repo_root.glob(pattern) if p.is_file()}
+        {p for pattern in _RUST_GLOBS for p in repo_root.glob(pattern) if _is_file(p)}
     )
     if not rust_paths:
         raise GuardStructureError(

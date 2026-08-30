@@ -19,6 +19,7 @@ repo では過去に (a) 行末コメントに書いただけの状態を配線�
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -888,3 +889,105 @@ def test_no_docs_is_structural_not_green(tmp_path: Path) -> None:
     (tmp_path / "docs").mkdir()
     result = _run_on(tmp_path)
     assert result.returncode == guard.EXIT_STRUCTURAL, result.stdout + result.stderr
+
+
+# ---------------------------------------------------------------------------
+# MAX_PATH (#965)
+#
+# Windows の ``os.stat`` は 260 文字を超えるパスに対し、ファイルが実在していても
+# ``FileNotFoundError`` を返す。``Path.exists()`` / ``Path.is_file()`` は内部で
+# ``os.stat`` を呼ぶので、深い場所へ checkout した repo でこの guard をローカル
+# 実行すると、実在するリンク先を「存在しない」と報告して exit 1 になっていた。
+#
+# **「エラーが消えた」だけでは検査が no-op 化したのと区別できない**ので、
+# 拡張パスへ寄せた後も「実在しないものは False を返す」ことを対で固定する。
+# ---------------------------------------------------------------------------
+
+_LONG_SEGMENT = "d" * 48
+
+
+def _make_deep_dir(base: Path) -> Path:
+    """``base`` の下に 260 文字を超えるディレクトリを作って返す。
+
+    作成自体に拡張パスが要る (``os.makedirs`` も ``os.stat`` 系を通る) ため、
+    Windows では ``\\\\?\\`` を前置して掘る。
+    """
+    deep = base
+    for _ in range(6):
+        deep = deep / _LONG_SEGMENT
+    target = str(deep)
+    if os.name == "nt":
+        os.makedirs("\\\\?\\" + os.path.abspath(target), exist_ok=True)
+    else:
+        os.makedirs(target, exist_ok=True)
+    return deep
+
+
+def test_extended_is_noop_off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """POSIX では変換しない (MAX_PATH 相当の制約が無いため)."""
+    monkeypatch.setattr(guard.os, "name", "posix")
+    assert guard._extended(Path("docs/a.md")) == "docs/a.md"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="拡張パス形式は Windows 固有")
+def test_extended_prefixes_a_drive_path() -> None:
+    got = guard._extended(Path("C:/x/y.md"))
+    assert got.startswith("\\\\?\\C:\\"), got
+
+
+@pytest.mark.skipif(os.name != "nt", reason="拡張パス形式は Windows 固有")
+def test_extended_uses_the_unc_form_for_unc_paths() -> None:
+    """UNC は ``\\\\?\\UNC\\server\\share`` 形。素朴な前置では解決できない.
+
+    ``\\\\server\\share\\x`` に ``\\\\?\\`` をそのまま足すと ``\\\\?\\\\\\server\\...``
+    になり、直そうとした「実在するのに存在しないと報告する」症状を UNC 上で
+    そのまま再現してしまう。
+    """
+    got = guard._extended(Path("//server/share/x.md"))
+    assert got.startswith("\\\\?\\UNC\\server\\share"), got
+    assert not got.startswith("\\\\?\\\\\\"), got
+
+
+@pytest.mark.skipif(os.name != "nt", reason="拡張パス形式は Windows 固有")
+def test_extended_is_idempotent_on_already_extended_paths() -> None:
+    already = "\\\\?\\C:\\x\\y.md"
+    assert guard._extended(Path(already)) == already
+
+
+def test_exists_finds_a_file_behind_max_path(tmp_path: Path) -> None:
+    """260 文字超のパスでも実在判定が True になること (#965 の本体).
+
+    Windows では素の ``Path.exists()`` が False を返すことも同時に確認する
+    (返さないなら、この環境ではそもそも症状が再現しておらず、本 test は
+    「修正が効いた」ことの証拠になっていない)。
+    """
+    deep = _make_deep_dir(tmp_path)
+    target = deep / "b.md"
+    if os.name == "nt":
+        with open("\\\\?\\" + os.path.abspath(str(target)), "w", encoding="utf-8") as f:
+            f.write("# b\n")
+    else:
+        target.write_text("# b\n", encoding="utf-8")
+
+    assert len(str(target)) > 260, f"deep path is only {len(str(target))} chars"
+    if os.name == "nt":
+        assert not target.exists(), (
+            "素の Path.exists() が True を返した = この環境では MAX_PATH 症状が "
+            "再現していない。本 test は修正の証拠になっていないので、"
+            "再現条件 (パス長 / longpath 設定) を見直すこと"
+        )
+    assert guard._exists(target) is True
+    assert guard._is_file(target) is True
+
+
+def test_exists_still_reports_missing_files_behind_max_path(tmp_path: Path) -> None:
+    """拡張パスへ寄せても「実在しないものは False」が保たれること.
+
+    これが無いと、`_exists` が常に True を返す実装 (= 検査の no-op 化) でも
+    上の test は緑になる。「エラーが消えた」と「検査が黙った」を分ける。
+    """
+    deep = _make_deep_dir(tmp_path)
+    missing = deep / "NOPE.md"
+    assert len(str(missing)) > 260
+    assert guard._exists(missing) is False
+    assert guard._is_file(missing) is False
