@@ -28,9 +28,19 @@ export type AppScreen =
  * localStorage persistence in #613 (deliberately deferred to a follow-up).
  *
  * NOTE: `--no-audio` is intentionally NOT exposed here. The audio module is
- * frozen (`AUDIO_FROZEN` in `allaganeye/commands/split_matches.py:525`,
- * #327), so the flag is a no-op until Fanfare scan ships. Re-add when
- * #327 lands.
+ * frozen (`AUDIO_FROZEN` in `allaganeye/audio/__init__.py`), so the Fanfare
+ * *scan* is skipped regardless of the flag's value.
+ *
+ * The flag is NOT inert end-to-end: it is part of the detection cache key
+ * (`_load_cache_hit` in `allaganeye/commands/split_matches.py`), is persisted
+ * into `.detection_cache.json`, and is recorded in `metadata.json` under
+ * `detection_params.no_audio`. Flipping it forces a cache miss and a full
+ * re-detect. Do not drop it from any of those on the assumption it is dead.
+ *
+ * The freeze is indefinite with no scheduled review date (#865, still open);
+ * the next natural trigger is the two-signal detection re-architecture. #327
+ * froze the module and is closed, so it will never "land" -- this is not a
+ * pending item. The material for an unfreeze sits next to `AUDIO_FROZEN`.
  */
 export interface DetectionParams {
   /** `--blackout-threshold {x}`. CLI default 15.0, valid range 0-255. */

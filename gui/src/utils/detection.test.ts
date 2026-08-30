@@ -40,7 +40,7 @@ describe('toStartDetectParams (#613)', () => {
     expect(args.gpu).toBe(expected);
   });
 
-  it('produces the three expected keys (noAudio omitted while audio module frozen, #327)', () => {
+  it('produces the three expected keys (noAudio omitted; audio module frozen indefinitely, #327 / #865)', () => {
     const args = toStartDetectParams(DEFAULT_DETECTION_PARAMS);
     expect(Object.keys(args).sort()).toEqual([
       'blackoutThreshold',

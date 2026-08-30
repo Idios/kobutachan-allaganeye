@@ -20,8 +20,13 @@ import {
  *   echoed back.
  *
  * NOTE: `noAudio` is intentionally not in `DetectionParams` (audio module
- * frozen, #327 / split_matches.py:525). When #327 ships, re-add the flag
- * here and to the panel UI.
+ * frozen -- `AUDIO_FROZEN` in `allaganeye/audio/__init__.py`, which skips the
+ * Fanfare *scan* regardless of the flag's value; the flag still participates
+ * in the detection cache key and in `metadata.json`, so it is not inert
+ * end-to-end). The freeze is indefinite with no scheduled review date (#865,
+ * still open); #327 is closed and will never "ship", so this is not a pending
+ * item. Re-add the flag here and to the panel UI only if that decision is
+ * reversed.
  */
 export function toStartDetectParams(p: DetectionParams): Record<string, unknown> {
   return {
