@@ -908,7 +908,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | input: `idle` / `disabled` (`running \|\| cancelling \|\| isSample`。sample mode disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) → §1.4)。hint: `displayOnly` |
 | 遷移トリガー | input `onChange` → 即時 `setNamePattern(value)` |
 | store mutation | なし (session-local) |
-| 例外 / edge case | `formatName` で `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}` を置換。`{start}` は `formatStartForFilename` で `MM-SS` / `H-MM-SS` 形式 (Windows filename で `:` 不可のため `-` 置換)。未知トークン (`{foo}` 等) は置換されず literal のまま出るだけで syntax error にはしない。ただし **置換キーなし等で 2 つ以上の match が同一ファイルに解決する pattern は、CLI 側の `resolve_export_output_paths` が ffmpeg 起動前 (mkdir よりも前) に検出し、1 件も書き出さずに exit 5** (#930 / #938)。GUI も `--stdin` で同じ `export` command を呼ぶため同じ preflight を通り、invoke reject → `EXPORT_ERROR` (§2.5.7) になる。**前回 run が残した同名ファイルへの上書き** (ffmpeg `-y`) は従来どおりで拒否対象ではない (§2.5.12)。拒否 5 条件の正は [cli-spec.md](cli-spec.md) の `--name-pattern` |
+| 例外 / edge case | `formatName` で `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}` を置換。`{start}` は `formatStartForFilename` で `MM-SS` / `H-MM-SS` 形式 (Windows filename で `:` 不可のため `-` 置換)。未知トークン (`{foo}` 等) は置換されず literal のまま出るだけで syntax error にはしない。ただし **置換キーなし等で 2 つ以上の match が同一ファイルに解決する pattern は、CLI 側の `resolve_output_paths` が ffmpeg 起動前 (mkdir よりも前) に検出し、1 件も書き出さずに exit 5** (#930 / #938)。GUI も `--stdin` で同じ `export` command を呼ぶため同じ preflight を通り、invoke reject → `EXPORT_ERROR` (§2.5.7) になる。**前回 run が残した同名ファイルへの上書き** (ffmpeg `-y`) は従来どおりで拒否対象ではない (§2.5.12)。拒否 5 条件の正は [cli-spec.md](cli-spec.md) の `--name-pattern` |
 
 #### §2.5.6 コーデック selector (copy / h264 buttons)
 

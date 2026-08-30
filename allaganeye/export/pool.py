@@ -203,7 +203,7 @@ def _identity_key(resolved: Path) -> Path:
     return Path(parts[0], *(p.rstrip(". ") or p for p in parts[1:]))
 
 
-def resolve_export_output_paths(
+def resolve_output_paths(
     matches: Sequence[ExportMatch],
     pattern: str,
     *,
@@ -214,7 +214,7 @@ def resolve_export_output_paths(
 
     Containment and uniqueness are two different invariants, and checking
     them on two different representations is what let a bug through:
-    :func:`resolve_export_output_path` judged containment on the **resolved
+    :func:`resolve_output_path` judged containment on the **resolved
     path**, while the callers' duplicate check keyed a dict on the **rendered
     string**. Two renderings can both stay inside ``output_dir`` and still
     denote the same file, so both passed both checks and both were written --
@@ -240,7 +240,7 @@ def resolve_export_output_paths(
     can actually change.
 
     Returns the ``output_dir / rendered`` paths in ``matches`` order (the
-    unresolved form, exactly as :func:`resolve_export_output_path` returns).
+    unresolved form, exactly as :func:`resolve_output_path` returns).
 
     Raises:
         ConfigValidationError: any match escapes ``output_dir``, targets
@@ -278,7 +278,7 @@ def resolve_export_output_paths(
     return out
 
 
-def resolve_export_output_path(
+def resolve_output_path(
     m: ExportMatch,
     pattern: str,
     *,
@@ -288,7 +288,7 @@ def resolve_export_output_path(
     """Render ``pattern`` for ``m`` and sandbox the result to ``output_dir`` (B1).
 
     Single-match check. It validates ``m`` **in isolation**, so it cannot see
-    that two matches collide -- use :func:`resolve_export_output_paths` for
+    that two matches collide -- use :func:`resolve_output_paths` for
     any code path that handles a whole match list.
 
     ``output_dir / rendered`` is not confined to ``output_dir``:
@@ -361,7 +361,7 @@ def export_matches(
     # That check is inherently list-level, so the per-match re-validation in the
     # worker below cannot express it -- this is the only place it can live for
     # callers that skip the CLI preflight (GUI / in-process).
-    resolve_export_output_paths(
+    resolve_output_paths(
         matches, name_pattern, output_dir=output_dir, source_video=source_video
     )
 
@@ -392,7 +392,7 @@ def export_matches(
 
             # B1: re-validate on the path that is actually handed to ffmpeg, so
             # no future edit can reintroduce an unchecked `output_dir / name`.
-            output_path = resolve_export_output_path(
+            output_path = resolve_output_path(
                 m, name_pattern, output_dir=output_dir, source_video=source_video
             )
             try:
