@@ -49,6 +49,13 @@ false-red)。
 が ``GuardStructureError`` 経由の **exit 2 (全検査 abort) へ悪化する**。本物の drift が
 あってもその診断ごと失われるので、元の false-red より有害になる。
 
+**走査の入口も同じ理由で守る必要がある。** ``Path.glob`` は 260 文字超の entry を
+例外なしに黙って落とす。結果が空になるとは限らないので「走査対象ゼロ件」の構造検査
+には引っかからず、**落ちたファイルの違反を見逃したまま exit 0 になる** (2026-08-30
+実測: root 225-235 文字の repo で宣言外 spawn site を含む `.rs` が消え、緑を返した)。
+元の症状 (false-red) より悪いので、``_glob`` が拡張パス walk の実数と突き合わせ、
+取りこぼしを構造エラーにする。
+
 **UNC は ``\\?\UNC\server\share`` 形**で、素朴に ``\\?\`` を前置すると解決できない
 ため分岐している。``\\.\`` (device namespace) は UNC ではないのでそのまま返す。
 Windows 以外では no-op。
@@ -90,12 +97,14 @@ Windows 以外では no-op。
   コメントとして除去する。C2 が false-red 側に倒れることはあっても、
   false-green にはならない。
 * **repo root 自体が長い場合の走査** — §パス長 の対処は「repo root から辿った
-  **参照先**が 260 文字を超える」場合を扱う (#965 で報告された形)。**repo root
-  そのものが深いと、走査の入口である `Path.glob` が 0 件を返す** (2026-08-30 実測:
-  root 290 文字で `docs/*.md` が 0 件、同じファイルを拡張パスで開くと成功する)。
-  この場合は「走査対象の doc が 0 件」で **exit 2 になり、検査は緑を返さない**。
-  false-green ではなく loud failure なので射程外にしている。閾値はおおよそ root
-  230 文字前後 (root + `docs/` + doc のファイル名長に依存する)。
+  **参照先**が 260 文字を超える」場合を直す (#965 で報告された形)。**repo root
+  そのものが深いと、走査の入口である `Path.glob` が該当 entry を黙って落とす**
+  (2026-08-30 実測: root 225 文字で `gui/src-tauri/src/process_util/mod.rs` が
+  glob から消え、root 265 文字で `docs/*.md` が 0 件になる。いずれも同じファイルを
+  拡張パスで開くと成功する)。前者は `_glob` の突き合わせで、後者は「doc が 0 件」で
+  **どちらも exit 2 として検知する**ので緑にはならないが、**その repo を走査できる
+  ようにはならない**。深い場所へ checkout した repo で本 gate を回したい場合は、
+  より浅い場所へ checkout する必要がある。
 
 Refs: https://github.com/Idios/kobutachan-allaganeye/issues/912
 Refs: https://github.com/Idios/kobutachan-allaganeye/issues/910
@@ -104,6 +113,7 @@ Refs: https://github.com/Idios/kobutachan-allaganeye/issues/910
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import os
 import re
 import sys
@@ -592,7 +602,62 @@ def _read(path: Path) -> str:
         raise GuardStructureError(f"読み込めない: {path} ({exc})") from exc
 
 
+def _walk_matches(repo_root: Path, pattern: str) -> int:
+    r"""``pattern`` に一致するファイル数を拡張パス walk で数える (#965)。
+
+    ``Path.glob`` の取りこぼしを検知するための ground truth。``glob`` と同じ集合を
+    数える必要があるので、対応する形を ``docs/*.md`` と ``a/b/**/*.rs`` (``**`` は
+    0 段以上) に限り、それ以外は構造エラーにする。**未対応の形を黙って 0 と数えると
+    この検査自体が no-op になる**ため。
+    """
+    head, _, name_pattern = pattern.rpartition("/")
+    recursive = head.endswith("/**") or head == "**"
+    base = head[: -len("**")].rstrip("/") if recursive else head
+    if "*" in base or "?" in base:
+        raise GuardStructureError(
+            f"未対応の glob 形: {pattern} (_walk_matches が数えられない)。"
+        )
+    start = repo_root.joinpath(*base.split("/")) if base else repo_root
+    count = 0
+    for _dirpath, dirnames, filenames in os.walk(_extended(start)):
+        count += sum(1 for name in filenames if fnmatch.fnmatch(name, name_pattern))
+        if not recursive:
+            dirnames.clear()
+    return count
+
+
+def _glob(repo_root: Path, pattern: str) -> list[Path]:
+    r"""``glob`` の結果が MAX_PATH で silent に欠けていないか確かめて返す (#965)。
+
+    **Windows の ``Path.glob`` は 260 文字を超える entry を例外なしに黙って落とす。**
+    落ちても結果が空になるとは限らないので、「走査対象ゼロ件」の構造検査には
+    引っかからない。その結果、宣言外の spawn site を含むファイルが走査から消えたまま
+    **exit 0 で緑になる** (2026-08-30 実測: root 225-235 文字の repo で
+    `gui/src-tauri/src/process_util/mod.rs` が glob から消え、C3 違反を見逃した)。
+
+    これは元の症状 (false-red) より悪い false-green なので、拡張パス walk の実数と
+    突き合わせ、**取りこぼしがあれば構造エラーにする**。実数より多い分では倒さない
+    (``*.md`` に一致するディレクトリ等、walk が数えない側の差分があるため)。
+    """
+    found = sorted(repo_root.glob(pattern))
+    if os.name != "nt":
+        return found
+    actual = _walk_matches(repo_root, pattern)
+    if actual > len(found):
+        raise GuardStructureError(
+            f"{pattern} の走査が {actual - len(found)} 件取りこぼした "
+            f"(glob={len(found)} / 実数={actual})。パスが 260 文字を超えている。"
+            "この状態を緑で通すと、走査から消えたファイルの違反を見逃す。"
+        )
+    return found
+
+
 def _docs(repo_root: Path) -> list[Path]:
+    # ここは `_glob` を通さない。`docs/*.md` は 1 階層なので取りこぼしが
+    # **all-or-nothing** になる (`os.scandir` がディレクトリごと開けないか、
+    # 全 entry を名前で返すかのどちらか。実測: 名前が 294 文字の doc も glob は
+    # 返す)。全滅なら直下の「0 件」で構造エラーになるため、部分欠落を検知する
+    # `_glob` を挟んでも**発火しうる状況が無い** (発火実証できない機構は置かない)。
     docs = sorted(repo_root.glob(_DOC_GLOB))
     if not docs:
         raise GuardStructureError(
@@ -758,7 +823,7 @@ def check_spawn_coverage(repo_root: Path) -> list[Violation]:
     # `fn build_cli_command(spec: &AllaganeyeCommand)` を別 module へ置くだけで、
     # 5 サイトの集合を一切変えずに 6 本目の spawn を生やせてしまう。
     rust_paths = sorted(
-        {p for pattern in _RUST_GLOBS for p in repo_root.glob(pattern) if _is_file(p)}
+        {p for pattern in _RUST_GLOBS for p in _glob(repo_root, pattern) if _is_file(p)}
     )
     if not rust_paths:
         raise GuardStructureError(

@@ -1079,3 +1079,145 @@ def test_deep_repo_root_is_structural_not_green(tmp_path: Path) -> None:
         + result.stdout
         + result.stderr
     )
+
+
+_UNDECLARED_SPAWN_RS = """
+async fn start_undocumented(app: tauri::AppHandle) {
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+}
+"""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="MAX_PATH は Windows 固有")
+def test_rust_file_past_max_path_is_not_silently_dropped(tmp_path: Path) -> None:
+    """走査対象から silent に落ちたファイルの違反を緑で通さないこと (#965).
+
+    `Path.glob` は 260 文字を超える entry を**例外なしに黙って落とす**。結果が空に
+    なるとは限らないので「走査対象ゼロ件」の構造検査には引っかからず、宣言外の
+    spawn site を含む `.rs` が走査から消えたまま **exit 0 で緑になっていた**
+    (2026-08-30 実測: root 225-235 文字の repo で C3 違反を見逃した)。
+    元の症状 (false-red) より悪い false-green なので、ここを pin する。
+
+    `LongPathsEnabled=1` の機では glob が落とさないので、違反は素直に exit 1 で
+    出る。**どちらの機でも「緑ではない」ことが不変**なので、そこを主張にしている。
+    """
+    _make_repo(tmp_path)
+    src = tmp_path / "gui" / "src-tauri" / "src"
+    deep = src
+    while len(str(deep / "mod.rs")) < 270:
+        deep = deep / _LONG_SEGMENT
+    os.makedirs("\\\\?\\" + os.path.abspath(str(deep)), exist_ok=True)
+    with open(
+        "\\\\?\\" + os.path.abspath(str(deep / "mod.rs")), "w", encoding="utf-8"
+    ) as f:
+        f.write(_UNDECLARED_SPAWN_RS)
+
+    result = _run_on(tmp_path)
+    out = result.stdout + result.stderr
+    assert result.returncode != guard.EXIT_OK, (
+        "走査から消えたファイルの違反を緑で通している\n" + out
+    )
+
+    dropped = not any(p.name == "mod.rs" for p in src.glob("**/*.rs"))
+    if dropped:
+        assert result.returncode == guard.EXIT_STRUCTURAL, out
+        assert "取りこぼした" in out, out
+    else:
+        assert result.returncode == guard.EXIT_DRIFT, out
+        assert "start_undocumented" in out, out
+
+
+@pytest.mark.skipif(os.name != "nt", reason="MAX_PATH は Windows 固有")
+def test_doc_with_a_name_past_max_path_is_still_read(tmp_path: Path) -> None:
+    """名前が 260 文字超の doc も走査対象に入り、中の違反が exit 1 で出ること (#965).
+
+    **`docs/` は 1 階層なので、深い repo でなくても長いファイル名だけで 260 文字を
+    超えられる。** そして 2026-08-30 実測では、この形の entry を `glob` は**落とさない**
+    (`os.scandir` は名前を返すだけで `stat` しない) 一方、素の `read_text` は
+    `FileNotFoundError` になる。つまり docs 側の症状は「走査から消える」ではなく
+    「走査対象なのに読めない」で、`_read` を素のままにすると **exit 1 が exit 2 へ
+    悪化する**。上の C2 版と対になる C1 側の end-to-end pin である。
+    """
+    _make_repo(tmp_path)
+    long_name = ("d" * 200) + ".md"
+    doc = tmp_path / "docs" / long_name
+    assert len(str(doc)) > 260, f"{len(str(doc))} 文字では症状が出ない"
+    with open("\\\\?\\" + os.path.abspath(str(doc)), "w", encoding="utf-8") as f:
+        f.write("# long\n\n[ghost](../gui/src-tauri/src/ghost.rs)\n")
+
+    assert any(p.name == long_name for p in (tmp_path / "docs").glob("*.md")), (
+        "前提が崩れた: この機では長い名前の doc を glob が落としている"
+    )
+
+    result = _run_on(tmp_path)
+    out = result.stdout + result.stderr
+    assert result.returncode == guard.EXIT_DRIFT, (
+        f"exit {result.returncode}。exit 2 なら読み込みが MAX_PATH で落ちている\n" + out
+    )
+    assert "ghost.rs" in out, out
+
+
+def _spy(monkeypatch: pytest.MonkeyPatch, name: str) -> list[str]:
+    """``guard`` の述語呼び出しを記録する。実際の判定はそのまま通す。"""
+    seen: list[str] = []
+    real = getattr(guard, name)
+
+    def wrapper(path: Path) -> bool:
+        seen.append(str(path))
+        return real(path)
+
+    monkeypatch.setattr(guard, name, wrapper)
+    return seen
+
+
+def test_link_check_resolves_targets_through_the_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C1 がリンク先の実在を ``_exists`` 経由で判定していること (#965).
+
+    ここが素の ``Path.exists()`` に戻ると **#965 が報告した症状そのもの**
+    (実在するリンク先を「存在しない」と報告して exit 1) が再発する。それでいて
+    MAX_PATH 系の end-to-end テストは C2 経路しか踏んでいないため、全部緑のまま
+    通った (2026-08-30 実測: 当該行だけ revert して 68 passed)。
+
+    長いパスを作らないので **ubuntu でも実際に走り、runner の LongPathsEnabled
+    設定にも依存しない**。
+    """
+    _make_repo(tmp_path)
+    seen = _spy(monkeypatch, "_exists")
+    assert guard.check_link_targets(tmp_path) == []
+    assert any("lib.rs" in s for s in seen), (
+        f"リンク先が _exists を経由していない: {seen}"
+    )
+
+
+def test_symbol_check_resolves_targets_through_the_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C2 がリンク先の実在を ``_is_file`` 経由で判定していること (#965)."""
+    _make_repo(tmp_path)
+    seen = _spy(monkeypatch, "_is_file")
+    assert guard.check_symbol_refs(tmp_path) == []
+    assert any("lib.rs" in s for s in seen), (
+        f"リンク先が _is_file を経由していない: {seen}"
+    )
+
+
+def test_spawn_check_resolves_targets_through_the_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C3 が arch doc と Rust ソースの実在を ``_is_file`` 経由で判定していること.
+
+    lib.rs を 2 回以上要求するのは、**preflight の実在確認と glob 結果の filter を
+    分けて固定する**ため。片方だけ素の ``is_file()`` に戻っても気づけるようにする。
+    """
+    _make_repo(tmp_path)
+    seen = _spy(monkeypatch, "_is_file")
+    assert guard.check_spawn_coverage(tmp_path) == []
+    assert any("system-architecture.md" in s for s in seen), (
+        f"arch doc が _is_file を経由していない: {seen}"
+    )
+    assert sum(1 for s in seen if "lib.rs" in s) >= 2, (
+        f"preflight と glob filter の両方が _is_file を経由していない: {seen}"
+    )
