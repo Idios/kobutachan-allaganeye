@@ -132,7 +132,7 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 PR 本文に「Refs #656 + #662 / Round 4」と書かれた fix PR。#656 は cp932 encoding bug の元 issue で、過去に #657 (Python 側 fix)、#662 (Rust 側 fix) が merged 済 (前回 fix で 2 回目の修正、本 PR で 3 回目)。
 
 1. **[critical]** **G-1**: Step 1.1 (同 issue 過去 PR 検出) で `gh pr list --search "#656" --state merged --limit 10` を実行し、件数 ≥1 (= 2 件) を検出
-2. **[critical]** **G-2**: 検出した件数を Step 5b トリアージ表の **冒頭警告行**として追加 (「同 issue で過去に merged PR `2` 件あります (PR #657, #662)。前回 fix の root cause が今回の変更で完全解消しているか、Step 5 / 5a で重点的に確認してください」)
+2. **[critical]** **G-2**: 検出した件数を Step 5b トリアージ表の **冒頭警告行**として追加 (「同 issue で過去に merged PR `2` 件あります (PR #657, #662)。前回 fix の **再発 root cause** ((a)、§「root cause の 2 用法」) が今回の変更で完全解消しているか、Step 5 / 5a で重点的に確認してください」)
 3. **[critical]** **G-3**: block / threshold は設けない (spec O2 (a) 確定値、警告のみ)
 4. **[critical]** **G-4**: 「意図的な multi-phase 分割」確認の言及がある (`docs/refactor-pattern.md` 参照可能性)
 
@@ -145,7 +145,7 @@ PR 本文: `scripts/build-portable-zip.ps1` の `get-pip.py` DL URL を `https:/
 1. **[critical]** **H-1**: Step 5 で M2 外部依存規約 (`docs/l2-workflow.md` §外部依存規約) を引いて URL 規約適合を逐条検証
 2. **[critical]** **H-2**: `master` / `main` / `latest` / `raw HEAD` を含む URL (= `raw/main/`) を検出し、Step 5b トリアージ表で **(A) PR 内修正** とする
 3. **[critical]** **H-3**: F2 (#649→#651→#703→#721 hotfix 連発) を reference として参照する
-4. **[critical]** **H-4**: Codex 起動条件 (diff > 15 file / root cause ≥2 / L1 core) は満たさない (touched 1 file 単発 fix) ため optional Codex review を**起動しない**判断 (起動しても可だが起動条件は満たさない旨を明示)
+4. **[critical]** **H-4**: Codex 起動条件 (条件1 大規模 > 15 file or > 500 lines / 条件2 再発 root cause ≥2 件 / 条件3 core 変更対象ファイル 該当 ≥1) は満たさない (touched 1 file 単発 fix) ため optional Codex review を**起動しない**判断 (起動しても可だが起動条件は満たさない旨を明示)
 5. installer 系 PR の immutable URL 規約違反は典型的な (A) trigger (B 化しない)
 
 ---

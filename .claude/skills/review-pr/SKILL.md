@@ -15,6 +15,24 @@ argument-hint: <PR番号>
 
 背景: 2026-04-22 PR #490 / #495 レビュー時、レビューセッションが合意なく修正 commit & push を実施したため明示的な訂正を受けた (#505)。PR ブランチ・PR 本文は PR 作成セッションの作業領域で、レビューセッションは観察・指摘・依頼に徹する。本質は「書き込みによる責務分離破り」を防ぐことで、checkout 単体は責務分離を破らないため #673 で read 目的に限り許可へ緩和した。
 
+## root cause の 2 用法 (#994)
+
+本 skill には「root cause」が **2 つの別概念**で登場する。取り違えると Codex review の起動判定
+(Step 5a) を誤るため、**以下の呼び分けを本文全体で使う**。裸の `root cause` は使わない。
+
+| 用語 | 何を数えるか | 単位 | 主な登場箇所 |
+| --- | --- | --- | --- |
+| **(a) 再発 root cause** | **過去に merged された PR** が直したはずの原因が、今回また現れているか | **過去 PR 単位** | Step 1.1 M5 警告 / Step 5a 起動条件 (条件 2) / 同 起動記録 |
+| **(b) sweep root cause** | **本 PR の diff で識別した欠陥種別** (literal mismatch / 古い API 残存 / 意味クラス 等) | **欠陥種別単位** | Step 5b トリアージ表 / Step 5c 同種パターン全件 sweep |
+
+**「single root cause だから Codex 非対象」は (a) で判定する。** (b) は Step 5c が
+「複数 root cause が混在する場合」を**通常ケース**として扱っており、(b) の意味では「single」は
+むしろ例外側になる。ここを取り違えると、起動すべき PR で silent に skip し、
+非起動記録も事後検証できない文言になる。
+
+- (a) の数え方: Step 1.1 の M5 警告の件数 (= 同 issue の過去 merged PR 件数)
+- (b) の数え方: Step 5c の「**sweep root cause** 数 = grep コマンド数」原則 (裸の `root cause` で引用しない)
+
 ## 手順
 
 ### 1. PR 概要取得
@@ -50,13 +68,19 @@ gh pr list --search "<元issue#>" --state merged --limit 10
 
 件数 **≥1** (本 PR 以外に同 issue を fix した merged PR が既存) なら、Step 5b トリアージ表の **冒頭に警告行**を必ず追加する:
 
-> 「同 issue で過去に merged PR `<N>` 件あります (PR #..., #...)。前回 fix の root cause が今回の変更で完全解消しているか、Step 5 / 5a で重点的に確認してください」
+> **本警告の発火閾値 (≥1 件) と、Step 5a 起動条件 2 の閾値 (≥2 件) は別である。** 過去 merged PR が
+> 1 本のときは「M5 警告は出るが Codex 起動条件 2 は不成立」という中間状態になる。警告行を見て
+> 条件 2 成立と読まないこと (同じシグナルを 2 つの gate が別閾値で使っている)。
+
+警告行の文面:
+
+> 「同 issue で過去に merged PR `<N>` 件あります (PR #..., #...)。前回 fix の **再発 root cause** ((a)、§「root cause の 2 用法」) が今回の変更で完全解消しているか、Step 5 / 5a で重点的に確認してください」
 
 意図的な multi-phase 分割 (例: AppError migration #663→#689→#714 系の Phase 分割、[`docs/refactor-pattern.md`](../../../docs/refactor-pattern.md)) の場合は元 issue の本文 / コメントで明示確認し、警告を「意図的分割と確認済」として処置する。
 
 ##### 意図的分割の確認失敗時 fallback (G-4 fix)
 
-元 issue の本文 / コメントを Read しても「意図的な multi-phase 分割」かどうかが判断できない場合 (= 元 issue が「再発したらまた直す」程度の bug fix で Phase 設計が無いケース) は、警告行を**通常通り出す** (= 「意図的分割と確認済」処置にはしない)。warning は user 判断に倒し、Step 7 提案で `/iterate-review` 起動時に Idios が手動で root cause sweep の重点確認を行う。
+元 issue の本文 / コメントを Read しても「意図的な multi-phase 分割」かどうかが判断できない場合 (= 元 issue が「再発したらまた直す」程度の bug fix で Phase 設計が無いケース) は、警告行を**通常通り出す** (= 「意図的分割と確認済」処置にはしない)。warning は user 判断に倒し、Step 7 提案で `/iterate-review` 起動時に Idios が手動で **再発 root cause** ((a)) の重点確認を行う。
 
 **block / threshold は設けない** (spec O2 (a) 確定値、警告のみ → user 判断)。F4 (#656 cp932 → #662 UTF-8 二段) や F8 (deferred 持ち越し) と同型の reoccurring fix を事前検出する。
 
@@ -321,20 +345,122 @@ PR のみ、**file list 取得より手前**で return する (Dependabot 等の
 
 以下のいずれかを満たす PR で Codex review を併走させる (人手 trigger or skill 内 auto)。agent 実行は tier 1 = companion script `codex-companion.mjs review --base develop-X.Y.Z` の Bash 実行 (slash `/codex:review` は `disable-model-invocation: true` のため agent から invoke 不可 = Idios 専用 tier 3。`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照):
 
-- PR diff が大きい (touched > 15 file or > 500 lines)、または
-- 過去 root cause が複数 (Step 1.1 M5 警告 ≥2 件)、または
-- L1 (CLI / detector / GPU) の core ロジック変更を含む
+- **条件 1 (大規模)**: PR diff が大きい (touched > 15 file or > 500 lines)、または
+- **条件 2 (再発)**: **再発 root cause** が複数 (Step 1.1 M5 警告 ≥2 件)、または
+- **条件 3 (core)**: 下記 §「core 変更対象ファイル」に **1 ファイルでも**該当する変更を含む
+
+##### core 変更対象ファイル (#993)
+
+**この列挙が正であり、抽象語 (「L1 core」「detector 系」) で判定しない。**
+**ディレクトリを指す行はすべて `**` を使う** — 単一 `*` はサブディレクトリを取りこぼす。
+1 行を `**` へ直したら、同じ表の全行に「この行の下にサブディレクトリが生じうるか」を
+1 件ずつ当ててから閉じる (1 行だけのピンポイント修正は同型の穴を残す)。 #930 の教訓
+「**抽象語の観点は具体的な欠陥クラスへの検出力を持たない。検出力は具体列挙にのみ宿る**」
+(`CLAUDE.md` §destructive write boundary audit checklist) は、レビュアの**起動条件の書き方**にも
+そのまま当てはまる。
+
+| glob | 含まれる理由 |
+| --- | --- |
+| `allaganeye/video/detector.py` | 暗転検知 Pass 1 / 2 本体 |
+| `allaganeye/video/gpu_detector.py` | GPU チャンク並列デコード |
+| `allaganeye/video/capture_region.py` | 検出 ROI 解決 (縮退 provenance を持つ) |
+| `allaganeye/video/presence.py` | presence 検出エンジン |
+| `allaganeye/video/scorebar.py` | 暗転分類 + 音声昇格 |
+| `allaganeye/video/vtuber_timeline.py` | VTuber timeline 検出 V0-V4 |
+| `allaganeye/video/probe_state.py` | probe 失敗縮退の契約型 |
+| `allaganeye/video/splitter.py` | 無劣化分割 (出力の不可逆性) |
+| `allaganeye/audio/**/*.py` | 音声昇格の信号処理。**サブディレクトリを含む** — `allaganeye/audio/refs/__init__.py` が実在し、単一 `*` では漏れる |
+| `allaganeye/export/**/*.py` | 並列 export / GPU encoder fallback / ffmpeg 起動。**サブディレクトリを含む** (現時点で下位 `.py` は無いが、`*` のままだと追加時に静かに漏れる) |
+| `gui/src-tauri/src/**/*.rs` | Tauri command 境界 (IPC write 境界)。**サブディレクトリを含む** — `gui/src-tauri/src/process_util/` が実在する |
+
+**境界ファイルの逐条判定** (#993 受け入れ条件):
+
+| ファイル | 条件 3 に該当するか | 根拠 |
+| --- | --- | --- |
+| `allaganeye/video/capture_region.py` | **する** | 上表に明示 |
+| `allaganeye/video/presence.py` | **する** | 上表に明示 |
+| `allaganeye/video/scorebar.py` | **する** | 上表に明示 |
+| `allaganeye/export/ffmpeg_runner.py` | **する** | `allaganeye/export/*.py` に含まれる |
+
+上表に**無い**ファイル (例 `allaganeye/cli.py` / `allaganeye/video/probe.py` /
+`allaganeye/video/areamap.py` / `gui/src/**`) は条件 3 に**該当しない**。追加したいときは
+この表を編集する — 判定を「読み手の解釈」に委ねない。
+
+> **判定は short-circuit してよいが、記録は全数走査を要する。** 条件 3 の**成立判定**は
+> 「1 ファイルでも該当」なので 1 件見つけた時点で確定できる。しかし**起動記録の `該当 <J> 件`**
+> は touched files 全件を表と突き合わせた数でなければならない。起動が確定した時点で数え止めると
+> J が過少になり、後で表を編集したときに過去の判定を再現できなくなる (記録に列挙を義務づけている
+> 理由がこれ)。**走査量が判定と記録で違う**ことをここで明示しておく。
+>
+> **同じ列挙を Step 5a の Codex fallback「重要 PR 判定」も使う。** 本表は**両者で共有する単一の正**で、
+> 起動条件 (本節) と fallback の重要 PR 判定 (§「Codex fallback」step 2) は **同一集合**を指す。
+> **片方だけを更新すると drift する** — 更新は必ずこの表 1 箇所で行い、両参照元がここを名前で引く。
+> (以前は本節が抽象語 / fallback 側が 4 ファイルの部分列挙という別粒度で、境界ファイルの判定が割れていた。)
 
 #### 起動記録 (該当時 / 不該当時とも必須、H-4 fix)
 
 起動した / しなかったの**どちらの場合も**、Step 6 レビュー報告に以下のいずれか 1 行を明記する。**両分岐に定型がある** — 片方だけを定型化すると、定型のない側は実行者ごとの作文になり表記が揺れる:
 
-> `Codex review 起動: 対象 (理由: <上記 3 条件のどれに該当したか>)`
+> `Codex review 起動: 対象 (理由: 条件1 touched <N> file / <M> lines・条件2 再発 root cause <K> 件・条件3 core 変更対象ファイル 該当 <J> 件 [<該当ファイル列挙>] → 成立: 条件 <成立した条件番号を全て>)`
 >
-> `Codex review 起動: 非対象 (理由: touched <N> file / single root cause / non-L1-core)`
+> `Codex review 起動: 非対象 (理由: 条件1 touched <N> file / <M> lines・条件2 再発 root cause <K> 件・条件3 core 変更対象ファイル 該当 0)`
+
+**実測値の書式は両分岐で共通**とする (#993 / #994)。どちらの分岐でも **3 条件を 1 つずつ名指しし、
+それぞれに実測値を付ける**。「`non-L1-core`」のような抽象語 1 語では、事後に「その判定が
+正しかったか」を検証できない。
+
+- **条件 1**: touched file 数と diff 行数を両方書く
+- **条件 2**: 再発 root cause の件数 (= Step 1.1 の M5 警告件数)
+- **条件 3**: §「core 変更対象ファイル」の表に対する**該当件数**。0 件なら `該当 0`、
+  **1 件以上なら該当ファイルを角括弧で列挙する** (どのファイルで成立したかが分からないと、
+  表を編集したときに過去の判定を再現できない)。**列挙の並び順は `gh pr view <PR#> --json files` の
+  返却順**、path は **repo 相対**、区切りは**半角カンマ + 空白**に固定する (並び順を決めないと、同じ PR を
+  2 回記録したときに文字列が変わり「再現できる」という根拠が崩れる)。**この取得が打ち切られたら
+  記録も判定も fail-closed にする** — `pulls.listFiles` の件数上限に達したかどうかの扱いは
+  §「変更ファイル一覧が取れないときの挙動 (fail-closed、実装の契約)」の規定に従う。部分リストで数えた `該当 <J> 件` は
+  「全数走査した」という記録の意味を持たない
+- **対象分岐のみ**: 末尾に `→ 成立: 条件 ...` を足し、**成立した条件を全て**書く。
+  起動条件は OR (「いずれかを満たす」) なので複数同時成立しうる。最初に満たした 1 条件だけを
+  書くと、その条件が後で表から外れたときに「もう起動対象ではない」と誤読される。
+  **区切りは半角カンマ + 空白 (`条件 1, 2, 3`) に固定する** — 理由部の条件間区切りが `・` なので、
+  ここも `・` にすると列挙が入れ子になって境界が読めなくなる
+
+**実例は単数成立・複数成立の両方を示す** (片方しか示さないと、示していない側が毎回作文になる)。
+**数値とファイル名は明らかに架空のものにしてある** — 具体的な実例をそのまま流用されると、
+本来 `該当 <J> 件` を数え直すべきところで実例の値が書き写され、記録が実態とズレるため:
+
+```text
+# 1 条件だけ成立した場合
+Codex review 起動: 対象 (理由: 条件1 touched 4 file / 210 lines・条件2 再発 root cause 1 件・条件3 core 変更対象ファイル 該当 2 件 [allaganeye/video/EXAMPLE_a.py, allaganeye/export/EXAMPLE_b.py] → 成立: 条件 3)
+
+# 複数条件が同時成立した場合
+Codex review 起動: 対象 (理由: 条件1 touched 18 file / 520 lines・条件2 再発 root cause 2 件・条件3 core 変更対象ファイル 該当 1 件 [allaganeye/video/EXAMPLE_c.py] → 成立: 条件 1, 2, 3)
+```
+
+**上の数値・ファイル名は骨格を示すためだけのもので、当該 PR で必ず数え直す。**
+
+> **取得が打ち切られて判定できないとき (fail-closed) の定型** — この第 3 の終状態にも定型を置く
+(定型の数は gate が到達しうる終状態の数と一致していなければならない):
+
+```text
+Codex review 起動: 判定不能 (理由: 変更ファイル一覧の取得が打ち切られた — §「変更ファイル一覧が取れないときの挙動 (fail-closed、実装の契約)」により job を再実行する)
+```
+
+この行を書いた場合は **Codex review を起動せずに job 再実行へ戻る**。`対象` / `非対象` の
+どちらかを書いてはいけない — `touched <N> file` も `該当 <J> 件` も同じ一覧に由来するため、
+部分リストで埋めた数値は実測値ではない。
+
+**なぜ非対象分岐と同じく 3 条件すべてを書くのか**: 片側だけ全条件列挙にすると、
+> 事後監査の対称性が崩れる (非対象は 3 条件ぶんの根拠が残るのに、対象は 1 条件しか残らない)。
+> 「記録義務は分岐を網羅する」の系として、**記録の粒度も分岐を跨いで揃える**。
 
 これがないと「Codex review を意図的に skip したのか / 忘れたのか」が事後追跡できない (Iron Law 5 整合)。
 
+> **ここで言う「root cause」は (a) 再発 root cause である** (#994)。**本 skill には同名で別概念の
+> (b) sweep root cause があり、取り違えると起動判定を誤る** — 詳細と対応表は
+> §「root cause の 2 用法」を参照。本記録行では**必ず「再発 root cause」と書く**
+> (裸の `root cause` / `single root cause` と書かない)。
+>
 > **記録義務は分岐を網羅する。** 本節と下記「Codex 出力の読み取り」の 2 record は、いずれも
 > **起こりうる状態すべてに定型を用意する**方針で書いてある (起動 = 対象 / 非対象、
 > 読み取り = 成功 / 失敗 / 非起動)。新しい記録義務を足すときも同じ原則に従うこと。
@@ -399,7 +525,7 @@ Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §C
 2. **重要 PR 判定 (I-5 fix、spec C6 限界節)**: 以下のいずれかを満たす場合は「重要 PR」とし、**自動 fallback の前に user に AskUserQuestion 3 択を提示**:
    - release 直前 (`pyproject.toml` version bump を含む or develop-X.Y.Z → main 統合 PR)
    - 大規模 refactor (touched > 30 file or diff > 1000 line)
-   - L1 core ロジック変更 (detector.py / gpu_detector.py / audio/*.py / video/detector.py)
+   - **§「core 変更対象ファイル」の表**に 1 ファイルでも該当する変更 (Step 5a 起動条件の条件 3 と**同一集合**。表は 1 箇所にしかなく、両者はそこを名前で引く — #993)
 
    AskUserQuestion 3 択 (Recommended 順):
    - (A) Codex 復旧待ち (本 PR 一時 abort、Codex 復旧後に再 invoke) [Recommended]
@@ -470,7 +596,7 @@ options: [
 | installer / `.github/workflows/` 系 PR で `master` / `main` / `latest` を含む URL を発見 | **(A) PR コメント** (immutable URL pin への変更を要請) | 規約は [`docs/l2-workflow.md` §外部依存規約](../../../docs/l2-workflow.md#外部依存規約-649651703721-教訓) (M2)。F2 (#649→#651→#703→#721) 系の再発防止 |
 | 大規模 PR (touched > 30 file or diff > 1000 line) で Phase 分割の検討漏れ | **(A) PR コメント** (Phase 分割提案) または **(B)** Phase 設計 spec 起票 | 判定基準は [`docs/refactor-pattern.md`](../../../docs/refactor-pattern.md) §4 (A1)。AppError migration が reference 実例 |
 
-**root cause 識別時は Step 5c (同種パターン sweep 規約、本節の直後で詳述) に従う**: explicit N 箇所のみ列挙ではなく、`grep -nE '...'` 全件 sweep の hits を本表に転記すること。**先に下記 Step 5c の手順を確認してから本表を埋めること** (Step 5b → 5c の flow 順は doc 上の順序、運用上は 5c の sweep 結果を 5b 表に転記する)。
+**sweep root cause ((b)、§「root cause の 2 用法」) を識別したら Step 5c (同種パターン sweep 規約、本節の直後で詳述) に従う**: explicit N 箇所のみ列挙ではなく、`grep -nE '...'` 全件 sweep の hits を本表に転記すること。**先に下記 Step 5c の手順を確認してから本表を埋めること** (Step 5b → 5c の flow 順は doc 上の順序、運用上は 5c の sweep 結果を 5b 表に転記する)。
 
 **トリアージ表テンプレート** (Step 6 のレビュー報告に必須で含める)
 
@@ -482,7 +608,7 @@ options: [
 
 ### 5c. 同種パターン全件 sweep 規約 (Refs #682)
 
-Step 5 / 5a / 5b で root cause (literal mismatch / 古い API 残存 / DCE 誇張表現 等) を識別したら、explicit な N 箇所だけを列挙して implementer に依頼するのは **Red Flag** (PR #675 で 3 round 分散の実害)。以下を必須化する:
+Step 5 / 5a / 5b で **sweep root cause ((b))** (literal mismatch / 古い API 残存 / DCE 誇張表現 等) を識別したら、explicit な N 箇所だけを列挙して implementer に依頼するのは **Red Flag** (PR #675 で 3 round 分散の実害)。以下を必須化する:
 
 1. **全件 grep 提示**: `grep -nE 'pattern1|pattern2|...'` で repo 全体から hits を抽出
 2. **トリアージ表に grep hits を全件転記**: Step 5b の表に各 hit を 1 行ずつ記載 (file:line + 該当パターン + 処置分類)
@@ -490,11 +616,16 @@ Step 5 / 5a / 5b で root cause (literal mismatch / 古い API 残存 / DCE 誇�
 
 「explicit な 4 箇所」を依頼すると implementer が同 file 内の他 hits を見落とし、Round 2/3 で再指摘するパターンが発生する (#682 issue 本文 PR #675 経緯参照)。
 
-**複数 root cause が混在する場合** (literal mismatch / 古い API 残存 / DCE 誇張表現 / **base regression (他 PR 由来フィールド欠落)** 等の異なる種類が同一 PR で発生): 各 root cause を最初に個別識別し、root cause ごとに独立した grep コマンドを生成する。base regression は Step 2.2 で列挙した影響候補 PR のフィールド・関数引数・新規エクスポートが本 PR の変更対象ファイルに統合されているか確認することで検出する。異なる root cause を同一 grep パターンで混在させると sweep 漏れが発生するため、root cause 数 = grep コマンド数を原則とする。
+**複数の sweep root cause ((b)) が混在する場合** (literal mismatch / 古い API 残存 / DCE 誇張表現 / **base regression (他 PR 由来フィールド欠落)** 等の異なる種類が同一 PR で発生): 各 root cause を最初に個別識別し、root cause ごとに独立した grep コマンドを生成する。base regression は Step 2.2 で列挙した影響候補 PR のフィールド・関数引数・新規エクスポートが本 PR の変更対象ファイルに統合されているか確認することで検出する。異なる sweep root cause を同一 grep パターンで混在させると sweep 漏れが発生するため、**sweep root cause 数 = grep コマンド数**を原則とする。
 
-#### 意味クラス root cause の sweep (Refs #935 P2-2)
+> **ここでの `root cause` は (b) sweep root cause である** (#994)。Step 5a 起動条件の条件 2 が数えるのは
+> **(a) 再発 root cause** (過去 merged PR 単位) で、別物である。定義は §「root cause の 2 用法」。
+> **本節は「複数が混在するのが通常」という前提で書かれている**ため、ここの感覚を (a) に持ち込むと
+> 「single ではないから Codex 対象」と誤判定する。
 
-上記 1-3 は **root cause が文字列パターンとして表現できる**場合の手順である (literal mismatch / 古い API 残存 / 命名 drift 等)。root cause が**意味クラス** — 単一の grep パターンでは表現できないもの — の場合は、パターンではなく**能力の呼び出し箇所を全列挙して述語を 1 件ずつ当てる**。
+#### 意味クラスの sweep root cause (Refs #935 P2-2)
+
+上記 1-3 は **sweep root cause が文字列パターンとして表現できる**場合の手順である (literal mismatch / 古い API 残存 / 命名 drift 等)。sweep root cause が**意味クラス** — 単一の grep パターンでは表現できないもの — の場合は、パターンではなく**能力の呼び出し箇所を全列挙して述語を 1 件ずつ当てる**。
 
 代表的な意味クラス (いずれかに該当したら本手順へ):
 
@@ -519,11 +650,11 @@ Step 5 / 5a / 5b で root cause (literal mismatch / 古い API 残存 / DCE 誇�
 
    > **層 2 を省略すると sweep は無意味になる**: 本 codebase の不可逆書込の大半は **ffmpeg subprocess** が行うため、層 1 だけでは「出力先パスを決める箇所」が 1 件も挙がらない。#930 の diff に対する実測は 層 1 = 0 hit (production code) / subprocess・出力先パス系 = 30 hit だった。
 
-2. **各 hit に述語を 1 件ずつ当て、判定結果を Step 5b の表に転記する。** 「diff 内にあるか」ではなく「述語を満たすか」で分類する。**diff 外の hit も対象**である (root cause が横断クラスである以上、同じ欠陥が diff 外に既存で潜んでいる可能性がまさに論点)
+2. **各 hit に述語を 1 件ずつ当て、判定結果を Step 5b の表に転記する。** 「diff 内にあるか」ではなく「述語を満たすか」で分類する。**diff 外の hit も対象**である (sweep root cause が横断クラスである以上、同じ欠陥が diff 外に既存で潜んでいる可能性がまさに論点)
 3. 述語を満たさない hit は、diff 内なら **(A)**、diff 外なら Step 5b の判定基準で **(A)** / **(B)** を決める。**「diff 外だから対象外」は理由にならない。** 対象外にするなら「別領域・別機能」trigger を満たすかで判定する
 4. hit にはコメント・docstring も混入する (粗い網)。**網を細くして取りこぼすより、粗く拾って仕分ける**方を選ぶ
 
-> **なぜ grep だけでは足りないか**: 「破壊的操作の述語が弱い」という root cause は、欠陥側の文字列では表現できない。**正しい実装と誤った実装が同じ語彙を使う**ためである。能力側 (書込呼び出し) を全列挙して述語を人が当てるしかない。この構造は memory `feedback_destructive_predicate_needs_identity` / `feedback_source_scan_guard_scope` で 2 度実証されている。
+> **なぜ grep だけでは足りないか**: 「破壊的操作の述語が弱い」という sweep root cause は、欠陥側の文字列では表現できない。**正しい実装と誤った実装が同じ語彙を使う**ためである。能力側 (書込呼び出し) を全列挙して述語を人が当てるしかない。この構造は memory `feedback_destructive_predicate_needs_identity` / `feedback_source_scan_guard_scope` で 2 度実証されている。
 
 #### mirror 元の検証状況確認 (Refs #935 P2-2)
 
@@ -561,7 +692,7 @@ Step 5b のトリアージ表を前提に、以下のテンプレート構造で
 
 | # | 条件 | 実証 (diff / test / log) | 判定 |
 |---|---|---|---|
-| 1 | <条件 1> | `path/to/file.py:123` / `test_xxx` / CI log | ○ / × / 部分的 |
+| 1 | <条件 1> | `path/to/file.py:123` / `test_xxx` / CI log | ○ / × / partial / n-a |
 | 2 | ... | ... | ... |
 
 ## ギャップ分析 (Step 5a)
@@ -615,7 +746,7 @@ Step 5b のトリアージ表を前提に、以下のテンプレート構造で
 
 ### 推奨フロー
 - **(A) 修正依頼が残っている場合**: `/iterate-review $ARGUMENTS` で review-fix ループを起動し、最終 summary コメントを 1 個投稿してマージ準備まで自動化
-- **(A) 課題ゼロかつ受け入れ条件 ✓**: ユーザーが `gh pr merge $ARGUMENTS --squash` で squash merge → 紐づく issue は `/close-issue <issue#>` でクローズ
+- **(A) 課題ゼロかつ受け入れ条件が全件 `○`**: ユーザーが `gh pr merge $ARGUMENTS --squash` で squash merge → 紐づく issue は `/close-issue <issue#>` でクローズ
 - **発散・スコープ問題が疑われる場合**: scope-guard skill / 設計再検討
 ```
 
@@ -667,7 +798,7 @@ PR がマージ済みで本 skill が呼ばれた場合 (= 確認用の事後レ
 1. Step 3 の `/enforce-acceptance-criteria` は issue 番号を特定できないため実行不可。代わりに Step 3 補助チェック (実装内容 ⇔ PR 本文一致 / Closes キーワード不在 / テスト存在) を**必須チェック**として実施
 2. Step 5 ドキュメント整合性と Step 5a ギャップ分析で「PR 本文に書かれた目的」を受け入れ条件の代替として扱う
 3. Step 5b トリアージは通常通り実施 (握り潰し禁止)
-4. Step 6 テンプレートの「受け入れ条件チェック」セクションは「該当なし (issue 未紐付け)」と明記し、代替判定根拠を箇条書き
+4. Step 6 テンプレートの「受け入れ条件チェック」表に **判定列 `n-a` の 1 行**を置き、条件列に「該当なし (issue 未紐付け)」、実証列に代替判定根拠を書く (判定記号の正は §G.3 の 4 値 `○ / × / partial / n-a`。自由文と記号の 2 表現に割らない)
 5. Step 8 は「紐づく issue がない場合」の分岐に従う
 
 ### §B. `/enforce-acceptance-criteria` 実行不可
@@ -706,7 +837,7 @@ PR がマージ済みで本 skill が呼ばれた場合 (= 確認用の事後レ
    - (iii) grep 結果なし + CI typecheck 未設定 → typecheck 追加を (B) 別 issue 起票 or PR 作成セッションに依頼
    - 動的 import (`importlib` / `import()` 実行時解決) は grep / typecheck だけでは検出不可。該当ソースに動的 import が含まれる場合は PR 作成セッションに実機検証を依頼
 
-**doc-only PR での旧用語 literal sweep**: doc-only PR であっても用語 / フィールド名 / コマンド名が変更された場合 (パス変更を含まない場合でも)、他ファイルへの旧用語残存を root cause として識別し Step 5c sweep を適用する。本 §D の「パス・識別子変更」はパス名に限らず PR で変更された任意のキーワード (用語 / フィールド名 / 関数名) を含む。旧用語が他ファイルに散在している場合は用語統一の root cause として Step 5c 全件 sweep が必要。
+**doc-only PR での旧用語 literal sweep**: doc-only PR であっても用語 / フィールド名 / コマンド名が変更された場合 (パス変更を含まない場合でも)、他ファイルへの旧用語残存を **sweep root cause ((b))** として識別し Step 5c sweep を適用する。本 §D の「パス・識別子変更」はパス名に限らず PR で変更された任意のキーワード (用語 / フィールド名 / 関数名) を含む。旧用語が他ファイルに散在している場合は用語統一の sweep root cause として Step 5c 全件 sweep が必要。
 
 ### §E. 参照ファイル追加 (バイナリ等) を伴う PR
 
@@ -769,7 +900,8 @@ Subagent mode で Step 5b の (A)/(B)/(C) 自動分類を行う際の厳格規�
 
 final message に以下のセクションを順序固定で含める:
 
-1. `## acceptance_criteria_status` (各条件 ✓/×/部分的 + evidence)
+1. `## acceptance_criteria_status` (各条件の判定は **○ / × / partial / n-a の 4 値のみ** + evidence。`✓` / `部分的` 等の別記号を使わない — `/iterate-review` Step 2.2 の validation item 5 が `×` / `partial` を文字列で検出するため、別記号だと未達の受け入れ条件が検出をすり抜ける。**`n-a` は「受け入れ条件が適用不能」= 孤立 PR (§A、issue 未紐付け) 専用**で、その場合は 1 行だけ置き、実証列に代替判定根拠を書く。**実証列の粒度は通常経路と同じ**にする — 「PR 本文の目的と一致」のような
+   印象コメントではなく、**根拠にした位置参照を具体的に挙げる** (例: `PR 本文 §目的 ↔ docs/testing-guide.md:120-140 の差分 / Step 5 doc 整合性 OK / Step 5a ギャップ分析 finding 0`)。通常経路で粒度を具体列挙している欄は、fallback 経路でも同じ粒度で埋める。**適用不能を表す値を用意しないと、§A の指示 (「該当なし」と明記せよ) が subagent mode では書きようがなくなる** — 列挙型は fallback 節が生む状態まで数えて定義する)
 2. `## findings_table` (Step 5b トリアージ表 markdown、各行に分類必須)
 3. `## ambiguous_judgments` (auto 判断できなかった点。空でもセクション自体は必須記載)
 4. `## recommendation` (LGTM / fix-required / divergent)
@@ -814,7 +946,7 @@ Iron Law Red Flags と呼応。以下の合理化が浮かんだら LGTM 寸前�
 - **再レビュー時に前回指摘の全件追跡を省略**: Round 2 以降で「前回指摘の解消確認」と「本 Round 新出」を分けずに混在レポートする → /iterate-review Step 3 (収束 / 発散判定) 違反。前 Round の (A) 課題を findings_history で 1 件ずつ照合し解消/未解消を明示する
 - **long-running 検証を自己判断で OK とする**: unit test pass = 全部 OK と誤解。GPU / 長時間動画 / audio 統合は mock 不可のため、PR 作成セッションに実機検証実施 (or 結果報告) を明示要求する
 - **提示フォーマットを無視して口語で書く**: レビュー結果が PR コメントに混在して追跡困難 → Step 6 の「レビュー報告テンプレート」構造で投稿
-- **explicit N 箇所だけ列挙して全件 grep を要求しない (PR #675 Round 1/3 divergence)**: PR #675 で 3 種類の root cause (literal「関数本体先頭」訂正 / 旧 API `vi.stubEnv('DEV', '' as any)` / DCE 誇張表現) が複数 file に散在し、各 Round で explicit な N 箇所のみ列挙したため Round 1 → 2 → 3 と divergence 発生。詳細手順 (grep 全件 sweep / トリアージ表全件転記 / 修正依頼本文に grep 同梱) は **Step 5c (同種パターン sweep 規約、canonical)** 参照。
+- **explicit N 箇所だけ列挙して全件 grep を要求しない (PR #675 Round 1/3 divergence)**: PR #675 で 3 種類の sweep root cause (literal「関数本体先頭」訂正 / 旧 API `vi.stubEnv('DEV', '' as any)` / DCE 誇張表現) が複数 file に散在し、各 Round で explicit な N 箇所のみ列挙したため Round 1 → 2 → 3 と divergence 発生。詳細手順 (grep 全件 sweep / トリアージ表全件転記 / 修正依頼本文に grep 同梱) は **Step 5c (同種パターン sweep 規約、canonical)** 参照。
 
 ## 参考
 

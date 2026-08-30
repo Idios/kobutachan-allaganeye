@@ -26,15 +26,34 @@ description: deferred issue レビュー → バージョンバンプ → リリ
 1. 対象バージョン (例 `v0.2.0`) を特定し、§共通項目 + §`v0.x.0` (L?) 固有項目 の 2 ブロックをユーザーに提示
    - **patch release には対応するレイヤー固有ブロックが存在しない**（固有項目は minor の `v0.x.0` 単位でしか定義されない）。その場合は §共通項目 のみを提示し、「レイヤー固有項目は該当なし（patch release のため）」と**明示**する。黙って 1 ブロックだけ出して済ませない
    - §共通項目 は minor / patch の**両方**に適用される（裁定 D5）。patch だからと本ゲートごと省略しない
-2. 各項目について「達成 / 未達成 / 該当なし」を 1 件ずつ確認 (3 件以上の bulk 確認になる場合はサンプル提示 + 全件 OK / 個別調整 / 中止 の 3 択)
-3. 1 件でも未達成があれば本スキルは中断し、ユーザーに残タスクの優先処理を依頼
-4. 全件達成を確認してから Step 0b へ進む
+2. 各項目について「達成 / 未達成 / 該当なし」を 1 件ずつ確認する。3 件以上の bulk 確認になる場合は **Step 0c の [§bulk 件数の運用](#bulk-件数の運用-iron-law-2-整合) と同じ規約**に従う (サンプル 1 件提示 + 3 択)。本 step 固有の差分は選択肢の意味だけで、件数の閾値・サンプルの選び方・「個別調整」選択時の挙動は同じ:
+   - 件数 ≤2: 1 件ずつ AskUserQuestion で個別確認
+   - 件数 ≥3: サンプル **1 件** (下記 §Track 構造の除外を適用した**後の母集団**の先頭)。本 step での「並び順」は [`docs/release-process.md` §レイヤーリリース受け入れゲート §共通項目](../../../docs/release-process.md) の記載順 — 4 点セットのうち**並び順だけが対象集合ごとに違う**ので、ここで上書きする + 「全件 OK (= 全件 達成) / 個別調整 / 中止」の 3 択
+   - **「個別調整」選択時は 1 件ずつの確認に進む** (Step 0c と同じ挙動)。「全件 OK」で通した場合、全項目を「達成」として記録する
+3. 1 件でも未達成があれば本スキルは中断し、ユーザーに残タスクの優先処理を依頼 (ただし下記 **Track 構造の patch release** の例外を先に読むこと)
+4. 全件達成を確認してから Step 0b へ進む。**Track 構造の patch release では「全件達成」を「除外 3 項目を『Track D で達成予定』と記録し、残り全件が達成」と読み替える** (下記例外節)。読み替えないと、定義上到達しない条件を待って Step 0b / Step 0a-2 が永久に起動しない
+
+#### Track 構造の patch release における再評価点 (#962 項目 4)
+
+**[`docs/release-process.md` §Patch release の Track 構造](../../../docs/release-process.md#patch-release-の-track-構造) に従う patch release では、§共通項目 の一部は Step 0a の時点で構造的に未達である。** Track D (version bump + CHANGELOG) が直列最後だからで、これを「未達 → 中断」と扱うと release が永久に始まらない。
+
+| §共通項目 | Step 0a 時点 | 満たされる時点 |
+| --- | --- | --- |
+| 対象スコープの全 PR がマージ済み | **未達でよい** (Track A-C 進行中) | Track D PR 作成の直前 |
+| バージョン保持箇所が全箇所 `x.y.z` | **未達でよい** (旧版のまま) | Step 3 のバンプ後 |
+| CHANGELOG に対象バージョンセクションがある | **未達でよい** (`## [Unreleased]`) | Step 3 の節見出し改名後 |
+| 上記以外の項目 | **達成が必要** | Step 0a |
+
+- Step 0a では上記 3 項目を **「Track D で達成予定」**として記録し、中断しない。それ以外の項目に未達があれば従来どおり中断する
+- **上記 3 項目は Step 0a の項目 2 (bulk 確認) の母集団から除外する。** サンプル選定 (先頭 1 件) の対象にもしないし、「全件 OK」を選んだときの一括「達成」記録の対象にもしない。除外しないと、bulk の記録規約 (全項目を「達成」として記録) と本節の記録規約 (「Track D で達成予定」) が同じ項目に対して衝突する。**本節の記録が優先**する
+- **再評価点は Step 3 のバンプ・CHANGELOG 改名を終えた直後** (Step 3 の検証コマンドが exit 0 になった時点)。ここで 3 項目を再確認し、1 件でも未達ならリリース PR を作らない
+- minor / major release ではこの例外を使わない (Track 構造の適用対象外。[`docs/release-process.md` §適用条件](../../../docs/release-process.md#適用条件))
 
 注意: 本ゲートは Iron Law 1 (受け入れ条件全充足) のリリースレベル展開。`deferred` review (Step 0b / 0c) はゲート §共通項目内の 1 行に対応するため、Step 0b / 0c はゲート確認の延長として扱う。
 
 ### Step 0a-2: リリース俯瞰レビュー (allaganeye-fable-consult、必須) (#945)
 
-Step 0a の全件達成を確認したら、**`Agent(subagent_type=allaganeye-fable-consult)` を起動して
+Step 0a の全件達成 (Track 構造の patch release では Step 0a 項目 4 の読み替え後の意味) を確認したら、**`Agent(subagent_type=allaganeye-fable-consult)` を起動して
 リリース記述を俯瞰レビューさせる**。本ステップはスキップできない。
 
 **対象** (2 点をまとめて渡す。**本 step の時点で実在するものだけを挙げてある**):
@@ -51,18 +70,29 @@ Step 0a の全件達成を確認したら、**`Agent(subagent_type=allaganeye-fa
 
 #### 起動記録 (実施 / 非実施とも必須、数値記入 required)
 
-Step 0a の 3 択と同じ画面に、以下のいずれか 1 行を明記する:
+以下のいずれか 1 行を、**本 step の直後にユーザーへ提示し、かつ Track D PR 本文の
+`### fable 俯瞰レビュー (Step 0a-2)` スロットへ転記する** (転記先は Step 3-6 の PR body テンプレートに定義済み)。
 
 > `fable 俯瞰レビュー: 実施 (finding N 件 / 消化 M 件 / 残 K 件 → Track D PR 本文へ転記)`
 >
 > `fable 俯瞰レビュー: 非実施 (理由: <1 行>)`
+
+**記録の置き場所を揮発的な対話画面で指定しない。** 本 step は Step 0a の全件達成確認が**終わった後**に
+走るので、「Step 0a の 3 択と同じ画面」のような指定は、記録を書く時点で既に閉じている画面を指す。
+記録先は**永続する成果物の名前付きスロット**で指定する (転記先の見出しを固定してあるのと同じ方式)。
+
+**ただし転記先の PR 本文は Step 3-6 まで存在しない。** 生成時刻が転記先の生成時刻より前なので、
+**その間の保管場所も指定する**: 本 step で生成した 1 行を **TodoWrite / セッションの plan に逐語で退避**し、
+Step 3-6 で PR body を組むときにそこから貼る。保管場所を決めないと、
+「揮発的な画面に書くな」という規約と「まだ書き込む先が無い」という物理状況が衝突し、
+実行者ごとに保管手段を発明することになる。
 
 **`実施` は N / M / K の数値記入が必須。** 数値を required にしないとこの step は no-op になる —
 Step 0a の判定は「達成 / 未達成 / **該当なし**」の 3 択で、**「該当なし」で通過できてしまう**ため
 (#945 が明示した false-green の制約)。**残 K 件がある場合は Track D の PR 本文へ転記する義務がある。**
 「実施した」とだけ書いて finding をゼロ件のまま放置する経路を塞ぐ。
 
-**Track D = version bump + CHANGELOG を担う直列最後の PR** ([`docs/release-process.md` §Patch release の Track 構造](../../../docs/release-process.md#patch-release-の-track-構造))。本 skill では **Step 2 以降で作るリリース PR** がこれにあたる。転記先を短縮名だけで書くと、Track 構造を知らない実行者が対応表を推測で埋めることになるため定義をここに置く。
+**Track D = version bump + CHANGELOG を担う直列最後の PR** ([`docs/release-process.md` §Patch release の Track 構造](../../../docs/release-process.md#patch-release-の-track-構造))。本 skill では **Step 3-6 で作る hop 1 の PR** がこれにあたる。**hop 数 = 2 の構成でも転記先は hop 1 の PR 本文 1 箇所**で、hop 2 は同じ本文を流用してよいが転記義務の対象ではない (「リリース PR」と単数で書くと、2 本ある構成でどちらか決まらなくなる)。転記先を短縮名だけで書くと、Track 構造を知らない実行者が対応表を推測で埋めることになるため定義をここに置く。
 
 **転記先の見出しは Step 3 の PR body テンプレートの `### fable 俯瞰レビュー (Step 0a-2)`** に固定してある。転記義務を課すだけで転記先に置き場所を作らないと、実行者ごとに書式と位置が割れる (#949 で 2 度、本 step で 3 度目に観測したクラス)。**「どこかへ転記せよ」と書く規約は、転記先テンプレートの名前付きスロットと必ず対で用意する。**
 
@@ -92,8 +122,11 @@ Step 0b で取得した各 deferred issue について、AskUserQuestion で以�
 
 #### bulk 件数の運用 (Iron Law 2 整合)
 
+**本節が bulk 確認規約の定義側**で、以下の **4 点セット (件数閾値 / サンプル数 / 並び順 / 「個別調整」時の挙動)** を持つ。借用側 (Step 0a) は「本節と同じ規約」とだけ書く — 4 点のどれかを借用側にしか書かないと、定義側を直接読んだ実行者に届かない。
+
 - 件数 ≤2: 1 件ずつ AskUserQuestion で個別確認
-- 件数 ≥3: **先に Iron Law 2 bulk pre-check** (サンプル 1 件提示 + 「全件 OK (= 全件 (b) deferred 継続) / 個別調整 / やめる」3 択)
+- 件数 ≥3: **先に Iron Law 2 bulk pre-check** (サンプル **1 件**提示 + 「全件 OK (= 全件 (b) deferred 継続) / 個別調整 / やめる」3 択)
+- **並び順**: サンプルの「先頭」は **Step 0b の `gh issue list` の出力順** (= 既定の作成日時降順) の先頭を指す。取得コマンドに `--sort` を足さない限りこの順が正
 - 「全件 OK」選択時の挙動 (B-2/B-3 fix): **全件を (b) deferred 継続として処置**し、Step 0c table の分類列を全件 `(b) deferred 継続` で埋める。「全件 (a) 次 release 吸収」と読み違えやすいため pre-check の選択肢 description で「(b) 継続」を明示する規約とする。「全件 (a) 次 release 吸収」を意図する場合は user が `Other` で明示する
 - 「個別調整」選択時のみ 1 件ずつの確認に進む
 
@@ -127,14 +160,41 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 以下 2 点を確認する (closed 側から open 側への参照切れの構造的検出):
 
 - **本文鮮度**: 各 deferred issue の本文と直近コメントを、関連 spec / design doc と突合する。本文が現状の実装・方針と矛盾 (鮮度切れ) している場合は、分類前に `gh issue edit <番号>` での本文更新を提案する (古い前提のまま (b) 継続すると次 cycle も腐り続けるため、#753「親 issue 本文が腐る」と同型の予防)
-- **not_planned 残タスク**: リリース区間 (前タグ〜HEAD) の commit / doc が参照する issue 番号のうち、コード/doc 内マーカー (`wired in #N` / `Refs #N` / `TODO(#N)` 等) が指す `#N` が **not_planned で close** されている場合、その残タスクの行き先 (再起票要否) を確認する (#762 が not_planned close されて残タスクが orphan 化した事例)。行き先が無ければ `/create-task` 起票を提案。マーカー探索の具体例:
+- **not_planned 残タスク**: リリース区間 (前タグ〜HEAD) の commit / doc が参照する issue 番号のうち、コード/doc 内マーカー (`wired in #N` / `Refs #N` / `TODO(#N)` 等) が指す `#N` が **not_planned で close** されている場合、その残タスクの行き先 (再起票要否) を確認する (#762 が not_planned close されて残タスクが orphan 化した事例)。マーカー探索の具体例:
 
   ```bash
+  # 前タグを解決する。プレースホルダのままにしない (#962 項目 2)。
+  # **この 1 行が `PREV_TAG` の唯一の定義**で、Step 2-2 のコミット分析はこれを参照する
+  # (定義を 2 箇所に写すと片方だけ変わって区間がズレる)。
+  # タグが 1 つも無い repo では describe が失敗するので fallback を持つ。
+  PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "HEAD~50")
+
   # リリース区間の diff から issue 参照マーカーを抽出
-  git log <前タグ>..HEAD -p -- '*.py' '*.md' '*.rs' '*.ts' | grep -oE '(wired in|Refs|TODO\() ?#[0-9]+'
+  git log "$PREV_TAG"..HEAD -p -- '*.py' '*.md' '*.rs' '*.ts' | grep -oE '(wired in|Refs|TODO\() ?#[0-9]+'
   # 抽出した各 #N の close 理由を確認 (not_planned を検出)
   gh issue view <N> --json state,stateReason --jq '"\(.state) \(.stateReason)"'
   ```
+
+  **確認は AskUserQuestion で行う (#962 項目 5)。** 「確認する」を動詞句のまま残すと、実行者ごとに
+  自由記述の問い合わせになったり独断で行き先を決めたりして記録が残らない。検出した
+  not_planned issue **1 件につき**、次の 3 択を提示する:
+
+  - **(a) `/create-task` で残タスクを再起票**: 行き先が無く、まだ必要な作業が残っている
+  - **(b) 対応不要 (マーカーが陳腐化)**: 実装済み / 方針変更でマーカー側が古い
+  - **(c) 既存 issue に集約済み**: 行き先の issue 番号を user が指定する
+
+  **2 問目 (常に一緒に提示する)**: マーカー除去の行き先 —
+  「別 issue に切る」 / 「本 release で消す」 / **「該当なし ((a) / (c) を選んだため)」**。
+  1 回の呼び出しの中で「1 問目の回答に応じて 2 問目を出す」ことは機構上できないので、
+  **2 問目は常に提示し、選択肢に「該当なし」を含める**。こうすると 1 件あたりの呼び出しは
+  常に 1 回で、下記の件数閾値と数が合う。
+
+  > **選択肢の列挙は途中に散文を挟まず 1 塊で閉じる。** 補足規約をリストの途中へ差し込むと、
+  > リストの外延が視覚的に閉じてしまい、後続の選択肢 ((c) 等) を提示し損ねる。
+
+  検出が 3 件以上なら、先に **Iron Law 2 bulk pre-check** ([§bulk 件数の運用](#bulk-件数の運用-iron-law-2-整合) と同じ規約) を通す。結果は Step 0c の spec PR table と同じ場所へ 1 行ずつ記録する。**検出ゼロなら「not_planned 残タスク: 検出 0 件」を 1 行記録する** — 無記載だと「検査してゼロ」と「検査していない」が区別できない
+
+### Step 1: 廃止 (Step 0b / 0c へ統合済み。欠番であって読み落としではない)
 
 ### Step 2: リリース準備
 
@@ -142,38 +202,108 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 2. 前回リリースタグ以降のコミットを分析:
 
    ```bash
-   git log $(git describe --tags --abbrev=0 2>/dev/null || echo "HEAD~50")..HEAD --oneline
+   # Step 0c-2 で解決した $PREV_TAG をそのまま使う (定義は Step 0c-2 の 1 箇所だけ)。
+   # **shell を跨ぐと変数は消える。** 空のまま `git log ..HEAD` を実行すると空の範囲を
+   # exit 0 で返す (= 沈黙した false-green) ので、必ず非空を確認してから使う。
+   # 別 shell なら Step 0c-2 と同一の 1 行で再解決してから下を実行する。
+   # ガードは対話 shell に貼っても窓が閉じない形にする (`exit 1` は対話 shell 自体を終了させる)。
+   if [ -z "$PREV_TAG" ]; then
+     echo "PREV_TAG が空です (Step 0c-2 の定義を再実行してから続けてください)" >&2
+   else
+     git log "$PREV_TAG"..HEAD --oneline
+   fi
    ```
 
 3. バージョン種別を決定（引数指定 or 上記「自動判定ルール」）
 4. **分岐元ブランチ**と**リリース PR の宛先 (`--base`)** を分けて特定する。**この 2 つは同じとは限らない**:
 
-   | 種別 | 分岐元 (`release/v<新バージョン>` をここから切る) | リリース PR の `--base` |
-   | --- | --- | --- |
-   | minor / major | `develop-<新バージョン>`（既存 develop ブランチ） | **`main`** |
-   | patch | `develop-<新バージョン>` があればそこ、無ければ `main` | 分岐元と同じ |
+   | 種別 | 分岐元 (`release/v<新バージョン>` をここから切る) | リリース PR の `--base` | `main` までの hop 数 |
+   | --- | --- | --- | --- |
+   | minor / major | `develop-<新バージョン>`（既存 develop ブランチ） | **`main`** | **1** |
+   | patch (`develop-<新バージョン>` **あり**) | `develop-<新バージョン>` | `develop-<新バージョン>` | **2** |
+   | patch (`develop-<新バージョン>` **なし**) | `main` | `main` | **1** |
 
    - 実例 (minor): v0.3.0 = PR [#924](https://github.com/Idios/kobutachan-allaganeye/pull/924) は head=`release/v0.3.0` / **base=`main`**、分岐元は `develop-0.3.0`。**`--base` に分岐元をそのまま渡すと、リリース PR が `main` ではなく develop を向く**
-   - 実例 (patch): v0.2.1 はバンプを `develop-0.2.1` に載せ、その後 `develop-0.2.1 → main` のリリース PR ([#774](https://github.com/Idios/kobutachan-allaganeye/pull/774)) を別途出している
    - 判断が曖昧な場合は `git branch -r | grep -E 'origin/develop-|origin/main'` の結果を提示してユーザー確認
 
-   > **`develop-<次バージョン>` を切るタイミング** (#918 item1): ここで指す `develop-<新バージョン>` は**今リリースするバージョンの開発統合先**であり、**既に存在している**ブランチである。本スキルが新規作成することはない。
+5. **hop 数が 2 のときは、`main` へ到達するまでに PR を 2 本作る** (#962 項目 6)。表の「hop 数」列が 2 の行に該当したら、以下を**明示の作業単位として計画に入れる**。1 本目だけ出して終わったと誤認する経路をここで塞ぐ:
+
+   | hop | head | base | 作る Step | 実例 (v0.2.1) |
+   | --- | --- | --- | --- | --- |
+   | **hop 1** | **`<hop1 head>`** | `develop-<新バージョン>` | Step 3-6 | [#773](https://github.com/Idios/kobutachan-allaganeye/pull/773) |
+   | **hop 2** | `develop-<新バージョン>` | `main` | **Step 3-7** (下記) | [#774](https://github.com/Idios/kobutachan-allaganeye/pull/774) |
+
+   > **`<hop1 head>` はここで 1 度だけ決める変数**で、Step 3-2 / 3-5 / 3-6 と Step 4 の表はすべてこの変数を指す。ブランチ名を各所にリテラルで書くと、下記の変種が効くのが 1 箇所だけになり、後続 step が古い名前を持ち続ける:
    >
-   > *次*のバージョン用の `develop-<次バージョン>` は、**タグ打ちと GitHub Release 作成が完了した後**に `main` から切る（[`docs/release-process.md`](../../../docs/release-process.md) §レイヤー間の移行手順 の 5、§ルール の 4）。リリース PR を `main` へマージする前でも、タグを打つ前でもない。切った直後に[バージョン保持箇所](../../../docs/versioning.md)を全箇所まとめて次バージョンへ更新する。
+   > | 条件 | `<hop1 head>` |
+   > | --- | --- |
+   > | 通常 | `release/v<新バージョン>` |
+   > | spec が「`release/vX.Y.Z` 統合ブランチを作らない」と裁定 (例: v0.3.1 の裁定 D4) | **`claude/v<新バージョン のドットを - に置換>-release-track-d`** (例: v0.3.1 → `claude/v0-3-1-release-track-d`) |
+   >
+   > **`claude/<slug>` のような名前空間だけの指定にしない。** この値は Step 3-2 / 3-5 / 3-6 と Step 4 の表の 4 箇所で**同一**でなければならないので、構成規則まで固定する。
+   >
+   > **hop 1 を省く変種ではない。** 裁定が出ている場合でも hop 1 の PR 自体は作る (head が `claude/<slug>` になるだけ) し、**hop 2 は変わらず必要**。「release ブランチを作らない = PR は 1 本」と読み違えない。
+   >
+   > **タグを打つのは hop 2 のマージ後、`main` の HEAD に対して**である ([`docs/release-process.md` §タグ運用](../../../docs/release-process.md#タグ運用))。hop 1 のマージ時点でタグを打たない。
+   >
+   > **hop 数 = 2 のとき、本 skill 中の「リリース PR」はすべて hop 2 の PR を指す。** これは特定 step の
+   > 局所規約ではなく **doc 全体に掛かる読み替え**である (Step 4 / Step 5 を含む)。とくに:
+   >
+   > - Step 5 の `gh workflow run security-audit.yml --ref <リリース PR の head ブランチ>` には
+   >   **`develop-<新バージョン>`** を渡す (`<hop1 head>` は hop 1 マージ後に削除されうる)
+   > - Step 5 の非実施記録の書き先「リリース PR 本文」は **hop 1 の PR 本文** (Step 0a-2 の転記先と同じ、上記 §Step 0a-2)
+   >
+   > 読み替えを個別 step の内側に書くと、書き忘れた step で単数形が復活する。
+
+6. **`develop-<次バージョン>` を切るタイミングを取り違えない** (#918 item1)。上の表で言う `develop-<新バージョン>` は**今リリースするバージョンの開発統合先**であり、**既に存在している**ブランチである。本スキルが新規作成することはない。
+
+   *次*のバージョン用の `develop-<次バージョン>` は、**タグ打ちと GitHub Release 作成が完了した後**に `main` から切る（[`docs/release-process.md`](../../../docs/release-process.md) §レイヤー間の移行手順 の 5、§ルール の 4）。リリース PR を `main` へマージする前でも、タグを打つ前でもない。切った直後に[バージョン保持箇所](../../../docs/versioning.md)を全箇所まとめて次バージョンへ更新する。**「完了した」の判定は Step 5 の後に置いた [§タグ打ち・GitHub Release 作成](#タグ打ちgithub-release-作成) の完了確認コマンドで行う** (#962 項目 7)。
 
 ### Step 3: バージョンバンプと PR 作成
 
-1. **事前品質チェック** ([`docs/l2-workflow.md`](../../../docs/l2-workflow.md) §「PR 作成 path 別自動チェック」):
+> **実行順序は下の番号どおりで、読み替えてはいけない** (#962 項目 1)。特に
+> **リリースブランチの作成 (3-2) はバージョン編集 (3-3) より前**である。逆にすると
+> 編集済みの dirty tree のまま `git checkout <分岐元>; git pull` することになり、
+> checkout 失敗・pull の merge 中断・編集の巻き戻しのいずれかを踏む。
+> 順序は **branch 作成 → 編集 → 検証 → commit → push → PR** で固定する。
+
+1. **分岐元ブランチに居ることを確定させてから事前品質チェックを回す** ([`docs/l2-workflow.md`](../../../docs/l2-workflow.md) §「PR 作成 path 別自動チェック」)。**在ブランチを先に確定する**のは、3-1 の修正を「分岐元ブランチ上で commit」するために、その時点で既に分岐元に居る必要があるため (別ブランチから移ろうとすると、まさに 3-2 が防いでいる dirty checkout になる):
+
+   ```bash
+   git checkout <分岐元ブランチ>   # 既に居るなら no-op
+   git pull
+   ```
 
    ```bash
    ruff check .
    ruff format --check .
    pytest
-   pyright
+   # pyright は PATH の python から解析環境を解決するため --pythonpath 必須 (省略は false-red、#974)。
+   # git 解決形にすると repo root / worktree の両方で効く (worktree に .venv は無い)。
+   pyright --pythonpath "$(dirname "$(git rev-parse --git-common-dir)")/.venv/Scripts/python.exe"
    ```
 
-   いずれか失敗したら修正してから以下に進む
-2. [`docs/versioning.md`](../../../docs/versioning.md) §バージョン管理場所 に挙がっている**全フィールド**の version を新バージョンへ更新する（フィールド一覧の機械可読な正は [`scripts/check_version_consistency.py`](../../../scripts/check_version_consistency.py) の `VERSION_LOCATIONS`、#911）。1 ファイルが複数フィールドを持つことがある（ファイル数 < フィールド数）ので、ファイル単位で数えて満足しないこと。lockfile (`gui/package-lock.json` / `gui/src-tauri/Cargo.lock`) は **該当フィールドの直接編集を既定**とする（バンプでは version 以外を動かさないため。依存そのものを更新したい場合はパッケージマネージャを使い、バンプとは別コミットに分ける）。このとき**旧バージョン文字列の一括置換はしない** — lockfile には依存由来の部分一致（`0.3.0` に対する `30.3.0` 等）が多数あり誤爆する。該当フィールドの行だけをピンポイントで直す。更新できたら必ず検証する:
+   いずれか失敗したら修正する。**修正した場合は分岐元ブランチ上で commit し、上の 4 コマンドだけを回し直して (`git checkout` / `git pull` は再実行しない — ローカル commit で ahead になった状態で pull すると余計な merge を踏む) 緑を確認してから 3-2 へ進む。** commit message は `fix: <要約> [<session-id>]` とし、**push はしない** (この commit は 3-2 で切る `<hop1 head>` に含まれて hop 1 PR に乗る)。 `git stash` で退避する形は採らない — 退避すると修正が作業ツリーから消えて 3-1 が再び赤に戻り、「緑を確認してから進む」が成立しない (退避を選択肢に置くなら退避 → 復帰 → 再検証の 3 段を書き切る必要があるので、ここではその複雑さを持ち込まない)。**「3-1 が全部緑で、作業ツリーが clean」になって初めて 3-2 へ進む。**
+
+2. **hop 1 の head ブランチ (`<hop1 head>`、Step 2-5 で決めた変数) を作成する**（3-1 で分岐元に居ることは確定済み。PR の `--base` とは**別物**なので取り違えない）。**バージョン編集より前**に行う:
+
+   ```bash
+   git checkout -b <hop1 head>
+   ```
+
+   3-1 で `git checkout <分岐元ブランチ>` / `git pull` を済ませてあるので、ここでは分岐だけを行う
+   (同じ pull を 2 度書くと、どちらが正か / 片方を飛ばしてよいかが読み手ごとに割れる)。
+
+   > **3-1 の修正 commit はローカルの分岐元ブランチに残る (push しない)。その乖離を解消する時点をここで決めておく**:
+   > hop 数 = 2 の構成では分岐元 (`develop-<新バージョン>`) が hop 2 の head として再登場するので、
+   > **hop 1 がマージされた後、`develop-<新バージョン>` を触る前 (Step 3-7 / Step 4) に
+   > `git checkout develop-<新バージョン> && git pull` で remote に揃える** (3-1 の commit は hop 1 PR 経由で
+   > 既に remote へ入っている)。stale なローカルから push すると非 FF で詰まるか hop 1 の内容を巻き戻す。
+   > **乖離を作る規約と解消する規約は対で置く。**
+   >
+   > **裁定で `release/vX.Y.Z` を作らない場合も本手順は飛ばさない。** `<hop1 head>` が `claude/<slug>` に解決されるだけで、コマンド列は同一である。どちらの形でも「**編集前にブランチを確定させる**」という本 step の目的は変わらない。
+
+3. [`docs/versioning.md`](../../../docs/versioning.md) §バージョン管理場所 に挙がっている**全フィールド**の version を新バージョンへ更新する（フィールド一覧の機械可読な正は [`scripts/check_version_consistency.py`](../../../scripts/check_version_consistency.py) の `VERSION_LOCATIONS`、#911）。1 ファイルが複数フィールドを持つことがある（ファイル数 < フィールド数）ので、ファイル単位で数えて満足しないこと。lockfile (`gui/package-lock.json` / `gui/src-tauri/Cargo.lock`) は **該当フィールドの直接編集を既定**とする（バンプでは version 以外を動かさないため。依存そのものを更新したい場合はパッケージマネージャを使い、バンプとは別コミットに分ける）。このとき**旧バージョン文字列の一括置換はしない** — lockfile には依存由来の部分一致（`0.3.0` に対する `30.3.0` 等）が多数あり誤爆する。該当フィールドの行だけをピンポイントで直す。更新できたら必ず検証する:
 
    - **あわせて `CHANGELOG.md` の節見出しを改名する**（#952）。開発中の節は `## [Unreleased]` で、リリース時に `## [<新バージョン>] - YYYY-MM-DD` へ改名する。**日付はこの時点では暫定**でよく、タグを打つ当日に Step 4 で確定させる。**この改名を飛ばすと直後の検証コマンドが失敗する** — `check_version_consistency.py --tag` は「バージョン `<新バージョン>` の節がありません」を返す（`check_changelog_heading` は該当版の節の存在を必須にしている）。既にリリース済みのバージョン節は触らない（裁定 D7）
    - **entry の内容**は [`docs/release-process.md`](../../../docs/release-process.md) §CHANGELOG entry の記述規約 に従う。3 部構成（太字機能名 + issue 番号 / 使い方 2-3 行 / 詳細リンク）で書き、内部用語は spec 側へ寄せる。利用者から見た振る舞いが変わらない変更（CI ガード / 開発 doc / skill / テスト / 版 pin）に entry は不要
@@ -195,15 +325,19 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
    exit 0 でなければ先に進まない（exit 1 = フィールド間 or tag との不一致 / exit 2 = 検査自体の構造エラー）。`release.yml` の `version-check` job が tag push 時に同じスクリプトで同じ判定を行うため、ここを飛ばすとリリース当日に fail する。`--tag` は**期待値の文字列**を渡すだけで、git tag が既に存在する必要はない（タグ打ちは本スキル範囲外の後工程）
 
+   > **ここが Step 0a の [§Track 構造の patch release における再評価点](#track-構造の-patch-release-における再評価点-962-項目-4) で予告した再評価点である** (#962 項目 4)。Track 構造の patch release で「Track D で達成予定」として通した §共通項目 3 件 (全 PR マージ済み / バージョン保持箇所 / CHANGELOG 対象セクション) を、この 2 コマンドの exit 0 と、**hop ごとの open PR 照会**の結果で**今ここで**再確認する。`<base>` のような未定義のプレースホルダを使わず、Step 2-4 / 2-5 で決めた値をそのまま渡す:
+   >
+   > ```bash
+   > # hop 1 の宛先 (= Step 2-4 の表の「リリース PR の `--base`」) に未マージの PR が残っていないか
+   > gh pr list --base <リリース PR の宛先> --state open --json number,title
+   >
+   > # hop 数 = 2 のときは hop 2 の宛先も見る (hop 1 だけ見て緑にしない)
+   > gh pr list --base main --state open --json number,title
+   > ```
+   >
+   > **本 release のスコープに属する PR** が 1 件でも open なら「全 PR マージ済み」は未達である。1 件でも未達ならリリース PR を作らない。
+   >
    > 更新対象を `grep -r '<旧バージョン>' --include='*.py' --include='*.toml' --include='*.json'` で拾う旧手順は使わない。`Cargo.lock` のように上記 glob のどれにも載らない保持ファイルがあり、取りこぼす（#817 / audit P2-33 の手順を #911 で置換）
-
-3. リリースブランチを作成（Step 2-4 の表の**分岐元**から分岐。PR の `--base` とは別物なので取り違えない）:
-
-   ```bash
-   git checkout <分岐元ブランチ>
-   git pull
-   git checkout -b release/v<新バージョン>
-   ```
 
 4. 変更をコミット（session-id を含める、[`docs/l2-workflow.md`](../../../docs/l2-workflow.md) §「PR 規約」 §「コミットメッセージ session-id」）:
 
@@ -214,24 +348,34 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
    # フィールド数ではなくファイル数になる (1 ファイル 2 フィールドの箇所がある)。
    # pyproject.toml だけを stage して他を置き去りにすると
    # release.yml の version-check job が fail する (#911)。
-   # git add は cwd 側の repo に効くので、Step 3-2 でバンプしたのと同じツリーを
+   # git add は cwd 側の repo に効くので、Step 3-3 でバンプしたのと同じツリーを
    # cwd にすること (worktree 作業中なら worktree root)。--list-paths の出力自体は
    # repo root 相対の固定文字列で cwd には依存しない
-   git add -- $(python scripts/check_version_consistency.py --list-paths)
+   # **`--list-paths` に CHANGELOG.md は含まれない** (実測: pyproject.toml / tauri.conf.json /
+   # Cargo.toml / package.json / package-lock.json / Cargo.lock の 6 ファイルのみ)。
+   # 3-3 で改名した CHANGELOG.md を明示的に足さないと、節見出しが unstaged のまま残り、
+   # CHANGELOG 抜きの PR が出来て release.yml の version-check がタグ push 時に落ちる。
+   git add -- $(python scripts/check_version_consistency.py --list-paths) CHANGELOG.md
    git commit -m "chore: bump version to <新バージョン> [<session-id>]"
 
-   # commit 後に stage 漏れを検出する。合格条件 = 出力に「バージョン保持ファイルが
-   # 1 つも現れない」こと。出力が空である必要はない (他ファイルの残留は可)
+   # commit 後に stage 漏れを検出する。合格条件 = 出力に **3-3 で編集したファイル
+   # (バージョン保持 6 ファイル + CHANGELOG.md) が 1 つも現れない**こと。
+   # 出力が空である必要はない (無関係な残留は可)。
+   # 「バージョン保持ファイルが出ないこと」だけを条件にすると、外延を外部スクリプトに
+   # 委ねているぶん CHANGELOG の漏れを見逃す
    git status --short
    ```
 
-   バージョン保持ファイル以外の差分（Step 3-1 で直した lint 等）が残っている場合は、
-   バンプと混ぜず別コミットに分ける（このコミットは version bump 単独に保つ）
+   バージョン保持ファイル以外の差分が残っている場合は、バンプと混ぜず別コミットに分ける
+   （このコミットは version bump 単独に保つ）。**3-1 で直した lint 等はここには残らない** —
+   3-1 の規約により、それらは 3-2 より前に分岐元で commit 済みだからである
+   （旧版は stash / 持ち越しを想定して「3-1 で直した lint 等」を例に挙げていたが、
+   その前提は 3-1 の clean-tree 規約と両立しない）
 
-5. リリースブランチを push:
+5. hop 1 の head ブランチを push:
 
    ```bash
-   git push -u origin release/v<新バージョン>
+   git push -u origin <hop1 head>
    ```
 
 6. リリース PR を作成（`--base` は Step 2-4 の表の**リリース PR の宛先**。minor / major では **`main`** であって分岐元の develop ではない。Windows + Git Bash での日本語本文破損回避のため `printf | --body-file -` 方式）:
@@ -252,7 +396,7 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
     ### チェックリスト
     - [ ] バージョン保持フィールドが全て一致 (\`python scripts/check_version_consistency.py --tag v<新バージョン>\` が exit 0)
-    - [ ] 全テスト通過 (\`pytest\`, \`ruff check .\`, \`ruff format --check .\`, \`pyright\`)
+    - [ ] 全テスト通過 (\`pytest\`, \`ruff check .\`, \`ruff format --check .\`, \`pyright --pythonpath <repo root の .venv の python>\`)
     - [ ] deferred issue を全件レビュー済み
     - [ ] CLAUDE.md の更新が必要な変更はない
 
@@ -264,9 +408,32 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
       --assignee Idios
     ```
 
-7. ユーザーに PR URL とバージョン変更内容を報告
+7. **hop 数が 2 のときのみ: hop 2 の PR (`develop-<新バージョン> → main`) を作る** (#962 項目 6)。Step 2-5 の表で hop 数 = 2 に該当した場合、3-6 で作った PR は `develop-<新バージョン>` 止まりであり、**`main` にはまだ何も入っていない**。hop 1 がマージされたら続けて:
+
+   ```bash
+   # hop 1 が実際にマージされたことを確認してから hop 2 を作る
+   gh pr view <hop 1 の PR 番号> --json state,mergedAt -q '"\(.state) \(.mergedAt)"'
+
+   gh pr create \
+     --title "Release v<新バージョン>" \
+     --body-file - \
+     --base main \
+     --head develop-<新バージョン> \
+     --label "release" \
+     --assignee Idios
+   ```
+
+   hop 2 の PR 本文は hop 1 と同じテンプレートでよい (`### 変更内容` を hop 1 へのリンクに置き換えてよい)。**hop 2 も required status check 8 件を満たす必要がある**ので、CI 1 サイクル分をタグ打ち当日の所要時間に見込む
+
+8. ユーザーに PR URL とバージョン変更内容を報告 (hop 数 = 2 なら **2 本ぶんの URL**)
 
 ### Step 4: CHANGELOG 見出し日付をタグ打ち日に合わせる（タグ打ちの直前、必須）
+
+> **本 step の適用範囲を先に確定する。** 以下の本文と表は **hop 数 = 1 の構成** (minor / major と、
+> `develop-<新バージョン>` を持たない patch) を前提に書いてある。**hop 数 = 2 の構成では
+> 「リリース PR」を hop 2 の PR に読み替える** — hop 1 は既にマージされていてよく、その場合の
+> 手順は下記 §「hop 1 マージ後・hop 2 前に日付ドリフトを見つけた場合」が正である。
+> (適用範囲の切り替え条件を step の末尾に置くと、本文を先に読んだ実行者が hop 1 前提の表を引く。)
 
 `CHANGELOG.md` の対象バージョン見出しは `## [<新バージョン>] - YYYY-MM-DD` の形をとり、**日付 = そのタグを打つ日 (JST)** とする（[`docs/release-process.md`](../../../docs/release-process.md) §タグ運用、裁定 D6 / #948）。リリース PR の作成からタグ打ちまでは日を跨ぐことがある（v0.3.0 では見出し日付が 2 回書き換わった）ため、**タグを打つ当日に**見出し日付を確認・更新して commit する。
 
@@ -290,8 +457,26 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
 
 | head ブランチ | 保護 | 載せ方 |
 | --- | --- | --- |
-| `release/v<新バージョン>`（minor / major） | **あり** | **専用の PR を 1 本作って merge する**（下記手順） |
-| `develop-<新バージョン>`（patch、裁定 D4） | なし | 直接 commit / push してよい |
+| `<hop1 head>` = `release/v<新バージョン>`（通常） | **あり** | **専用の PR を 1 本作って merge する**（下記手順） |
+| `<hop1 head>` = `claude/<slug>`（`release/*` を作らない裁定のとき） | なし | 直接 commit / push してよい |
+| `develop-<新バージョン>`（hop 1 マージ後、hop 2 の head） | なし | 直接 commit / push してよい (下記 §hop 1 マージ後) |
+
+#### hop 1 マージ後・hop 2 前に日付ドリフトを見つけた場合 (#962 項目 6)
+
+hop 数 = 2 の patch release では、hop 1 (`→ develop-<新バージョン>`) をマージしてから
+hop 2 (`develop-<新バージョン> → main`) をマージするまでに日を跨ぐことがある。
+このとき見出し日付が「タグを打つ日」とズレる。**タグは hop 2 のマージ後に `main` へ打つ**ので、
+ズレたままだと `version-check` job がタグ push 時に落ちる。
+
+直し方は **hop 2 の head である `develop-<新バージョン>` が保護対象かどうか**だけで決まり、
+上の表と同じ判定になる:
+
+- `develop-*` は保護対象ではない → **`develop-<新バージョン>` へ直接 commit / push してよい**。
+  hop 2 の PR が open のままなら、その push が自動で PR に載る (新しい PR を作り直さない)
+- 何らかの理由で `develop-*` が保護対象になっている場合は、上の「保護対象の head へ載せる手順」を
+  `release/v<新バージョン>` の代わりに `develop-<新バージョン>` を base として実行する
+
+**タグ打ちを翌日以降へ延ばす判断をしたなら、その時点で直さず、実際にタグを打つ当日に Step 4 をもう一度回す。** 「先に直しておく」と、また日を跨いだときに二重にズレる。
 
 > **なぜ minor / major では PR が要るのか**: `required_status_checks` は PR のマージだけでなく**対象 ref への `git push` すべて**に適用される。`release/*` は保護対象なので直接 push は `GH013: Repository rule violations found` で reject される（実測。`docs/release-process.md` §対象 ref の選び方 の表）。「日付のためだけの PR は作らない」という初版の指示は**この保護の導入により無効**になった。
 
@@ -306,7 +491,7 @@ gh pr create --base release/v<新バージョン> --title "docs: set CHANGELOG d
 
 この PR も required status check 8 件を満たす必要がある。**CI 1 サイクル分（十数分）をタグ打ち当日の所要時間に見込んでおくこと。** PR 本文は通常どおり Self-Test Report を埋める（`validate-checklist` が required なので、未消化 checkbox があるとマージできない）。
 
-> **実行順序の制約**: Step 4 は**リリース PR をマージする前**に実行する。`main` は保護ブランチ（`release/vX.Y.Z → main` のマージのみ受け付ける、[`docs/release-process.md`](../../../docs/release-process.md) §ルール 1）なので、マージ後に日付だけ直そうとしても直接 commit できない。**Step 4 → リリース PR マージ → タグ打ちを同じ JST 日のうちに終える**のが正しい順序で、v0.3.0 もこの順で確定させている。
+> **実行順序の制約** (hop 数 = 1 の構成、= minor / major と `develop-<新バージョン>` を持たない patch): Step 4 は**リリース PR をマージする前**に実行する。**hop 数 = 2 の構成では本文は hop 2 の PR に読み替える** — hop 1 は既にマージされていてよく、その場合の手順は上記 §「hop 1 マージ後・hop 2 前に日付ドリフトを見つけた場合」が正である。`main` は保護ブランチ（`release/vX.Y.Z → main` のマージのみ受け付ける、[`docs/release-process.md`](../../../docs/release-process.md) §ルール 1）なので、マージ後に日付だけ直そうとしても直接 commit できない。**Step 4 → リリース PR マージ → タグ打ちを同じ JST 日のうちに終える**のが正しい順序で、v0.3.0 もこの順で確定させている。
 >
 > なお基準日を省いた `python scripts/check_version_consistency.py --tag v<新バージョン>` は、日付欄の**存在**しか見ない（値は比較しない）。Step 3 のバンプ時点ではタグを打つ日が未確定なので、そちらでは省略形で構わない。
 
@@ -354,11 +539,25 @@ security 再チェック: 非実施 (理由: …)
 
 ### タグ打ち・GitHub Release 作成
 
-リリース PR マージ後の手順（本スキル範囲外、`docs/release-process.md` §タグ運用 を参照）:
+リリース PR マージ後の手順。**タグを打つ操作そのものは本スキルの範囲外** (`docs/release-process.md` §タグ運用 が正) だが、
+**タグ push 後の `release.yml` 完了確認は本スキルの gate である** — Step 2-6 が「`develop-<次バージョン>` を切ってよいか」の
+判定にこの確認結果を使うため。「範囲外」を全体に掛けて完了確認まで user 任せにしない:
 
 - patch リリース: マージされたブランチで `git tag -a v<新バージョン> -m "Release v<新バージョン>: <概要>"` → `git push origin v<新バージョン>`
 - minor/major リリース: `develop-<新バージョン>` を `main` にマージしてから `main` でタグ打ち
 - **annotated tag（`-a`）で打つ**。`version-check` job は CHANGELOG 見出し日付の基準日として annotated tag の `taggerdate` を第一候補に読む
 - **GitHub Release は `git push origin v<新バージョン>` で [`release.yml`](../../../.github/workflows/release.yml) が自動作成する**。本文は [`scripts/extract_release_notes.py`](../../../scripts/extract_release_notes.py) が CHANGELOG.md の該当セクションから抽出し、Portable ZIP も自動添付される
+  - **`git push` はトリガであって完了ではない (#962 項目 7)。** `release.yml` はタグ push を trigger に**非同期**で走り、Windows ビルド + PyInstaller + FFmpeg DL を含むため十数分かかる。push した時点を「Release 作成済み」と扱うと、`develop-<次バージョン>` を切る判断 (Step 2-6) が実際の完了より先に出る。**次の 2 つがどちらも通ってから**先へ進む:
+
+    ```bash
+    # 1. workflow の完了を待つ (失敗したらここで非ゼロ exit する)
+    gh run watch "$(gh run list --workflow release.yml --event push --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status
+
+    # 2. Release 実体と成果物の添付を確認する (assets が空なら ZIP が付いていない)
+    gh release view "v<新バージョン>" --json name,isDraft,assets \
+      -q '"\(.name) draft=\(.isDraft) assets=\(.assets | length)"'
+    ```
+
+    `gh run watch` が非ゼロで返る / `assets=0` / `draft=true` のいずれかなら、**`develop-<次バージョン>` をまだ切らない**。原因を潰すか、[`docs/release-process.md`](../../../docs/release-process.md) §手動リリース手順 (CI 迂回) に従う
   - 手動で `gh release create ... --notes-from-tag` を叩かない（#918 item4）。Release が二重作成されるうえ、`--notes-from-tag` はタグメッセージを本文にするため CHANGELOG の内容が反映されない
   - CI 障害等で手動作成が必要な場合のみ、[`docs/release-process.md`](../../../docs/release-process.md) §手動リリース手順 (CI 迂回) に従う（Actions の一時無効化を含む手順一式がある）

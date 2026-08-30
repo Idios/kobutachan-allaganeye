@@ -84,26 +84,59 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
    - **(B) は厳格 3 条件 AND 必須**: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻`。**サイズ単独 / scope-out 単独 / 受け入れ条件直結性単独では (B) 化不可**
    - **(C) は同テーマ既存 issue が存在する場合のみ**
    - 判定に迷う finding は `(A)*` と記載し、ambiguous_judgments に詳述する (`ambiguous` 単独記載は禁止。`(A)*` が正式記法 = §G.2.1 item 5 準拠)
-7. final message は以下の構造で return:
+7. final message は以下の構造で return する。**下の ```markdown fence は提示のためのもので、return には含めない** (fence 込みで返すか裸で返すかが割れると、セクション終端の判定まで揺れる):
 
    ```markdown
    ## acceptance_criteria_status
    | # | 条件 | 実証 | 判定 |
+   | --- | --- | --- | --- |
+   | 1 | <元 issue の受け入れ条件を逐語> | `path:line` / `test_name` / CI job 名 | ○ |
+   <条件 1 件につき 1 行。判定は **○ / × / partial の 3 値のみ** (他の記号を使わない)。
+    **受け入れ条件がゼロになる原因は 2 通りあり、どちらもセクションを空にせず 1 行を置く**
+    (原因の分岐を数えずに定型文を 1 つしか置かないと、書かれていない分岐で実行者が文言を発明する):
+
+    **表の 4 列すべてに値を与える** (列を一部だけ指定した定型は、指定されていない列で実行者が発明する):
+
+    | 原因 | `#` 列 | 条件列に書く literal | 実証列 | 判定列 |
+    | --- | --- | --- | --- | --- |
+    | issue はあるが `## 受け入れ条件` 節が無い | `1` | `受け入れ条件なし (issue に \`## 受け入れ条件\` 節が存在しない)` | 代替判定根拠 | `○` |
+    | PR に紐づく issue が無い (孤立 PR、`/review-pr` §A fallback) | `1` | `受け入れ条件なし (PR に紐づく issue が存在しない = 孤立 PR、§A fallback 適用)` | 代替判定根拠 | `○` |
+
+    実証列は「代替判定根拠」という説明ではなく **列挙された形のいずれか**で埋める —
+    `PR 本文 §<節名> ↔ <path:line 範囲>` / `CI green (<job 名>)` / `Step 5 doc 整合性 OK` /
+    `Step 5a ギャップ分析 finding 0` を `/` で連ねる。**本質的に PR ごとに変わるセルは
+    literal ではなく「選べる形の集合」で与える** — 説明語だけ置くと実行者が散文を発明する。**この 3 値が本 skill 全体の正**で、
+    controller 側の Round summary (Step 2.3) と Final summary (Step 4.2) も同じ記号を使う —
+    `✓` 等の別記号を view ごとに使うと写像規則が必要になり、片方の view にだけ
+    「他の記号を使わない」と書いた形は、書かれていない view を緩いと読ませる抜け道になる。
+    受け入れ条件を持たない issue なら、判定列 `○` の 1 行に
+    「受け入れ条件なし (issue に `## 受け入れ条件` 節が存在しない)」と書く — セクションは空にしない>
 
    ## findings_table
    | # | 摘出内容 | 出所 | 処置 | 根拠 |
+   | --- | --- | --- | --- | --- |
+   <finding 1 件につき 1 行。**ゼロ件なら見出し + ヘッダ行 + 区切り行の 3 行だけを返し、
+    データ行を 1 行も書かない** — literal の正は Step 2.2 §「findings ゼロ件の記法」。
+    空でもセクション自体は必須記載 (ambiguous_judgments と同じ規約)>
 
    ## ambiguous_judgments
-   - <subagent が auto 判断できなかった点。空でもセクション自体は必須記載>
+   - <subagent が auto 判断できなかった点を 1 件 1 行。**空なら箇条書き行を 1 行も書かず、見出しだけを残す**
+     (findings_table のゼロ件がデータ行 0 行なのと対応する。`- (なし)` のような自由文は書かない)>
 
    ## recommendation
-   <LGTM / fix-required / divergent>
+   <LGTM / fix-required / divergent。決定規則: findings_table のデータ行が 0 行 かつ
+    受け入れ条件が全件実証済なら `LGTM` / findings が 1 件以上なら `fix-required` /
+    同一 topic が round を跨いで再出現しているなら `divergent`。
+    **収束判定は controller が findings 件数で行う** (Step 3.1) ため、本フィールドは
+    controller の判定を上書きしない — 食い違ったら controller 側が正>
 
    ## meta
    - mergeStateStatus: <CLEAN/BEHIND/...>
    - 並行 PR: <検出ゼロ / [#X handled]>
    - CI status: <green/failing/pending>
    - Codex 出力読み取り: <成功 (job <job-id> の result 全文を finding の入力にした) / 失敗 (理由: <1 行>、stdout の範囲のみで triage) / 非起動 (理由: <起動条件のどれに不該当か>)>
+     <非起動 の理由は `/review-pr` を読まずとも書けるよう、代表形をここに置く:
+      `条件1 touched <N> file / <M> lines・条件2 再発 root cause <K> 件・条件3 core 変更対象ファイル 該当 0`>
    ```
 
 8. **Codex review を起動した場合は、finding を `/review-pr` §「Codex 出力の読み取り」の手順で保存済み全文から取り込む。** stdout に見えた分だけで triage しない。`## meta` の `Codex 出力読み取り` 行は**省略不可**で、`失敗` と `非起動` は**理由も必須** (省略はいずれも parse error)。`非起動` の理由には `/review-pr` の「起動記録 (該当時 / 不該当時とも必須)」の非対象行の内容を畳んでよい — **この行以外に Codex 関連の slot を新設しない**
@@ -113,20 +146,116 @@ PR #<N> を review してください。`/review-pr` skill を invoke します�
 
 Agent tool の戻り値 markdown から `## findings_table` セクションの表行を抽出。各行を `{round, n, finding, source, classification, rationale}` として `findings_history[round]` に蓄積。
 
+#### findings ゼロ件の記法 (#995)
+
+**ゼロ件は例外ではなく通常経路である** (§4.1 が「Round 1 で 0 findings (即収束)」を想定ケースとして
+扱っている)。記法を定義しないと実行者ごとに割れ、正しい return が parse error 扱いになる。
+
+**正 — この 3 行をそのままコピーして返す** (`## findings_table` の literal はここ 1 箇所だけが正。
+Step 2.1 prompt template item 7 の記述もこのブロックを指す — **行番号ではなく名前で参照する**):
+
+```markdown
+## findings_table
+| # | 摘出内容 | 出所 | 処置 | 根拠 |
+| --- | --- | --- | --- | --- |
+```
+
+**区切り行 (`| --- | ... |`) は必須**で、**データ行として数えない**。区切り行が無いと GFM の表として
+成立せず、「markdown 表形式で返せ」という要求 (Step 2.1 の subagent 契約) と矛盾する。
+Step 4.2 の summary テンプレートも区切り行を**持っている**。**ここで揃えるのは「区切り行の有無」という軸だけ**で、
+区切り行の字面 (`| --- |` と `|---|` のパディング差) は揃えていない。
+
+誤りの形と、それを落とす validation item:
+
+| 誤った return | 落ちる item |
+| --- | --- |
+| `\| - \| なし \| - \| - \| - \|` のようなプレースホルダ **データ行** | **item 1** (処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれでもない) |
+| `なし` / `N/A` / `該当なし` 等の**自由文**をセクション本文に置く | **item 1** (`\|` で始まらない非空行は表行として読めないため。下記 item 1 の後半を参照) |
+| `## findings_table` セクション**自体を省く** | **item 4** (必須セクションの存在検査。ゼロ件とセクション欠落は別事象で、セクションが無い return は「表を作り忘れた / 別書式で返した」と区別できない) |
+
+> **記録義務は分岐を網羅する** (`/review-pr` §「起動記録」、#945)。異常系・非ゼロ件だけに定型を
+> 用意すると、正常系 (ゼロ件) のたびに実行者が文言を発明して表記が揺れる。本節はその原則の適用で、
+> `## ambiguous_judgments` の「空でもセクション自体は必須記載」と同じ書式・同じ理由である。
+
+**下記 validation item 1-7 に対するゼロ件記法の当たり方** (各項目 1 件ずつ)。
+**前提: return 全体が Step 2.1 の final message テンプレート (`## acceptance_criteria_status` /
+`## findings_table` / `## ambiguous_judgments` / `## recommendation` / `## meta`) を備えていること。**
+本表は「ゼロ件記法がこの item を壊さないか」を見るものであって、「findings_table セクション単体で
+足りる」という意味ではない (item 4 / 6 は別セクションの存在を見る):
+
+| item | 検査内容 | ヘッダ行のみの return での判定 |
+| --- | --- | --- |
+| 1 | 全 finding に classification がある | **通る**。データ行が 0 行なので「classification を欠く行」も 0 行 |
+| 2 | (B) 主張行には trigger 根拠列がある | **通る**。(B) 行が 0 行 |
+| 3 | 「無視」「観察のみ」「スコープ対象外」を単独で含む行がない | **通る**。ヘッダ行にこれらの語は含まれない (`なし` 等の自由文は本 item ではなく **item 1** で落ちる。帰属は上の誤り表が正) |
+| 4 | 必須セクションが存在する | **通る (条件付き)**。テンプレートの 5 セクションすべてを置くこと。1 つでも省けば本 item で parse error |
+| 5 | 受け入れ条件の未達が findings に反映されている | **通る (条件付き)**。`## acceptance_criteria_status` が全件実証済であることが前提。`×` / `partial` が 1 行でもあるのに findings 0 件なら parse error |
+| 6 | (A) 強優先方針違反検出 | **通る**。分類対象の finding が 0 件 |
+| 7 | `## meta` に `Codex 出力読み取り` 行がある | **通る (条件付き)**。findings 件数とは独立だが、`## meta` に当該行が無ければ本 item で parse error。Codex 非起動なら `非起動 (理由: ...)` で理由括弧まで必須。禁止語彙は item 7 本文の 3 行が正 (ここには写さない) |
+
+**セクションの定義**: 「セクション」とは **`##` 見出し行から次の `##` 見出し行の直前まで**を指す
+(次の見出し行はそのセクションに含まない)。
+
+**item ごとの検査対象 roster (本節が正)**。**「scope を共有する item の集合」ではなく
+`(item, 対象セクション, 期待する行形式)` の三つ組で定義する** — 同じセクションを見る item でも
+期待する行形式が違うため、集合に畳むと「同じ検査を両セクションに適用する」と読まれて衝突する
+(実際 `## ambiguous_judgments` は `-` 始まりの箇条書きが正なので、findings_table 用の
+「パイプ始まりでなければ parse error」を当てると 1 件でも書いた時点で必ず落ちる):
+
+| item | 対象セクション | 期待する行形式 |
+| --- | --- | --- |
+| 1 | `## findings_table` **のみ** | 見出し行 / パイプ始まりの表行 |
+| 2 | `## findings_table` のデータ行 | (B) 行の根拠列 |
+| 3 | `## findings_table` + `## ambiguous_judgments` | 行形式は問わない (キーワード grep のみ) |
+| 4 | **テンプレートの 5 セクションすべて** | セクションの**存在**のみ |
+| 5 | `## acceptance_criteria_status` × `## findings_table` の横断 | 判定列と finding の対応 |
+| 6 | `## findings_table` のデータ行 | 処置列の分類 |
+| 7 | `## meta` | 状態語 + 理由括弧 + 語彙 |
+
+**この表を各 item の本文へ再掲しない** — 再掲すると membership が割れる
+(定義だけを 1 箇所にしても roster が複数箇所にあれば同じことが起きる)。
+
+**return 全体の空白の扱い**: セクション間の空行・末尾改行・インデントは**有意ではない**。
+検査はいずれも非空行に対して行う。**dispatch prompt の `__ITERATE_REVIEW_SUBAGENT_MODE__` marker は
+return に echo しない** (marker は入力側の契約)。
+
 **抽出時の必須 validation (握り潰し防止)**:
 
-1. **全 finding に classification がある**: 各行の処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれか。`(A)*` は ambiguous_judgments セクションとの cross-reference が必須 (subagent が自動判断できなかった finding に使用、`ambiguous` 単独記載は禁止)。空欄 / 「観察のみ」 / 「対象外」/ `ambiguous` 単独等は **parse error**。Round 2+ で `handoff_state` に既登録の topic が再度 findings_table に含まれる場合も **parse error** (= subagent が exclusion を尊重していない)
+1. **全 finding に classification がある / セクション内に表行以外の本文を置かない**: `## findings_table` セクション内の**非空行は、見出し行 (`##` で始まる) か、ヘッダ行・区切り行・データ行 (いずれもパイプ文字で始まる)** でなければならない。パイプ文字で始まらない非空行 (`なし` / `N/A` / `該当なし` / 説明文 等) があれば **parse error** — 自由文を許すと「ゼロ件」と「表を書かずに散文で済ませた」が区別できなくなる。データ行については、各行の処置列が `(A)` / `(A)*` / `(B)` / `(C)` のいずれか。`(A)*` は ambiguous_judgments セクションとの cross-reference が必須 (subagent が自動判断できなかった finding に使用、`ambiguous` 単独記載は禁止)。空欄 / 「観察のみ」 / 「対象外」/ `ambiguous` 単独等は **parse error**。Round 2+ で `handoff_state` に既登録の topic が再度 findings_table に含まれる場合も **parse error** (= subagent が exclusion を尊重していない)
 2. **(B) 主張行には trigger 根拠列がある**: rationale 列に「別領域・別機能 AND 1 セッション超 AND 受け入れ条件検証破綻」3 条件への該当言及があるか。1 条件のみの (B) は **parse error** (= subagent が誤分類)
-3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**。**検査範囲は `## findings_table` / `## ambiguous_judgments` の行に限る** (item 1 / 2 / 4 / 5 と同じスコープ)。`## meta` の状態記録行 (`Codex 出力読み取り: 非起動 (理由: ...)` 等) は**対象外** — 記録義務を課した行が握り潰し検出に巻き込まれると、正しく申告するほど parse error になる
-4. **`ambiguous_judgments` セクションが存在する** (空でもセクション自体は必須): 不在は parse error
-5. **(A) 強優先方針違反検出**: `latent issue / CI failure / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述` 等の典型 (A) trigger を含む finding が (A) 以外 ((A)* / (B) / (C)) に分類されている場合は **parse error**
-6. **`## meta` に `Codex 出力読み取り` 行がある** (#949): `成功` / `失敗 (理由: ...)` / `非起動 (理由: ...)` のいずれかで始まること。行の不在は **parse error**。**`失敗` と `非起動` はどちらも理由が必須**で、理由括弧を欠いたものは parse error (根拠は「読んだ」「読めなかった」「起動していない」を事後に区別できなくすることであり、この理屈は 2 分岐に等しく効く。片方だけを名指しすると、名指しされていない側が緩いと読める抜け道になる)。`非起動` の理由は `/review-pr` Step 5a §「起動記録 (該当時 / 不該当時とも必須)」の非対象行と同一内容でよい (**同 record の専用スロットは増やさず本行に畳む**)。畳んだ完成形の例:
+3. **subagent return に「無視」「観察のみ」「スコープ対象外」のキーワードを単独で含む行がない**: 文字列 grep で検出、ヒットしたら **parse error**。**「単独で含む」= 行から記号・空白を除いた本体がそのキーワードと一致すること**を指す。`## ambiguous_judgments` には「スコープ対象外かどうか判断できなかった」のように**正直な申告としてこの語を含む bullet** が来うるので、部分一致で落とすと**正しく書くほど parse error になる** (`## meta` の記録行について既に述べたのと同じ構図。禁止語彙 gate は対象セクションごとに positive fixture で緑を確認してから roster に載せる)。**検査範囲は上記 §「item ごとの検査対象 roster」に従う** (ここに再掲しない。名前参照は参照先ブロックの見出しの字面をそのまま引く)。roster に無いセクション — とりわけ `## meta` の状態記録行 (`Codex 出力読み取り: 非起動 (理由: ...)` 等) は**対象外**である。記録義務を課した行が握り潰し検出に巻き込まれると、正しく申告するほど parse error になるため
+4. **必須セクションが存在する** (空でもセクション自体は必須): **`## acceptance_criteria_status` / `## findings_table` / `## ambiguous_judgments` / `## recommendation` / `## meta` の 5 つすべて**を検査し、**いずれかが不在なら parse error**。**「空でもよい」セクションだけでなく、parser が読む全セクションを対象にする** — `## acceptance_criteria_status` が不在だと item 5 が「`×` / `partial` の行が無い」= 適合と同じ観測値になり、まさに本 item が塞ごうとしている false-green が別セクションで再現する。**`## findings_table` をこの item に含めるのが要点** — 含めないと、セクションごと落とした return が「データ行 0 行」と同じ観測値になり、item 1 / 2 / 6 を空虚に通過して「(A)/(B)/(C) all 0 = 収束」→ LGTM summary 投稿まで静かに通る (不在が『違反ゼロ』と同じ観測値になる検査は false-green を生む)
+5. **受け入れ条件の未達が findings に反映されている**: `## acceptance_criteria_status` に `×` / `partial` / 未実証の行があるなら、**その各行に対応する `(A)` finding が `## findings_table` に存在しなければ parse error**。
+   **これが無いと「受け入れ条件が落ちているのに findings ゼロ」= 収束 → LGTM が通る** (Codex adversarial-review [high])。
+   Step 2.2 は findings_table しか件数に数えないため、未達の受け入れ条件は (A) finding に変換されない限り
+   Step 3.1 の収束判定から**構造的に見えない**。ゼロ件記法を整備したことで、この経路は
+   「正しく見える return」として通りやすくなっている
+6. **(A) 強優先方針違反検出**: `latent issue / CI failure / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述` 等の典型 (A) trigger を含む finding が (A) 以外 ((A)* / (B) / (C)) に分類されている場合は **parse error**
+7. **`## meta` に `Codex 出力読み取り` 行がある** (#949): `成功` / `失敗 (理由: ...)` / `非起動 (理由: ...)` のいずれかで始まること。行の不在は **parse error**。**`失敗` と `非起動` はどちらも理由が必須**で、理由括弧を欠いたものは parse error (根拠は「読んだ」「読めなかった」「起動していない」を事後に区別できなくすることであり、この理屈は 2 分岐に等しく効く。片方だけを名指しすると、名指しされていない側が緩いと読める抜け道になる)。`非起動` の理由は `/review-pr` Step 5a §「起動記録 (該当時 / 不該当時とも必須)」の非対象行と同一内容でよい (**同 record の専用スロットは増やさず本行に畳む**)。畳んだ完成形の例:
 
    ```text
-   - Codex 出力読み取り: 非起動 (理由: touched 4 file / single root cause / non-L1-core)
+   - Codex 出力読み取り: 非起動 (理由: 条件1 touched 4 file / 210 lines・条件2 再発 root cause 1 件・条件3 core 変更対象ファイル 該当 0)
    ```
 
-   > **本 validation は構文検査のみ** — 状態語で始まっているか、`失敗` / `非起動` に理由括弧があるか、の 2 点だけを見る。**理由の中身が具体的かどうか (`(理由: 特になし)` のような空疎な理由) は検査しない。** 意味の妥当性は Step 2.3 の Round summary で controller が目視する
+   > **理由の literal の正は prompt template 側 (Step 2.1 の `## meta` に置いた代表形) 1 箇所**で、
+   > 上の行はそれを scenario 値で埋めた例にすぎない。**同じ literal の worked example を 2 箇所に持たない** —
+   > 持つと片方だけ古くなる。
+   >
+   > **`非起動` の理由が下記のいずれかに当たったら parse error にする。**
+   >
+   > - `single root cause` を含む
+   > - `non-L1-core` を含む
+   > - `root cause` が出現するのに、その直前が `再発` **でない** (= 修飾語の無い裸の用法)
+   >
+   > 3 番目は「裸の」を判定可能な形に落としたもの。**単純な部分文字列一致で `root cause` を
+   > 禁止すると、正の代表形が含む `条件2 再発 root cause <K> 件` 自身に当たって、
+   > 指示どおり書いた return が parse error になる** (禁止語彙 gate は、正の literal に対して
+   > 緑になること (positive fixture) と旧語彙に対して赤になること (negative fixture) の
+   > 両方を確認してから置く)。禁止リストの正は本 3 行だけで、他所は名前で参照する
+   > `/review-pr` は 3 条件を 1 つずつ実測値付きで書くことを要求しており、旧語彙は「どの条件が
+   > どう不成立だったか」を事後に復元できない (= 監査不能な skip)。
+   >
+   > 上記の語彙検査を除けば **本 validation は構文検査** — 状態語で始まっているか、`失敗` / `非起動` に理由括弧があるか、の 2 点を見る。**理由の中身が十分に具体的かどうか (`(理由: 特になし)` のような空疎な理由) までは検査しない。** 意味の妥当性は Step 2.3 の Round summary で controller が目視する
 
 **parse error 時の対処**:
 
@@ -144,7 +273,7 @@ Round N findings:
 - (A): <件数>
 - (B): <件数>
 - (C): <件数>
-- 受け入れ条件 (Step 3): <全 ✓ / 部分 / 全 ×>
+- 受け入れ条件 (Step 3): <全 ○ / partial あり / 全 ×>
 - ambiguous_judgments: <件数> (詳細は別途展開)
 
 選択:
@@ -168,7 +297,7 @@ Iron Law 3 と CLAUDE.md plugin override 規約は「user の明示判断が最�
 2. ambiguous_judgments の処置は subagent が挙げた選択肢のみ提示。controller が独自に「本 PR 内修正」「scope 拡大」を**追加しない**
 3. scope 拡大が本当に必要 (連続して同種 finding が出る等) と思ったら、user に AskUserQuestion で問う前に **`/scope-guard` skill** を呼び、scope 拡大の妥当性を独立判定する
 4. user が `Other` 経由で「本 PR 内修正したい」と明示した場合のみ scope 拡大に倒す
-5. 「Round N で同 root cause を 1 件本 PR 内修正した」は Round N+1 で sweep の根拠に**ならない**。各 finding は独立に subagent recommended に従う
+5. 「Round N で同じ **sweep root cause** ((b)、`/review-pr` §「root cause の 2 用法」) を 1 件本 PR 内修正した」は Round N+1 で sweep の根拠に**ならない**。各 finding は独立に subagent recommended に従う
 
 関連 PR: #732 (commit `8eff1d2`, `ee77e37` が scope creep 該当)。
 
@@ -181,12 +310,12 @@ Iron Law 3 と CLAUDE.md plugin override 規約は「user の明示判断が最�
 1. 該当 path:line を Read で内容確認
 2. Edit で修正
 3. 変更 path に応じた local check (Iron Law 6 サブ条 = `docs/l2-workflow.md` §「PR 作成 path 別自動チェック」):
-   - Python (`*.py`): `ruff check . && ruff format --check . && pyright && pytest`
+   - Python (`*.py`): `ruff check . && ruff format --check . && pyright --pythonpath "$(dirname "$(git rev-parse --git-common-dir)")/.venv/Scripts/python.exe" && pytest` (`--pythonpath` 省略は false-red、#974。macOS / Linux は `.venv/bin/python`)
    - GUI (`gui/src/**`, `gui/src-tauri/**`): `npm run lint && npm run typecheck && npm test && npm run build && cargo check`
    - Markdown (`docs/**.md`, `*.md`): `bash scripts/check-markdownlint.sh` (violation fix recipe は [`docs/markdownlint-guide.md`](../../../docs/markdownlint-guide.md) §typical fixes を参照、M10)
 4. **1 round = 1 commit** で集約: 全 (A) を 1 つの commit にまとめる (round 単位の atomicity を確保、Round 別 SHA を summary コメントで参照しやすくするため)。message テンプレ: `fix(round-N): <要約> (Refs #<元 issue>)`。例外として、push 失敗で reset → 再 commit が必要な場合のみ複数 commit になる可能性を許容
 
-> **M5 同 issue 過去 PR 警告の併走**: `/review-pr` Step 1.1 で同 issue 過去 merged PR が ≥1 件検出された場合、その警告は subagent の Step 5b 表冒頭に転記されて return される。controller (本 skill) は Step 2.2 parse 後の Step 2.3 Round summary 提示時に user に再度明示する (root cause sweep 重点確認の促し)。
+> **M5 同 issue 過去 PR 警告の併走**: `/review-pr` Step 1.1 で同 issue 過去 merged PR が ≥1 件検出された場合、その警告は subagent の Step 5b 表冒頭に転記されて return される。controller (本 skill) は Step 2.2 parse 後の Step 2.3 Round summary 提示時に user に再度明示する (**再発 root cause** ((a)、`/review-pr` §「root cause の 2 用法」) の重点確認の促し。ここは過去 merged PR 単位の話で、Step 5c の sweep root cause ((b)) ではない)。
 
 #### Step 2.5 (B) findings handoff (新規 issue 起票、限定例外パス)
 
@@ -255,7 +384,12 @@ Iron Law 3 と CLAUDE.md plugin override 規約は「user の明示判断が最�
 
 #### Step 3.1 収束 (success path)
 
-(A)/(B)/(C) all 0 → Step 4 (Final summary comment) へ。
+(A)/(B)/(C) all 0 **かつ `## acceptance_criteria_status` が全件実証済** → Step 4 (Final summary comment) へ。
+
+> **findings 件数だけで収束を決めない** (Codex adversarial-review [high])。受け入れ条件に `×` / `partial` が
+> 残ったまま findings がゼロなら、それは収束ではなく **Iron Law 1 の未達**である。Step 2.2 の
+> validation item 5 が「未達の受け入れ条件は (A) finding として現れる」ことを強制するので、
+> 正常な経路では両者は一致する。**一致しない return が来たら収束させず parse error として再 dispatch する。**
 
 #### Step 3.2 発散検知
 
@@ -332,12 +466,12 @@ PR は <R> ラウンドの review-fix で収束。全 findings 解消完了。
 
 | # | 条件 | 実証 | 判定 |
 |---|---|---|---|
-| 1 | <条件> | `path:line` / `test_name` / CI log | ✓ |
+| 1 | <条件> | `path:line` / `test_name` / CI log | ○ |
 
 ## Final State
 
-- CI: ✓ green (last commit `<SHA[:7]>`)
-- 受け入れ条件: 全 ✓
+- CI: green (last commit `<SHA[:7]>`)
+- 受け入れ条件: 全 ○
 - (A) 残: 0 / (B) handoff: <#N1, #N2 or なし> / (C) handoff: <#M1 or なし>
 - 並行 PR: <検出ゼロ / [#X handled]>
 - base sync: <CLEAN / 取り込み済み>

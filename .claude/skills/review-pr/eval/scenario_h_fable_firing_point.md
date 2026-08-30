@@ -9,7 +9,7 @@ EPT シナリオ。**発火する側 (F-1) と発火しない側 (F-2) の対**�
 ### 想定状況
 
 PR は `docs/` 配下 5 file の変更に加え、`docs/superpowers/specs/` へ新規 spec doc を 1 件追加する。
-code file の変更はゼロ。diff 320 行、single root cause。
+code file の変更はゼロ。diff 320 行、再発 root cause 0 件 (同 issue の過去 merged PR なし)。
 executor は Step 5a を進めて Step 6 レビュー報告を組み立てる直前にいる。
 
 ### 期待挙動
@@ -30,8 +30,8 @@ executor は Step 5a を進めて Step 6 レビュー報告を組み立てる直
 ### 想定状況
 
 `allaganeye/export/pool.py` / `tests/test_pool.py` / `docs/cli-spec.md` の 3 file、diff 90 行、
-single root cause。doc-only でなく、spec / plan の新規追加もなく、15 file / 500 行 を大きく下回り、
-L1 core (CLI / detector / GPU) の変更でもない。
+再発 root cause 0 件。doc-only でなく、spec / plan の新規追加もなく、15 file / 500 行 を大きく下回り、
+§「core 変更対象ファイル」の表にも 1 件も該当しない。
 
 ### 期待挙動
 
@@ -59,9 +59,9 @@ Fable も Codex も**起動せず**、どちらについても理由付きの 1 
 ### 想定状況
 
 PR は `.github/workflows/ci.yml` と `constraints.txt` の 2 file のみを変更する。
-`.py` / `.ts` / `.rs` は 1 つも含まない。diff 40 行、single root cause。
+`.py` / `.ts` / `.rs` は 1 つも含まない。diff 40 行、再発 root cause 0 件。
 doc-only でもなく、spec / plan の新規追加もなく、15 file / 500 行 を大きく下回り、
-L1 core の変更でもない。
+§「core 変更対象ファイル」の表にも該当しない。
 
 ### 期待挙動
 
