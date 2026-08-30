@@ -351,7 +351,10 @@ PR のみ、**file list 取得より手前**で return する (Dependabot 等の
 
 ##### core 変更対象ファイル (#993)
 
-**この列挙が正であり、抽象語 (「L1 core」「detector 系」) で判定しない。** #930 の教訓
+**この列挙が正であり、抽象語 (「L1 core」「detector 系」) で判定しない。**
+**ディレクトリを指す行はすべて `**` を使う** — 単一 `*` はサブディレクトリを取りこぼす。
+1 行を `**` へ直したら、同じ表の全行に「この行の下にサブディレクトリが生じうるか」を
+1 件ずつ当ててから閉じる (1 行だけのピンポイント修正は同型の穴を残す)。 #930 の教訓
 「**抽象語の観点は具体的な欠陥クラスへの検出力を持たない。検出力は具体列挙にのみ宿る**」
 (`CLAUDE.md` §destructive write boundary audit checklist) は、レビュアの**起動条件の書き方**にも
 そのまま当てはまる。
@@ -366,9 +369,9 @@ PR のみ、**file list 取得より手前**で return する (Dependabot 等の
 | `allaganeye/video/vtuber_timeline.py` | VTuber timeline 検出 V0-V4 |
 | `allaganeye/video/probe_state.py` | probe 失敗縮退の契約型 |
 | `allaganeye/video/splitter.py` | 無劣化分割 (出力の不可逆性) |
-| `allaganeye/audio/*.py` | 音声昇格の信号処理 |
-| `allaganeye/export/*.py` | 並列 export / GPU encoder fallback / ffmpeg 起動 |
-| `gui/src-tauri/src/**/*.rs` | Tauri command 境界 (IPC write 境界)。**サブディレクトリを含む** — `gui/src-tauri/src/process_util/` のように実在する下位ディレクトリが単一 `*` の字面から漏れる |
+| `allaganeye/audio/**/*.py` | 音声昇格の信号処理。**サブディレクトリを含む** — `allaganeye/audio/refs/__init__.py` が実在し、単一 `*` では漏れる |
+| `allaganeye/export/**/*.py` | 並列 export / GPU encoder fallback / ffmpeg 起動。**サブディレクトリを含む** (現時点で下位 `.py` は無いが、`*` のままだと追加時に静かに漏れる) |
+| `gui/src-tauri/src/**/*.rs` | Tauri command 境界 (IPC write 境界)。**サブディレクトリを含む** — `gui/src-tauri/src/process_util/` が実在する |
 
 **境界ファイルの逐条判定** (#993 受け入れ条件):
 
@@ -436,7 +439,18 @@ Codex review 起動: 対象 (理由: 条件1 touched 18 file / 520 lines・条�
 
 **上の数値・ファイル名は骨格を示すためだけのもので、当該 PR で必ず数え直す。**
 
-> **なぜ非対象分岐と同じく 3 条件すべてを書くのか**: 片側だけ全条件列挙にすると、
+> **取得が打ち切られて判定できないとき (fail-closed) の定型** — この第 3 の終状態にも定型を置く
+(定型の数は gate が到達しうる終状態の数と一致していなければならない):
+
+```text
+Codex review 起動: 判定不能 (理由: 変更ファイル一覧の取得が打ち切られた — §「変更ファイル一覧が取れないときの挙動 (fail-closed、実装の契約)」により job を再実行する)
+```
+
+この行を書いた場合は **Codex review を起動せずに job 再実行へ戻る**。`対象` / `非対象` の
+どちらかを書いてはいけない — `touched <N> file` も `該当 <J> 件` も同じ一覧に由来するため、
+部分リストで埋めた数値は実測値ではない。
+
+**なぜ非対象分岐と同じく 3 条件すべてを書くのか**: 片側だけ全条件列挙にすると、
 > 事後監査の対称性が崩れる (非対象は 3 条件ぶんの根拠が残るのに、対象は 1 条件しか残らない)。
 > 「記録義務は分岐を網羅する」の系として、**記録の粒度も分岐を跨いで揃える**。
 
