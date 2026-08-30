@@ -3,11 +3,17 @@
 Mocks run_export_attempt to focus on concurrency / cancel / partial
 failure semantics. Codex review #3 enforces cancel-without-queue-size
 condition.
+
+Resolver-level path contract tests (containment / identity-collision
+predicates on ``resolve_output_path`` / ``resolve_output_paths`` themselves)
+live in ``tests/test_path_schema_contracts.py`` (#934 P1-3). What remains here
+is pool *routing* (the ``test_pool_*`` tests, which prove ``export_matches``
+actually reaches the shared resolver -- a different predicate from the
+resolver's own contract) plus pool concurrency/cancel/failure behaviour.
 """
 
 from __future__ import annotations
 
-import shutil
 import sys
 import threading
 import time
@@ -25,10 +31,9 @@ from allaganeye.export.pool import (
     _format_start_for_filename,
     _identity_key,
     export_matches,
-    resolve_output_path,
-    resolve_output_paths,
 )
 from allaganeye.export.schema import ExportError, ExportResult
+from tests.export_match_helpers import make_matches, make_pair
 
 
 @pytest.mark.parametrize(
@@ -59,15 +64,6 @@ def _slots(n: int) -> list[EncoderSlot]:
     ]
 
 
-def _matches(n: int) -> list[ExportMatch]:
-    return [
-        ExportMatch(
-            index=i, start=float(i * 10), end=float((i + 1) * 10), type_label="match"
-        )
-        for i in range(n)
-    ]
-
-
 def test_runs_n_workers_in_parallel(tmp_path: Path):
     """concurrency = len(slots): max in-flight workers = N."""
     in_flight = 0
@@ -91,7 +87,7 @@ def test_runs_n_workers_in_parallel(tmp_path: Path):
 
     with patch("allaganeye.export.pool.run_export_attempt", side_effect=fake_run):
         summary = export_matches(
-            matches=_matches(10),
+            matches=make_matches(10),
             slots=_slots(3),
             source_video=tmp_path / "in.mp4",
             output_dir=tmp_path,
@@ -129,7 +125,7 @@ def test_cancel_stops_remaining(tmp_path: Path):
 
     with patch("allaganeye.export.pool.run_export_attempt", side_effect=fake_run):
         summary = export_matches(
-            matches=_matches(20),
+            matches=make_matches(20),
             slots=_slots(2),
             source_video=tmp_path / "in.mp4",
             output_dir=tmp_path,
@@ -167,7 +163,7 @@ def test_cancel_marks_true_even_with_empty_queue(tmp_path: Path):
 
     with patch("allaganeye.export.pool.run_export_attempt", side_effect=fake_run):
         summary = export_matches(
-            matches=_matches(3),
+            matches=make_matches(3),
             slots=_slots(1),
             source_video=tmp_path / "in.mp4",
             output_dir=tmp_path,
@@ -196,7 +192,7 @@ def test_partial_failure_other_workers_continue(tmp_path: Path):
 
     with patch("allaganeye.export.pool.run_export_attempt", side_effect=fake_run):
         summary = export_matches(
-            matches=_matches(5),
+            matches=make_matches(5),
             slots=_slots(2),
             source_video=tmp_path / "in.mp4",
             output_dir=tmp_path,
@@ -230,7 +226,7 @@ def test_empty_slots_raises(tmp_path: Path):
     """0 slots is not executable -> ValueError (caller bug)."""
     with pytest.raises(ValueError):
         export_matches(
-            matches=_matches(1),
+            matches=make_matches(1),
             slots=[],
             source_video=tmp_path / "in.mp4",
             output_dir=tmp_path,
@@ -266,7 +262,7 @@ def _run_pool(
     source_video: Path | None = None,
 ):
     return export_matches(
-        matches=_matches(1) if matches is None else matches,
+        matches=make_matches(1) if matches is None else matches,
         slots=_slots(1),
         source_video=source_video or (tmp_path / "in.mp4"),
         output_dir=output_dir if output_dir is not None else tmp_path / "out",
@@ -405,7 +401,7 @@ def test_pool_accepts_plain_pattern_inside_output_dir(tmp_path: Path):
         summary = _run_pool(
             tmp_path,
             pattern="{idx:03}_{type}_{start}.mp4",
-            matches=_matches(2),
+            matches=make_matches(2),
             output_dir=out_dir,
         )
     assert summary.success == 2
@@ -438,47 +434,6 @@ def test_pool_accepts_subdirectory_pattern(tmp_path: Path):
     assert summary.success == 1
 
 
-def test_resolve_output_path_returns_path_inside_output_dir(tmp_path: Path):
-    """Worker-level primitive: accepted patterns resolve under -o."""
-    out_dir = tmp_path / "out"
-    got = resolve_output_path(
-        ExportMatch(index=3, start=65.0, end=75.0, type_label="match"),
-        "{idx:03}_{type}_{start}.mp4",
-        output_dir=out_dir,
-        source_video=tmp_path / "in.mp4",
-    )
-    assert got == out_dir / "003_match_01-05.mp4"
-
-
-def test_resolve_output_path_rejects_escape(tmp_path: Path):
-    """Worker-level primitive rejects on its own (callers that skip the CLI
-    preflight -- GUI / future callers -- are still covered)."""
-    with pytest.raises(ConfigValidationError) as exc:
-        resolve_output_path(
-            ExportMatch(index=1, start=0.0, end=10.0, type_label="match"),
-            "../victim.mp4",
-            output_dir=tmp_path / "out",
-            source_video=tmp_path / "in.mp4",
-        )
-    assert exc.value.exit_code == 5
-
-
-@pytest.mark.parametrize("pattern", ["", ".", "./"])
-def test_resolve_output_path_rejects_output_dir_itself(tmp_path: Path, pattern: str):
-    """A pattern that renders to nothing resolves to -o itself (a directory).
-
-    ``output_dir / ""`` is ``output_dir``, which is not a writable file
-    target -- reject it instead of handing a directory path to ffmpeg.
-    """
-    with pytest.raises(ConfigValidationError):
-        resolve_output_path(
-            ExportMatch(index=1, start=0.0, end=10.0, type_label="match"),
-            pattern,
-            output_dir=tmp_path / "out",
-            source_video=tmp_path / "in.mp4",
-        )
-
-
 # --------------------------------------------------------------------------
 # Output *identity* uniqueness (#930 follow-up).
 #
@@ -493,129 +448,6 @@ def test_resolve_output_path_rejects_output_dir_itself(tmp_path: Path, pattern: 
 # --------------------------------------------------------------------------
 
 
-def _pair(a: str, b: str) -> list[ExportMatch]:
-    """Two matches whose only difference is the ``{type}`` token."""
-    return [
-        ExportMatch(index=0, start=0.0, end=10.0, type_label=a),
-        ExportMatch(index=1, start=10.0, end=20.0, type_label=b),
-    ]
-
-
-def _assert_each_passes_containment(
-    matches: list[ExportMatch], pattern: str, out_dir: Path, source: Path
-) -> None:
-    """Anti-false-green guard.
-
-    A uniqueness test is worthless if the input would have been rejected
-    anyway by the pre-existing containment / source-collision checks -- the
-    test would go green on the OLD code path for the WRONG reason. Assert
-    up front that every name is individually legal, so the only thing left
-    to reject is the shared identity.
-    """
-    for m in matches:
-        resolve_output_path(m, pattern, output_dir=out_dir, source_video=source)
-
-
-def test_resolve_output_paths_returns_one_path_per_match(tmp_path: Path):
-    """Reverse pin: distinct names are returned in order, unresolved."""
-    out_dir = tmp_path / "out"
-    got = resolve_output_paths(
-        _matches(3),
-        "{idx:03}_{type}.mp4",
-        output_dir=out_dir,
-        source_video=tmp_path / "in.mp4",
-    )
-    assert got == [
-        out_dir / "000_match.mp4",
-        out_dir / "001_match.mp4",
-        out_dir / "002_match.mp4",
-    ]
-
-
-def test_resolve_output_paths_accepts_empty_match_list(tmp_path: Path):
-    assert (
-        resolve_output_paths(
-            [],
-            "{idx:03}.mp4",
-            output_dir=tmp_path / "out",
-            source_video=tmp_path / "in.mp4",
-        )
-        == []
-    )
-
-
-@pytest.mark.skipif(
-    sys.platform != "win32", reason="path identity is case-insensitive on Windows only"
-)
-def test_resolve_output_paths_rejects_case_only_identity_collision(
-    tmp_path: Path,
-):
-    """``Clip.mp4`` and ``clip.mp4`` are two strings for one file (NTFS)."""
-    out_dir = tmp_path / "out"
-    source = tmp_path / "in.mp4"
-    matches = _pair("Clip", "clip")
-    _assert_each_passes_containment(matches, "{type}.mp4", out_dir, source)
-
-    with pytest.raises(ConfigValidationError) as exc:
-        resolve_output_paths(
-            matches, "{type}.mp4", output_dir=out_dir, source_video=source
-        )
-    assert exc.value.exit_code == 5
-    # both renderings must be named so the user can act on the message
-    assert "Clip.mp4" in str(exc.value)
-    assert "clip.mp4" in str(exc.value)
-
-
-def test_resolve_output_paths_rejects_dotdot_identity_collision(tmp_path: Path):
-    """``sub/../clip.mp4`` stays inside -o and *is* ``clip.mp4``.
-
-    Windows normalises the ``..`` even though ``sub`` never exists, so the
-    second write lands on the first file. Verified on this platform: writing
-    ``sub/../clip.mp4`` then ``clip.mp4`` leaves exactly one file.
-    """
-    out_dir = tmp_path / "out"
-    source = tmp_path / "in.mp4"
-    matches = _pair("sub/../clip", "clip")
-    _assert_each_passes_containment(matches, "{type}.mp4", out_dir, source)
-
-    with pytest.raises(ConfigValidationError) as exc:
-        resolve_output_paths(
-            matches, "{type}.mp4", output_dir=out_dir, source_video=source
-        )
-    assert exc.value.exit_code == 5
-
-
-def test_resolve_output_paths_rejects_exact_string_collision(tmp_path: Path):
-    """Regression: the pre-existing identical-string case still fails."""
-    with pytest.raises(ConfigValidationError) as exc:
-        resolve_output_paths(
-            _matches(2),
-            "{type}.mp4",  # no {idx}: both render "match.mp4"
-            output_dir=tmp_path / "out",
-            source_video=tmp_path / "in.mp4",
-        )
-    assert exc.value.exit_code == 5
-
-
-def test_resolve_output_paths_allows_identity_pairs_once_idx_disambiguates(
-    tmp_path: Path,
-):
-    """Control: the ``{type}`` values above are not illegal in themselves.
-
-    With ``{idx:03}`` in the pattern the two matches land on different files,
-    so the guard must stay quiet. This is what proves the rejections above are
-    caused by the shared identity and not by the token's content.
-    """
-    out_dir = tmp_path / "out"
-    got = resolve_output_paths(
-        _pair("Clip", "clip"),
-        "{idx:03}_{type}.mp4",
-        output_dir=out_dir,
-        source_video=tmp_path / "in.mp4",
-    )
-    assert got == [out_dir / "000_Clip.mp4", out_dir / "001_clip.mp4"]
-
-
 @pytest.mark.skipif(
     sys.platform != "win32", reason="path identity is case-insensitive on Windows only"
 )
@@ -628,7 +460,7 @@ def test_pool_rejects_case_only_identity_collision(tmp_path: Path):
             _run_pool(
                 tmp_path,
                 pattern="{type}.mp4",
-                matches=_pair("Clip", "clip"),
+                matches=make_pair("Clip", "clip"),
                 output_dir=out_dir,
             )
 
@@ -641,7 +473,7 @@ def test_pool_rejects_dotdot_identity_collision(tmp_path: Path):
             _run_pool(
                 tmp_path,
                 pattern="{type}.mp4",
-                matches=_pair("sub/../clip", "clip"),
+                matches=make_pair("sub/../clip", "clip"),
                 output_dir=out_dir,
             )
 
@@ -655,89 +487,6 @@ def test_pool_rejects_dotdot_identity_collision(tmp_path: Path):
 # compare unequal as paths yet name one file -- the exact shape of the bug
 # this section is meant to close, one layer deeper.
 # --------------------------------------------------------------------------
-
-
-def _assert_os_treats_as_one_file(tmp_path: Path, a: str, b: str) -> None:
-    """Precondition pin: on THIS machine the two names really are one file.
-
-    The guard is only worth having if the OS folds these names together. Pin
-    the premise here, so a future Windows / pathlib change surfaces as a
-    failed assumption instead of a silently pointless test.
-    """
-    probe = tmp_path / "_probe"
-    probe.mkdir(parents=True)
-    (probe / a).write_bytes(b"A")
-    (probe / b).write_bytes(b"B")
-    names = sorted(p.name for p in probe.iterdir())
-    assert len(names) == 1, f"expected {a!r} and {b!r} to be one file, got {names}"
-    shutil.rmtree(probe)
-
-
-@pytest.mark.skipif(
-    sys.platform != "win32", reason="Win32 strips trailing dots/spaces; POSIX does not"
-)
-@pytest.mark.parametrize(
-    "second", ["clip.mp4.", "clip.mp4 "], ids=["trailing-dot", "trailing-space"]
-)
-def test_resolve_output_paths_rejects_win32_folded_identity_collision(
-    tmp_path: Path, second: str
-):
-    """A trailing dot / space is dropped by Win32 but kept by ``PurePath``."""
-    out_dir = tmp_path / "out"
-    source = tmp_path / "in.mp4"
-    # The pattern is bare ``{type}`` so the trailing character stays last.
-    matches = _pair("clip.mp4", second)
-    # ... and the two renderings differ as text, so a string-keyed check --
-    # the very thing this section replaced -- would not have caught them.
-    assert second != "clip.mp4"
-    _assert_each_passes_containment(matches, "{type}", out_dir, source)
-    _assert_os_treats_as_one_file(tmp_path, "clip.mp4", second)
-
-    with pytest.raises(ConfigValidationError) as exc:
-        resolve_output_paths(matches, "{type}", output_dir=out_dir, source_video=source)
-    assert exc.value.exit_code == 5
-    assert "'clip.mp4'" in str(exc.value)
-    assert repr(second) in str(exc.value)
-
-
-@pytest.mark.skipif(
-    sys.platform == "win32", reason="trailing dots/spaces are significant on POSIX"
-)
-@pytest.mark.parametrize("second", ["clip.mp4.", "clip.mp4 "], ids=["dot", "space"])
-def test_resolve_output_paths_keeps_trailing_dot_pair_legal_on_posix(
-    tmp_path: Path, second: str
-):
-    """Over-rejection guard: POSIX really does have two files here."""
-    out_dir = tmp_path / "out"
-    got = resolve_output_paths(
-        _pair("clip.mp4", second),
-        "{type}",
-        output_dir=out_dir,
-        source_video=tmp_path / "in.mp4",
-    )
-    assert got == [out_dir / "clip.mp4", out_dir / second]
-
-
-@pytest.mark.skipif(
-    sys.platform != "win32", reason="Win32 strips trailing dots/spaces; POSIX does not"
-)
-def test_resolve_output_paths_keeps_dots_only_component_distinct(
-    tmp_path: Path,
-):
-    """A component that is *only* dots must not be folded to nothing.
-
-    Stripping ``...`` would invent an empty component and make every such name
-    collide with its own directory. Windows cannot create the name at all, so
-    ffmpeg fails loudly -- there is no silent overwrite to prevent here.
-    """
-    out_dir = tmp_path / "out"
-    got = resolve_output_paths(
-        _pair("...", "clip"),
-        "{type}",
-        output_dir=out_dir,
-        source_video=tmp_path / "in.mp4",
-    )
-    assert got == [out_dir / "...", out_dir / "clip"]
 
 
 @pytest.mark.parametrize(
@@ -824,7 +573,7 @@ def test_pool_rejects_win32_folded_identity_collision(tmp_path: Path):
             _run_pool(
                 tmp_path,
                 pattern="{type}",
-                matches=_pair("clip.mp4", "clip.mp4."),
+                matches=make_pair("clip.mp4", "clip.mp4."),
                 output_dir=out_dir,
             )
 
@@ -842,71 +591,6 @@ def test_pool_rejects_win32_folded_identity_collision(tmp_path: Path):
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "type_label",
-    ["clip.mp4::$DATA", "clip.mp4:stream", "clip.mp4:stream:$DATA"],
-    ids=["default-stream", "named-stream", "named-stream-typed"],
-)
-def test_render_rejects_alternate_data_stream_syntax(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, type_label: str
-):
-    """Driven through the platform switch so CI (ubuntu-only) gates it too."""
-    monkeypatch.setattr(pool_module, "_IS_WINDOWS", True)
-    m = ExportMatch(index=0, start=0.0, end=10.0, type_label=type_label)
-    with pytest.raises(ConfigValidationError) as exc:
-        resolve_output_path(
-            m, "{type}", output_dir=tmp_path / "out", source_video=tmp_path / "in.mp4"
-        )
-    assert exc.value.exit_code == 5
-    assert type_label in str(exc.value)
-
-
-@pytest.mark.skipif(
-    sys.platform != "win32", reason="':' is a legal filename character on POSIX"
-)
-def test_resolve_output_paths_rejects_ads_identity_collision(tmp_path: Path):
-    """``clip.mp4`` and ``clip.mp4::$DATA`` are one file with two resolved keys.
-
-    Both halves of that premise are pinned against the real OS below, and the
-    order matters: ``resolve()`` only collapses the stream suffix once the
-    target *exists* (it can then ask the filesystem). At preflight time the
-    outputs do not exist yet, which is exactly when the identity key fails.
-    """
-    # 1. the state the preflight actually runs in: nothing written yet
-    assert (tmp_path / "none.mp4").resolve() != (tmp_path / "none.mp4::$DATA").resolve()
-    # 2. ... and the two names are nonetheless one file
-    probe = tmp_path / "_probe"
-    probe.mkdir()
-    (probe / "clip.mp4").write_bytes(b"A")
-    (probe / "clip.mp4::$DATA").write_bytes(b"B")
-    assert sorted(p.name for p in probe.iterdir()) == ["clip.mp4"]
-    shutil.rmtree(probe)
-
-    with pytest.raises(ConfigValidationError) as exc:
-        resolve_output_paths(
-            _pair("clip.mp4", "clip.mp4::$DATA"),
-            "{type}",
-            output_dir=tmp_path / "out",
-            source_video=tmp_path / "in.mp4",
-        )
-    assert exc.value.exit_code == 5
-
-
-@pytest.mark.skipif(
-    sys.platform == "win32", reason="':' is a legal filename character on POSIX"
-)
-def test_colon_stays_legal_off_windows(tmp_path: Path):
-    """Over-rejection guard: POSIX filenames may contain ``:``."""
-    out_dir = tmp_path / "out"
-    got = resolve_output_paths(
-        _pair("a:b", "c:d"),
-        "{type}",
-        output_dir=out_dir,
-        source_video=tmp_path / "in.mp4",
-    )
-    assert got == [out_dir / "a:b", out_dir / "c:d"]
-
-
 @pytest.mark.skipif(
     sys.platform != "win32", reason="':' is a legal filename character on POSIX"
 )
@@ -918,6 +602,6 @@ def test_pool_rejects_alternate_data_stream(tmp_path: Path):
             _run_pool(
                 tmp_path,
                 pattern="{type}",
-                matches=_pair("clip.mp4", "clip.mp4::$DATA"),
+                matches=make_pair("clip.mp4", "clip.mp4::$DATA"),
                 output_dir=out_dir,
             )

@@ -48,6 +48,13 @@ issue の作業項目だったので実測した。結論は **入れない**:
 
 「何も assert しない宣言を機械可読ファイルへ足す」のは本 issue が潰そうとしている
 アンチパターンそのものなので、契約は下記の pin test 側に置く。
+
+**resolver レベルの path 契約の単一集約先** (#934 P1-3): ``resolve_output_path`` /
+``resolve_output_paths`` 自体の contain / identity-collision 述語の pin test は本ファイルへ
+集約する。caller ごとの routing テスト (「その caller が共有 resolver に実際に到達するか」)
+は意図的に各 caller の隣に置く -- 別の述語だからである: pool 側は
+``tests/test_export_pool.py`` の ``test_pool_*``、minimap 側は
+``tests/test_minimap_command.py``。
 """
 
 from __future__ import annotations
@@ -56,6 +63,8 @@ import copy
 import json
 import os
 import re
+import shutil
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -74,9 +83,15 @@ from allaganeye.commands.split_matches import (
 )
 from allaganeye.config import SplitConfig
 from allaganeye.exceptions import ConfigValidationError
-from allaganeye.export.pool import ExportMatch, resolve_output_path
+from allaganeye.export import pool as pool_module
+from allaganeye.export.pool import (
+    ExportMatch,
+    resolve_output_path,
+    resolve_output_paths,
+)
 from allaganeye.export.schema import ExportSummary
 from allaganeye.video.detector import MatchBoundary
+from tests.export_match_helpers import make_matches, make_pair
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = REPO_ROOT / "schemas" / "metadata.schema.json"
@@ -984,3 +999,390 @@ def test_export_cli_accepts_clean_name_pattern(
         )
     assert result.exit_code == 0, result.output
     mock_export.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# resolve_output_path / resolve_output_paths: containment + identity
+# collisions (moved from tests/test_export_pool.py, #934 P1-3)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_output_path_returns_path_inside_output_dir(tmp_path: Path):
+    """Worker-level primitive: accepted patterns resolve under -o."""
+    out_dir = tmp_path / "out"
+    got = resolve_output_path(
+        ExportMatch(index=3, start=65.0, end=75.0, type_label="match"),
+        "{idx:03}_{type}_{start}.mp4",
+        output_dir=out_dir,
+        source_video=tmp_path / "in.mp4",
+    )
+    assert got == out_dir / "003_match_01-05.mp4"
+
+
+def test_resolve_output_path_rejects_escape(tmp_path: Path):
+    """Worker-level primitive rejects on its own (callers that skip the CLI
+    preflight -- GUI / future callers -- are still covered)."""
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_output_path(
+            ExportMatch(index=1, start=0.0, end=10.0, type_label="match"),
+            "../victim.mp4",
+            output_dir=tmp_path / "out",
+            source_video=tmp_path / "in.mp4",
+        )
+    assert exc.value.exit_code == 5
+
+
+@pytest.mark.parametrize("pattern", ["", ".", "./"])
+def test_resolve_output_path_rejects_output_dir_itself(tmp_path: Path, pattern: str):
+    """A pattern that renders to nothing resolves to -o itself (a directory).
+
+    ``output_dir / ""`` is ``output_dir``, which is not a writable file
+    target -- reject it instead of handing a directory path to ffmpeg.
+    """
+    with pytest.raises(ConfigValidationError):
+        resolve_output_path(
+            ExportMatch(index=1, start=0.0, end=10.0, type_label="match"),
+            pattern,
+            output_dir=tmp_path / "out",
+            source_video=tmp_path / "in.mp4",
+        )
+
+
+# --------------------------------------------------------------------------
+# Output *identity* uniqueness (#930 follow-up).
+#
+# Containment and uniqueness are separate invariants. Two matches can render
+# to different STRINGS that denote the SAME file; both then pass containment
+# and both pass a string-keyed duplicate check, so both are written and one is
+# silently lost while the summary still reports success.
+#
+# The batch resolver keys on the resolved Path, which is the file's identity:
+# PurePath equality/hashing is case-insensitive on Windows, and ``resolve()``
+# collapses ``sub/../name`` even when ``sub`` does not exist.
+# --------------------------------------------------------------------------
+
+
+def _assert_each_passes_containment(
+    matches: list[ExportMatch], pattern: str, out_dir: Path, source: Path
+) -> None:
+    """Anti-false-green guard.
+
+    A uniqueness test is worthless if the input would have been rejected
+    anyway by the pre-existing containment / source-collision checks -- the
+    test would go green on the OLD code path for the WRONG reason. Assert
+    up front that every name is individually legal, so the only thing left
+    to reject is the shared identity.
+    """
+    for m in matches:
+        resolve_output_path(m, pattern, output_dir=out_dir, source_video=source)
+
+
+def test_resolve_output_paths_returns_one_path_per_match(tmp_path: Path):
+    """Reverse pin: distinct names are returned in order, unresolved."""
+    out_dir = tmp_path / "out"
+    got = resolve_output_paths(
+        make_matches(3),
+        "{idx:03}_{type}.mp4",
+        output_dir=out_dir,
+        source_video=tmp_path / "in.mp4",
+    )
+    assert got == [
+        out_dir / "000_match.mp4",
+        out_dir / "001_match.mp4",
+        out_dir / "002_match.mp4",
+    ]
+
+
+def test_resolve_output_paths_accepts_empty_match_list(tmp_path: Path):
+    assert (
+        resolve_output_paths(
+            [],
+            "{idx:03}.mp4",
+            output_dir=tmp_path / "out",
+            source_video=tmp_path / "in.mp4",
+        )
+        == []
+    )
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="path identity is case-insensitive on Windows only"
+)
+def test_resolve_output_paths_rejects_case_only_identity_collision(
+    tmp_path: Path,
+):
+    """``Clip.mp4`` and ``clip.mp4`` are two strings for one file (NTFS)."""
+    out_dir = tmp_path / "out"
+    source = tmp_path / "in.mp4"
+    matches = make_pair("Clip", "clip")
+    _assert_each_passes_containment(matches, "{type}.mp4", out_dir, source)
+
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_output_paths(
+            matches, "{type}.mp4", output_dir=out_dir, source_video=source
+        )
+    assert exc.value.exit_code == 5
+    # both renderings must be named so the user can act on the message
+    assert "Clip.mp4" in str(exc.value)
+    assert "clip.mp4" in str(exc.value)
+
+
+def test_resolve_output_paths_rejects_dotdot_identity_collision(tmp_path: Path):
+    """``sub/../clip.mp4`` stays inside -o and *is* ``clip.mp4``.
+
+    Windows normalises the ``..`` even though ``sub`` never exists, so the
+    second write lands on the first file. Verified on this platform: writing
+    ``sub/../clip.mp4`` then ``clip.mp4`` leaves exactly one file.
+    """
+    out_dir = tmp_path / "out"
+    source = tmp_path / "in.mp4"
+    matches = make_pair("sub/../clip", "clip")
+    _assert_each_passes_containment(matches, "{type}.mp4", out_dir, source)
+
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_output_paths(
+            matches, "{type}.mp4", output_dir=out_dir, source_video=source
+        )
+    assert exc.value.exit_code == 5
+
+
+def test_resolve_output_paths_rejects_exact_string_collision(tmp_path: Path):
+    """Regression: the pre-existing identical-string case still fails."""
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_output_paths(
+            make_matches(2),
+            "{type}.mp4",  # no {idx}: both render "match.mp4"
+            output_dir=tmp_path / "out",
+            source_video=tmp_path / "in.mp4",
+        )
+    assert exc.value.exit_code == 5
+
+
+def test_resolve_output_paths_allows_identity_pairs_once_idx_disambiguates(
+    tmp_path: Path,
+):
+    """Control: the ``{type}`` values above are not illegal in themselves.
+
+    With ``{idx:03}`` in the pattern the two matches land on different files,
+    so the guard must stay quiet. This is what proves the rejections above are
+    caused by the shared identity and not by the token's content.
+    """
+    out_dir = tmp_path / "out"
+    got = resolve_output_paths(
+        make_pair("Clip", "clip"),
+        "{idx:03}_{type}.mp4",
+        output_dir=out_dir,
+        source_video=tmp_path / "in.mp4",
+    )
+    assert got == [out_dir / "000_Clip.mp4", out_dir / "001_clip.mp4"]
+
+
+def _assert_os_treats_as_one_file(tmp_path: Path, a: str, b: str) -> None:
+    """Precondition pin: on THIS machine the two names really are one file.
+
+    The guard is only worth having if the OS folds these names together. Pin
+    the premise here, so a future Windows / pathlib change surfaces as a
+    failed assumption instead of a silently pointless test.
+    """
+    probe = tmp_path / "_probe"
+    probe.mkdir(parents=True)
+    (probe / a).write_bytes(b"A")
+    (probe / b).write_bytes(b"B")
+    names = sorted(p.name for p in probe.iterdir())
+    assert len(names) == 1, f"expected {a!r} and {b!r} to be one file, got {names}"
+    shutil.rmtree(probe)
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="Win32 strips trailing dots/spaces; POSIX does not"
+)
+@pytest.mark.parametrize(
+    "second", ["clip.mp4.", "clip.mp4 "], ids=["trailing-dot", "trailing-space"]
+)
+def test_resolve_output_paths_rejects_win32_folded_identity_collision(
+    tmp_path: Path, second: str
+):
+    """A trailing dot / space is dropped by Win32 but kept by ``PurePath``."""
+    out_dir = tmp_path / "out"
+    source = tmp_path / "in.mp4"
+    # The pattern is bare ``{type}`` so the trailing character stays last.
+    matches = make_pair("clip.mp4", second)
+    # ... and the two renderings differ as text, so a string-keyed check --
+    # the very thing this section replaced -- would not have caught them.
+    assert second != "clip.mp4"
+    _assert_each_passes_containment(matches, "{type}", out_dir, source)
+    _assert_os_treats_as_one_file(tmp_path, "clip.mp4", second)
+
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_output_paths(matches, "{type}", output_dir=out_dir, source_video=source)
+    assert exc.value.exit_code == 5
+    assert "'clip.mp4'" in str(exc.value)
+    assert repr(second) in str(exc.value)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="trailing dots/spaces are significant on POSIX"
+)
+@pytest.mark.parametrize("second", ["clip.mp4.", "clip.mp4 "], ids=["dot", "space"])
+def test_resolve_output_paths_keeps_trailing_dot_pair_legal_on_posix(
+    tmp_path: Path, second: str
+):
+    """Over-rejection guard: POSIX really does have two files here."""
+    out_dir = tmp_path / "out"
+    got = resolve_output_paths(
+        make_pair("clip.mp4", second),
+        "{type}",
+        output_dir=out_dir,
+        source_video=tmp_path / "in.mp4",
+    )
+    assert got == [out_dir / "clip.mp4", out_dir / second]
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="Win32 strips trailing dots/spaces; POSIX does not"
+)
+def test_resolve_output_paths_keeps_dots_only_component_distinct(
+    tmp_path: Path,
+):
+    """A component that is *only* dots must not be folded to nothing.
+
+    Stripping ``...`` would invent an empty component and make every such name
+    collide with its own directory. Windows cannot create the name at all, so
+    ffmpeg fails loudly -- there is no silent overwrite to prevent here.
+    """
+    out_dir = tmp_path / "out"
+    got = resolve_output_paths(
+        make_pair("...", "clip"),
+        "{type}",
+        output_dir=out_dir,
+        source_video=tmp_path / "in.mp4",
+    )
+    assert got == [out_dir / "...", out_dir / "clip"]
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="':' is a legal filename character on POSIX"
+)
+def test_resolve_output_paths_rejects_ads_identity_collision(tmp_path: Path):
+    """``clip.mp4`` and ``clip.mp4::$DATA`` are one file with two resolved keys.
+
+    Both halves of that premise are pinned against the real OS below, and the
+    order matters: ``resolve()`` only collapses the stream suffix once the
+    target *exists* (it can then ask the filesystem). At preflight time the
+    outputs do not exist yet, which is exactly when the identity key fails.
+    """
+    # 1. the state the preflight actually runs in: nothing written yet
+    assert (tmp_path / "none.mp4").resolve() != (tmp_path / "none.mp4::$DATA").resolve()
+    # 2. ... and the two names are nonetheless one file
+    probe = tmp_path / "_probe"
+    probe.mkdir()
+    (probe / "clip.mp4").write_bytes(b"A")
+    (probe / "clip.mp4::$DATA").write_bytes(b"B")
+    assert sorted(p.name for p in probe.iterdir()) == ["clip.mp4"]
+    shutil.rmtree(probe)
+
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_output_paths(
+            make_pair("clip.mp4", "clip.mp4::$DATA"),
+            "{type}",
+            output_dir=tmp_path / "out",
+            source_video=tmp_path / "in.mp4",
+        )
+    assert exc.value.exit_code == 5
+
+
+# --- Alternate data stream / colon handling (moved from tests/test_export_pool.py,
+# #934 P1-3: these are resolver contracts, not pool routing) ---
+
+
+@pytest.mark.parametrize(
+    "type_label",
+    ["clip.mp4::$DATA", "clip.mp4:stream", "clip.mp4:stream:$DATA"],
+    ids=["default-stream", "named-stream", "named-stream-typed"],
+)
+def test_render_rejects_alternate_data_stream_syntax(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, type_label: str
+):
+    """Driven through the platform switch so CI (ubuntu-only) gates it too."""
+    monkeypatch.setattr(pool_module, "_IS_WINDOWS", True)
+    m = ExportMatch(index=0, start=0.0, end=10.0, type_label=type_label)
+    with pytest.raises(ConfigValidationError) as exc:
+        resolve_output_path(
+            m, "{type}", output_dir=tmp_path / "out", source_video=tmp_path / "in.mp4"
+        )
+    assert exc.value.exit_code == 5
+    assert type_label in str(exc.value)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="':' is a legal filename character on POSIX"
+)
+def test_colon_stays_legal_off_windows(tmp_path: Path):
+    """Over-rejection guard: POSIX filenames may contain ``:``."""
+    out_dir = tmp_path / "out"
+    got = resolve_output_paths(
+        make_pair("a:b", "c:d"),
+        "{type}",
+        output_dir=out_dir,
+        source_video=tmp_path / "in.mp4",
+    )
+    assert got == [out_dir / "a:b", out_dir / "c:d"]
+
+
+# ---------------------------------------------------------------------------
+# 集約そのものを守る guard (#934 P1-3)
+#
+# 「resolver 契約の pin test はこのファイルに集約する」は規約であって、規約だけでは
+# 腐る。次の PR が別ファイルへ resolver 契約テストを足しても、テストは全部 green の
+# まま集約が崩れる -- 崩れたこと自体を誰も観測しない。発火点をここに置く。
+#
+# 判定は「resolver を **import している** test module があるか」で行う。呼び出し箇所を
+# 数えるのではなく import で判定するのは、import は 1 モジュールに 1 箇所しか無く
+# 走査がずれないため (呼び出し側は文字列として docstring にも現れる)。
+# ---------------------------------------------------------------------------
+
+_RESOLVER_NAMES = ("resolve_output_path", "resolve_output_paths")
+_RESOLVER_HOME = "test_path_schema_contracts.py"
+
+
+def _test_modules_importing_resolver() -> list[str]:
+    """`test_*.py` のうち resolver を import しているものを返す。"""
+    import ast
+
+    tests_dir = Path(__file__).parent
+    hits: list[str] = []
+    for path in sorted(tests_dir.glob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "allaganeye.export.pool"
+            ):
+                if any(alias.name in _RESOLVER_NAMES for alias in node.names):
+                    hits.append(path.name)
+                    break
+    return hits
+
+
+def test_resolver_contract_tests_live_in_one_module() -> None:
+    """resolver を import する test module は本ファイルだけであること。
+
+    caller ごとの *routing* テスト (pool / minimap) は resolver を import せず、
+    それぞれの entry point (``export_matches`` / minimap CLI) 経由で叩く。だから
+    「import しているか」で集約の崩れを判定できる。routing テストを書くのに
+    resolver の import が要るなら、それは routing ではなく resolver 契約であり、
+    本ファイルへ移すべきものである。
+    """
+    got = _test_modules_importing_resolver()
+    assert got == [_RESOLVER_HOME], (
+        f"resolver 契約テストの集約が崩れている。resolver を import している "
+        f"test module: {got}。{_RESOLVER_HOME} 以外に resolver 契約テストを置くと、"
+        "同じ述語が 2 箇所で pin され片方だけが更新される (#934 P1-3 が解消した drift)。"
+        "caller の routing を検査したいなら resolver を直接 import せず entry point 経由で叩く。"
+    )
+
+
+def test_resolver_home_is_this_module() -> None:
+    """guard 自身が空振りしていないこと (home の名前が実ファイルと一致するか)。"""
+    assert Path(__file__).name == _RESOLVER_HOME
+    assert _RESOLVER_HOME in _test_modules_importing_resolver()
