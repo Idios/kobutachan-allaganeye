@@ -84,7 +84,13 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
   - Release 本文は [`scripts/extract_release_notes.py`](../scripts/extract_release_notes.py) が CHANGELOG.md から該当バージョンのセクションを抽出する
   - タグ名と[バージョン保持箇所](versioning.md#バージョン管理場所)が 1 つでも一致しない場合、workflow の `version-check` job は fail する (#911)。突合対象の正は [`scripts/check_version_consistency.py`](../scripts/check_version_consistency.py) の `VERSION_LOCATIONS`
   - 同 job は tag push 時に **CHANGELOG 見出し日付**と**バンプ方向** (直前のリリースより新しいこと) も検査する (#948 / #918)。いずれも `--tag` 指定時のみ発火するため、**PR / `workflow_dispatch` / branch push では 1 度も走らない**
-- 手動で dry-run ビルドを確認したい場合は、Actions タブから `Release` workflow を `workflow_dispatch` で起動する (Release は作成されず ZIP artifact のみ)
+- Actions タブから `Release` workflow を `workflow_dispatch` で起動すると、**ビルド + smoke test の検証**ができる。**Release も ZIP artifact も生成されない** (#922)
+  - dispatch でも走るのは build に加えて baseline 計測 / launcher `--version` smoke / fixture への detect smoke / integrity fall-through (exit 7) の 4 step (それぞれ `|| github.event_name == 'workflow_dispatch'` を持つ)。「build が通るか」だけではない
+  - `actions/upload-artifact@v4` の 2 step はいずれも `if: matrix.shell == 'pwsh' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))` で gate されており、`workflow_dispatch` はどちらの条件にも該当しない (`.github/workflows/release.yml`)。build 自体は走るが成果物は upload されない
+  - **Portable ZIP を実際に手に入れたい場合の経路は 3 つ**:
+    1. **ローカルで作る** — §手動リリース手順 (CI 迂回) の [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) を直接実行する
+    2. **リリース PR の CI から取る** — `release.yml` の `pull_request` trigger は base…head の全 diff で評価されるため、リリース PR では起動し `upload-artifact` の `pull_request` 分岐が成立する (実測: PR #924 の `build-windows (pwsh)` job)。取るのは `allaganeye-windows-v<version>` の方 (同時に上がる `allaganeye-baseline-v<version>` は `baseline.json` のみ)。**ただしこの artifact は展開済み payload で、1 / 3 の ZIP が持つ最上位 `allaganeye-v<version>/` ディレクトリを含まない** — 「展開 = インストール」の確認に使うときは形が違う点に注意 (`release` job が再 zip して wrapper を復元している)
+    3. **タグ push 後の Release 添付から取る** — `refs/tags/v*` の push で自動作成される GitHub Release に添付される
 - `/release` スキルは develop → main PR 作成・CHANGELOG 更新の支援に使う (Release 作成自体は上記 workflow が担う)
 
 ## CHANGELOG entry の記述規約 (#952)
@@ -358,7 +364,7 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 
 ### 注意事項
 
-- 手動リリース後、次回の通常 push で `release.yml` の `pull_request` トリガーや `python` ジョブが正常動作するか確認する (Actions タブから `Release` workflow を `workflow_dispatch` で dry-run 起動するのが確実)
+- 手動リリース後、次回の通常 push で `release.yml` の `pull_request` トリガーや `version-check` / `build-windows` ジョブが正常動作するか確認する (Actions タブから `Release` workflow を `workflow_dispatch` で dry-run 起動すると **ビルドの通過だけ**を確認できる。artifact は上がらない — §タグ運用 参照)
 - 同梱バイナリ (Python / FFmpeg) の更新は手動ビルドでも自動ビルドでも更新箇所が同じ ([`docs/developer-setup.md` §9](developer-setup.md) のチェックリストに従う)
 - 手動 Release は通常時は不要。CI 復旧後は `release.yml` 経由に戻す
 
