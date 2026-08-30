@@ -924,9 +924,18 @@ def _make_deep_dir(base: Path) -> Path:
 
 
 def test_extended_is_noop_off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
-    """POSIX では変換しない (MAX_PATH 相当の制約が無いため)."""
+    """POSIX では変換しない (MAX_PATH 相当の制約が無いため).
+
+    ``Path`` の生成は patch の**外**で行う。``guard.os`` は `os` module そのもの
+    なので ``os.name`` の差し替えはプロセス全体に効き、その状態で ``Path()`` を
+    呼ぶと Windows 版 Python 3.11 が ``PosixPath`` を作れず
+    ``NotImplementedError`` になる (CI の windows job で pytest ごと
+    INTERNALERROR になった)。判定したいのは ``_extended`` の分岐だけである。
+    """
+    path = Path("docs/a.md")
+    expected = str(path)
     monkeypatch.setattr(guard.os, "name", "posix")
-    assert guard._extended(Path("docs/a.md")) == "docs/a.md"
+    assert guard._extended(path) == expected
 
 
 @pytest.mark.skipif(os.name != "nt", reason="拡張パス形式は Windows 固有")
