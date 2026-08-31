@@ -5,12 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-<!-- 書き方は docs/release-process.md §CHANGELOG entry の記述規約 を参照。
+<!-- 開発中の変更は `## [Unreleased]` 節を作ってそこへ足す (リリース時に
+     `## [<版>] - YYYY-MM-DD` へ改名する)。書き方は
+     docs/release-process.md §CHANGELOG entry の記述規約 を参照。
      利用者から見た振る舞いが変わらない変更 (CI ガード / 開発 doc / skill /
      テスト / 版 pin) に entry は不要。その場合は PR 本文に
-     「CHANGELOG entry: 不要 (内部専用 -- <種別>)」を 1 行残す。 -->
+     「CHANGELOG entry: 不要 (内部専用 -- <種別>)」を 1 行残す。
+
+     空の `## [Unreleased]` を置いたままにしないこと。
+     scripts/check_changelog_style.py は `## [Unreleased]` があればそこだけを
+     走査するため、空節を残すとリリース節が**検査対象から外れて緑になる**。 -->
+
+## [0.3.1] - 2026-08-31
 
 ### Changed
 
