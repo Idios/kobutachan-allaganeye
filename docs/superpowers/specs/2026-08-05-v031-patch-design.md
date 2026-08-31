@@ -1,7 +1,8 @@
 # v0.3.1 patch release 設計書 — v0.3.0 retrospective の機構化 + deferred 27 件の吸収
 
-- **status**: draft (Track 0 spec、Idios レビュー待ち)
+- **status**: Track 0 完了 / リリース当日 (2026-08-31) に §9.4 を追記
 - **作成日**: 2026-08-05
+- **最終更新**: 2026-08-31 (§9.4 追記。§9.1-9.3 は計画時点の記録として据え置く)
 - **対象リリース**: v0.3.1 (patch)
 - **base ブランチ**: `develop-0.3.1` (= `aefcb8c` = v0.3.0 タグと同一 commit)
 - **Track 構造**: [`docs/release-process.md` §Patch release の Track 構造](../../release-process.md#patch-release-の-track-構造)
@@ -552,7 +553,7 @@ base は全 Track `develop-0.3.1` (D4)。Track の意味づけは [`docs/release
 ### 7.1 リリース判定
 
 - [ ] `/release` Step 0a の受け入れゲートが全項目「達成」 (D5 で patch 適用に改めた後の §共通項目)
-- [ ] 吸収 27 件がすべて close されている、または close できない理由が本 spec §8 に記録されている
+- [x] 吸収 27 件がすべて close されている、または close できない理由が記録されている — 24 件 close 済み / 3 件 (#326 / #882 / #933) は理由と行き先を §9.4.1 に記録 (2026-08-31 実測)
 - [ ] Track D の version 7 フィールドが `check_version_consistency.py` で exit 0
 - [ ] CHANGELOG `## [0.3.1] - YYYY-MM-DD` の日付がタグ打ち日 (JST) と一致し、G1-3 のガードが exit 0
 
@@ -614,7 +615,9 @@ base は全 Track `develop-0.3.1` (D4)。Track の意味づけは [`docs/release
 
 open 65 件 + 前セッションで close 済み 2 件 = **67 行**。(a) 27 件 / (b) 38 件 / (c) 2 件。
 
-本 table は `/release` Step 0c を実施した時点 (2026-08-05、本 spec 作成前) の open issue 集合が対象である。**その後 Track 0 で起票した 9 件 (#945-#953) は本 table に含まれない** — 行き先は [実装計画](../plans/2026-08-05-v031-track-decomposition.md) が持つ (#945-#950 と #952 は v0.3.1 で作業、#951 と #953 は deferred)。
+本 table は `/release` Step 0c を実施した時点 (2026-08-05、本 spec 作成前) の open issue 集合が対象である。**§9.1-9.3 は計画時点の分類で、タグ打ち直前 (2026-08-31) の再確認結果は §9.4 にある。**
+
+**その後 Track 0 で起票した 9 件 (#945-#953) は本 table に含まれない** — 行き先は [実装計画](../plans/2026-08-05-v031-track-decomposition.md) が持つ (#945-#950 と #952 は v0.3.1 で作業、#951 と #953 は deferred)。
 
 ### 9.1 (a) v0.3.1 で吸収 — 27 件
 
@@ -705,22 +708,54 @@ open 65 件 + 前セッションで close 済み 2 件 = **67 行**。(a) 27 件
 上の 9.1-9.3 は v0.3.1 の**計画時点** (2026-08-05) の分類である。`/release` skill は
 タグを打つ前にもう一度 Step 0b / 0c を回すので、その結果をここに残す。
 
-#### Step 0b: deferred 全件取得
+> **当日の Step 0c は分類をやり直す場ではなく、計画時点の分類が今も妥当かを確認する場である。**
+> 下の「(a) 0 件」は「タグを打つ当日に新規吸収の余地が無い」という**時点の帰結**であって、
+> 49 件を放置してよいという意味ではない。実際の吸収判断は次サイクル (v0.3.2) の**計画時点**の
+> Step 0c で行う。この 2 つを混同すると、当日の記録が「Step 0c は全件 (b) で流してよい」という
+> 前例に化ける。
+
+#### 9.4.1 §9.1 の (a) 吸収 27 件のうち消化できなかった 3 件
+
+**§7.1 の受け入れ条件「吸収 27 件がすべて close されている、または close できない理由が
+記録されている」への回答。** 27 件の state を全件照会した結果、**24 件が close 済み / 3 件が
+open のまま**だった。3 件は (a) → (b) へ**持ち越し**であり、これは無言の降格ではなく明示の記録である。
+
+| issue | §9.1 の判断理由 | 当日の state | 消化できなかった理由 / 行き先 |
+| --- | --- | --- | --- |
+| [#326](https://github.com/Idios/kobutachan-allaganeye/issues/326) | 本 repo に作業なし。別 repo へ転記し close (D12) | OPEN + `deferred` | 転記先が別 repo (`idios-claudecode-tools`) で **Idios の手作業**が要り、本 repo の PR では消化できない。v0.3.2 へ持ち越し。着手条件は既に満たされている旨を本日コメントで明記した (§9.4.3) |
+| [#882](https://github.com/Idios/kobutachan-allaganeye/issues/882) | 検証データ保全の恒久策 (第 3 系統) | OPEN + `deferred` | 第 3 系統の保全先 (repo 外ストレージ) の用意が Idios 環境側の作業で、v0.3.1 の Track に載らなかった。v0.3.2 へ持ち越し |
+| [#933](https://github.com/Idios/kobutachan-allaganeye/issues/933) | §A の npm audit 閾値判断 + §B の個別修正 | OPEN + `deferred` | §B の 4 項目は v0.3.1 で消化済み (本日の鮮度更新コメントで実測付きで対比)。残るのは §B の 3 項目 (`StateSwitcher.tsx` の JSDoc / `recentStore.ts` `MatchThumb.tsx` のパスコメント / `ui-interaction-spec.md`) と §A の閾値判断。**部分消化**のため close せず持ち越し |
+
+残る 24 件は close 済みで、§7.1 のこの条件は **「3 件は理由を記録」の分岐で充足**とする。
+
+#### 9.4.2 Step 0b: deferred 全件取得
 
 `gh issue list --state open --label deferred --limit 200` で **49 件**。
 
-#### Step 0c-2: not_planned 残タスク
+計画時点の (b) 38 件 (§9.2) との差 11 件の内訳は、上記 9.4.1 の持ち越し 3 件 (#326 / #882 / #933)、
+Track 0 で起票して deferred とした 2 件 (#951 / #953)、v0.3.1 の作業中に起票した
+6 件 (#964 / #968 / #975 / #997 / #998 と #921) である。
 
-リリース区間 (`v0.3.0`..`origin/develop-0.3.1`) の diff から
+#### 9.4.3 Step 0c-2: not_planned 残タスク
+
+リリース区間 (`v0.3.0`..`origin/develop-0.3.1`、当日の tip は `cc951ca`) の diff から
 `(wired in|Refs|TODO\() ?#N` 形のマーカーを抽出し **48 件**の issue 番号を得た。
-各番号の `state` / `stateReason` を照会した結果、**not_planned で close されたものは
-検出 0 件**。orphan 化した残タスクは無い。
+各番号の `state` / `stateReason` を照会した結果、**not_planned で close されたものは検出 0 件**。
 
-#### Step 0c-2: 本文鮮度
+**この確認が見ていない集合** (§5.2 G2-0 の共通処方に従い明記する):
 
-将来レイヤー (L4 / L5 / L6 / L7) の issue は v0.3.1 が触っていないため対象外とし、
-現行スコープの **28 件**を実装と突き合わせた。**4 件**が鮮度切れだったので、各 issue へ
-「鮮度更新 (2026-08-31)」コメントを投稿した (本文の主張と現在の実態を表で対比)。
+- 走査した拡張子は `*.py` / `*.md` / `*.rs` / `*.ts` のみ。他の拡張子 (`*.ps1` / `*.json` / `*.yml` 等) は対象外
+- 拾ったのはマーカー 3 形式 (`wired in #N` / `Refs #N` / `TODO(#N)`) のみ。散文中の裸の `#N` は対象外
+- 区間はリリース区間内の diff のみ。区間より前から残っている参照は対象外
+
+したがって正確には「**上記の範囲内で** not_planned 参照は 0 件」であり、orphan 残タスクが
+repo 全体で皆無であることを示したわけではない。
+
+#### 9.4.4 Step 0c-2: 本文鮮度
+
+将来レイヤー (L4 / L5 / L6 / L7) の 21 件 (#28 / #32 / #63 / #125-#137 / #139 / #140 / #150-#152)
+は v0.3.1 が触っていないため対象外とし、**現行スコープ 28 件**を実装と突き合わせた。
+**4 件**が鮮度切れだったので、各 issue へ「鮮度更新 (2026-08-31)」コメントを投稿した。
 
 | issue | 鮮度切れの内容 | 実測 |
 | --- | --- | --- |
@@ -729,18 +764,77 @@ open 65 件 + 前セッションで close 済み 2 件 = **67 行**。(a) 27 件
 | [#933](https://github.com/Idios/kobutachan-allaganeye/issues/933) | §B の 4 項目が修正済みなのに `[ ]` のまま | `docs/output-spec.md:114` / `docs/gui-development.md:76` / `docs/ui-architecture.md:57` / `release/SKILL.md` Step 2-4 がいずれも修正済み |
 | [#326](https://github.com/Idios/kobutachan-allaganeye/issues/326) | 着手条件「L2 完了後」が既に満たされている | #325 は CLOSED、L2 は 2026-05 に出荷済み |
 
-#### Step 0c: 3 択分類
+**処置をコメントにした理由** (skill は `gh issue edit` での本文更新の「提案」を求めている):
+本文の書き換えは起票者 (Idios) の判断領域なので、agent 側では**実測付きの対比をコメントで提示**する
+形にとどめた。各コメントは本文のどの記述がどう古いかを表で示しており、本文 edit をするかどうかは
+Idios が判断できる。**v0.3.2 の Step 0c-2 で同じ 4 件を再掲する** (本文が未更新なら再び鮮度切れとして
+検出されるので、握り潰しにはならない)。
+
+#### 9.4.5 Step 0c: 3 択分類
 
 Iron Law 2 の bulk pre-check (サンプル 1 件 = 作成日時降順の先頭 #998) を提示し、
 Idios が **「全件 OK = 全件 (b) deferred 継続」**を選択した。
 
-| 分類 | 件数 | 内訳 |
-| --- | --- | --- |
-| (a) 次 release 吸収 | 0 | — |
-| (b) deferred 継続 | **49** | 全件。v0.3.1 は Track A-D を消化済みで、ここから新規に吸収するのは release の scope 外になるため |
-| (c) close | 0 | — |
+| 分類 | 件数 |
+| --- | --- |
+| (a) 次 release 吸収 | 0 |
+| (b) deferred 継続 | **49** |
+| (c) close | 0 |
 
-**(a) が 0 件なので Track B 吸収候補は無い。** 49 件は次サイクル (v0.3.2) で再評価する。
+**(a) が 0 件なので Track B 吸収候補は無い。**
+
+| issue # | title | 分類 | 判断理由 |
+| --- | --- | --- | --- |
+| #998 | [task] 検証依存セット台帳と E: 原本の乖離 (手動分割 MP4 7 本が欠落) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #997 | [task] areamap GT の pin 済み case に assert する test があることを強制していない | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #975 | [bug] checker に残る近似の乖離 8 形 (fail-closed の射程外) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #968 | [task] GUI が書き出し先の絶対パスを受け取っておらず、#930 のパス可視化が CLI 限定になっている | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #964 | [bug] GUI の name-pattern プレビューが sandbox 検証を持たず、exit 5 で拒否される名前をそれらしく表示する | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #957 | [task] typer 0.26+ (click vendoring) への移行判断と CLI 内部 API 依存の解消 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #953 | [question] GUI minimap: 実行中の画面離脱で進捗表示を失う扱いの決着 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #951 | [task] cv2 5.x 移行の判断と baseline 再取得 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #937 | [bug] export/minimap 出力パスの同一性判定に残る 4 経路 (hardlink / 8.3 / macOS / 予約デバイス名) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #933 | v0.3.0 doc 監査でスコープ外に置いた項目 (CI スキャナ / audit 閾値 / doc 陳腐化 9 件) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #925 | [task] masked 録画の baseline 回帰ゲートを追加 (現状は不変性確認のみで正しさ未検証) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #921 | [task] --vtuber: 試合間 gap 約 70 秒未満での結合を解消する | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #882 | [task] 検証データ保全の恒久策 (第 3 系統) 追加 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #867 | [task] L3: #809 audit 追記 AC 残 2 点の移設 (cache 感度 + red tests) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #866 | [task] L3: two-signal 再アーキ Phase 3-4 (VTuber 検証+cutover) 追跡 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #861 | [task] L3: QSV/AMF decode hwaccel の扱い確定 (#762 後継) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #809 | [task] L3: Pass 1 暗転検知の game 領域輝度適応 (VTuber 本番 wiring) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #753 | [task] L3: VTuber + minimap キックオフ (parent issue) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #742 | [refactor] 5 spawn site を tauri-plugin-shell::Command に移行 (#727 派生 (2), post-v0.2.0) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #671 | [task] L2a: E2E test 自動化 feasibility 検討 (#484派生) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #670 | [task] L3: GUI 動画 HTTP server 改善 (responsiveness) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #518 | [question] note -> warnings: Warning[] 構造化 (将来検討) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #480 | [task] L3: VTuber scorebar 局在化(P1) + ROI 適応分類(P4) (re-plan #753、旧: scorebar ROI 適応化) | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #479 | [task] ユーザー要望: Twitch アーカイブ URL からの試合分割取り込み | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #432 | [task] 他プロセス使用中による Permission denied 系問題の全体見直し | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #412 | [refactor] PR #323 refinement 残存長 segment の warning を機械的に追跡する | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #373 | [refactor] metadata.json に末尾打ち切り情報を残す | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #326 | [task] ハイブリッド skill 方式を idios-claudecode-tools テンプレートに反映 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #152 | [risk] L4 (former L3): Tesseract 日本語言語パックの別途インストール要件 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #151 | [risk] L4 (former L3): OBS 録画に音声トラックが存在しない場合の処理 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #150 | [risk] L4 (former L3): openai-whisper の PyTorch 依存によるインストールサイズ肥大化 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #140 | [risk] L4-L6 (former L3-L5): 全体処理時間の見積もりとユーザー体験 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #139 | [question] L4-L6 (former L3-L5) の end-to-end パイプライン設計 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #137 | [task] L6 (former L5): 投稿提案の出力設計 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #136 | [task] L6 (former L5): サムネイル自動生成 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #135 | [task] L6 (former L5): ハイライトクリップ自動切り出し | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #134 | [task] L5 (former L4) [LLM拡張]: API キー管理とセキュリティ | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #133 | [risk] L5 (former L4) [LLM拡張]: API コスト管理 — LLM 呼び出しの費用見積もり | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #132 | [task] L5 (former L4) [LLM拡張]: 投稿価値の評価基準定義 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #131 | [task] L5 (former L4) [LLM拡張]: LLM プラグインアーキテクチャの設計 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #130 | [task] L4 (former L3): 外部依存の追加と環境構築手順の整備 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #129 | [risk] L4 (former L3): Whisper ローカル実行の処理時間・リソース消費 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #128 | [risk] L4 (former L3): OCR 精度 — ゲーム独自フォントの認識リスク | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #127 | [task] L4 (former L3): イベントデータ出力フォーマットの設計 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #126 | [task] L4 (former L3): Whisper による音声認識・SE 検出 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #125 | [task] L4 (former L3): Tesseract OCR によるキルログ抽出 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #63 | [task] L7 (former L6): プレイヤー名ぼかし機能の検討・実装 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #32 | [task] Windows/Linux クロスプラットフォームテスト基盤の構築 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+| #28 | [task] L7 (former L6): --precise フラグ（再エンコード分割モード）の追加 | (b) deferred 継続 | bulk 承認 (2026-08-31) |
+
 このうち [#975](https://github.com/Idios/kobutachan-allaganeye/issues/975) /
 [#997](https://github.com/Idios/kobutachan-allaganeye/issues/997) /
 [#998](https://github.com/Idios/kobutachan-allaganeye/issues/998) は、本リリース作業中に
