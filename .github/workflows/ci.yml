@@ -118,6 +118,10 @@ jobs:
   # 本 project は Windows 向けに配布する CLI で、ここは #930 で実際にデータ損失を
   # 出した書込 sandbox と同じ経路なので、その差分だけを Windows で回す。
   #
+  # #965 で `scripts/check_doc_code_refs.py` の MAX_PATH 回避も同じ理由でここに
+  # 相乗りしている (Windows でしか症状が出ない = ubuntu job では revert しても緑)。
+  # job 名は #934 由来のままだが、**扱う対象は「Windows 固有の path 意味論」全般**。
+  #
   # **全スイートは回さない** — ffmpeg / GPU を要する経路は既存の job と実機検証の
   # 担当であり、ここを太らせると Windows runner の待ち時間だけが増える。
   # `export_cli` を除外しているのは、CLI 経路が encoder 列挙で ffmpeg を要求するため
@@ -141,9 +145,23 @@ jobs:
       # shell: bash を明示する。既定の pwsh は native command の stderr を
       # NativeCommandError へ包み、exit 0 でも $? を false にすることがある
       # (docs/l2-workflow.md / PowerShell の既知の罠)。
-      - name: Test (path sandbox / metadata contracts only)
+      # `check_doc_code_refs` (#965) をここに足しているが、**MAX_PATH の gate と
+      # しては期待しないこと**。2026-08-30 実測: GitHub の windows-latest は
+      # `LongPathsEnabled=1` で、260 文字超でも素の `os.stat` が成功する。つまり
+      # **症状自体が再現せず、MAX_PATH 系のテストは self-skip するか vacuous になる**。
+      # 実際に revert を捕まえているのは述語の経路を固定する spy テストで、そちらは
+      # 長いパスを作らないので ubuntu の python job でも走る。
+      #
+      # それでもここに入れるのは、**Windows 固有の破綻を踏むため**。実例として
+      # `os.name` を patch した状態の `Path()` が Windows 版 Python 3.11 で
+      # `NotImplementedError` になり、pytest ごと INTERNALERROR で落ちた
+      # (ubuntu では緑だった)。
+      #
+      # `-rs` は縮退を可視化するため。理由を出さないと **gate が no-op になった
+      # ことがログ上 `s` の 1 文字と区別できない**。
+      - name: Test (path sandbox / metadata contracts / doc-code-refs)
         shell: bash
-        run: pytest tests/test_export_pool.py tests/test_path_schema_contracts.py -q -k "not export_cli"
+        run: pytest tests/test_export_pool.py tests/test_path_schema_contracts.py tests/scripts/test_check_doc_code_refs.py -q -rs -k "not export_cli"
 
   hook-test:
     runs-on: ubuntu-latest

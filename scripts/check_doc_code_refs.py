@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""doc -> code 参照が silent に壊れていないかを検査する (#912 / #910)。
+r"""doc -> code 参照が silent に壊れていないかを検査する (#912 / #910)。
 
 `.github/workflows/ci.yml` の `doc-code-refs` job から引数なしで呼ばれる。
 標準ライブラリのみを使う (CI job に pip install を持たせないため)。
@@ -35,6 +35,35 @@ N つに限られる」という網羅宣言が、`gui/src-tauri/src/**/*.rs` �
 こと (#912)。宣言した以上「網羅が壊れたら気づく」機構が要る。壊れた SSoT は
 散在していた頃より有害になりうるため。
 
+## パス長 (#965)
+
+**参照先ファイルへのアクセスは実在判定も読み込みも** ``\\?\`` 拡張パス経由で行う
+(``_extended`` / ``_exists`` / ``_is_file`` / ``_read``)。Windows の ``os.stat`` は 260
+文字を超えるパスに対し、ファイルが実在していても ``FileNotFoundError`` を返す。素の
+``Path.exists()`` だと、深い場所へ checkout した repo で **実在するリンク先を「存在
+しない」と報告して exit 1** になっていた (2026-08-08 実測: 278 文字のパスで 9 本が
+false-red)。
+
+**判定と読み込みを別の表現で行ってはいけない。** ``_is_file`` だけを拡張パスへ寄せて
+``_read`` を素のままにすると、「ある」と答えた直後の読み込みが失敗し、局所的な exit 1
+が ``GuardStructureError`` 経由の **exit 2 (全検査 abort) へ悪化する**。本物の drift が
+あってもその診断ごと失われるので、元の false-red より有害になる。
+
+**走査の入口も同じ理由で守る必要がある。** ``Path.glob`` は 260 文字超の entry を
+例外なしに黙って落とす。結果が空になるとは限らないので「走査対象ゼロ件」の構造検査
+には引っかからず、**落ちたファイルの違反を見逃したまま exit 0 になる** (2026-08-30
+実測: root 225-235 文字の repo で宣言外 spawn site を含む `.rs` が消え、緑を返した)。
+元の症状 (false-red) より悪いので、``_glob`` が拡張パス walk の実数と突き合わせ、
+取りこぼしを構造エラーにする。
+
+**UNC は ``\\?\UNC\server\share`` 形**で、素朴に ``\\?\`` を前置すると解決できない
+ため分岐している。``\\.\`` (device namespace) は UNC ではないのでそのまま返す。
+Windows 以外では no-op。
+
+この変換は **false-red を消すだけで、検査を緩めない**。「実在しないものは False」を
+`tests/scripts/test_check_doc_code_refs.py` が対で固定しており、`_exists` が常に True を
+返す実装 (= 検査の no-op 化) では緑にならない。
+
 ## この gate が見ていない集合
 
 **参照先が存在することしか見ず、記述内容の正しさは見ない。** symbol 名が実在
@@ -67,6 +96,15 @@ N つに限られる」という網羅宣言が、`gui/src-tauri/src/**/*.rs` �
 * **`#` コメント言語の文字列** — `.yml` / `.py` 等では文字列中の `#` 以降も
   コメントとして除去する。C2 が false-red 側に倒れることはあっても、
   false-green にはならない。
+* **repo root 自体が長い場合の走査** — §パス長 の対処は「repo root から辿った
+  **参照先**が 260 文字を超える」場合を直す (#965 で報告された形)。**repo root
+  そのものが深いと、走査の入口である `Path.glob` が該当 entry を黙って落とす**
+  (2026-08-30 実測: root 225 文字で `gui/src-tauri/src/process_util/mod.rs` が
+  glob から消え、root 265 文字で `docs/*.md` が 0 件になる。いずれも同じファイルを
+  拡張パスで開くと成功する)。前者は `_glob` の突き合わせで、後者は「doc が 0 件」で
+  **どちらも exit 2 として検知する**ので緑にはならないが、**その repo を走査できる
+  ようにはならない**。深い場所へ checkout した repo で本 gate を回したい場合は、
+  より浅い場所へ checkout する必要がある。
 
 Refs: https://github.com/Idios/kobutachan-allaganeye/issues/912
 Refs: https://github.com/Idios/kobutachan-allaganeye/issues/910
@@ -75,6 +113,8 @@ Refs: https://github.com/Idios/kobutachan-allaganeye/issues/910
 from __future__ import annotations
 
 import argparse
+import fnmatch
+import os
 import re
 import sys
 from collections.abc import Iterator
@@ -547,19 +587,129 @@ def declared_argv_builders(doc_text: str) -> list[str]:
 
 
 def _read(path: Path) -> str:
+    """読み込みも MAX_PATH 回避形で行う (#965)。
+
+    **実在判定だけを拡張パスへ寄せて読み込みを素のままにすると悪化する。**
+    ``_is_file`` が「ある」と答えた直後に ``read_text`` が ``FileNotFoundError`` を
+    投げ、**exit 1 (局所的な false-red) が exit 2 (構造エラーで全体 abort) になる**。
+    しかもその時点で他の検査結果はすべて捨てられるので、本物の drift があっても
+    その診断が失われる。判定と読み込みは同じパス表現で行う。
+    """
     try:
-        return path.read_text(encoding="utf-8")
+        with open(_extended(path), encoding="utf-8") as f:
+            return f.read()
     except OSError as exc:  # pragma: no cover - I/O 障害
         raise GuardStructureError(f"読み込めない: {path} ({exc})") from exc
 
 
+def _walk_matches(repo_root: Path, pattern: str) -> int:
+    r"""``pattern`` に一致するファイル数を拡張パス walk で数える (#965)。
+
+    ``Path.glob`` の取りこぼしを検知するための ground truth。``glob`` と同じ集合を
+    数える必要があるので、対応する形を ``docs/*.md`` と ``a/b/**/*.rs`` (``**`` は
+    0 段以上) に限り、それ以外は構造エラーにする。**未対応の形を黙って 0 と数えると
+    この検査自体が no-op になる**ため。
+    """
+    head, _, name_pattern = pattern.rpartition("/")
+    recursive = head.endswith("/**") or head == "**"
+    base = head[: -len("**")].rstrip("/") if recursive else head
+    if "*" in base or "?" in base:
+        raise GuardStructureError(
+            f"未対応の glob 形: {pattern} (_walk_matches が数えられない)。"
+        )
+    start = repo_root.joinpath(*base.split("/")) if base else repo_root
+    count = 0
+    for _dirpath, dirnames, filenames in os.walk(_extended(start)):
+        count += sum(1 for name in filenames if fnmatch.fnmatch(name, name_pattern))
+        if not recursive:
+            dirnames.clear()
+    return count
+
+
+def _glob(repo_root: Path, pattern: str) -> list[Path]:
+    r"""``glob`` の結果が MAX_PATH で silent に欠けていないか確かめて返す (#965)。
+
+    **Windows の ``Path.glob`` は 260 文字を超える entry を例外なしに黙って落とす。**
+    落ちても結果が空になるとは限らないので、「走査対象ゼロ件」の構造検査には
+    引っかからない。その結果、宣言外の spawn site を含むファイルが走査から消えたまま
+    **exit 0 で緑になる** (2026-08-30 実測: root 225-235 文字の repo で
+    `gui/src-tauri/src/process_util/mod.rs` が glob から消え、C3 違反を見逃した)。
+
+    これは元の症状 (false-red) より悪い false-green なので、拡張パス walk の実数と
+    突き合わせ、**取りこぼしがあれば構造エラーにする**。実数より多い分では倒さない
+    (``*.md`` に一致するディレクトリ等、walk が数えない側の差分があるため)。
+    """
+    found = sorted(repo_root.glob(pattern))
+    if os.name != "nt":
+        return found
+    actual = _walk_matches(repo_root, pattern)
+    if actual > len(found):
+        raise GuardStructureError(
+            f"{pattern} の走査が {actual - len(found)} 件取りこぼした "
+            f"(glob={len(found)} / 実数={actual})。パスが 260 文字を超えている。"
+            "この状態を緑で通すと、走査から消えたファイルの違反を見逃す。"
+        )
+    return found
+
+
 def _docs(repo_root: Path) -> list[Path]:
+    # ここは `_glob` を通さない。`docs/*.md` は 1 階層なので取りこぼしが
+    # **all-or-nothing** になる (`os.scandir` がディレクトリごと開けないか、
+    # 全 entry を名前で返すかのどちらか。実測: 名前が 294 文字の doc も glob は
+    # 返す)。全滅なら直下の「0 件」で構造エラーになるため、部分欠落を検知する
+    # `_glob` を挟んでも**発火しうる状況が無い** (発火実証できない機構は置かない)。
     docs = sorted(repo_root.glob(_DOC_GLOB))
     if not docs:
         raise GuardStructureError(
             f"走査対象の doc が 0 件 ({_DOC_GLOB})。走査が壊れている。"
         )
     return docs
+
+
+def _extended(path: Path) -> str:
+    r"""Windows の MAX_PATH を回避する拡張パス形式へ変換する (#965)。
+
+    Windows の ``os.stat`` は 260 文字 (MAX_PATH) を超えるパスに対し、**ファイルが
+    実在していても** ``FileNotFoundError`` を返す。``Path.exists()`` / ``Path.is_file()``
+    は内部で ``os.stat`` を呼ぶので、深い場所へ checkout した repo でこの guard を
+    ローカル実行すると、実在するリンク先を「存在しない」と報告して exit 1 になる
+    (2026-08-08 実測: 278 文字のパスで実在する 9 本のリンクが red になった)。
+
+    ``\\?\`` を前置すると Win32 が MAX_PATH 検査を省くので実在判定が正しく返る。
+
+    **UNC パスは別形式**である。``\\server\share\x`` に素朴に ``\\?\`` を足すと
+    ``\\?\\\server\share\x`` になって解決できない。正しくは
+    ``\\?\UNC\server\share\x`` で、この分岐を持たないと UNC 上で**実在するのに
+    存在しないと報告する**という、直そうとした症状を別経路でそのまま再現する。
+
+    Windows 以外では no-op (POSIX に MAX_PATH 相当の制約は無い)。相対パスは
+    ``os.path.abspath`` で絶対化する — 拡張パス形式は相対パスを受け付けない。
+    """
+    if os.name != "nt":
+        return str(path)
+    resolved = os.path.abspath(str(path))
+    if resolved.startswith("\\\\?\\"):
+        return resolved
+    if resolved.startswith("\\\\.\\"):
+        # device namespace。UNC ではないのでそのまま返す。``abspath`` は末尾が
+        # 予約デバイス名のパス (``C:/x/NUL`` 等) をこの形へ書き換えるので、
+        # ``\\`` 始まりを一律 UNC 扱いすると ``\\?\UNC\.\NUL`` という無効な形を
+        # 作る。結果は「実在しない」に倒れて害は無いが、コードが意図と違うことを
+        # 言っている状態になる。
+        return resolved
+    if resolved.startswith("\\\\"):  # UNC: \\server\share\...
+        return "\\\\?\\UNC" + resolved[1:]
+    return "\\\\?\\" + resolved
+
+
+def _exists(path: Path) -> bool:
+    """MAX_PATH を回避した ``Path.exists()`` 相当 (#965)。"""
+    return os.path.exists(_extended(path))
+
+
+def _is_file(path: Path) -> bool:
+    """MAX_PATH を回避した ``Path.is_file()`` 相当 (#965)。"""
+    return os.path.isfile(_extended(path))
 
 
 def check_link_targets(repo_root: Path) -> list[Violation]:
@@ -571,7 +721,7 @@ def check_link_targets(repo_root: Path) -> list[Violation]:
         for lineno, line in iter_prose_lines(text):
             for target in link_targets(line):
                 checked += 1
-                if not (doc.parent / target).exists():
+                if not _exists(doc.parent / target):
                     violations.append(
                         Violation(
                             "link",
@@ -596,7 +746,7 @@ def check_symbol_refs(repo_root: Path) -> list[Violation]:
                 checked += 1
                 location = f"{doc.relative_to(repo_root).as_posix()}:{lineno}"
                 path = doc.parent / target.split("#", 1)[0]
-                if not path.is_file():
+                if not _is_file(path):
                     violations.append(
                         Violation("symbol", location, f"参照先が存在しない: {target}")
                     )
@@ -622,14 +772,14 @@ def check_symbol_refs(repo_root: Path) -> list[Violation]:
 def check_spawn_coverage(repo_root: Path) -> list[Violation]:
     """C3: §2.3 の GUI -> CLI spawn 網羅宣言が実態と一致すること。"""
     doc_path = repo_root / _ARCH_DOC
-    if not doc_path.is_file():
+    if not _is_file(doc_path):
         raise GuardStructureError(f"{_ARCH_DOC} が存在しない。")
     doc_text = _read(doc_path)
     declared, declared_count = declared_spawn_sites(doc_text)
     location = _ARCH_DOC
 
     lib_path = repo_root / "gui/src-tauri/src/lib.rs"
-    if not lib_path.is_file():
+    if not _is_file(lib_path):
         raise GuardStructureError(f"{lib_path} が存在しない。")
     lib_source = _read(lib_path)
 
@@ -673,7 +823,7 @@ def check_spawn_coverage(repo_root: Path) -> list[Violation]:
     # `fn build_cli_command(spec: &AllaganeyeCommand)` を別 module へ置くだけで、
     # 5 サイトの集合を一切変えずに 6 本目の spawn を生やせてしまう。
     rust_paths = sorted(
-        {p for pattern in _RUST_GLOBS for p in repo_root.glob(pattern) if p.is_file()}
+        {p for pattern in _RUST_GLOBS for p in _glob(repo_root, pattern) if _is_file(p)}
     )
     if not rust_paths:
         raise GuardStructureError(

@@ -19,6 +19,7 @@ repo では過去に (a) 行末コメントに書いただけの状態を配線�
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -888,3 +889,344 @@ def test_no_docs_is_structural_not_green(tmp_path: Path) -> None:
     (tmp_path / "docs").mkdir()
     result = _run_on(tmp_path)
     assert result.returncode == guard.EXIT_STRUCTURAL, result.stdout + result.stderr
+
+
+# ---------------------------------------------------------------------------
+# MAX_PATH (#965)
+#
+# Windows の ``os.stat`` は 260 文字を超えるパスに対し、ファイルが実在していても
+# ``FileNotFoundError`` を返す。``Path.exists()`` / ``Path.is_file()`` は内部で
+# ``os.stat`` を呼ぶので、深い場所へ checkout した repo でこの guard をローカル
+# 実行すると、実在するリンク先を「存在しない」と報告して exit 1 になっていた。
+#
+# **「エラーが消えた」だけでは検査が no-op 化したのと区別できない**ので、
+# 拡張パスへ寄せた後も「実在しないものは False を返す」ことを対で固定する。
+# ---------------------------------------------------------------------------
+
+_LONG_SEGMENT = "d" * 48
+
+
+def _make_deep_dir(base: Path) -> Path:
+    """``base`` の下に 260 文字を超えるディレクトリを作って返す。
+
+    作成自体に拡張パスが要る (``os.makedirs`` も ``os.stat`` 系を通る) ため、
+    Windows では ``\\\\?\\`` を前置して掘る。
+    """
+    deep = base
+    for _ in range(6):
+        deep = deep / _LONG_SEGMENT
+    target = str(deep)
+    if os.name == "nt":
+        os.makedirs("\\\\?\\" + os.path.abspath(target), exist_ok=True)
+    else:
+        os.makedirs(target, exist_ok=True)
+    return deep
+
+
+def test_extended_is_noop_off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """POSIX では変換しない (MAX_PATH 相当の制約が無いため).
+
+    ``Path`` の生成は patch の**外**で行う。``guard.os`` は `os` module そのもの
+    なので ``os.name`` の差し替えはプロセス全体に効き、その状態で ``Path()`` を
+    呼ぶと Windows 版 Python 3.11 が ``PosixPath`` を作れず
+    ``NotImplementedError`` になる (CI の windows job で pytest ごと
+    INTERNALERROR になった)。判定したいのは ``_extended`` の分岐だけである。
+    """
+    path = Path("docs/a.md")
+    expected = str(path)
+    monkeypatch.setattr(guard.os, "name", "posix")
+    assert guard._extended(path) == expected
+
+
+@pytest.mark.skipif(os.name != "nt", reason="拡張パス形式は Windows 固有")
+def test_extended_prefixes_a_drive_path() -> None:
+    got = guard._extended(Path("C:/x/y.md"))
+    assert got.startswith("\\\\?\\C:\\"), got
+
+
+@pytest.mark.skipif(os.name != "nt", reason="拡張パス形式は Windows 固有")
+def test_extended_uses_the_unc_form_for_unc_paths() -> None:
+    """UNC は ``\\\\?\\UNC\\server\\share`` 形。素朴な前置では解決できない.
+
+    ``\\\\server\\share\\x`` に ``\\\\?\\`` をそのまま足すと ``\\\\?\\\\\\server\\...``
+    になり、直そうとした「実在するのに存在しないと報告する」症状を UNC 上で
+    そのまま再現してしまう。
+    """
+    got = guard._extended(Path("//server/share/x.md"))
+    assert got.startswith("\\\\?\\UNC\\server\\share"), got
+    assert not got.startswith("\\\\?\\\\\\"), got
+
+
+@pytest.mark.skipif(os.name != "nt", reason="拡張パス形式は Windows 固有")
+def test_extended_is_idempotent_on_already_extended_paths() -> None:
+    already = "\\\\?\\C:\\x\\y.md"
+    assert guard._extended(Path(already)) == already
+
+
+def test_exists_finds_a_file_behind_max_path(tmp_path: Path) -> None:
+    """260 文字超のパスでも実在判定が True になること (#965 の本体).
+
+    Windows では素の ``Path.exists()`` が False を返すことも同時に確認する
+    (返さないなら、この環境ではそもそも症状が再現しておらず、本 test は
+    「修正が効いた」ことの証拠になっていない)。
+    """
+    deep = _make_deep_dir(tmp_path)
+    target = deep / "b.md"
+    if os.name == "nt":
+        with open("\\\\?\\" + os.path.abspath(str(target)), "w", encoding="utf-8") as f:
+            f.write("# b\n")
+    else:
+        target.write_text("# b\n", encoding="utf-8")
+
+    assert len(str(target)) > 260, f"deep path is only {len(str(target))} chars"
+    if os.name == "nt" and target.exists():
+        # `LongPathsEnabled=1` の環境では素の Path.exists() も成功するので、
+        # 症状自体が再現しない。**赤ではなく skip にする**: 設定差で suite が
+        # 赤くなると、本物の退行と区別が付かなくなる。
+        pytest.skip(
+            "素の Path.exists() が True = この環境では MAX_PATH 症状が再現しない "
+            "(LongPathsEnabled=1 等)。本 test は修正の証拠にならないので skip する"
+        )
+    assert guard._exists(target) is True
+    assert guard._is_file(target) is True
+
+
+def test_exists_still_reports_missing_files_behind_max_path(tmp_path: Path) -> None:
+    """拡張パスへ寄せても「実在しないものは False」が保たれること.
+
+    これが無いと、`_exists` が常に True を返す実装 (= 検査の no-op 化) でも
+    上の test は緑になる。「エラーが消えた」と「検査が黙った」を分ける。
+    """
+    deep = _make_deep_dir(tmp_path)
+    missing = deep / "NOPE.md"
+    assert len(str(missing)) > 260
+    assert guard._exists(missing) is False
+    assert guard._is_file(missing) is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="MAX_PATH は Windows 固有")
+def test_symbol_ref_into_a_deep_target_stays_exit1_not_exit2(tmp_path: Path) -> None:
+    """symbol 参照先が 260 文字超でも exit 1 (局所) のままで、exit 2 に悪化しないこと.
+
+    **実在判定だけを拡張パスへ寄せて読み込みを素のままにすると、ここが exit 2 になる。**
+    ``_is_file`` が「ある」と答えた直後に ``read_text`` が ``FileNotFoundError`` を投げ、
+    ``GuardStructureError`` -> exit 2 で**他の検査結果ごと捨てられる**。局所的な
+    false-red より悪い (本物の drift があってもその診断が失われる)。
+
+    fallback code review (Codex usage limit 時の C6) が case C/D として実測した退行で、
+    ここはその再発防止 pin である。
+    """
+    _make_repo(tmp_path)
+    deep = _make_deep_dir(tmp_path)
+    src = deep / "deepfile.rs"
+    src_ext = "\\\\?\\" + os.path.abspath(str(src))
+    with open(src_ext, "w", encoding="utf-8") as f:
+        f.write("pub fn real_symbol_here() {}\n")
+    assert len(str(src)) > 260
+
+    docs = tmp_path / "docs"
+    rel = os.path.relpath(str(src), str(docs)).replace("\\", "/")
+    (docs / "a.md").write_text(
+        f"# a\n\n[deepfile.rs]({rel}) の `no_such_symbol_xyz` を参照する。\n",
+        encoding="utf-8",
+    )
+
+    result = _run_on(tmp_path)
+    out = result.stdout + result.stderr
+    assert result.returncode == guard.EXIT_DRIFT, (
+        f"exit {result.returncode} (期待 {guard.EXIT_DRIFT})。"
+        "exit 2 なら読み込み側が MAX_PATH で落ちて全体 abort している\n" + out
+    )
+    assert "no_such_symbol_xyz" in out, (
+        "違反した symbol 名が出力に現れない = 診断が失われている\n" + out
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="MAX_PATH は Windows 固有")
+def test_read_goes_through_the_extended_path(tmp_path: Path) -> None:
+    """``_read`` 自体が 260 文字超のファイルを読めること (#965).
+
+    上の end-to-end pin だけだと、``_read`` を直さずに ``check_symbol_refs`` 側で
+    例外を握り潰す実装でも緑になりうる。読み込みの述語を直接固定する。
+    """
+    deep = _make_deep_dir(tmp_path)
+    target = deep / "c.md"
+    with open("\\\\?\\" + os.path.abspath(str(target)), "w", encoding="utf-8") as f:
+        f.write("deep content\n")
+    assert len(str(target)) > 260
+    assert guard._read(target) == "deep content\n"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="MAX_PATH は Windows 固有")
+def test_deep_repo_root_is_structural_not_green(tmp_path: Path) -> None:
+    """repo root 自体が深い場合は exit 2 (loud failure) であって緑ではないこと.
+
+    #965 が直したのは「root から辿った**参照先**が 260 文字超」という形で、
+    **root そのものが深い場合は走査の入口の ``Path.glob`` が 0 件を返す**。
+    docstring の `## この gate が見ていない集合` はこれを射程外と宣言しているが、
+    その宣言が成り立つのは **緑ではなく exit 2 で落ちる**限りにおいてである。
+    ここが exit 0 に退行したら、走査ゼロ件が「違反ゼロ件」として通ってしまう。
+    """
+    root = _make_deep_dir(tmp_path)
+    docs = root / "docs"
+    os.makedirs("\\\\?\\" + os.path.abspath(str(docs)), exist_ok=True)
+    with open(
+        "\\\\?\\" + os.path.abspath(str(docs / "a.md")), "w", encoding="utf-8"
+    ) as f:
+        f.write("# a\n")
+    assert len(str(root)) > 260
+
+    # `LongPathsEnabled=1` の機では glob が通り、そもそも残余の限界が存在しない。
+    # 「exit 2 で落ちる」を別の理由 (arch doc 欠損) で満たして緑にしないよう、
+    # 前提の有無をここで実測してから分岐する。
+    if list(root.glob(guard._DOC_GLOB)):
+        pytest.skip("この機では長い root でも glob が通る (残余の限界が無い)")
+
+    result = _run_on(root)
+    assert result.returncode == guard.EXIT_STRUCTURAL, (
+        f"exit {result.returncode}。exit 0 なら走査ゼロ件が緑で通っている\n"
+        + result.stdout
+        + result.stderr
+    )
+
+
+_UNDECLARED_SPAWN_RS = """
+async fn start_undocumented(app: tauri::AppHandle) {
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+}
+"""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="MAX_PATH は Windows 固有")
+def test_rust_file_past_max_path_is_not_silently_dropped(tmp_path: Path) -> None:
+    """走査対象から silent に落ちたファイルの違反を緑で通さないこと (#965).
+
+    `Path.glob` は 260 文字を超える entry を**例外なしに黙って落とす**。結果が空に
+    なるとは限らないので「走査対象ゼロ件」の構造検査には引っかからず、宣言外の
+    spawn site を含む `.rs` が走査から消えたまま **exit 0 で緑になっていた**
+    (2026-08-30 実測: root 225-235 文字の repo で C3 違反を見逃した)。
+    元の症状 (false-red) より悪い false-green なので、ここを pin する。
+
+    `LongPathsEnabled=1` の機では glob が落とさないので、違反は素直に exit 1 で
+    出る。**どちらの機でも「緑ではない」ことが不変**なので、そこを主張にしている。
+    """
+    _make_repo(tmp_path)
+    src = tmp_path / "gui" / "src-tauri" / "src"
+    deep = src
+    while len(str(deep / "mod.rs")) < 270:
+        deep = deep / _LONG_SEGMENT
+    os.makedirs("\\\\?\\" + os.path.abspath(str(deep)), exist_ok=True)
+    with open(
+        "\\\\?\\" + os.path.abspath(str(deep / "mod.rs")), "w", encoding="utf-8"
+    ) as f:
+        f.write(_UNDECLARED_SPAWN_RS)
+
+    result = _run_on(tmp_path)
+    out = result.stdout + result.stderr
+    assert result.returncode != guard.EXIT_OK, (
+        "走査から消えたファイルの違反を緑で通している\n" + out
+    )
+
+    dropped = not any(p.name == "mod.rs" for p in src.glob("**/*.rs"))
+    if dropped:
+        assert result.returncode == guard.EXIT_STRUCTURAL, out
+        assert "取りこぼした" in out, out
+    else:
+        assert result.returncode == guard.EXIT_DRIFT, out
+        assert "start_undocumented" in out, out
+
+
+@pytest.mark.skipif(os.name != "nt", reason="MAX_PATH は Windows 固有")
+def test_doc_with_a_name_past_max_path_is_still_read(tmp_path: Path) -> None:
+    """名前が 260 文字超の doc も走査対象に入り、中の違反が exit 1 で出ること (#965).
+
+    **`docs/` は 1 階層なので、深い repo でなくても長いファイル名だけで 260 文字を
+    超えられる。** そして 2026-08-30 実測では、この形の entry を `glob` は**落とさない**
+    (`os.scandir` は名前を返すだけで `stat` しない) 一方、素の `read_text` は
+    `FileNotFoundError` になる。つまり docs 側の症状は「走査から消える」ではなく
+    「走査対象なのに読めない」で、`_read` を素のままにすると **exit 1 が exit 2 へ
+    悪化する**。上の C2 版と対になる C1 側の end-to-end pin である。
+    """
+    _make_repo(tmp_path)
+    long_name = ("d" * 200) + ".md"
+    doc = tmp_path / "docs" / long_name
+    assert len(str(doc)) > 260, f"{len(str(doc))} 文字では症状が出ない"
+    with open("\\\\?\\" + os.path.abspath(str(doc)), "w", encoding="utf-8") as f:
+        f.write("# long\n\n[ghost](../gui/src-tauri/src/ghost.rs)\n")
+
+    assert any(p.name == long_name for p in (tmp_path / "docs").glob("*.md")), (
+        "前提が崩れた: この機では長い名前の doc を glob が落としている"
+    )
+
+    result = _run_on(tmp_path)
+    out = result.stdout + result.stderr
+    assert result.returncode == guard.EXIT_DRIFT, (
+        f"exit {result.returncode}。exit 2 なら読み込みが MAX_PATH で落ちている\n" + out
+    )
+    assert "ghost.rs" in out, out
+
+
+def _spy(monkeypatch: pytest.MonkeyPatch, name: str) -> list[str]:
+    """``guard`` の述語呼び出しを記録する。実際の判定はそのまま通す。"""
+    seen: list[str] = []
+    real = getattr(guard, name)
+
+    def wrapper(path: Path) -> bool:
+        seen.append(str(path))
+        return real(path)
+
+    monkeypatch.setattr(guard, name, wrapper)
+    return seen
+
+
+def test_link_check_resolves_targets_through_the_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C1 がリンク先の実在を ``_exists`` 経由で判定していること (#965).
+
+    ここが素の ``Path.exists()`` に戻ると **#965 が報告した症状そのもの**
+    (実在するリンク先を「存在しない」と報告して exit 1) が再発する。それでいて
+    MAX_PATH 系の end-to-end テストは C2 経路しか踏んでいないため、全部緑のまま
+    通った (2026-08-30 実測: 当該行だけ revert して 68 passed)。
+
+    長いパスを作らないので **ubuntu でも実際に走り、runner の LongPathsEnabled
+    設定にも依存しない**。
+    """
+    _make_repo(tmp_path)
+    seen = _spy(monkeypatch, "_exists")
+    assert guard.check_link_targets(tmp_path) == []
+    assert any("lib.rs" in s for s in seen), (
+        f"リンク先が _exists を経由していない: {seen}"
+    )
+
+
+def test_symbol_check_resolves_targets_through_the_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C2 がリンク先の実在を ``_is_file`` 経由で判定していること (#965)."""
+    _make_repo(tmp_path)
+    seen = _spy(monkeypatch, "_is_file")
+    assert guard.check_symbol_refs(tmp_path) == []
+    assert any("lib.rs" in s for s in seen), (
+        f"リンク先が _is_file を経由していない: {seen}"
+    )
+
+
+def test_spawn_check_resolves_targets_through_the_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C3 が arch doc と Rust ソースの実在を ``_is_file`` 経由で判定していること.
+
+    lib.rs を 2 回以上要求するのは、**preflight の実在確認と glob 結果の filter を
+    分けて固定する**ため。片方だけ素の ``is_file()`` に戻っても気づけるようにする。
+    """
+    _make_repo(tmp_path)
+    seen = _spy(monkeypatch, "_is_file")
+    assert guard.check_spawn_coverage(tmp_path) == []
+    assert any("system-architecture.md" in s for s in seen), (
+        f"arch doc が _is_file を経由していない: {seen}"
+    )
+    assert sum(1 for s in seen if "lib.rs" in s) >= 2, (
+        f"preflight と glob filter の両方が _is_file を経由していない: {seen}"
+    )
