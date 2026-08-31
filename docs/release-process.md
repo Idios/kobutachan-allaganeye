@@ -125,7 +125,8 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
   詳細は [<リンク名>](<spec / doc への相対パス>) を参照。
 ```
 
-- **(a) 太字の機能名は必須**。`### Added` の太字機能名は機能告知 drift 検査 (spec §5.2 G2-2 / #944) が機能名集合を抽出する SSoT でもあるため、**太字を外すとその機能が検査対象から静かに消える**
+- **(a) 太字の機能名は必須**。読者が節を流し読みして「何が変わったか」だけを拾えるようにするため。`python scripts/check_changelog_style.py` が形を検査する。
+  なお **機能告知 drift 検査 (`scripts/check_feature_announcement.py`) は CHANGELOG を読まない** — 出荷サブコマンドの正は typer runtime registry (`collect_shipped_commands`) で、照合先は `README.md` / `docs/quickstart.md` / 同梱 `README.txt` である (2026-08-31 実測: 同 script 内の `CHANGELOG` 参照は 0 件)。**「太字を外すとその機能が告知検査から静かに消える」という以前の記述は誤り**だった
 - **(b) は利用者の語彙で 2-3 行**。設計の説明を CHANGELOG 側に書かない
 - **(c) 詳細は spec / doc へのリンクで送る**
 
