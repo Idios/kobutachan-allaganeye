@@ -187,7 +187,8 @@ output PTS 6184 と称しながら ~1.1s 遅れた input frame をサンプリ�
 
 v0.3.0 では緊急 escape 用の transitional な rollback env var を残していたが、
 v0.3.1 (#864) で legacy path ごと撤去した。**現在 fps filter 経路に切り替える
-手段は無い**。撤去した env var 名と当時の設計意図は `CHANGELOG.md` の
+手段は無い**。撤去した env var は `ALLAGANEYE_DETECT_FPS_FILTER` で、設定しても
+現在は無視される。当時の設計意図は `CHANGELOG.md` の
 v0.3.0 Deprecated / v0.3.1 Removed エントリ、および
 `docs/superpowers/specs/2026-05-18-v030-l3-detect-fps-filter-retirement-design.md`
 S6 を参照。
