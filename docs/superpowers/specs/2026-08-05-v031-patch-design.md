@@ -700,6 +700,52 @@ open 65 件 + 前セッションで close 済み 2 件 = **67 行**。(a) 27 件
 | #372 | metadata.json と cache の source パス形式を統一する | (c) close | 解消済み (COMPLETED)。前セッションで close。解消状態の pin は #934 が担う |
 | #765 | detect の NVDEC saturation 実機計測結果 (記録) | (c) close | 記録目的を達成 (COMPLETED)。前セッションで close |
 
+### 9.4 リリース当日の再確認 (2026-08-31、タグ打ち直前)
+
+上の 9.1-9.3 は v0.3.1 の**計画時点** (2026-08-05) の分類である。`/release` skill は
+タグを打つ前にもう一度 Step 0b / 0c を回すので、その結果をここに残す。
+
+#### Step 0b: deferred 全件取得
+
+`gh issue list --state open --label deferred --limit 200` で **49 件**。
+
+#### Step 0c-2: not_planned 残タスク
+
+リリース区間 (`v0.3.0`..`origin/develop-0.3.1`) の diff から
+`(wired in|Refs|TODO\() ?#N` 形のマーカーを抽出し **48 件**の issue 番号を得た。
+各番号の `state` / `stateReason` を照会した結果、**not_planned で close されたものは
+検出 0 件**。orphan 化した残タスクは無い。
+
+#### Step 0c-2: 本文鮮度
+
+将来レイヤー (L4 / L5 / L6 / L7) の issue は v0.3.1 が触っていないため対象外とし、
+現行スコープの **28 件**を実装と突き合わせた。**4 件**が鮮度切れだったので、各 issue へ
+「鮮度更新 (2026-08-31)」コメントを投稿した (本文の主張と現在の実態を表で対比)。
+
+| issue | 鮮度切れの内容 | 実測 |
+| --- | --- | --- |
+| [#964](https://github.com/Idios/kobutachan-allaganeye/issues/964) | 本文が対照として挙げる関数名が旧名 | PR #1009 (`98a3a58`) で `resolve_export_output_path(s)` -> `resolve_output_path(s)` に改名済み (`allaganeye/export/pool.py:206` / `:281`) |
+| [#518](https://github.com/Idios/kobutachan-allaganeye/issues/518) | 「採用するか検討」とあるが scaffold は実装済み | `allaganeye/detection/warnings.py` が実在し、`schemas/metadata.schema.json` に `warnings` フィールドがある |
+| [#933](https://github.com/Idios/kobutachan-allaganeye/issues/933) | §B の 4 項目が修正済みなのに `[ ]` のまま | `docs/output-spec.md:114` / `docs/gui-development.md:76` / `docs/ui-architecture.md:57` / `release/SKILL.md` Step 2-4 がいずれも修正済み |
+| [#326](https://github.com/Idios/kobutachan-allaganeye/issues/326) | 着手条件「L2 完了後」が既に満たされている | #325 は CLOSED、L2 は 2026-05 に出荷済み |
+
+#### Step 0c: 3 択分類
+
+Iron Law 2 の bulk pre-check (サンプル 1 件 = 作成日時降順の先頭 #998) を提示し、
+Idios が **「全件 OK = 全件 (b) deferred 継続」**を選択した。
+
+| 分類 | 件数 | 内訳 |
+| --- | --- | --- |
+| (a) 次 release 吸収 | 0 | — |
+| (b) deferred 継続 | **49** | 全件。v0.3.1 は Track A-D を消化済みで、ここから新規に吸収するのは release の scope 外になるため |
+| (c) close | 0 | — |
+
+**(a) が 0 件なので Track B 吸収候補は無い。** 49 件は次サイクル (v0.3.2) で再評価する。
+このうち [#975](https://github.com/Idios/kobutachan-allaganeye/issues/975) /
+[#997](https://github.com/Idios/kobutachan-allaganeye/issues/997) /
+[#998](https://github.com/Idios/kobutachan-allaganeye/issues/998) は、本リリース作業中に
+Idios が「v0.3.2 へ送る」と判断して `deferred` を付けた 3 件である。
+
 ## 10. 関連リンク
 
 - [`docs/release-process.md` §Patch release の Track 構造](../../release-process.md#patch-release-の-track-構造)
