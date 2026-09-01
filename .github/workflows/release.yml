@@ -90,7 +90,22 @@ jobs:
     outputs:
       version: ${{ steps.parse.outputs.version }}
     steps:
+      # fetch-tags は必須。既定の checkout は tag push でも **tag object を
+      # 取得しない** -- 実測 (2026-09-02, run 33528826207):
+      #
+      #   git fetch ... --depth=1 origin +074a47e...:refs/tags/v0.3.1
+      #   git for-each-ref --format='%(refname) %(objecttype)' 'refs/tags/*'
+      #   -> refs/tags/v0.3.1 commit
+      #
+      # commit SHA を tag 名へマップするだけなので、ローカルの ref は
+      # **lightweight** になり `%(taggerdate)` が常に空を返す。annotated tag を
+      # 正しく打っていても version-check が「taggerdate を取得できません」で
+      # 落ちる = このガードは導入以来 1 度も本来の日付判定に到達していなかった。
+      # (#948 導入時の spec §8.2 O-6 は「既定でも読める」と記録していたが、
+      #  実測はそうなっていない。)
       - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
 
       - uses: actions/setup-python@v5
         with:
@@ -104,10 +119,15 @@ jobs:
       # バンプ方向も検査する。
       #
       # 基準日は annotated tag の taggerdate **のみ**を使う。規約
-      # (docs/release-process.md §タグ運用) が定義する「タグを打つ日」そのもので
-      # あり、actions/checkout@v4 の既定 fetch-depth: 1 でも読める
-      # (init + fetch --depth=1 +refs/tags/<tag>*:refs/tags/<tag>* で tag object
-      # ごと取得されることを実測。spec §8.2 O-6 の決着)。
+      # (docs/release-process.md §タグ運用) が定義する「タグを打つ日」そのもの。
+      #
+      # **読めるようにするのは呼び出し側の責任**である。既定の checkout では
+      # 読めない (上の checkout step のコメントに実測を記録)。tag object を
+      # 取得するのは (a) checkout の `fetch-tags: true` と (b) 下の明示 refspec
+      # fetch の 2 段で、どちらか片方でも成立すればよい形にしてある。
+      #
+      # 旧記述は「既定 fetch-depth: 1 でも読める (spec §8.2 O-6 の決着)」と
+      # 書いていたが、**これは誤り**だった (2026-09-02 実測で反証)。
       #
       # **github.event.head_commit.timestamp へ fallback しない** (Codex
       # adversarial-review high finding)。あれは「タグが指す commit の日時」で
@@ -125,13 +145,27 @@ jobs:
           fi
 
           TAG="${GITHUB_REF#refs/tags/}"
+
+          # tag ref を明示 refspec で取り直す。checkout 側の `fetch-tags: true` に
+          # 加えた二重化で、**checkout の実装詳細に依存しないため**にここに置く。
+          # 既定の checkout は commit SHA を tag 名へマップするだけで annotated
+          # tag object を持ってこない (実測 run 33528826207)。その状態では
+          # `%(taggerdate)` が空になり、正しく打ったタグでも下で必ず落ちる。
+          # `refs/tags/<tag>:refs/tags/<tag>` の refspec なら tag object ごと来る。
+          # 失敗しても即 fail にはしない ((a) が効いていれば下の判定は通る) が、
+          # **黙らせない**。握り潰すと、CI 側 (network / permission) の失敗でも
+          # 下の「annotated tag で打ち直してください」だけが出て、運用者に無関係な
+          # 原因を疑わせる。今回まさにその誤帰属で 1 サイクル失っている。
+          git fetch --no-tags --force origin "refs/tags/${TAG}:refs/tags/${TAG}" \
+            || echo "::warning::refs/tags/${TAG} の fetch に失敗しました (CI 側要因の可能性)。以降で taggerdate が取れない場合はこの warning を先に疑うこと"
+
           # lightweight tag / ref 欠落では空文字が返る (exit 0)。
           REFERENCE_DATE="$(git for-each-ref --format='%(taggerdate:iso-strict)' "refs/tags/${TAG}")"
           if [[ -z "${REFERENCE_DATE}" ]]; then
             echo "--- diagnostics ---"
             echo "ref object type: $(git cat-file -t "${TAG}" 2>&1 || true)"
             git for-each-ref --format='%(refname) %(objecttype)' 'refs/tags/*' || true
-            echo "::error::${TAG} から taggerdate を取得できません。annotated tag で打ち直してください (git tag -a ${TAG} -m '...')。CHANGELOG 見出し日付の基準日はタグ作成時刻であり、commit 日時で代用しません (docs/release-process.md §タグ運用)"
+            echo "::error::${TAG} から taggerdate を取得できません。**上に fetch の warning が出ていないかを先に確認**すること (出ていれば CI 側要因で、タグの打ち方は無関係)。warning が無ければ lightweight tag なので annotated で打ち直してください (git tag -a ${TAG} -m '...')。CHANGELOG 見出し日付の基準日はタグ作成時刻であり、commit 日時で代用しません (docs/release-process.md §タグ運用)"
             exit 1
           fi
           echo "基準日: annotated tag ${TAG} の taggerdate = ${REFERENCE_DATE}"

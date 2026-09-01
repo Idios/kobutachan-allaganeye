@@ -236,7 +236,7 @@ E1 (routing がアドバイザリで skill / hook に 0 件) / E5 (見出し日�
 
 1. **規約を先に確定する** (D6)。`docs/release-process.md` §タグ運用 に「CHANGELOG 見出し日付 = タグを打つ日 (JST)」を 1 行で定義し、§共通項目 のチェックリスト項目を「対象バージョンセクションが存在 (日付 = タグ打ち日 JST / 主要変更点 / breaking changes)」へ具体化する
 2. `.claude/skills/release/SKILL.md` の §タグ打ち・GitHub Release 作成 の直前に「見出し日付を当日に更新して commit する」手順を追加する。**現在 skill 全体で `changelog` の grep hit が 0 件**であり、`docs/release-process.md:81` の「/release スキルは CHANGELOG 更新の支援に使う」が実体を伴っていない乖離も同時に解消する
-3. `scripts/check_version_consistency.py` に `_check_changelog_heading()` を追加する。`--tag` 指定時のみ発火。`--changelog-date-from <ISO8601>` を CLI 引数で受け、workflow 側が `${{ github.event.head_commit.timestamp }}` を渡す (単体テスト可能な形にする)
+3. `scripts/check_version_consistency.py` に `_check_changelog_heading()` を追加する。`--tag` 指定時のみ発火。`--changelog-date-from <ISO8601>` を CLI 引数で受け、workflow 側が基準日を渡す (単体テスト可能な形にする)。**訂正 (2026-09-02)**: 計画時は `${{ github.event.head_commit.timestamp }}` を渡す想定だったが、出荷したのは **annotated tag の `taggerdate` のみ**を渡す形である (commit 日時はタグを打った日時ではないため。Codex adversarial-review の high finding)。この方針は `tests/scripts/test_check_version_consistency.py` が pin している
 4. `scripts/extract_release_notes.py:13` の regex を日付必須へ厳格化し、`tests/scripts/test_extract_release_notes.py` を新設する (現在この script には対応テストが存在しない)
 
 **タイムゾーンの扱い (必須)**: GitHub Actions runner は既定 UTC である。**過去 4 タグ中 2 件 (v0.1.1 02:55 JST / v0.2.1 08:43 JST) で JST 日付と UTC 日付が 1 日ずれる。** naive 実装は 50% の確率で false-red を出し、リリース当日にタグを打ち直す羽目になる。
@@ -602,7 +602,7 @@ base は全 Track `develop-0.3.1` (D4)。Track の意味づけは [`docs/release
 | O-3 | #922 を doc 修正で解くか `release.yml` 修正で解くか | 決定に依存して Track が B / C に分かれる |
 | O-4 | 配布 build (`build-portable-zip.ps1:473`) に constraints を効かせるか | 効かせないと出荷物の cv2 が未固定のまま残る (R1 表) |
 | O-5 | JST 深夜帯 (00:00-09:00 JST) にタグを打つ運用を許容するか | 許容するなら G1-3 は `Asia/Tokyo` 固定で足りる。禁止するなら規約に 1 行足して検査を単純化できる |
-| O-6 | `annotated tag object` の `taggerdate` が `version-check` job の checkout 後に読めるか (`actions/checkout@v4` は既定 `fetch-depth: 1`) | 実 CI で試すしかない。読めない場合は `github.event.head_commit.timestamp` が唯一の基準日になる |
+| O-6 | `annotated tag object` の `taggerdate` が `version-check` job の checkout 後に読めるか (`actions/checkout@v4` は既定 `fetch-depth: 1`) | **決着 (2026-09-02 実測): 既定では読めない。** checkout は commit SHA を tag 名へマップするだけで tag object を取得せず、CI 上の ref は lightweight になる (`refs/tags/v0.3.1 commit`、run 33528826207)。`fetch-tags: true` と明示 refspec fetch の 2 段で取得するよう `release.yml` を修正した。`head_commit.timestamp` への fallback は採らない (規約とズレた日付を通すため) |
 | O-7 | `.claude/skills/release/eval/requirements.md:24` のシナリオ B が「patch release v0.3.1、deferred 5 件」を前提にしている (実際は 64 件) | #918 の PR で eval も同時更新する。しないと次の EPT で旧前提が復活する |
 
 ### 8.3 本 spec が意図的に扱わないもの
