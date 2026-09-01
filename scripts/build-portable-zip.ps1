@@ -197,6 +197,8 @@ function Format-ReadmeContent {
 このフォルダの `allaganeye.bat` をダブルクリックすると GUI
 (`allaganeye-gui.exe`) が起動します。GUI に動画ファイルをドロップして、
 検出された試合を確認・微調整し、各試合を MP4 でエクスポートできます。
+書き出しは複数の試合を並列で処理し、H.264 での再エンコードも選べます。
+エリアマップ (ミニマップ) 部分だけを切り抜く画面も GUI から使えます。
 
 NOTE: GUI は Microsoft Edge WebView2 Runtime を必要とします (Windows 11 と
 最近の Windows 10 にはプリインストール済み)。GUI が起動せず runtime missing
@@ -237,12 +239,47 @@ $guiSection
 
 ### コマンドプロンプトから実行
 
---dry-run や -o などのオプションを指定したい場合は、このフォルダで
-コマンドプロンプトを開き、以下のように実行してください:
+-o などのオプションを指定したい場合は、このフォルダでコマンドプロンプトを
+開き、以下のように実行してください:
 
+    rem 検知だけ実行して metadata.json を書き出す (分割はしない)
+    allaganeye.bat detect "C:\path\to\video.mkv"
+
+    rem 試合ごとに分割する
     allaganeye.bat split "C:\path\to\video.mkv"
-    allaganeye.bat split "C:\path\to\video.mkv" --dry-run
+    allaganeye.bat split "C:\path\to\video.mkv" -o "C:\path\to\out"
+
+    rem 検知済みの metadata.json から並列で書き出す (H.264 再エンコードも可)
+    allaganeye.bat export "C:\path\to\output\metadata.json" -o "C:\path\to\out"
+    allaganeye.bat export "C:\path\to\output\metadata.json" --codec h264
+
+    rem エリアマップ (ミニマップ) の領域を提案する
+    allaganeye.bat minimap "C:\path\to\output\metadata.json"
+
+    rem 提案された領域で切り抜く
+    allaganeye.bat minimap "C:\path\to\output\metadata.json" --region 1520,780,380,380
+
+    rem フレーム輝度を CSV に出す (しきい値の調整用)
+    allaganeye.bat debug-brightness "C:\path\to\video.mkv"
+
+    rem バージョン確認
     allaganeye.bat --version
+
+### 試合が検知できないとき
+
+チャット欄を画像でマスクした録画や、ゲーム画面が画面全体でない配信レイアウトの
+録画では、既定の検知が試合を見つけられないことがあります。detect / split に
+以下のオプションを付けて試してください:
+
+    rem チャット欄を画像でマスクしている録画
+    allaganeye.bat detect "C:\path\to\video.mkv" --masked
+
+    rem 配信レイアウト (ゲーム画面が画面の一部) の録画
+    allaganeye.bat detect "C:\path\to\video.mkv" --vtuber
+
+なお、試合終了後のロビーや街の映像は既定では MP4 に出力されません
+(metadata.json には残ります)。この部分も出力したい場合は --keep-trailing を
+付けてください。
 
 詳細なドキュメントは https://github.com/Idios/kobutachan-allaganeye を参照してください。
 
@@ -466,11 +503,16 @@ $VenvDir = Join-Path $BuildDir 'venv'
 $VenvPython = Join-Path $VenvDir 'Scripts\python.exe'
 
 # 2. Install allaganeye + PyInstaller into venv
+# 依存版は constraints.txt で CI / ローカルと揃える (#916)。効かせないと build した
+# 日の PyPI 最新が ZIP に入り、CI が検証した版と別物になる。相対パス不可 (build venv
+# の cwd が repo root とは限らない) なので Join-Path で絶対パス化する。
+# pip 自身の self-upgrade だけは constraints の対象外 (既知の残余)。
 & $VenvPython -m pip install --upgrade pip --no-cache-dir
 & $VenvPython -m pip install `
     -r (Join-Path $RepoRoot 'scripts\installer\requirements-pyinstaller.txt') `
+    -c (Join-Path $RepoRoot 'constraints.txt') `
     --no-cache-dir
-& $VenvPython -m pip install $RepoRoot --no-cache-dir
+& $VenvPython -m pip install $RepoRoot -c (Join-Path $RepoRoot 'constraints.txt') --no-cache-dir
 
 # 3. Run PyInstaller (frozen --onedir) and copy the frozen app into the payload.
 # PyInstaller output: $BuildDir/pyinstaller-dist/allaganeye/ (allaganeye.exe +

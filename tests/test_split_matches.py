@@ -289,10 +289,18 @@ def test_match_list_handles_missing_type_key(
 def test_metadata_output_file_uses_posix_separator(
     mock_probe, mock_detect, mock_split, tmp_path
 ):
-    """metadata.json output_file uses POSIX '/' separator on all platforms (#371).
+    """metadata.json output_file never carries a Windows separator (#371 / #934).
 
     JSON is a cross-platform data-interchange format; backslashes in paths
     break Linux/macOS consumers of metadata.json (e.g. the L2/L3 pipeline).
+
+    #934 で ``output_file`` は **metadata.json と同ディレクトリからの相対**になった
+    ため、CLI 経路では区切りを含まない bare filename になる。#371 の主張 (backslash が
+    混ざらない) はそのまま成立するが、「``/`` を含む」という当時の assert は
+    **output_dir を値に埋め込んでいたバグの副産物**だったので落とす。区切りを含む値が
+    posix 化されること自体は
+    ``tests/test_path_schema_contracts.py::test_output_file_field_does_not_shorten_out_of_tree_paths``
+    が直接 pin している。
     """
     nested = tmp_path / "sub" / "output"
     mock_probe.return_value = PROBE_RESULT
@@ -310,8 +318,10 @@ def test_metadata_output_file_uses_posix_separator(
         assert "\\" not in m["output_file"], (
             f"output_file must not contain backslashes: {m['output_file']!r}"
         )
-        assert "/" in m["output_file"], (
-            f"output_file must contain forward slashes: {m['output_file']!r}"
+        # #934: 出力先が nested (tmp/sub/output) でも値は bare filename になる。
+        assert m["output_file"] == Path(m["output_file"]).name, (
+            f"output_file must be relative to the metadata.json directory: "
+            f"{m['output_file']!r}"
         )
 
 
@@ -1667,6 +1677,35 @@ def test_print_detection_stats_vtuber_timeline_section_obs_no_impact(capsys):
     assert "Timeline (vtuber)" not in out
 
 
+def test_print_detection_stats_vtuber_section_has_no_masked_l2_lines(capsys):
+    """vtuber 経路の stats に masked L2 行が混ざらない (#920 行 12b/12c の pin)。
+
+    `docs/output-spec.md` 行 12b / 12c は「vtuber path では出力されない」と書いて
+    いる。その根拠は `allaganeye/video/vtuber_timeline.py` の V4 検証が専用の
+    local stats を使って呼ばれ、main stats へ `masked_segments_dropped` を混入
+    させないことにある。V4 の drop 数は行 12e の `V4: N dropped` 側へ translate
+    される。ここでは helper 側の帰結 (vtuber key だけを持つ stats で masked 行が
+    出ないこと) を固定する。混入が起きれば verbose の二重表示になる。
+    """
+    from allaganeye.commands.split_matches import _print_detection_stats
+
+    _print_detection_stats(
+        {
+            "vtuber_timeline_probes": 1449,
+            "vtuber_anchor_confidence": 0.589,
+            "vtuber_gaps_tested": 8,
+            "vtuber_gaps_merged": 4,
+            "vtuber_v4_dropped": 3,
+            "vtuber_low_confidence_segments": 1,
+        }
+    )
+    out = capsys.readouterr().out
+    # V4 の drop は行 12e 側にだけ現れる
+    assert "V4: 3 dropped, 1 low-confidence" in out
+    assert "masked L2 validation" not in out
+    assert "masked L2 zero-gap merge" not in out
+
+
 class TestCaptureRegionsCache:
     """#810: capture_regions の cache 保存 / 引継 / legacy 合成。"""
 
@@ -1932,6 +1971,88 @@ class TestCaptureRegionsCache:
             "present but malformed capture_regions (missing confidence) must return "
             "None -- must NOT synthesize FULL_FRAME"
         )
+
+    def test_malformed_capture_regions_warning_names_the_cache_file(
+        self, cache_video, tmp_path, caplog
+    ):
+        """破損 cache の警告に、どの cache ファイルが原因かが出る (#906).
+
+        #879 で path 版から純関数へ抽出した際に、警告文から cache path が落ちた。
+        cache 破損は稀なので診断性のみの問題だが、落ちたままだと「どのファイルを
+        消せばよいか」がログから読めない。
+        """
+        import logging
+
+        from allaganeye.commands.split_matches import _capture_regions_from_cache_data
+
+        cache_path = tmp_path / ".detection_cache.json"
+        malformed_regions = {
+            "coarse": {
+                "x": 0.0,
+                "y": 0.0,
+                "w": 1.0,
+                "h": 1.0,
+                # "confidence" key missing -> invalid CaptureRegion
+                "source": "fallback",
+            },
+            "segments": [],
+            "fallback_reason": None,
+        }
+        self._write_cache(
+            cache_path, cache_video, extra={"capture_regions": malformed_regions}
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+
+        with caplog.at_level(
+            logging.WARNING, logger="allaganeye.commands.split_matches"
+        ):
+            result = _capture_regions_from_cache_data(data, cache_path=cache_path)
+
+        assert result is None
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+        ]
+        assert any(str(cache_path) in m for m in warnings), (
+            f"warning must name the offending cache file {cache_path}, got: {warnings}"
+        )
+
+    def test_malformed_capture_regions_warning_without_path_still_warns(
+        self, cache_video, tmp_path, caplog
+    ):
+        """cache_path を渡さない呼び出しでも警告は出る (#906 後方互換).
+
+        引数は optional なので、path を持たない呼び出し元がいても警告そのものは
+        失われない (path 部分だけが省かれる)。
+        """
+        import logging
+
+        from allaganeye.commands.split_matches import _capture_regions_from_cache_data
+
+        cache_path = tmp_path / ".detection_cache.json"
+        self._write_cache(
+            cache_path,
+            cache_video,
+            extra={
+                "capture_regions": {
+                    "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0},
+                    "segments": [],
+                    "fallback_reason": None,
+                }
+            },
+        )
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+
+        with caplog.at_level(
+            logging.WARNING, logger="allaganeye.commands.split_matches"
+        ):
+            result = _capture_regions_from_cache_data(data)
+
+        assert result is None
+        assert any(
+            "capture_regions" in r.getMessage()
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        ), "warning must still be emitted when cache_path is not supplied"
 
     def test_read_cached_capture_regions_null_value_treated_as_absent(
         self, cache_video, tmp_path
@@ -2753,6 +2874,35 @@ class TestDiskSpaceCheck:
 
         stderr = capsys.readouterr().err
         assert "Warning" in stderr
+
+    def test_check_disk_space_tight_warning_suppressed_by_quiet(self, tmp_path, capsys):
+        """`show=False` (= `-q`) では warning を出さない。
+
+        `docs/output-spec.md` 行 15a の `-q` 列 (非出力) の pin。warning のガードは
+        `show` だけを見て `verbose` を見ないため、`-q` が唯一の抑制手段である。
+        """
+        from allaganeye.commands.split_matches import _check_disk_space
+
+        video = tmp_path / "test.mp4"
+        video.write_bytes(b"\x00" * 1_000_000)
+        boundaries: list[MatchBoundary] = [
+            {"start": 0.0, "end": 900.0, "type": "unknown"},
+        ]
+        config = SplitConfig(output_dir=tmp_path / "output")
+
+        # test_check_disk_space_warns_on_tight と同じ「tight」条件を使う。
+        fake_usage = type(
+            "Usage", (), {"total": 2_000_000, "used": 900_000, "free": 1_100_000}
+        )
+        with patch(
+            "allaganeye.commands.split_matches.shutil.disk_usage",
+            return_value=fake_usage,
+        ):
+            _check_disk_space(video, boundaries, 1000.0, config, show=False)
+
+        captured = capsys.readouterr()
+        assert "Warning" not in captured.err
+        assert "Warning" not in captured.out
 
     @patch(f"{MODULE}.split_video")
     @patch(f"{MODULE}.detect_match_boundaries")
@@ -6387,7 +6537,9 @@ def test_build_metadata_payload_no_post_match_is_bitexact(tmp_path):
             "duration": 600.0,
             "duration_display": _format_duration(600.0),
             "type": "fl_match",
-            "output_file": (tmp_path / "match_001.mp4").as_posix(),
+            # #934: metadata.json ディレクトリ (= output_dir) からの相対。
+            # 修正前は output_dir 込みの as_posix をそのまま書いていた。
+            "output_file": "match_001.mp4",
         },
         {
             "index": 2,
@@ -6398,7 +6550,7 @@ def test_build_metadata_payload_no_post_match_is_bitexact(tmp_path):
             "duration": 590.0,
             "duration_display": _format_duration(590.0),
             "type": "unknown",
-            "output_file": (tmp_path / "match_002.mp4").as_posix(),
+            "output_file": "match_002.mp4",
         },
     ]
 

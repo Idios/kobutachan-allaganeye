@@ -770,3 +770,116 @@ Describe 'PyInstaller artifacts (#752)' {
     $spec | Should -Match "'sphinx'"
   }
 }
+
+Describe 'Dependency constraints wiring (#916)' {
+  # 出荷物の依存版を CI と揃えるための配線を pin する。効かせないと build した日の
+  # PyPI 最新 4.x が ZIP に入り、CI が検証した版と別物になる (#916 と同型の穴が
+  # 配布側に残る)。
+  #
+  # bare-name の全文 scan は production comment や無関係な statement を拾って
+  # false-green になるため、**statement 単位に scope してから call-form まで**
+  # assert する (memory: source-scan guard は statement に scope + call-form assert)。
+  BeforeAll {
+    $script:ConstraintsRepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    $script:ConstraintsBuildScript = Join-Path $script:ConstraintsRepoRoot 'scripts\build-portable-zip.ps1'
+    $script:ConstraintsFile = Join-Path $script:ConstraintsRepoRoot 'constraints.txt'
+
+    # **正規表現によるテキスト走査ではなく PowerShell の AST を使う。**
+    # 行ベースの scan は次のすべてを取り違える:
+    #   - 行末コメント (`# TODO: -c ...` と書いただけで配線済みに見える)
+    #   - ブロックコメント `<# ... #>` / here-string の中身 (コードではないのに拾う)
+    #   - バッククォート継続の畳み方の差
+    # AST はパーサ本体の結果なので、コメントも here-string も CommandAst にならない。
+    $tokens = $null
+    $parseErrors = $null
+    $scriptAst = [System.Management.Automation.Language.Parser]::ParseFile(
+      $script:ConstraintsBuildScript, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors -and $parseErrors.Count -gt 0) {
+      throw "build-portable-zip.ps1 の parse に失敗した: $($parseErrors[0].Message)"
+    }
+    # **`install` の literal を条件にしない。** テキストに `install` が出る形だけを
+    # 拾うと、次のような通常の PowerShell 表記で pip を呼びながら検査を素通りできる:
+    #   $pipArgs = @('install', $RepoRoot); & $VenvPython -m pip @pipArgs
+    #   Start-Process $VenvPython -ArgumentList '-m','pip','install',...
+    # いずれも `pip` は現れるので、**pip に触るコマンドをすべて拾ってから**
+    # self-upgrade だけを除外する。結果、上記の形は「constraints 未指定」として
+    # 赤くなり、書いた人に配線を明示させられる。
+    # (Codex adversarial-review round 2 の指摘)
+    $script:FindPipCommands = {
+      param([string]$Path)
+      $t = $null
+      $e = $null
+      $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$t, [ref]$e)
+      if ($e -and $e.Count -gt 0) { throw "parse に失敗した: $($e[0].Message)" }
+      $found = $ast.FindAll({
+          param($node)
+          $node -is [System.Management.Automation.Language.CommandAst]
+        }, $true)
+      return @($found | ForEach-Object { $_.Extent.Text } | Where-Object { $_ -match '\bpip\b' })
+    }
+
+    $script:PipInstallStatements = @(& $script:FindPipCommands $script:ConstraintsBuildScript)
+    # pip 自身の self-upgrade は constraints の対象外 (pip の版は固定していない。
+    # 既知の残余として docs/l2-workflow.md §外部依存規約 に記載)。
+    $script:PackageInstallStatements = @(
+      $script:PipInstallStatements | Where-Object { $_ -notmatch 'install\s+--upgrade\s+pip\b' }
+    )
+  }
+
+  It 'constraints.txt exists at repo root' {
+    Test-Path $script:ConstraintsFile | Should -BeTrue
+  }
+
+  It 'finds exactly 2 package-installing pip statements (new unguarded install fails here)' {
+    # 本数を pin することで、`-c` を付け忘れた 3 本目が静かに増えるのを防ぐ。
+    # 増減させた場合は下の call-form assert も併せて見直すこと。
+    $script:PackageInstallStatements.Count | Should -Be 2
+  }
+
+  It 'every package-installing pip statement passes -c with an absolute constraints path' {
+    # 相対パス不可: build venv の cwd が repo root とは限らないため、
+    # `Join-Path $RepoRoot` で絶対パス化されていることまで assert する。
+    foreach ($stmt in $script:PackageInstallStatements) {
+      $stmt | Should -Match '-c\s+\(Join-Path\s+\$RepoRoot\s+''constraints\.txt''\)'
+    }
+  }
+
+  Context 'negative fixtures (guard 自身が何も見ていない状態を防ぐ)' {
+    # 「走っているが検出していない」guard を防ぐため、回避されがちな PowerShell
+    # 表記を実際に parse させて拾えることを確認する。Codex round 2 の要求。
+    BeforeAll {
+      $script:FixtureDir = Join-Path ([System.IO.Path]::GetTempPath()) "ae-pip-fixtures-$PID"
+      New-Item -ItemType Directory -Force -Path $script:FixtureDir | Out-Null
+
+      $script:Fixtures = @{
+        'direct'       = '& $VenvPython -m pip install $RepoRoot --no-cache-dir'
+        'splatted'     = '$pipArgs = @(''install'', $RepoRoot)
+& $VenvPython -m pip @pipArgs'
+        'startprocess' = 'Start-Process $VenvPython -ArgumentList ''-m'', ''pip'', ''install'', $RepoRoot -Wait'
+        'continuation' = '& $VenvPython -m pip `
+    install $RepoRoot `
+    --no-cache-dir'
+      }
+      foreach ($k in $script:Fixtures.Keys) {
+        $p = Join-Path $script:FixtureDir "$k.ps1"
+        [IO.File]::WriteAllText($p, $script:Fixtures[$k], (New-Object System.Text.UTF8Encoding($true)))
+      }
+    }
+
+    AfterAll {
+      if ($script:FixtureDir -and (Test-Path $script:FixtureDir)) {
+        Remove-Item -Recurse -Force $script:FixtureDir
+      }
+    }
+
+    It 'detects an unconstrained pip install written as <_>' -ForEach @('direct', 'splatted', 'startprocess', 'continuation') {
+      $path = Join-Path $script:FixtureDir "$_.ps1"
+      $found = @(& $script:FindPipCommands $path)
+      $found.Count | Should -BeGreaterThan 0 -Because "$_ 形の pip 呼び出しを検出できていない (guard が素通りする)"
+      # いずれの fixture も constraints を渡していないので、call-form assert は
+      # 通ってはいけない。
+      $constrained = @($found | Where-Object { $_ -match '-c\s+\(Join-Path\s+\$RepoRoot\s+''constraints\.txt''\)' })
+      $constrained.Count | Should -Be 0
+    }
+  }
+}

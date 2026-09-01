@@ -438,6 +438,16 @@ export function DropScreen({
           </div>
         </>
       )}
+
+      {/* #944 §D: GUI にバージョン表示も doc への導線も 1 つも無く、ユーザーが
+          自分の版を知る手段が無かった。URL はリンクではなく選択可能なテキスト
+          にしてある -- 外部 URL を開く経路 (shell plugin の JS binding) が
+          現状の GUI に無く、押しても何も起きないリンクの方が有害なため。 */}
+      <div className={styles.appMeta} data-testid="drop-app-meta">
+        <span>Allagan Eye v{__APP_VERSION__}</span>
+        <span className={styles.appMetaSep}>·</span>
+        <span>github.com/Idios/kobutachan-allaganeye</span>
+      </div>
     </div>
   );
 }

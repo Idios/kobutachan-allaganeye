@@ -12,7 +12,7 @@
 
 ### detect コマンドの適用境界
 
-マトリクスは元々 `split` を対象に作成されたため、`detect` を対象に加えるにあたり **全 19 行を `allaganeye/commands/detect.py` の実行経路に対して突合した** (#862)。以下の 4 点を除き、残る行は split と同一のヘルパ (`_print_environment_header` / `_display_cache_hit_params` / `_resolve_gpu_mode_with_probe` / `_run_detection` / `_print_detection_stats` / `_display_results` / `_display_gaps` / `_emit_total_time`) を detect も呼ぶため、**表の値がそのまま detect にも適用される**。
+マトリクスは元々 `split` を対象に作成されたため、`detect` を対象に加えるにあたり **全 19 行を `allaganeye/commands/detect.py` の実行経路に対して突合した** (#862)。以下の 5 点を除き、残る行は split と同一のヘルパ (`_print_environment_header` / `_display_cache_hit_params` / `_resolve_gpu_mode_with_probe` / `_run_detection` / `_print_detection_stats` / `_display_results` / `_display_gaps` / `_emit_total_time`) を detect も呼ぶため、**表の値がそのまま detect にも適用される**。
 
 detect に該当しない行 (この 4 点で網羅):
 
@@ -20,8 +20,11 @@ detect に該当しない行 (この 4 点で網羅):
 - **行 11 のうち `Splitting` elapsed**: `Splitting: N matches, Xs` (2 space indent 付き) は `_emit_splitting_elapsed` (`allaganeye/commands/split_matches.py` で定義) が出力し、その呼び出し元は `run_split` (cache hit / cache miss の 2 経路) と `run_split_from_metadata` (`split --from-metadata`) の計 3 箇所、すなわち**分割フェーズを実行する split 側の経路のみ**。detect (`allaganeye/commands/detect.py` の `run_detect`) は `_print_detection_stats` のみを呼び `_emit_splitting_elapsed` を一切呼ばないため、`Pass 1` / `Pass 2` / `Scorebar` / Filter drop 内訳は出力されるが `Splitting` elapsed は出力されない
 - **行 16 (`Splitting` 進捗バー)**: 分割フェーズが存在しないため detect では常に非出力
 - **行 17 のうち `Output: <dir>` + ファイル一覧**: 分割フェーズが存在しないため detect では出力されない。`Metadata: <path>` のみ detect も出力するが、`show` が真のとき (= `-q` でも `--progress-format json` でもないとき) に限る (`run_detect` 末尾の `if show:` ガード)
+- **行 15a (ディスク空き容量 warning)**: 出力ファイルを書かないため detect では容量検査そのものを行わない。`_check_disk_space` の呼び出しは `allaganeye/commands/split_matches.py` の 3 箇所 (`run_split` の cache hit / cache miss と `run_split_from_metadata`) だけで、`allaganeye/commands/detect.py` には**関数の参照が 1 つも無い** (#933)
 
 行 12a (`Region:`) は #908 で後から追加した行のため上記 #862 突合には含まれないが、split (`run_split`) / detect (`run_detect`) が同一のガード条件 (`if captured_region is not None:`) で出力するため、**表の値がそのまま detect にも適用される**。この行だけは `_print_detection_stats` の内側ではなく呼び出し元に置かれており (行 11 / 行 12 は同ヘルパ内)、それが #862 PR-A の突合をすり抜けた原因。
+
+行 12b-12e (masked / vtuber の検知統計) も #862 突合の後に追加された行だが、`_print_detection_stats` の**内側**にあり、split (`run_split`) / detect (`run_detect`) が同一のガード条件 (`if verbose and show and detect_stats is not None:`) で同ヘルパを呼ぶため、**表の値がそのまま detect にも適用される** (#920)。
 
 **`-q` の挙動は split と異なる**: detect の `-q` は `show = not quiet and not json_mode` の評価により、`Metadata: <path>` 行も含め stdout を全抑制する。下記「強制 silent 契約 (`-q`)」節は **split 専用**の契約であり、detect の `-q` 挙動には適用されない。
 
@@ -31,8 +34,8 @@ detect に該当しない行 (この 4 点で網羅):
 
 `split --from-metadata <metadata.json>` (#463) は検知フェーズを skip する第 3 の実行経路 (`allaganeye/commands/split_matches.py` の `run_split_from_metadata`) で、`run_split` とは別の出力プロファイルを持つ。
 
-- **非出力**: 行 1-10 (環境ヘッダ / HW info / `Probing:` / Metadata 詳細 / `Auto-adjusted` / Dry-run 通知 / Cache hit params / GPU mode / 検知パラメータ summary / 検知進捗バー)、行 11 のうち検知統計部分 (`Pass 1` / `Pass 2` / `Scorebar`)、行 12 (Filter drop 内訳) / 行 12a (`Region:`) / 行 13 (`Detected N match(es)`) / 行 14 (Match 一覧) / 行 15 (Gap 一覧)。いずれも検知を行わないため
-- **出力**: 行 16 (`Splitting` 進捗バー) / 行 17 (`Output:` + ファイル一覧 + `Metadata:`) / 行 11 のうち `Splitting` elapsed (`_emit_splitting_elapsed`) / 行 18 (`Total:`) / 行 19 系エラー表示
+- **非出力**: 行 1-10 (環境ヘッダ / HW info / `Probing:` / Metadata 詳細 / `Auto-adjusted` / Dry-run 通知 / Cache hit params / GPU mode / 検知パラメータ summary / 検知進捗バー)、行 11 のうち検知統計部分 (`Pass 1` / `Pass 2` / `Scorebar`)、行 12 (Filter drop 内訳) / 行 12a (`Region:`) / **行 12b-12e (masked / vtuber の検知統計)** / 行 13 (`Detected N match(es)`) / 行 14 (Match 一覧) / 行 15 (Gap 一覧)。いずれも検知を行わないため (`run_split_from_metadata` は `_print_detection_stats` を呼ばない)
+- **出力**: 行 16 (`Splitting` 進捗バー) / 行 17 (`Output:` + ファイル一覧 + `Metadata:`) / 行 11 のうち `Splitting` elapsed (`_emit_splitting_elapsed`) / **行 15a (ディスク空き容量 warning)** / 行 18 (`Total:`) / 行 19 系エラー表示
 - **本経路固有の行**: 下表 3b / 3c
 
 | # | 出力項目 | 関連Issue | default | `-v` | `-q` | `--dry-run` | `-v --dry-run` | `-q --dry-run` | `-v -q` |
@@ -69,8 +72,8 @@ Error: --quiet and --verbose are mutually exclusive
 | `--gpu-vendor` | 行 8a の `<vendor>` 値のみ変化。未実装 / probe 未検出の vendor 指定は exit 5 (#546 / #553 / #550 / #582) |
 | `--no-cache` | 行 7 (Cache hit params) と行 13 の `(cached)` サフィックスが常に非出力。他行は影響なし |
 | `--no-audio` | 行 9 (検知パラメータ summary) の `audio=frozen` / `audio=off` トークンに反映。現状 AUDIO_FROZEN=True のため値に関わらず `frozen` 表示 (#384) |
-| `--vtuber` | 行 9 の `vtuber=on` トークンに反映。`--vtuber` 採用 run の verbose 検知統計 (行 11) に `Timeline (vtuber)` / `V3:` 行が追加される (#895)。`--vtuber` が縮退 (V0 失敗等) した場合は timeline 統計行は出力されず通常 pass 1/2 統計に戻る。cache ヒット時 (行 7) は `vtuber_algo=N` トークンが `masked_fallback` 直後に挿入される (vtuber 影響 run のみ) |
-| `--masked` | 行 9 の `masked=on` トークンに反映。masked fallback 採用 run では verbose 検知統計 (行 11) に `masked L2 validation` / `masked L2 zero-gap merge` 行が追加される (#822)。暗転が 1 件も検出できなかった録画では `--masked` 未指定でも fallback が自動発動するため、**行 9 が `masked=off` のままでもこれらの統計行が出力されうる** (#821)。cache ヒット時 (行 7) は `masked=` に加え resolved の `masked_fallback=` が出力され、masked 影響 run のみ `masked_algo=N` トークンが `masked_fallback` の直後に挿入される。`--vtuber` との同時指定は exit 5 |
+| `--vtuber` | 行 9 の `vtuber=on` トークンに反映。`--vtuber` 採用 run の verbose 検知統計に **行 12d / 12e** が追加される (#895)。`--vtuber` が縮退 (V0 失敗等) した場合は timeline 統計行は出力されず通常 pass 1/2 統計に戻る。cache ヒット時 (行 7) は `vtuber_algo=N` トークンが `masked_fallback` 直後に挿入される (vtuber 影響 run のみ) |
+| `--masked` | 行 9 の `masked=on` トークンに反映。masked fallback 採用 run では verbose 検知統計に **行 12b / 12c** が追加される (#822)。暗転が 1 件も検出できなかった録画では `--masked` 未指定でも fallback が自動発動するため、**行 9 が `masked=off` のままでもこれらの統計行が出力されうる** (#821)。cache ヒット時 (行 7) は `masked=` に加え resolved の `masked_fallback=` が出力され、masked 影響 run のみ `masked_algo=N` トークンが `masked_fallback` の直後に挿入される。`--vtuber` との同時指定は exit 5 |
 | `--keep-trailing` | 出力項目自体の有無には影響しない。cache ヒット時 (行 7) の `keep_trailing=on` トークン値に反映され、post-match trailing を通常 match として MP4 化するため行 17 のファイル一覧と行 11 の `Splitting: N matches` の件数が変化しうる (#805)。行 13 の `Detected N match(es)` と行 14 の Match 一覧は default でも post_match segment を数えるため、本フラグでは変化しない |
 | `-o`, `--sample-interval`, `--blackout-threshold`, etc. | 出力項目自体の有無には影響せず、値のみ変化 |
 
@@ -101,9 +104,14 @@ Error: --quiet and --verbose are mutually exclusive
 | 11 | 検知統計 (`Pass 1`, `Pass 2`, `Scorebar`, `Splitting` elapsed (split のみ) 含) | [#386](https://github.com/Idios/kobutachan-allaganeye/issues/386), [#387](https://github.com/Idios/kobutachan-allaganeye/issues/387) | × | ◯ | × | × | ◯ | × | ❌ |
 | 12 | Filter drop 内訳 + unknown match 行 (`Filter: N candidates -> M matches` + `+ N unknown match (録画途中試合)`) | [#388](https://github.com/Idios/kobutachan-allaganeye/issues/388), [#433](https://github.com/Idios/kobutachan-allaganeye/issues/433) | × | ◯ | × | × | ◯ | × | ❌ |
 | 12a | `Region: <capture region token>` (`captured_region` 解決時のみ) | [#810](https://github.com/Idios/kobutachan-allaganeye/issues/810), [#908](https://github.com/Idios/kobutachan-allaganeye/issues/908) | × | ◯ (cache miss 時のみ) | × | × | ◯ (cache miss 時のみ) | × | ❌ |
+| 12b | `masked L2 validation: N segment(s) dropped (below quorum)` (2 space indent 付き) | [#822](https://github.com/Idios/kobutachan-allaganeye/issues/822) | × | ◯ (cache miss + masked fallback 採用 + 当該カウンタ > 0 時のみ) | × | × | ◯ (同左) | × | ❌ |
+| 12c | `masked L2 zero-gap merge: N pair(s) merged (flank flicker split)` (2 space indent 付き) | [#822](https://github.com/Idios/kobutachan-allaganeye/issues/822) | × | ◯ (cache miss + masked fallback 採用 + 当該カウンタ > 0 時のみ) | × | × | ◯ (同左) | × | ❌ |
+| 12d | `Timeline (vtuber): N probes, anchor conf X.XX` (2 space indent 付き) | [#895](https://github.com/Idios/kobutachan-allaganeye/issues/895) | × | ◯ (cache miss + vtuber timeline 採用時のみ) | × | × | ◯ (同左) | × | ❌ |
+| 12e | `V3: N gaps tested, N merged, N peek-overridden; V4: N dropped, N low-confidence` (2 space indent 付き) | [#895](https://github.com/Idios/kobutachan-allaganeye/issues/895) | × | ◯ (cache miss + vtuber timeline 採用時のみ) | × | × | ◯ (同左) | × | ❌ |
 | 13 | `Detected N match(es) ... (cached)` サフィックス含 | [#418](https://github.com/Idios/kobutachan-allaganeye/issues/418) (M) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 14 | Match 一覧 (`[unknown]` / `[fl_match]` マーカー含) | [#382](https://github.com/Idios/kobutachan-allaganeye/issues/382) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 15 | Gap 一覧 | - | × | ◯ | × | × | ◯ | × | ❌ |
+| 15a | ディスク空き容量 warning (`Warning: free space is tight (estimated: ..., free: ...)`、**stderr**) | [#338](https://github.com/Idios/kobutachan-allaganeye/issues/338), [#933](https://github.com/Idios/kobutachan-allaganeye/issues/933) | stderr (推定サイズが空きの 80% 超のときのみ) | stderr (同左) | × | - | - | - | ❌ |
 | 16 | 進捗バー `Splitting` | - | ◯ | ◯ | × | - | - | - | ❌ |
 | 17 | `Output: <dir>` / ファイル一覧 / `Metadata: <path>` | - | ◯ | ◯ | ◯ | - | - | - | ❌ |
 | 18 | `Total: <duration>` | [#381](https://github.com/Idios/kobutachan-allaganeye/issues/381) | × | ◯ | × | × | ◯ | × | ❌ |
@@ -116,6 +124,11 @@ Error: --quiet and --verbose are mutually exclusive
 - 行 12a (`Region:`) が条件付きなのは、`captured_region` が解決済み (非 `None`) のときだけ出力するため (`run_split` / `run_detect` の `if captured_region is not None:` ガード)。実運用上これは **cache miss (実際に検知を走らせた) と同義**である:
   - **cache miss 時**: `detect_match_boundaries` は標準 / vtuber / masked のどの経路を通っても `region_callback` を必ず呼ぶ。`region_callback(...)` の呼び出しは同関数内の 3 箇所 (vtuber timeline 採用時 / masked fallback 採用時 / 標準 path 確定時) で、早期 return 2 箇所 (`return timeline_boundaries` / `return masked_segments`) はいずれも**直前に**呼び出しを済ませている。したがって `captured_region` は常に埋まり、`-v` なら必ず出力される
   - **cache hit 時**: `captured_region` は cache 記録値から復元される (split は `_split_and_write_metadata` へ `capture_regions=hit.capture_regions` を渡し、detect は `captured_region = hit.capture_regions` を代入する) が、cache-hit 分岐は `Region:` 行に到達する前に return / スキップするため **表示されない**。split は cache-hit 分岐 (`run_split` の `if hit is not None:`) がブロック末尾の `return` で抜けるため `Region:` のガードに到達しない。detect は `Region:` 出力ガードが cache-miss ブロック (`run_detect` の `if boundaries is None:`) の**内側**にあるため、cache hit ではブロックごとスキップされる。`--no-cache` を付ければ cache miss 扱いになり出力される
+- **行 12b-12e が「cache miss 時のみ」なのは行 12a と同じ理由**による。4 行はいずれも `_print_detection_stats` が出力し、その呼び出しガードは `if verbose and show and detect_stats is not None:` で、`detect_stats` は `verbose` のときだけ dict になる (`detect_stats = {} if verbose else None`)。cache hit 分岐はこのガードに到達する前に return / スキップするため表示されない
+- **行 12b-12e が「採用時のみ」なのは、統計 key が経路ごとに書き分けられているため**。表の凡例より強い条件が付くので個別に記す:
+  - **行 12b / 12c (masked)**: `masked_segments_dropped` / `masked_l2_zero_gap_merges` を書くのは masked fallback の経路 (`allaganeye/video/detector.py`) だけで、かつ**カウンタが 0 なら行を出さない** (健全な run で 0 行のノイズを出さないため)。**vtuber 経路では出力されない** — `allaganeye/video/vtuber_timeline.py` の V4 検証は専用の local stats を使って呼ばれ、main stats への key 混入と verbose 二重表示を避けている。V4 の drop 数は行 12e の `V4: N dropped` 側へ translate される
+  - **行 12d / 12e (vtuber)**: `if "vtuber_timeline_probes" in stats:` の**単一ガード配下**にあるので 2 行は常に同時に出る。key を書くのは V2 が非空を保証した後で、**縮退時 (V4 が全 segment を drop) は書いた key を pop する**ため、band-crop path へ fall back した run の verbose に放棄した統計は残らない
+- **行 15a が stderr かつ `-v` 非依存なのは**、`_check_disk_space` の warning ガードが `if estimated > free * _DISK_SPACE_WARNING_RATIO and show:` (`show` = `not quiet`) であり verbose を見ないため。`--dry-run` 系列が `-` なのは、cache hit / cache miss どちらの経路でも **dry-run の early return が `_check_disk_space` の呼び出しより前**にあり、容量検査そのものに到達しないため (行 16-17 と同じ理由)。推定サイズが空き容量を**超える**場合は warning ではなく exit 1 のエラーになるので、本行は「超えないが 80% を超えた」場合だけの行である
 - 行 8 / 行 8a は `allaganeye/commands/split_matches.py` の `_resolve_gpu_mode_with_probe` が出力する。行 8 は **`--gpu` / `--no-gpu` いずれも未指定 (auto 判定) のときだけ**出力される。行 8a は「GPU 経路が採用され (auto 判定で GPU 選択、または `--gpu` 明示)」かつ「vendor が解決できた (`_select_gpu_vendor` が非 `None`)」の AND 条件でのみ出力される。vendor 未解決時は `-hwaccel auto` に縮退し行 8a は出ない
 - 行 6 (`Dry-run 通知`) で default / `-v` / `-q` 列が `-` なのは、これらの組合せでは `--dry-run` 自体が指定されていないため「通知する場面が存在しない」という意味
 - 行 16-17 で `--dry-run` 系列が `-` なのは、dry-run は分割処理を skip するため split 出力・Splitting バーが発生しない
@@ -197,6 +210,38 @@ Metadata: <metadata.json path>
 - エラー表示: [`docs/cli-spec.md` §「エラー表示」](cli-spec.md)
 
 出力例を変更する PR は本マトリクスのセルに変化が無くても、該当 docs 節の整合性を必ず目視確認する (再発防止: PR #343 系での「docs 出力例なし → 整合性検証が走らない」問題への対応)。
+
+## ユーザーに提示するパスの契約 (Refs #935 P2-4)
+
+**CLI がユーザーに提示するパス (完了行 / `--json`) は絶対パスで出す。** `-o` に渡された相対パス・ドライブ相対パスをそのまま提示してはならない。
+
+**GUI は本契約の適用範囲外である** (現状パスを受け取っていないため。下表と #968 を参照)。**「提示するパスは絶対」を GUI にも適用済みと読まないこと。**
+
+| 提示先 | 形式 | 実装 |
+| --- | --- | --- |
+| `--json` の `output_path` | **絶対パス + POSIX 区切り** (`/`) | `Path(os.path.abspath(output_path)).as_posix()` (`allaganeye/export/schema.py` の `ProgressEvent.result`) |
+| 完了行 `[OK] match NNN -> <path>` | **絶対パス + プラットフォーム固有の区切り** (Windows は `\`) | 上記 payload を `Path(str(...))` で再構成 (`allaganeye/commands/export.py` / `allaganeye/commands/minimap.py`) |
+| GUI | **パスを受け取らない (本契約の適用外)** | Rust 側は wire event の `output_path` を deserialize するが、フロントへ転送する `ExportProgress` (`gui/src-tauri/src/lib.rs`) に**パス field が無い**ため破棄される。GUI が画面に出す出力先はユーザーが指定した値そのもので、本契約の絶対化は**効いていない** (追跡: #968) |
+
+**規約の要点**:
+
+- **絶対化には `os.path.abspath` を使い、`Path.resolve()` は使わない。** `abspath` は正規化のみを行い **symlink を解決しない**ため、報告されるパスが「ffmpeg が実際に書いた場所」と一致する。`resolve()` は symlink 先を返すので、ユーザーが指定した場所と表示が食い違う
+- `--json` が POSIX 区切りなのは GUI (wire protocol) 互換のため。人間向けの完了行は**シェル / エクスプローラへそのまま貼れる形**にするため OS ネイティブ区切りにする。**この 2 つが異なるのは意図的**である
+- ドライブ相対パス (`E:out` のような Windows 固有形。シェルの quote 落ちで発生する) は、絶対化によって実際の解決先が可視化される。**これが本規約の主目的**である
+
+> **根拠 (#930)**: `-o` に渡された相対パスをそのまま表示していたため、shell の quote 落ちで `E:\royalstraightflesh\videos\20260127` が `E:royalstraightfleshvideos20260127` (ドライブ相対) に化けた際、**実際の書き出し先が読み取れなかった**。quote 落ち自体はユーザーの入力ミスだが、表示がそれを可視化できていなかったことが欠陥である。
+
+**GUI プレビューとの非対称 (既知・未解消)**: GUI の name-pattern プレビュー (`gui/src/utils/filename.ts` の `formatMatchFilename`) は pattern を展開するだけで、CLI 側 (`allaganeye/export/pool.py`) が持つ 4 つの sandbox 検証 (出力先外への脱出 / source 上書き / Windows 不正名 / 出力衝突) を**持たない**。そのため GUI 上では「書き出し時に exit 5 で拒否される名前」がプレビューとして正常に見える。**本節の契約は CLI 出力に対するものであり、GUI プレビューの検証欠落は #964 で追跡する** (CLI 側が exit 5 で拒否するためデータ損失は起きず、失敗を早く知れない UX の問題)。
+
+**本契約の 3 点セット** ([`docs/l2-workflow.md` §規約・ガード導入の 3 点セット](l2-workflow.md) 準拠):
+
+| | 実体 |
+| --- | --- |
+| ①発火点 | [`/review-pr`](../.claude/skills/review-pr/SKILL.md) Step 5「パス生成点・表示点を触る PR の場合」 |
+| ②非実施記録 | 同 step。非該当なら `パス契約: 非該当 (理由: パスの生成点・表示点に変更なし)` を Step 6 に 1 行 |
+| ③red 実証 | `tests/test_export_schema.py::test_progress_event_result_reports_absolute_path` (相対 `-o` を渡して絶対パスが返ることを assert。`os.path.abspath` を外すと red になることを PR #930 が実測済み) |
+
+`--json` の絶対化のみ ③ が存在する。**完了行のネイティブ区切りと GUI 側には pin test が無い**ため、この 2 つは現状 ③ 未達である (#934 で機械検査化する範囲に含める)。
 
 ## export コマンド出力
 

@@ -121,9 +121,34 @@ primary 8/8 で ~30s。cumulative sample-dir tests (~90s) と合わせて音声�
 | 項目 | 決定 |
 | --- | --- |
 | 対象 | **検証依存セット (48 ファイル、~632 GiB)** = GT/baseline 台帳が参照する全動画 (下表)。台帳外の自録画・再生成可能な検知/分割出力・重複 zip は対象外 |
-| 先 (第 2 系統) | `F:\allaganeye-backup\` (E: とは別物理ディスクの内蔵 HDD) へ robocopy cold copy。恒久策 (外付け HDD or クラウド cold storage) は後日追加予定 |
+| 先 (第 2 系統) | `F:\allaganeye-backup\` (E: とは別物理ディスクの内蔵 HDD) へ robocopy cold copy |
+| 先 (第 3 系統) | 筐体外の系統を 1 つ追加する。方式 (外付け HDD / クラウド cold storage / 併用) の選定・購入・初回コピーは Idios 判断 |
 | 周期 | 定期実行ではなく**新規 baseline/GT 動画の追加時に都度コピー + 台帳更新**。release gate 時に checksum 照合で健全性を確認 |
 | 台帳 | [`tests/baselines/source-videos.sha256.json`](../tests/baselines/source-videos.sha256.json) に全対象の SHA-256 + size を記録 (repo = GitHub 側にも残る)。ドライブ故障後の復元・再入手時の同一性検証に使う |
+
+#### 実施状況
+
+上表は **2026-07-07 に決めた方針**であって現状ではない。現状は次のとおり:
+
+| 系統 | 状態 |
+| --- | --- |
+| 第 2 系統 (`F:`) | **完了** (#869) |
+| 第 3 系統 (筐体外) | **未着手**。[#882](https://github.com/Idios/kobutachan-allaganeye/issues/882) で追跡中 |
+
+`F:` は `E:` と**同一筐体内の内蔵 HDD** なので、ディスク単体故障には耐えるが **PC 全損・ランサム・盗難に対しては現状 2 系統とも無防備**である。第 3 系統はその穴を塞ぐためのもので、未着手である以上その穴は今も開いている。
+
+#### 台帳と原本の照合記録
+
+**台帳 = 実在保証ではない。** これまでに実行した突合の結果を、実施時期つきで残しておく。
+
+| 系統 | 照合の実施時期 | 結果 |
+| --- | --- | --- |
+| E: 原本 | 2026-08-21 | 48 entry 中 **8 本が欠落** (すべて `obs-baseline-manual-split` の手動分割 MP4)。うち 1 本は [#992](https://github.com/Idios/kobutachan-allaganeye/issues/992) で復元済みのため、記録時点の欠落は **7 本**。扱いは [#998](https://github.com/Idios/kobutachan-allaganeye/issues/998) で追跡中 |
+| F: バックアップ (第 2 系統) | [#869](https://github.com/Idios/kobutachan-allaganeye/issues/869) の初回コピー時 (方針決定は 2026-07-07)。**以降は再照合していない** | 全件照合で **fail=0/48**。#992 の復元は実際にここを復元元として使えた |
+
+欠落している 7 本は**どのテスト / GT manifest からも参照されていない** (参照元は台帳自身と `docs/superpowers/` 配下の記録のみ) ため、現時点でテストが赤くなることはない。台帳から落とすか E: へ復元するかの判断は #998 で行う。
+
+> 上表は**突合を実行した時点の記録**であり、この doc を読んだ時点の状態ではない。現在の状態が要るときは台帳を使って実際に突合すること。
 
 ### 検証依存セット (対象一覧)
 
@@ -241,18 +266,19 @@ def _ffmpeg_interval(request: pytest.FixtureRequest) -> None:
 
 PR #575 / issue #560: ffmpeg 8.1 で `20260118` baseline の Match 8 end が 281s 乖離。per-frame probe で 6184.0-6184.8 の 0.8s 幅 blackout を捕捉できたが、`fps=0.5` filter は output PTS 6184 のラベルで実際は ~6185.1s 時点のフレーム (Y-mean=45) をサンプリングしていた (`showinfo` で確認)。(B) 案で baseline を `6184.0 -> 6465.25` に更新して対応。fps filter 廃止による根本対策は #576 で実施済み。
 
-### detect fps filter 廃止後の運用 (#576)
+### detect fps filter 廃止後の運用 (#576 → #864)
 
-PR #576 (detect fps filter 廃止) 完了後、default path では fps filter を
-使わないため、ffmpeg version upgrade による Pass 1 brightness drift は
-構造的に発生しない。本 S の判定 flow が必要になるのは、env var
-`ALLAGANEYE_DETECT_FPS_FILTER=1` で legacy path を強制した場合のみ。
+PR #576 (detect fps filter 廃止) で default path から fps filter が消え、さらに
+PR #864 で legacy path と transitional な rollback env var ごと撤去された。
+現在 detect の chunk decode は frame-index ベースの
+`select='not(mod(n,N))'` のみで、**ffmpeg version upgrade による Pass 1
+brightness drift は構造的に発生しない**。
 
-- 新 path で baseline mismatch が観測された場合は、(B) ffmpeg version
-  依存 ではなく **(A) 検知ロジック退行** を疑う (legacy path で再現
-  しないことを確認)
-- legacy path は v0.3.x patch release で削除予定。それ以降は本 S の
-  運用は廃止される
+- baseline mismatch が観測された場合、(B) ffmpeg version 依存差異 という
+  選択肢は既に存在しない。**(A) 検知ロジック退行**として扱う
+- 切り替えて再現確認するための legacy path はもう無いので、本 S 冒頭の
+  (A)/(B) 判定 flow は #864 以降 **(A) 一択**に縮退している。以下の記述は
+  v0.3.0 以前の baseline を追跡する際の歴史的経緯として残す
 
 ### 検証データの保存場所
 

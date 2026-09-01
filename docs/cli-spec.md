@@ -14,7 +14,7 @@ CLI コマンド・引数・オプションの**構文**をまとめる。各オ
 
 | オプション | 説明 |
 | --- | --- |
-| `--version`, `-V` | バージョン表示 (#337)。Portable ZIP では同梱物 integrity 検査を兼ね、欠損時 exit 7 (#668)。検査は `allaganeye/cli.py` の `version_callback` からのみ呼ばれるため、他のサブコマンド実行経路では exit 7 は発生しない |
+| `--version`, `-V`, `-v` | バージョン表示 (#337、`-v` は #376 で追加)。**`-v` がバージョン表示になるのはトップレベルのみ**で、`allaganeye split <video> -v` のようにサブコマンド側に置いた `-v` は従来どおり verbose (両者は別の parser が処理する)。Portable ZIP では同梱物 integrity 検査を兼ね、欠損時 exit 7 (#668)。検査は `allaganeye/cli.py` の `version_callback` からのみ呼ばれるため、他のサブコマンド実行経路では exit 7 は発生しない |
 | `--help` | ヘルプ表示 (短縮形なし) |
 
 ## split コマンド
@@ -57,7 +57,7 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 | `--no-cache` | `false` | キャッシュされた検知結果を無視して再検知する |
 | `--vtuber` | `false` | VTuber 配信録画向けの timeline 検出を有効化する (#895)。`--vtuber` 指定時は暗転起点ではなく「試合中である」証拠 (scorebar presence AND 画面運動) の timeline から試合区間を抽出する (V0-V4)。OBS/masked path は非接触。縮退 4 trigger (V0 anchor 失敗 / UNKNOWN 過半 / V2 無結果 / V4 が全 segment を drop) で従来 band-crop blackout path へ fall back (floor 保証)。cache key は `vtuber_algo` (`_VTUBER_ALGO_VERSION`) で管理し、アルゴリズム変更時に bump する (**値の正は実装 `allaganeye/commands/split_matches.py` 側。本 doc は値を複製しない**)。cache ヒット時 (`--vtuber` 影響 run のみ) verbose に `vtuber_algo=N` トークンを表示 |
 | `--keep-trailing` | `false` | default は試合後 trailing を `post_match: true` フラグ化して metadata に保持し、default split (MP4) から除外する (#805 段階2 で不可逆削除を廃止)。本フラグ指定時は flagging を skip し、trailing を通常 match として MP4 分割・保持する (#797 probe 無効化)。段階2 で `post_match_trailing_dropped` warning は emit されなくなった (flag が代替) |
-| `--no-audio` | `false` | 音声ベースの試合境界昇格（Fanfare スキャン）を無効化する。**現在は音声モジュールが凍結中（#327）のため、本フラグの値に関わらずスキャンは常にスキップされる。verbose 出力では `audio=frozen` と表示される (#384)** |
+| `--no-audio` | `false` | 音声ベースの試合境界昇格（Fanfare スキャン）を無効化する。**音声モジュールは凍結されており（#327 で凍結、#865 で期限を定めない凍結が正式方針）、本フラグの値に関わらずスキャンは常にスキップされる。verbose 出力では `audio=frozen` と表示される (#384)** |
 | `--masked` | `false` | チャット欄マスク画像が全画面に合成された録画向け。mask のない領域を自動検出して再検知する。暗転が一部見つかる場合でも本フラグ指定でこの経路を強制する。**`--vtuber` と同時指定は排他エラー (exit 5)** |
 | `--dry-run` | `false` | 検知のみ実行し分割しない（検知結果はキャッシュに保存される） |
 | `-v`, `--verbose` | `false` | 詳細出力（メタデータ詳細、gap 情報）。**`-q` と同時指定は排他エラー (exit 5) (#419)** |
@@ -254,7 +254,7 @@ verbose モードの UX 目的 (= 情報取得) を優先する設計。silent r
 | `duration` | float | 試合時間（秒） |
 | `duration_display` | string | 試合時間の表示形式 |
 | `type` | string | セグメントの種別（`"fl_match"` / `"unknown"`） |
-| `output_file` | string | 出力ファイルパス（POSIX 区切り、例: `output/match_001.mp4`）。Windows 実行時も `/` で記録される |
+| `output_file` | string | 出力 MP4 のファイル名（`metadata.json` と同じディレクトリからの相対、例: `match_001.mp4`）。区切りを含む場合も POSIX 区切り (`/`) で記録される。`-o` に何を渡しても値は変わらない ([#934](https://github.com/Idios/kobutachan-allaganeye/issues/934)。それ以前は `split -o <絶対パス>` が絶対パスを書いており、detect の書式と食い違っていた) |
 
 **gaps[]:**
 
@@ -581,32 +581,46 @@ timestamp,brightness
 
 verbose モードの traceback は CLI ハンドラが `raise typer.Exit(...) from None` で上位に抜ける直前、元の例外が `sys.exc_info()` に残っている段階で `traceback.format_exception(type(exc), exc, exc.__traceback__)` により生成される。`from None` で traceback 自体を抑制しているわけではなく、典型的なユーザーには邪魔になるため default / -q では出さない設計。
 
-出力例 (ffmpeg 失敗 + `-v`):
+出力例 (ffprobe 失敗 = 動画として読めないファイルを渡した場合 + `-v`):
 
 ```text
-Error: ffmpeg failed
-  command: ffmpeg -i recording.mkv ...
+Error: ffprobe failed
+  command: ...\ffprobe.EXE -v quiet -print_format json -show_format -show_streams broken.mp4
   return_code: 1
   stderr_tail:
-    NAL unit type 12 not supported
 Traceback (most recent call last):
-  File "...\allaganeye\cli.py", line 163, in split
-    run_split(video_path, config, verbose=verbose, quiet=quiet)
+  File "...\allaganeye\video\probe.py", line 70, in probe_video
+    result = subprocess.run(
+             ^^^^^^^^^^^^^^^
   ...
-allaganeye.exceptions.VideoProcessingError: ffmpeg failed
+subprocess.CalledProcessError: Command '[...]' returned non-zero exit status 1.
+
+The above exception was the direct cause of the following exception:
+
+  ...
+  File "...\allaganeye\video\probe.py", line 98, in probe_video
+    raise VideoProcessingError(
+allaganeye.exceptions.VideoProcessingError: ffprobe failed
 ```
+
+> `stderr_tail` がこの例で空なのは、`probe_video` が ffprobe を `-v quiet` で起動して
+> いるため (`allaganeye/video/probe.py`)。`command` / `return_code` / `stderr_tail` の
+> 3 key は `VideoProcessingError` の `context` に入れた分がそのまま `verbose_detail()`
+> で描画される (`allaganeye/exceptions.py`)。ffmpeg 側の失敗はこの 3 key ではなく
+> メッセージ本文に stderr を埋め込む形が多い (例: `ffmpeg split failed for <name>: <stderr>`、
+> `allaganeye/video/splitter.py`)。
 
 出力例 (同じエラー / default):
 
 ```text
-Error: ffmpeg failed
+Error: ffprobe failed
   (Run with -v / --verbose for full details)
 ```
 
 出力例 (同じエラー / `-q`):
 
 ```text
-Error: ffmpeg failed
+Error: ffprobe failed
 ```
 
 ### click-level option-parse error (#440 / PR #632)
@@ -621,9 +635,11 @@ Error: ffmpeg failed
 Usage: allaganeye [OPTIONS] COMMAND [ARGS]...
 Try 'allaganeye --help' for help.
 
-Error: No such option: -v
+Error: No such option: -e
 Did you mean --version?
 ```
+
+> `-version` は click に short option の集合 (`-v -e -r -s -i -o -n`) として解釈される。#376 で `-v` をトップレベルの version alias にしたため、報告される未知 option は `-v` から**次の未知文字 `-e` に変わった**。`_suggest_long_option_hint` は失敗した option 文字ではなく argv の token を走査するので、`Did you mean --version?` のヒントは従来どおり出る。
 
 - 出力先: stderr (click `exc.show()` + `click.echo(..., err=True)` の hint 行)
 - 終了コード: 2 (`NoSuchOption.exit_code` = click UsageError 系のデフォルト)

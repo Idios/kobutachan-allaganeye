@@ -7,7 +7,27 @@ on:
       - 'gui/src-tauri/Cargo.toml'
       - 'gui/package-lock.json'
       - 'gui/package.json'
+      # #868: Python manifest が抜けていたため、Python 依存だけを変更する PR では
+      # 本 workflow 自体が起動せず pip の advisory が PR 段階で一切検査されて
+      # いなかった。paths を足すだけでは「起動するが Python を見る job が無い」
+      # false-green になるため、同 issue で pip-audit job も同時に追加している。
+      - 'pyproject.toml'
+      - 'constraints.txt'
+      - 'scripts/installer/requirements-pyinstaller.txt'
       - '.github/workflows/security-audit.yml'
+      - '.github/dependabot.yml'
+  # #950: PR が 1 本も来ない期間は既定ブランチの依存状態が無検査になる。
+  # v0.3.0 では advisory 公開からタグ打ちまで約 7 時間の窓があり、その間に
+  # 公開された undici の新規 advisory 5 件を直前に踏んだ。
+  #
+  # **`schedule` は既定ブランチ (main) 上の workflow ファイルでしか有効にならない**
+  # (GitHub の仕様)。develop-* へ merge しただけでは定期実行は始まらず、main へ
+  # 入るまで 1 度も走らない。
+  #
+  # この cron が見ていない集合: cron 間隔以内でしか検知できない (daily なので
+  # 最悪 24h 遅延する)。タグ打ち直前の窓を 0 にはできない。
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
 
 permissions:
@@ -70,6 +90,121 @@ jobs:
           # だが、scope を解決できない依存が将来現れたとき silent に素通しさせない
           # ため明示する (false green を作らない)。
           fail-on-scope: runtime, development, unknown
+
+  pip-audit:
+    name: pip audit (Python)
+    # **OS matrix にしている理由**: Python の依存解決は環境マーカーで OS ごとに
+    # 変わる。ubuntu だけで監査すると、**出荷物にしか入らない Windows 限定の
+    # transitive が永久に無検査**になる。実例:
+    #   - `pyinstaller` -> `pefile` / `pywin32-ctypes` (Windows のみ)
+    #   - `typer` -> `click` -> `colorama` (Windows のみ)
+    # Portable ZIP は windows runner でビルドするので、出荷物の依存集合は
+    # windows 側が正である。2026-08-20 時点では上記いずれにも advisory は
+    # 存在しない (実測) が、「今ゼロ」は「今後もゼロ」を意味しない。
+    #
+    # step の `shell:` に `${{ matrix.* }}` を書くと phantom run 化するため、
+    # shell は job の `defaults` に静的値で逃がしてある (#786 / #788 の教訓)。
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      # **Windows leg で必須。** `pip-audit -r` が内部で使う
+      # `pip_requirements_parser.auto_decode()` は、BOM も PEP 263 の coding
+      # cookie も無いファイルを **locale の既定エンコーディング**で decode する。
+      # windows runner の既定は cp1252 なので、`requirements-pyinstaller.txt` の
+      # UTF-8 日本語コメントが `UnicodeDecodeError: 'charmap' codec can't decode
+      # byte 0x81` で落ちる (2026-08-20 に実 runner で観測)。
+      #
+      # UTF-8 mode (PEP 540) にすると `locale.getpreferredencoding(False)` が
+      # UTF-8 を返すので解決する。**出荷物のビルド入力である requirements ファイル
+      # 自体は書き換えない** (pip / PyInstaller 側の読み取りに影響を与えないため)。
+      # ローカルの Windows で `pip-audit -r` を叩く場合も同じ env が要る。
+      PYTHONUTF8: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
+
+      # **本 job は「実際に install した環境」を監査する。** manifest を静的に
+      # 読む方式にしないのは、GitHub の dependency graph が Python について
+      # 使い物にならないと実測できているため (2026-08-20):
+      #   - `constraints.txt` の exact pin は graph に 1 件も登録されない
+      #     (black / isort / rich は存在しない)
+      #   - `pyproject.toml` の依存は名前だけで resolved version を持たない
+      # advisory の突合には resolved version が要るので、Dependabot alert も
+      # dependency-review job も Python 依存については原理的に発火しない。
+      # 実環境を audit する本 job だけがその穴を塞ぐ。詳細は
+      # docs/ci-security-audit.md を参照。
+      # runner 同梱の toolchain を先に上げる。actions/setup-python@v5 の
+      # Python 3.11.9 は **pip 24.0 / setuptools 65.5.0** を積んでおり、
+      # setuptools 65.5.0 は PYSEC-2022-43012 / PYSEC-2025-49 / PYSEC-2026-1918 /
+      # PYSEC-2026-3447 の 4 件に該当する (2026-08-20 に実 runner で観測)。
+      # これは repo の依存ではなく runner 環境の問題なので、`--ignore-vuln` で
+      # 黙らせるのではなく上げて直す。放置すると「常に赤い pip-audit」になり、
+      # override が常態化して gate が死ぬ。
+      - name: Upgrade build toolchain (runner 同梱の pip / setuptools は古い)
+        run: python -m pip install --upgrade pip setuptools
+
+      - name: Install project (audit 対象の実環境を作る)
+        run: pip install -e ".[dev]" -c constraints.txt
+
+      # バージョンは上限付き (外部依存の版固定規約 (b))。cargo-audit の
+      # `--version "^0.22"` と同じ扱いで、advisory DB は実行時に取得するため
+      # exact pin にはしない。
+      - name: Install pip-audit
+        run: pip install "pip-audit>=2.10,<3" -c constraints.txt
+
+      # pip-audit は **severity の閾値を持たず、advisory に 1 件でも当たれば fail**
+      # する。npm audit の `--audit-level=high` / dependency-review の
+      # `fail-on-severity: moderate` より厳しい。導入時点 (2026-08-20) の実測では
+      # 該当ゼロなので恒久 red にはならない。
+      #
+      # 誤検知・対応不能な advisory が出た場合の許容ルール:
+      #   `--ignore-vuln GHSA-xxxx-xxxx-xxxx` を下に追記し、**同じ行に (1) なぜ
+      #   対応できないか (2) いつ見直すか** をコメントで書く。理由を書かない
+      #   ignore は禁止 (書かないと恒久 ignore が既成事実化して gate が黙る)。
+      #
+      # `--strict` は付けない。editable install した本体 (kobutachan-allaganeye)
+      # は PyPI 由来でないため skip 警告が出るが、`--strict` にするとその警告で
+      # job が落ちて常時 red になる。
+      #
+      # この job が見ていない集合:
+      #   - dev extras を含む実環境全体を見るので、配布物 (Portable ZIP) に
+      #     同梱されない dev 依存の advisory でも fail する
+      #   - PyPI に無い依存 (ffmpeg 等の OS バイナリ) は対象外
+      #   - `-c constraints.txt` で固定していない依存は「その日の最新」を監査する
+      #     ため、同じ commit でも実行日によって結果が変わりうる
+      - name: Run pip-audit (installed environment)
+        run: pip-audit --progress-spinner off
+
+      # **`scripts/installer/requirements-pyinstaller.txt` は上の step では
+      # 監査されない。** pyinstaller / pyinstaller-hooks-contrib は
+      # `pyproject.toml` の dev extras に**入っていない**ため、
+      # `pip install -e ".[dev]"` した環境には存在しないからである
+      # (`pip show pyinstaller` が "Package(s) not found" を返すことを実測)。
+      #
+      # 同ファイルを `pull_request.paths` に載せておきながら監査しないのは、
+      # 「trigger は塞いだが中身は誰も見ていない」という false-green そのもの。
+      # Portable ZIP は PyInstaller で frozen application を作るので、この依存は
+      # **出荷物に直接効く**。別 invocation で必ず監査する。
+      #
+      # `-r` は install せずに requirements を解決して監査する。解決結果は OS
+      # ごとに変わるので、上の matrix によって ubuntu / windows の**両方**で走る。
+      # windows leg が pefile / pywin32-ctypes を含む出荷物どおりの集合を見る。
+      - name: Run pip-audit (PyInstaller build requirements)
+        run: pip-audit --progress-spinner off -r scripts/installer/requirements-pyinstaller.txt
 
   npm-audit:
     name: npm audit (JavaScript)

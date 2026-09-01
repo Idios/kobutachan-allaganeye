@@ -197,6 +197,23 @@
   color: var(--ae-bg);
 }
 
+/* #944 §D: CLI にしかないフラグ (--masked / --vtuber) の案内。 */
+.cliOnlyNote {
+  grid-column: 1 / -1;
+  font-family: var(--ae-font-body);
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--ae-text-dim);
+  border-top: 1px solid rgba(var(--ae-gold-rgb), 0.18);
+  padding-top: 10px;
+  margin-top: 4px;
+}
+
+.cliOnlyNote code {
+  font-family: var(--ae-font-mono, monospace);
+  color: var(--ae-gold);
+}
+
 .resetRow {
   grid-column: 1 / -1;
   display: flex;

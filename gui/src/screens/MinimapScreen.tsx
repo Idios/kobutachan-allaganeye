@@ -15,6 +15,8 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 
+import pathStyles from '../styles/path-display.module.css';
+
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { SampleModeBanner } from '../components/SampleModeBanner';
 import { useEscapeKey } from '../hooks/useEscapeKey';
@@ -24,7 +26,7 @@ import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { fmtMatchDuration, fmtTime } from '../utils/time';
 import { formatMatchFilename } from '../utils/filename';
-import { stripExtendedPathPrefix } from '../utils/path';
+import { splitPath, stripExtendedPathPrefix } from '../utils/path';
 import { elementRectToSourcePx, validateRegionPx, type RegionPx } from '../utils/region';
 import { deriveDefaultOutDir } from './ExportScreen';
 import { minimapReducer } from './reducers/minimap';
@@ -596,9 +598,44 @@ export function MinimapScreen() {
         </div>
       )}
 
-      <button type="button" onClick={() => navigate('complete')}>
-        ◀ 一覧へ
-      </button>
+      {/* #944 §D: 他 5 画面は冒頭に画面名を出すが、本画面だけ無かったため
+          [⬦ ミニマップ切抜き] を押したユーザーが何をする画面か知れなかった。
+          入力ファイル path の表示 (他 5 画面にはある) も同時に追加する。 */}
+      <div className={styles.header}>
+        <button
+          type="button"
+          className={styles.backButton}
+          onClick={() => navigate('complete')}
+        >
+          ◀ 一覧へ
+        </button>
+        <div>
+          {videoSource &&
+            (() => {
+              const { fileName, parentDir } = splitPath(videoSource);
+              return (
+                <div
+                  className={pathStyles.pathDisplay}
+                  title={videoSource}
+                  data-testid="minimap-path"
+                >
+                  <div className={styles.headerFileName}>
+                    {fileName || '(video)'}
+                  </div>
+                  {parentDir && (
+                    <div className={pathStyles.pathSecondary}>{parentDir}</div>
+                  )}
+                </div>
+              );
+            })()}
+          <div className={styles.caption}>ミニマップ切抜き</div>
+          <div className={styles.title}>エリアマップの領域を切り出す</div>
+          <div className={styles.purpose}>
+            試合映像からエリアマップ（ミニマップ）部分だけを切り抜き、H.264
+            で保存します。領域は自動検出するか、映像上をドラッグして指定できます。
+          </div>
+        </div>
+      </div>
 
       <div className={styles.videoPane}>
         {videoUrl ? (

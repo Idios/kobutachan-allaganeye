@@ -40,7 +40,9 @@ pytest tests/test_detector.py   # 単体テスト
 # Lint / 型チェック
 ruff check .
 ruff format --check .
-pyright
+# 型チェック。--pythonpath 必須 (素の pyright も python -m pyright も PATH の python を見るため false-red、#974)
+# git 解決形にすると repo root / worktree の両方で効く (worktree に .venv は無い)
+pyright --pythonpath "$(dirname "$(git rev-parse --git-common-dir)")/.venv/Scripts/python.exe"  # macOS / Linux は .venv/bin/python
 bash scripts/check-markdownlint.sh   # markdownlint (CI と同 version で全 .md チェック、--fix で自動修正)
 # violation の fix recipe / ignore pattern 規約は docs/markdownlint-guide.md を参照
 
@@ -52,7 +54,7 @@ allaganeye split <video_path> -o <dir>  # 出力先指定
 allaganeye split <video_path> --gpu     # GPU アクセラレーション検知
 allaganeye split <video_path> --workers 8  # ワーカー数指定
 allaganeye split <video_path> --no-cache   # キャッシュ無視で再検知
-allaganeye split <video_path> --no-audio   # 音声昇格の無効化フラグ（#327 で凍結中のため現在は常にスキップ）
+allaganeye split <video_path> --no-audio   # 音声昇格の無効化フラグ（#327 で凍結、#865 で期限なし凍結が正式方針。常にスキップされ本フラグは無効）
 allaganeye split <video_path> --quiet      # 進捗抑制（出力ファイルのみ）
 allaganeye split <video_path> -v           # verbose（環境情報・パイプライン統計を表示、#336）
 allaganeye --version                       # バージョン表示（短縮形: -V、#337）
@@ -153,12 +155,14 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 8. `filter_blackouts_with_scorebar()` で各暗転領域の前後フレームのスコアバー有無を判定し、暗転を分類（`match_boundary` / `in_match` / `non_fl`）。V2 検出 (`_has_scorebar_v2`) は 1920x1080 リサイズ後に **two-path OR semantics** で GC 紋章 3 点 AND 判定 (#307, #522): **Primary=absolute `_EMBLEM_POSITIONS`** (pre-#522 validated)、**Rescue=dynamic span (`_find_scorebar_horizontal_range`) + `_EMBLEM_RELATIVE_POSITIONS` 相対比**。Primary pass で short-circuit、両 path fail で False。`raw_rgb` None / opencv 未インストール時のみ None → V1 (`_has_scorebar`, channel-std + edge) フォールバック。1080p OBS validated set の挙動を完全保持しつつ 4K Game DVR の HUD スケール差異は Rescue で救済
 9. `non_fl`（非FL暗転）と短い `in_match`（試合内暗転）を除外。隣接する `match_boundary` ペア間の短いギャップをマージ
 
-**音声昇格**（#288。**現在は凍結中 #327**: `AUDIO_FROZEN=True` のため `--no-audio` の値に関わらずスキャンは常にスキップされ、verbose では `audio=frozen` と表示される #384。以下は解凍時の挙動）
+**音声昇格**（#288。**期限を定めない凍結が正式方針**（#865、2026-08-26 確定）: `AUDIO_FROZEN=True` のため `--no-audio` の値に関わらずスキャンは常にスキップされ、verbose では `audio=frozen` と表示される #384。以下は解凍時の挙動）
+
+> **凍結継続の決着**（#865）: 「解凍 / Q3 手順での撤去 / 凍結継続」の 3 択を比較したうえで**凍結継続**を選んだ。凍結中の実行時コストはゼロ（スキャンは無条件スキップ、`--no-audio` は無効、verbose 表示のみ）である一方、撤去は patch release で CLI 表面（`--no-audio`）と `scipy` 依存を落とす破壊的変更になる。**再評価の期日は設けない**。次の自然な契機は二信号検出の再アーキで、その帰趨が複合信号統合（下記 (B) 条件）の要否を決める。解凍時の検討材料は `allaganeye/audio/__init__.py` の `AUDIO_FROZEN` 付近に集約してある（根拠 issue #327 が closed で、open issue の台帳から辿れないため）。撤去する場合の 3 手順は同ファイル冒頭 docstring に記載。
 
 - `audio/scan.py` で動画全域の音声から Fanfare ピーク（log-mel 相関 sim ≥ 0.65）を抽出
 - `in_match` 分類された暗転のうち、暗転終了後 0-60s 以内に Fanfare ピークがあるものを `match_boundary` に昇格
 - スコアバー残像で誤分類された試合境界（例: 2026-04-08 57:53）を救済
-- 既知の制約: Fanfare は試合中にも弱いピーク（sim 0.65-0.75）を出すため、本条件のみでは偽陽性が混入しうる。WR 参照は #306 で同梱済み（`war_room.npz`）。解凍時に WR→Fanfare 間隔による (B) 条件を追加して偽陽性を除去する計画（#327 の解凍判断と合わせて再評価）
+- 既知の制約: Fanfare は試合中にも弱いピーク（sim 0.65-0.75）を出すため、本条件のみでは偽陽性が混入しうる。WR 参照は #306 で同梱済み（`war_room.npz`）。解凍時に WR→Fanfare 間隔による (B) 条件を追加して偽陽性を除去する計画（解凍の可否は #865 で「期限なし凍結」に決着済み。上記 blockquote を参照）
 
 **フィルタリング・抽出**
 10. `min(min_blackout_duration, _REFINED_MIN_BLACKOUT)` 未満の短い暗転を除外（リスポーン暗転の誤判定防止）
@@ -169,7 +173,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 - 動作確認済み: ハイスペック PC（高速 SSD、高性能 GPU）での OBS 録画。試合間暗転 2-5 秒程度
 - 未検証: 低スペック環境でローディング画面が長い（10 秒超）ケース
 - 既知の制限: ローディング画面が純粋な黒画面でなく UI 要素（スピナー、ロゴ等）を含む場合、brightness が 15-55 の範囲で変動し暗転が分断されることがある。分断された各区間が `min_blackout_duration` 未満になると試合境界を検出できない
-- 既知の制限 (legacy fps filter path、#576 で v0.3.0 構造的対策実装済): ffmpeg `fps` filter のフレーム選択は version 依存で、8.1 で output PTS と実フレーム内容に最大 ~1.1s のオフセットが発生する事例あり (#575)。v0.3.0 default の新 path (`-vf select='not(mod(n,N))'` + dual seek、frame-index ベース) は ffmpeg version 非依存。緊急 rollback が必要な場合のみ env var `ALLAGANEYE_DETECT_FPS_FILTER=1` で legacy path に戻せる (transitional、v0.3.x patch release で削除予定)。判定 flow は [`docs/testing-guide.md`](docs/testing-guide.md) §「baseline drift の判定」、検証データは [`docs/video-processing.md`](docs/video-processing.md) §「ffmpeg fps filter の version 依存制約」を参照
+- 解消済みの制限 (legacy fps filter path、#576 で構造的対策 → #864 で撤去): ffmpeg `fps` filter のフレーム選択は version 依存で、8.1 で output PTS と実フレーム内容に最大 ~1.1s のオフセットが発生する事例あり (#575)。現行 path (`-vf select='not(mod(n,N))'` + dual seek、frame-index ベース) は ffmpeg version 非依存。v0.3.0 で transitional な env var rollback を残していたが #864 で legacy path ごと撤去したため、**現在 fps filter 経路は存在しない** (fps metadata が 解決できない場合は縮退せず `VideoProcessingError`。`probe` が `fps <= 0` を hard fail するため production 経路では到達しない)。検証データは [`docs/video-processing.md`](docs/video-processing.md) §「ffmpeg fps filter の version 依存制約」を参照
 - post-match trailing の扱い ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) 段階2 Phase 1 で default path 非破壊化済): 試合終了後の trailing (lobby/city) は `_flag_post_match_trailing` (#797 の不可逆削除を置換) が **scorebar 不在を根拠に `post_match: true` フラグ付与**するのみで、削除はしない。default split (MP4) からは除外しつつ metadata には保持する (detect / split --from-metadata / export 全経路でフラグ保持 + MP4 除外)。これにより「scorebar FN 環境 (未対応 HUD layout / 4K Game DVR 等) で実試合の trailing を silent に削除しうる」という旧 silent-loss リスクは構造的に消滅した (削除という不可逆操作自体が存在しない)。視覚 UX (badge/dimming + ExportScreen non-selectable row) も Phase 2 で実装済み (#805 完結: CompleteScreen/PreviewScreen badge + ExportScreen 選択不可 + 常時 `—` mark)
 
 **GPU モード** (`--gpu`)
@@ -232,13 +236,15 @@ export ALLAGANEYE_SAMPLE_VIDEO_DIR=/path/to/videos
 
 ツール側はユーザー環境を変更しない。ファイル関連付け / レジストリ / PATH / 自動起動登録は提案禁止。展開 = インストール、削除 = アンインストール の Portable ZIP 哲学を維持する (2026-04-27 ユーザー方針確定)。
 
-## 外部依存 URL 規約
+## 外部依存の版固定規約
 
-> §アーキテクチャ §外部依存 (runtime deps: ffmpeg / Python pkg / platforms) とは別。本 § は **DL URL の pin ルール**。
+> §アーキテクチャ §外部依存 (runtime deps: ffmpeg / Python pkg / platforms) とは別。本 § は **版を固定するルール** (DL URL / 依存 manifest / constraints)。
 
-外部依存 (Python / npm / cargo / OS binary tarball 等) の DL コードは **immutable URL** で pin する。詳細・受け入れ可能ソース・禁止パターン・検証手順は [`docs/l2-workflow.md` §外部依存規約](docs/l2-workflow.md#外部依存規約-649651703721-教訓) を参照。
+外部依存 (Python / npm / cargo / OS binary tarball 等) は版を固定する。(a) DL コードは **immutable URL** で pin する (b) 依存 manifest は**上限を付ける** (c) 再現が要る版は **exact pin** する。詳細・受け入れ可能ソース・禁止パターン・検証手順は [`docs/l2-workflow.md` §外部依存規約](docs/l2-workflow.md#外部依存規約-649651703721-教訓) を参照。
 
-代表事例: get-pip.py SHA pin (#649→#651→#703)、BtbN FFmpeg monthly snapshot (#721)。
+Python 依存は 2 層構成 (#916)。`pyproject.toml` = **外部への互換範囲の宣言** (上限必須)、`constraints.txt` = **repo 内の再現環境** の exact pin。範囲指定は「範囲内の最新」に解決されるので再現にはならない (`>=4.8,<5` は実測で 4.14.0.94 に解決する)。`pip install` を足すときは `-c constraints.txt` を必ず付ける。
+
+代表事例: get-pip.py SHA pin (#649→#651→#703)、BtbN FFmpeg monthly snapshot (#721)、cv2 の 4.x 固定 + baseline provenance の exact pin (#916)。
 
 ## セキュリティ検査（allaganeye-guard 運用連携）
 
@@ -261,6 +267,7 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 - 計画立案・実装・PR テストは Plan モード + 通常ツール + TodoWrite で代替
 - ユーザー (Idios) が戦略・方針を判断し、Claude は選択肢提示と実装を担う
 - skill (`.claude/skills/*/SKILL.md`) 改修 PR は mizchi `empirical-prompt-tuning` protocol に従う。詳細は [`docs/l2-workflow.md` §skill 改修ワークフロー](docs/l2-workflow.md#skill-改修ワークフロー-empirical-prompt-tuning) を参照
+- 規約 / ガード / チェックを**新設**する PR は **3 点セット** (①発火点をファイルと行で指定 ②非実施時の 1 行記録義務 ③発火側の red 実証) を必ず揃える。詳細は [`docs/l2-workflow.md` §規約・ガード導入の 3 点セット](docs/l2-workflow.md) を参照
 
 ### `/iterate-review` workflow と (A) 強優先方針
 
@@ -304,6 +311,23 @@ subprocess / IPC / OS API を介した encoding fix を行うときは、**以�
 ### 大規模 refactor の Phase 分割
 
 単一 PR で touched files > 30 file or diff > 1000 line を超えそうな refactor は [`docs/refactor-pattern.md`](docs/refactor-pattern.md) §1 適用条件を確認し、Phase 分割を検討する。AppError migration (#663→#689→#714/716/725/730/733→#745→#746) が reference 実例。
+
+## destructive write boundary audit checklist (#930 教訓)
+
+**発火条件**: 本 PR が**新設・変更した外部入力境界** (CLI option / metadata field / GUI 自由入力 / 環境変数) と、そこから**到達する不可逆操作** (上書き / 削除 / truncate) がある場合。**既存境界の入力の扱いを変えただけでも発火する** (本節の 4 問は「新しい書込経路を足す / 既存の書込経路の入力を変えるとき」を対象とするため)。[`docs/l2-workflow.md` §Step 5 の focus 導出手順](docs/l2-workflow.md) と**同じトリガー語で発火する対の規約**であり、片方を実施したら他方も実施する。
+
+> **配置の意図**: 本節は §開発ワークフロー §バグ修正時の方針 の**配下ではない**。#930 の欠陥を作り込んだのは feature PR (#787 / #885) であって bug-fix workflow ではないため、その位置では本件に対して一度も発火しない。
+
+新しい書込経路を足す / 既存の書込経路の入力を変えるときは、**以下 4 問すべてに答える**こと。1 問でも答えられないなら、その経路はまだ検査されていない。
+
+1. **入力はどこから来るか** — argv (CLI option) / metadata field / GUI 自由入力 / 環境変数のどれか。**複数経路から来るなら全部挙げる**
+2. **述語は「解決後の同一性」か、それとも「名前・文字列」か** — 書込先・削除対象を選ぶ判定が realpath / OID / content hash のような**解決後の同一性**に基づくか、名前一致・文字列前方一致に基づくか。後者なら、その名前が指す実体が意図した実体である保証を示す
+3. **その同一性は書込対象どうしの間でも一意か** — 複数の対象が同じ書込先に解決しうるか (例: 2 つの match が同名ファイルへ落ちる)。一意でないなら衝突時の挙動を示す
+4. **失敗時に不可逆か** — truncate / 上書き / 削除を伴うか。伴うなら、失敗しても原本が残る順序 (temp へ書いてから `os.replace` 等) になっているか
+
+**実装 PR では 4 問の答えを PR 本文に明示する。** 該当なしなら「新設・変更した外部入力境界なし」を 1 行書く (無記載では「検査してゼロだった」と「検査しなかった」が区別できない)。
+
+> **根拠 (#930)**: `--name-pattern` の値が `-o` の外へ脱出し、原本 MP4 を **exit 0 + `[OK]` のまま不可逆に破壊しうる**欠陥が、plan → subagent → `/review-pr` → Codex adversarial-review → `/iterate-review` の 5 層をすべて通過した。当時の skill には「security」「外部入力」という**抽象語の観点は既に存在していた**。それでも検出されなかった。**抽象語の観点は具体的な欠陥クラスへの検出力を持たない。検出力は具体列挙にのみ宿る。**
 
 ## Plugin との関係 (override 宣言)
 
@@ -362,14 +386,14 @@ Codex CLI が rate-limit / quota / network / auth 等で fail した場合、Cla
 | --- | --- | --- |
 | メイン（設計判断・複雑デバッグ・アーキ変更・新機能・統括） | ユーザー選択（既定 Opus 最新 / 高難度は最初から Fable 最新）。**固定しない** | セッションモデル |
 | 技術レビュー・相談（バグ/セキュリティ/GPU fallback/encoding/adversarial） | Codex | 既存 3-tier（§Codex 運用）。**不変** |
-| 全体レビュー・相談（設計方針/UX/ドキュメント整合/受け入れ条件妥当性/俯瞰） | Fable 最新 | `Agent(subagent_type=fable-consult)` |
+| 全体レビュー・相談（設計方針/UX/ドキュメント整合/受け入れ条件妥当性/俯瞰） | Fable 最新 | `Agent(subagent_type=allaganeye-fable-consult)` |
 | 中難度定型（原因既知バグ修正/テスト作成/スコープ明確 refactor/doc 更新） | Sonnet 最新 | `Agent(subagent_type=allaganeye-sonnet-worker)` |
 | 低難度定型（検索/リネーム/フォーマット/boilerplate/要約/情報収集） | Haiku 最新 | `Agent(subagent_type=allaganeye-haiku-worker)`。ビルトイン Explore は `model:"haiku"` を渡す |
 
 - **エイリアス指定**（`fable` / `opus` / `sonnet` / `haiku`）で各系統の最新に自動追従（フル ID 固定はしない）。
-- agent 定義は **project-local**（`.claude/agents/`）に置く。worker は user-level model-router の同名定義（`~/.claude/agents/{sonnet,haiku}-worker.md`）との衝突を構造的に避けるため **`allaganeye-` prefix** で命名する（precedence 依存を排除し、弱い前提の silent 誤ルーティングを根絶。#889 Codex adversarial-review 反映）。
+- agent 定義は **project-local**（`.claude/agents/`）に置く。**project 定義の agent はすべて `allaganeye-` prefix で命名する** — user-level に同名定義（`~/.claude/agents/{sonnet,haiku}-worker.md` / `~/.claude/agents/fable-consult.md`）が実在し、prefix なしでは precedence 依存になって弱い前提の silent 誤ルーティングを招くため（worker は #889 Codex adversarial-review 反映、fable-consult は #945 で適用）。
 
-### fable-consult の推奨トリガー地点（原則。強制ではない）
+### allaganeye-fable-consult の推奨トリガー地点（原則。強制ではない）
 
 - spec/design doc 執筆完了後・ユーザーレビュー前
 - brainstorming で選択肢が割れて決めきれないとき
@@ -386,6 +410,30 @@ Codex CLI が rate-limit / quota / network / auth 等で fail した場合、Cla
 - Explore は `model:"haiku"`（fan-out 検索は低難度）。
 - Plan・general-purpose 等その他は model 未指定（メイン inherit）を既定とし、明らかに定型のみ `sonnet` 明示。Plan（高難度）を惰性で haiku に落とさない。
 - fork はモデル上書き不可で常に親（メイン）を継承する。
+
+### Claude 利用不可時の fallback（DeepSeek）
+
+Claude の usage limit 等で **Claude Code 本体が使えない間**は、人間（Idios）が手動で DeepSeek に切り替えて開発を継続する。設計 spec は [`docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md`](docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md)。
+
+**fallback 対応表**（左 = 通常時、右 = fallback 時）:
+
+| 用途 | fallback 先 | 実行手段 |
+| --- | --- | --- |
+| メイン / Claude Opus（高難度調査・コーディング・doc 作成） | DeepSeek V4 Pro | Zed 上で DeepSeek が主エージェント役（人間介在） |
+| 全体レビュー・相談（Fable） | Codex & DeepSeek V4 Pro の**並列独立クロスレビュー** → 主エージェントが突合（異モデル視点は Codex 側のみ） | Codex（§Codex 運用、Claude と独立）+ DeepSeek V4 Pro（俯瞰役を代行） |
+| 中難度定型（Sonnet） | DeepSeek V4 Flash | Zed 上で DeepSeek V4 Flash が作業（人間介在） |
+| 低難度定型（Haiku） | DeepSeek V4 Flash | 同上 |
+| 技術レビュー・相談（Codex） | Codex（レビュアは不変） | fallback 時は companion script ではなく `codex` CLI 直呼び（CLI の version 整合が別途必要）。Codex も usage limit の場合は Claude Fable / DeepSeek V4 Pro |
+
+**正直な制約**:
+
+- **DeepSeek は Claude Code の subagent になれない**（`.claude/agents/*.md` の `model:` は Claude エイリアスのみ）。fallback は hook で強制できず、**Idios の手動切替 + 記録義務**で運用する。
+- fallback 時の skill 実行は **DeepSeek が `.claude/skills/*/SKILL.md` を read して手順を手動追従**する形。Claude Code のスラッシュコマンド（`/review-pr` 等）は DeepSeek から invoke 不可。`Agent` subagent / `AskUserQuestion` / superpowers plugin skill は Zed 等価物（`spawn_agent` / 散文での確認 / 直接レビュー）へ置換する。
+- **Codex を DeepSeek から呼べるかは terminal 権限に依存**する。権限があれば `codex` CLI を直接実行できる（Codex 本体は Claude と独立）。無い場合は既存 tier 3（Idios 手動 invoke）に落ちる。
+
+**fallback notice（記録義務、C6 同型）**: Claude fallback で作成した成果物には以下を明示し、Claude/Opus/Fable レビュー済との誤認を防ぐ。
+
+> **Claude fallback notice**: 本成果物は Claude usage limit のため DeepSeek <V4 Pro | V4 Flash> で作成しました。Claude 復旧後の再レビューを推奨します。
 
 ## CLAUDE.md 継続改善
 

@@ -11,6 +11,7 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -30,9 +31,30 @@ sys.modules[_spec.name] = cvc
 _spec.loader.exec_module(cvc)
 
 
+def _write_changelog(
+    root: Path, entries: Sequence[tuple[str, str | None]] = (("1.2.3", "2026-08-04"),)
+) -> None:
+    """`entries` の順に version 見出しを並べた CHANGELOG.md を作る。
+
+    日付に `None` を渡すと `## [x.y.z]` (日付なし) になる。`## [Unreleased]` の
+    ような非リリース節も同じ経路で書ける (D7 で新設予定のため前方互換を試験する)。
+    Keep a Changelog の慣行どおり **新しい順** に並べる。
+    """
+    parts = [
+        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n"
+    ]
+    for version, date in entries:
+        heading = f"## [{version}]" if date is None else f"## [{version}] - {date}"
+        parts.append(f"{heading}\n\n### Added\n\n- {version} の変更点\n")
+    (root / "CHANGELOG.md").write_text("\n".join(parts), encoding="utf-8")
+
+
 def _write_synthetic_repo(root: Path, version: str = "1.2.3") -> None:
     """全バージョン保持箇所が `version` で一致した合成 repo を作る。"""
     (root / "gui" / "src-tauri").mkdir(parents=True, exist_ok=True)
+    # CHANGELOG は `--tag` 指定時にだけ読まれる。直前リリース (1.2.2) を置いて
+    # バンプ方向チェックが「前より新しい」を満たす状態を既定にする。
+    _write_changelog(root, ((version, "2026-08-04"), ("1.2.2", "2026-07-01")))
 
     (root / "pyproject.toml").write_text(
         f'[project]\nname = "allaganeye"\nversion = "{version}"\n', encoding="utf-8"
@@ -441,3 +463,750 @@ def test_doc_parity_detects_field_level_drift(
     assert _documented_fields(drifted) != _guarded_fields(), (
         f"フィールド単位の drift を検出できていません: {description}"
     )
+
+
+# --------------------------------------------------------------------------
+# CHANGELOG 見出し日付 (#948)
+#
+# 本ガードは **Track D のタグ push で初めて発火する**。v0.3.1 開発中に自然発火する
+# 機会が無いので、ここで赤 (発火) と緑 (false-red が出ない) の**両方**を注入で観測する。
+# 「書いて緑」で終わらせるとリリース当日に直列最後の PR が止まる (spec 8.1 R-2)。
+# --------------------------------------------------------------------------
+
+
+def _prepare(
+    root: Path,
+    version: str,
+    heading_date: str | None,
+    previous: tuple[str, str | None] = ("0.0.1", "2020-01-01"),
+) -> None:
+    """`version` で全箇所一致 + 指定した見出し日付を持つ合成 repo を作る。"""
+    _write_synthetic_repo(root, version)
+    _write_changelog(root, ((version, heading_date), previous))
+
+
+def test_matching_changelog_date_returns_0(tmp_path: Path) -> None:
+    _prepare(tmp_path, "1.2.3", "2026-08-04")
+    assert (
+        cvc.main(
+            [
+                "--repo-root",
+                str(tmp_path),
+                "--tag",
+                "v1.2.3",
+                "--changelog-date-from",
+                "2026-08-04T11:42:17+09:00",
+            ]
+        )
+        == 0
+    )
+
+
+def test_wrong_changelog_date_returns_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """偽の日付を注入して **exit code の生値**で非ゼロを観測する (受け入れゲート)。"""
+    _prepare(tmp_path, "1.2.3", "2026-08-01")
+
+    rc = cvc.main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--tag",
+            "v1.2.3",
+            "--changelog-date-from",
+            "2026-08-04T11:42:17+09:00",
+        ]
+    )
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 1
+    assert any("2026-08-01" in line and "2026-08-04" in line for line in errors), (
+        f"見出し日付の不一致を報告する ::error:: 行がない: {errors}"
+    )
+
+
+# 過去タグの実データ。**4 タグ中 2 件で JST 日付と UTC 日付が 1 日ずれる。**
+# naive 実装 (UTC 素通し) は「utc_date が正しい」と判定するため、
+#   * jst_date を期待する CHANGELOG に対して false-red を出し、
+#   * utc_date を書いた CHANGELOG を誤って通す。
+# 両方向を固定しないと、TZ 変換を消しても片側は緑のままになる。
+_MIDNIGHT_JST_TAGS = [
+    # (id, version, JST 表記, 同一瞬間の UTC 表記, JST 日付, UTC 日付)
+    (
+        "v0.1.1-0255JST",
+        "0.1.1",
+        "2026-04-20T02:55:19+09:00",
+        "2026-04-19T17:55:19+00:00",
+        "2026-04-20",
+        "2026-04-19",
+    ),
+    (
+        "v0.2.1-0843JST",
+        "0.2.1",
+        "2026-05-17T08:43:41+09:00",
+        "2026-05-16T23:43:41+00:00",
+        "2026-05-17",
+        "2026-05-16",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("version", "jst_repr", "utc_repr", "jst_date", "utc_date"),
+    [pytest.param(*row[1:], id=row[0]) for row in _MIDNIGHT_JST_TAGS],
+)
+@pytest.mark.parametrize("wire_format", ["jst", "utc"])
+def test_jst_midnight_tag_does_not_false_red(
+    tmp_path: Path,
+    version: str,
+    jst_repr: str,
+    utc_repr: str,
+    jst_date: str,
+    utc_date: str,
+    wire_format: str,
+) -> None:
+    """JST 深夜 (00:00-09:00 JST) のタグで false-red が出ないこと (緑側の実証)。
+
+    同一瞬間を JST 表記で渡しても UTC 表記で渡しても、`Asia/Tokyo` へ明示変換した
+    うえで比較するので **どちらも JST 日付に一致して 0** でなければならない。
+    UTC 表記側が落ちるなら、それは runner の既定 TZ (UTC) を素通ししている証拠。
+    """
+    _prepare(tmp_path, version, jst_date, previous=("0.0.1", "2020-01-01"))
+    reference = jst_repr if wire_format == "jst" else utc_repr
+
+    assert (
+        cvc.main(
+            [
+                "--repo-root",
+                str(tmp_path),
+                "--tag",
+                f"v{version}",
+                "--changelog-date-from",
+                reference,
+            ]
+        )
+        == 0
+    ), f"JST 深夜タグで false-red ({version}, {wire_format} 表記)"
+
+
+@pytest.mark.parametrize(
+    ("version", "jst_repr", "utc_repr", "jst_date", "utc_date"),
+    [pytest.param(*row[1:], id=row[0]) for row in _MIDNIGHT_JST_TAGS],
+)
+def test_jst_midnight_tag_rejects_utc_date(
+    tmp_path: Path,
+    version: str,
+    jst_repr: str,
+    utc_repr: str,
+    jst_date: str,
+    utc_date: str,
+) -> None:
+    """UTC 日付を書いた CHANGELOG は **落ちる** こと (赤側の実証)。
+
+    naive 実装が「正しい」と判定する値をここで固定する。TZ 変換を外すと本テストが
+    緑から赤へ反転するので、`test_jst_midnight_tag_does_not_false_red` と対になって
+    実装が `Asia/Tokyo` を見ていることを両側から挟む。
+    """
+    _prepare(tmp_path, version, utc_date, previous=("0.0.1", "2020-01-01"))
+
+    assert (
+        cvc.main(
+            [
+                "--repo-root",
+                str(tmp_path),
+                "--tag",
+                f"v{version}",
+                "--changelog-date-from",
+                jst_repr,
+            ]
+        )
+        == 1
+    ), f"UTC 日付 ({utc_date}) を通してしまった ({version})"
+
+
+def test_hardcoded_timezone_is_asia_tokyo() -> None:
+    """基準 TZ が `Asia/Tokyo` に固定されていること (規約と実装の突合)。"""
+    assert cvc.CHANGELOG_TIMEZONE_NAME == "Asia/Tokyo"
+
+
+def test_fixed_offset_matches_iana_asia_tokyo() -> None:
+    """固定 +09:00 が IANA `Asia/Tokyo` と一致することを実データで突合する。
+
+    実装が `zoneinfo` ではなく固定 offset を使うのは、Windows に IANA tz database
+    が無く `ZoneInfo("Asia/Tokyo")` が `ZoneInfoNotFoundError` になるため
+    (`scripts/check_version_consistency.py` の定数コメント参照)。その代償として
+    「固定値が本当に Asia/Tokyo と同じか」を誰も見ない状態になるので、tz database
+    が存在する環境 (CI の ubuntu) でだけ実タグ日時を使って突合する。
+    """
+    zoneinfo = pytest.importorskip("zoneinfo", reason="zoneinfo module unavailable")
+    try:
+        iana = zoneinfo.ZoneInfo("Asia/Tokyo")
+    except zoneinfo.ZoneInfoNotFoundError:  # pragma: no cover - Windows 開発機
+        pytest.skip("IANA tz database が無い環境 (Windows など)")
+
+    from datetime import datetime as _datetime
+
+    for _, _, jst_repr, utc_repr, jst_date, _ in _MIDNIGHT_JST_TAGS:
+        for representation in (jst_repr, utc_repr):
+            moment = _datetime.fromisoformat(representation)
+            assert (
+                moment.astimezone(cvc.CHANGELOG_TIMEZONE).date()
+                == moment.astimezone(iana).date()
+                == _datetime.strptime(jst_date, "%Y-%m-%d").date()
+            ), f"固定 offset と IANA Asia/Tokyo が食い違う: {representation}"
+
+
+def test_release_process_doc_documents_the_hardcoded_timezone() -> None:
+    """`docs/release-process.md` が実装と同じ TZ を規約として明記していること。
+
+    TZ は 1 箇所でも食い違うと 50% の確率で false-red になる値なので、doc 側が
+    silent に古びる経路を塞ぐ (#911 の doc 突合と同じ処方)。
+    """
+    doc = (REPO_ROOT / "docs" / "release-process.md").read_text(encoding="utf-8")
+    assert cvc.CHANGELOG_TIMEZONE_NAME in doc
+    assert "タグを打つ日" in doc
+
+
+def test_changelog_section_missing_returns_1(tmp_path: Path) -> None:
+    """対象バージョンの節が無ければ落ちること。"""
+    _write_synthetic_repo(tmp_path, "1.2.3")
+    _write_changelog(tmp_path, (("1.2.2", "2026-07-01"),))
+
+    assert cvc.main(["--repo-root", str(tmp_path), "--tag", "v1.2.3"]) == 1
+
+
+def test_changelog_heading_without_date_returns_1(tmp_path: Path) -> None:
+    """`--changelog-date-from` 無しでも「日付が無い」ことは検知すること。
+
+    `--tag` 単独 (= `/release` の bump 時に手元で回す形) では値の一致までは見ないが、
+    日付欄そのものの欠落は素通ししない。
+    """
+    _prepare(tmp_path, "1.2.3", None)
+
+    assert cvc.main(["--repo-root", str(tmp_path), "--tag", "v1.2.3"]) == 1
+
+
+def test_tag_without_reference_date_skips_value_comparison(tmp_path: Path) -> None:
+    """`--tag` 単独では日付の**値**は見ない (バンプ日 != タグ日 の運用を壊さない)。"""
+    _prepare(tmp_path, "1.2.3", "1999-12-31")
+
+    assert cvc.main(["--repo-root", str(tmp_path), "--tag", "v1.2.3"]) == 0
+
+
+def test_changelog_check_does_not_fire_without_tag(tmp_path: Path) -> None:
+    """`--tag` 未指定時は CHANGELOG を一切読まないこと。
+
+    CHANGELOG.md が存在しない合成 repo でも 0 で通ることが証拠になる。
+    """
+    _write_synthetic_repo(tmp_path, "1.2.3")
+    (tmp_path / "CHANGELOG.md").unlink()
+
+    assert cvc.main(["--repo-root", str(tmp_path)]) == 0
+
+
+def test_naive_reference_date_returns_2(tmp_path: Path) -> None:
+    """offset を持たない ISO8601 は exit 2 (構造エラー) に倒すこと。
+
+    naive な値を UTC / JST のどちらかとして**推測**すると、まさに潰したい
+    「1 日ずれ」を検査側で再生産する。推測せずに落とす。
+    """
+    _prepare(tmp_path, "1.2.3", "2026-08-04")
+
+    assert (
+        cvc.main(
+            [
+                "--repo-root",
+                str(tmp_path),
+                "--tag",
+                "v1.2.3",
+                "--changelog-date-from",
+                "2026-08-04T11:42:17",
+            ]
+        )
+        == 2
+    )
+
+
+def test_unparseable_reference_date_returns_2(tmp_path: Path) -> None:
+    _prepare(tmp_path, "1.2.3", "2026-08-04")
+
+    assert (
+        cvc.main(
+            [
+                "--repo-root",
+                str(tmp_path),
+                "--tag",
+                "v1.2.3",
+                "--changelog-date-from",
+                "not-a-timestamp",
+            ]
+        )
+        == 2
+    )
+
+
+def test_reference_date_without_tag_returns_2(tmp_path: Path) -> None:
+    """`--changelog-date-from` だけ渡して `--tag` を忘れたら落とすこと。
+
+    日付検査は `--tag` 指定時のみ発火する。基準日を渡しているのに検査が走らない
+    組み合わせは **呼び出し側の配線ミス** なので、黙って 0 で通すと false-green
+    になる (release.yml がこの形に退化しても気付けなくなる)。
+    """
+    _prepare(tmp_path, "1.2.3", "2026-08-04")
+
+    assert (
+        cvc.main(
+            [
+                "--repo-root",
+                str(tmp_path),
+                "--changelog-date-from",
+                "2026-08-04T11:42:17+09:00",
+            ]
+        )
+        == 2
+    )
+
+
+def test_unreleased_section_is_skipped(tmp_path: Path) -> None:
+    """日付を持たない `## [Unreleased]` 節があっても通ること (D7 の前方互換)。
+
+    PR-B2 が `## [Unreleased]` を新設する。非リリース節を version 見出しとして
+    掴むと、日付欠落で恒久 red になるか、バンプ方向の比較対象を取り違える。
+    """
+    _write_synthetic_repo(tmp_path, "1.2.3")
+    _write_changelog(
+        tmp_path,
+        (("Unreleased", None), ("1.2.3", "2026-08-04"), ("1.2.2", "2026-07-01")),
+    )
+
+    assert (
+        cvc.main(
+            [
+                "--repo-root",
+                str(tmp_path),
+                "--tag",
+                "v1.2.3",
+                "--changelog-date-from",
+                "2026-08-04T00:10:00+09:00",
+            ]
+        )
+        == 0
+    )
+
+
+# --------------------------------------------------------------------------
+# バンプ方向 (ダウングレード検出、#918 item3)
+# --------------------------------------------------------------------------
+
+
+def test_downgrade_returns_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """直前のリリースより小さいバージョンを打とうとしたら落とすこと (発火実証)。
+
+    #911 のガードは「7 フィールドが互いに一致し、タグとも一致する」しか見ないので、
+    全箇所を揃えて v0.2.9 を打つとダウングレードでも全ゲートが緑になる。
+    """
+    _write_synthetic_repo(tmp_path, "0.2.9")
+    _write_changelog(tmp_path, (("0.2.9", "2026-08-04"), ("0.3.0", "2026-08-01")))
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.2.9"])
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 1
+    assert any("0.3.0" in line and "0.2.9" in line for line in errors), (
+        f"バンプ方向を報告する ::error:: 行がない: {errors}"
+    )
+
+
+def test_retagging_an_already_released_version_returns_1(tmp_path: Path) -> None:
+    """リリース済みバージョンの打ち直しを落とすこと。
+
+    「既存の最新リリースと同値」は CHANGELOG 上では**同じ版の節が 2 つある**形で
+    しか現れない (自分自身を比較対象から外すため)。したがってこのケースは重複
+    見出しとして捕まる。`_check_bump_direction` の `<=` が拾う経路ではない。
+    """
+    _write_synthetic_repo(tmp_path, "0.3.0")
+    _write_changelog(tmp_path, (("0.3.0", "2026-08-04"), ("0.3.0", "2026-08-01")))
+
+    assert cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.3.0"]) == 1
+
+
+def test_forward_bump_returns_0(tmp_path: Path) -> None:
+    _write_synthetic_repo(tmp_path, "0.3.1")
+    _write_changelog(tmp_path, (("0.3.1", "2026-08-04"), ("0.3.0", "2026-08-01")))
+
+    assert cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.3.1"]) == 0
+
+
+def test_higher_version_with_malformed_date_is_still_compared(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """日付が壊れた上位版の節も比較対象に入ること (Codex medium finding)。
+
+    見出しを「日付として読めた行」だけに絞ると `## [0.4.0] - TBD` が見出しとして
+    存在しないことになり、0.4.0 が既にある CHANGELOG で v0.3.1 を打っても通る。
+    ダウングレード検出は履歴ではなく見出しから証拠を採るので、無視した見出しが
+    そのまま検出漏れになる。
+    """
+    _write_synthetic_repo(tmp_path, "0.3.1")
+    _write_changelog(tmp_path, (("0.4.0", None), ("0.3.1", "2026-08-07")))
+    # 日付欄が「無い」のではなく「壊れている」形にする。
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        changelog.read_text(encoding="utf-8").replace("## [0.4.0]", "## [0.4.0] - TBD"),
+        encoding="utf-8",
+    )
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.3.1"])
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 1
+    assert any("0.4.0" in line for line in errors), (
+        f"日付が壊れた上位版 0.4.0 を見落とした: {errors}"
+    )
+
+
+def test_pre_release_heading_is_compared(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """pre-release 識別子付きの上位版も比較対象に入ること (Codex medium finding)。"""
+    _write_synthetic_repo(tmp_path, "0.3.1")
+    _write_changelog(tmp_path, (("0.4.0-rc1", "2026-08-01"), ("0.3.1", "2026-08-07")))
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.3.1"])
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 1
+    assert any("0.4.0-rc1" in line for line in errors), (
+        f"pre-release の上位版を見落とした: {errors}"
+    )
+
+
+def test_fenced_heading_is_not_counted_as_a_release(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """fenced code block 内の `## [...]` を実在のリリース節として数えないこと。
+
+    CHANGELOG が見出しの書式例を fence で囲んで載せると、素朴な行頭マッチは
+    それを架空の上位版として拾い、バンプ方向チェックが**恒久 red** になる
+    (Codex adversarial-review round 2 medium finding)。
+    """
+    _write_synthetic_repo(tmp_path, "0.3.1")
+    fence = "`" * 3
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n"
+        "\n"
+        "## [0.3.1] - 2026-08-07\n"
+        "\n"
+        "### Added\n"
+        "\n"
+        "- 見出しの書式例:\n"
+        "\n"
+        f"{fence}text\n"
+        "## [9.9.9] - 2026-01-01\n"
+        f"{fence}\n"
+        "\n"
+        "## [0.3.0] - 2026-08-04\n"
+        "\n"
+        "- 前リリース\n",
+        encoding="utf-8",
+    )
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.3.1"])
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 0, f"fence 内の見出しを実在版として拾った: {errors}"
+
+
+def test_mask_implementations_stay_in_sync() -> None:
+    """**3** スクリプトの fence マスクが同じ結果を返すこと。
+
+    `scripts/extract_release_notes.py` と `scripts/check_changelog_style.py` は
+    同じ処理を**意図的に複製**している (CI の別 job から独立に呼ばれるので import
+    で結合させない)。複製した以上、片方だけ直して silent に挙動が割れるのを防ぐ
+    必要がある。**複製を増やしたらこの比較に足すこと** (#952 で 3 者目を追加)。
+    """
+
+    def _load(module_name: str, filename: str):
+        spec = importlib.util.spec_from_file_location(
+            module_name, SCRIPTS_DIR / filename
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    ern = _load("extract_release_notes_for_sync_check", "extract_release_notes.py")
+    ccs = _load("check_changelog_style_for_sync_check", "check_changelog_style.py")
+
+    backtick = "`" * 3
+    long_fence = "`" * 4
+    samples = [
+        "a\nb\n",
+        "a\r\nb\r\n",
+        f"{backtick}\n## [9.9.9] - 2026-01-01\n{backtick}\n",
+        f"\t{backtick}md\n## [9.9.9] - 2026-01-01\n{backtick}\n",
+        f"{backtick}\n## [9.9.9] - 2026-01-01\n",
+        # 長い fence の中に短い fence がある形 (round 3 high finding)。
+        f"{long_fence}\n{backtick}\n## [9.9.9] - 2026-01-01\n{backtick}\n{long_fence}\n",
+        # 閉じ行に info string が付いている (CommonMark では閉じない)。
+        f"{backtick}\n## [9.9.9] - 2026-01-01\n{backtick}md\n",
+        "",
+    ]
+    for sample in samples:
+        assert cvc.mask_fenced_blocks(sample) == ern._mask_fenced_blocks(sample)
+        assert cvc.mask_fenced_blocks(sample) == ccs.mask_fenced_blocks(sample)
+        assert len(cvc.mask_fenced_blocks(sample)) == len(sample)
+
+
+def test_longer_fence_is_not_closed_by_shorter_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """4 連バッククォートの fence 内の短い fence を閉じ記号と誤認しないこと。
+
+    誤認すると架空の上位版 (`## [9.9.9]`) が露出し、バンプ方向チェックが
+    恒久 red になる (Codex adversarial-review round 3 high finding)。
+    """
+    b4, b3 = "`" * 4, "`" * 3
+    _write_synthetic_repo(tmp_path, "0.3.1")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n"
+        "\n"
+        "## [0.3.1] - 2026-08-07\n"
+        "\n"
+        f"{b4}\n"
+        f"{b3}\n"
+        "## [9.9.9] - 2026-01-01\n"
+        f"{b3}\n"
+        f"{b4}\n"
+        "\n"
+        "## [0.3.0] - 2026-08-04\n"
+        "\n"
+        "- 前リリース\n",
+        encoding="utf-8",
+    )
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.3.1"])
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 0, f"fence 内の短い fence を閉じ記号と誤認した: {errors}"
+
+
+def test_suffix_tag_is_rejected_as_unsupported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """pre-release / build 識別子付きのタグは「未対応」と明示して落とすこと。
+
+    pre-release 同士の precedence (rc1 < rc2) は実装していない。近似のまま通すと
+    `v0.4.0-rc2` が `0.4.0-rc1` と同値になり「ダウングレード」という**理由の
+    分からない red** をリリース当日に出す (Codex round 2 medium finding)。
+    """
+    _write_synthetic_repo(tmp_path, "0.4.0-rc2")
+    _write_changelog(
+        tmp_path, (("0.4.0-rc2", "2026-08-02"), ("0.4.0-rc1", "2026-08-01"))
+    )
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.4.0-rc2"])
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 1
+    assert any("未対応" in line for line in errors), (
+        f"「未対応」と分かるメッセージが出ていない: {errors}"
+    )
+    # 「ダウングレード」という誤った説明をしていないこと。
+    assert not any("新しくありません" in line for line in errors), (
+        f"pre-release をダウングレードとして誤報告した: {errors}"
+    )
+
+
+def test_release_after_its_own_pre_release_is_allowed(tmp_path: Path) -> None:
+    """`0.4.0-rc1` がある状態で `v0.4.0` を打てること (false-red を出さない)。
+
+    pre-release を「同 core の正式リリースと同値」にしてしまうと、rc を出した
+    バージョンが二度と正式リリースできなくなる。
+    """
+    _write_synthetic_repo(tmp_path, "0.4.0")
+    _write_changelog(
+        tmp_path,
+        (("0.4.0", "2026-09-01"), ("0.4.0-rc1", "2026-08-01"), ("0.3.1", "2026-08-07")),
+    )
+
+    assert cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.4.0"]) == 0
+
+
+def test_malformed_target_date_is_reported_distinctly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """対象節の日付が壊れているとき「日付が無い」と区別して報告すること。
+
+    リリース当日に「節はあるのに日付が無いと言われる」で原因探索の時間を使わない。
+    """
+    _write_synthetic_repo(tmp_path, "1.2.3")
+    _write_changelog(tmp_path, (("1.2.3", None), ("1.2.2", "2026-07-01")))
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        changelog.read_text(encoding="utf-8").replace(
+            "## [1.2.3]", "## [1.2.3] - 2026-8-7"
+        ),
+        encoding="utf-8",
+    )
+
+    rc = cvc.main(["--repo-root", str(tmp_path), "--tag", "v1.2.3"])
+    errors = _error_lines(capsys.readouterr().out)
+
+    assert rc == 1
+    assert any("2026-8-7" in line for line in errors), (
+        f"壊れた日付文字列を報告していない: {errors}"
+    )
+
+
+def test_first_release_has_nothing_to_compare(tmp_path: Path) -> None:
+    """比較対象が無い初回リリースは通ること。"""
+    _write_synthetic_repo(tmp_path, "0.1.0")
+    _write_changelog(tmp_path, (("0.1.0", "2026-04-17"),))
+
+    assert cvc.main(["--repo-root", str(tmp_path), "--tag", "v0.1.0"]) == 0
+
+
+def test_duplicate_version_headings_returns_1(tmp_path: Path) -> None:
+    """同じバージョンの節が 2 つあるときは曖昧なので落とすこと。"""
+    _write_synthetic_repo(tmp_path, "1.2.3")
+    _write_changelog(
+        tmp_path, (("1.2.3", "2026-08-04"), ("1.2.3", "2026-08-01"), ("1.2.2", None))
+    )
+
+    assert cvc.main(["--repo-root", str(tmp_path), "--tag", "v1.2.3"]) == 1
+
+
+def test_crlf_changelog_is_handled(tmp_path: Path) -> None:
+    """CRLF 改行の CHANGELOG.md でも見出しを取り違えないこと。
+
+    本 repo は `core.autocrlf=true` の Windows 環境で開発されており、CHANGELOG.md は
+    `.gitattributes` の `eol=lf` 対象**外**なので実際に CRLF で checkout される
+    (実測)。一方 CI は Linux (LF) なので、**CRLF の取り扱いを壊しても CI は緑のまま
+    開発機だけが落ちる**。ここでは改行をバイト列で書いて、プラットフォームに依らず
+    CRLF 経路を通す (`Path.write_text` は既定で `\\n` を `os.linesep` へ変換するため、
+    それ任せだと Linux 側で CRLF を 1 度も踏まない)。
+    """
+    _write_synthetic_repo(tmp_path, "1.2.3")
+    (tmp_path / "CHANGELOG.md").write_bytes(
+        "# Changelog\r\n"
+        "\r\n"
+        "## [1.2.3] - 2026-08-04\r\n"
+        "\r\n"
+        "- 新しい\r\n"
+        "\r\n"
+        "## [1.2.2] - 2026-07-01\r\n"
+        "\r\n"
+        "- 古い\r\n".encode()
+    )
+
+    assert (
+        cvc.main(
+            [
+                "--repo-root",
+                str(tmp_path),
+                "--tag",
+                "v1.2.3",
+                "--changelog-date-from",
+                "2026-08-04T11:42:17+09:00",
+            ]
+        )
+        == 0
+    )
+
+
+def test_crlf_changelog_still_detects_wrong_date(tmp_path: Path) -> None:
+    """CRLF でもガードが**発火する**こと (CRLF 経路が素通しになっていない)。"""
+    _write_synthetic_repo(tmp_path, "1.2.3")
+    (tmp_path / "CHANGELOG.md").write_bytes(
+        b"# Changelog\r\n\r\n## [1.2.3] - 2026-08-01\r\n\r\n- x\r\n"
+    )
+
+    assert (
+        cvc.main(
+            [
+                "--repo-root",
+                str(tmp_path),
+                "--tag",
+                "v1.2.3",
+                "--changelog-date-from",
+                "2026-08-04T11:42:17+09:00",
+            ]
+        )
+        == 1
+    )
+
+
+def test_missing_changelog_file_returns_2(tmp_path: Path) -> None:
+    """CHANGELOG.md 自体が無いのは構造エラー (検査の自己崩壊) として 2 に倒すこと。"""
+    _write_synthetic_repo(tmp_path, "1.2.3")
+    (tmp_path / "CHANGELOG.md").unlink()
+
+    assert cvc.main(["--repo-root", str(tmp_path), "--tag", "v1.2.3"]) == 2
+
+
+# --------------------------------------------------------------------------
+# 発火点の配線 (release.yml がガードを実際に呼んでいること)
+# --------------------------------------------------------------------------
+
+
+def _release_workflow() -> str:
+    return (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+
+
+def _release_workflow_effective() -> str:
+    """`release.yml` から comment 行を除いた**実際に評価される**部分だけを返す。
+
+    comment を含めて検査すると両方向に壊れる:
+
+    * 肯定側 (`--changelog-date-from` があること): comment 内に語があるだけで
+      通ってしまい、呼び出しが消えても気付けない
+    * 否定側 (`head_commit` が無いこと): 「なぜ使わないか」を comment で説明
+      した瞬間に落ちる
+
+    どちらも「語の有無」ではなく「実効行の有無」を見れば解決する。
+    """
+    return "\n".join(
+        line
+        for line in _release_workflow().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+
+
+def test_release_workflow_passes_reference_date_on_tag_push() -> None:
+    """`release.yml` が `--tag` と一緒に `--changelog-date-from` を渡していること。
+
+    日付検査は基準日を渡された時だけ値を比較する。workflow が渡さなくなると
+    スクリプト側の test は全部緑のまま **CI では構造チェックしか走らない** という
+    false-green になるので、呼び出し口を pin する (G1-1 3 点セットの 1 番目「発火点」)。
+    """
+    workflow = _release_workflow_effective()
+    assert "--changelog-date-from" in workflow
+    # 基準日は annotated tag の taggerdate のみ。
+    assert "taggerdate" in workflow
+
+
+def test_release_workflow_does_not_fall_back_to_commit_timestamp() -> None:
+    """基準日を `head_commit.timestamp` へ落とさないこと (Codex high finding)。
+
+    `head_commit.timestamp` は**タグが指す commit の日時**であってタグを打った
+    日時ではない。commit とタグ push が日を跨ぐと規約とズレた日付を「正」として
+    通してしまう。しかもそれが起きるのは lightweight tag を打った時 = 規約
+    (`git tag -a`) 違反時だけなので、弱い基準で通すより落とす方が正しい。
+
+    具体的な false-green: commit が 2026-08-06 23:00 JST、lightweight tag を
+    2026-08-07 JST に push、CHANGELOG 見出しが `2026-08-06` の場合、fallback があると
+    これが通る。
+    """
+    assert "head_commit" not in _release_workflow_effective()
+
+
+def test_release_workflow_still_triggers_on_constraints_change() -> None:
+    """PR-A2 (#916) が入れた `constraints.txt` の paths を壊していないこと。"""
+    assert "constraints.txt" in _release_workflow()

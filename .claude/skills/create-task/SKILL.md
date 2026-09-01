@@ -54,6 +54,16 @@ issue 規約 (粒度 / prefix ラベル / スコープラベル / 優先度ラ�
 
 preamble を埋められないことは「issue 化に値する整理ができていない」signal。空欄や曖昧な記述で勝手に埋めない。
 
+### ガード / 規約 / チェックを追加する issue の受け入れ条件 (G1-1)
+
+issue の内容が **CI job / hook / skill step / 規約文の新設**にあたる場合 (`[task]` / `[refactor]` prefix で頻出)、`## 受け入れ条件` に [`docs/l2-workflow.md` §規約・ガード導入の 3 点セット](../../../docs/l2-workflow.md) の 3 点を**必ず反映**する:
+
+- [ ] 発火点を skill step / CI job / hook のいずれかに**ファイルと行で**指定した (「doc に書いた」だけでは発火点にならない)
+- [ ] 非実施時に理由を 1 行残す義務を課した
+- [ ] **発火側の red 実証** — 違反を一時注入し **exit code の生値**で発火を観測 + pin test を同梱した
+
+3 点を受け入れ条件に落とさずに起票すると、実装 PR が「doc に規約を書いただけ」で受け入れ条件を満たしてしまい、ガードが no-op のままマージされる。**③ が最も落ちやすい** (保護機構は不発でも green のため CI が mask する)。
+
 ## Patch release 関連の issue 起票 (#L-γ A2 / M9)
 
 v0.M.N → v0.M.(N+1) の patch release で吸収する issue を起票する場合は、[`docs/release-process.md` §Patch release の Track 構造](../../../docs/release-process.md#patch-release-の-track-構造) (Track A-D 並列化) を参照し、対応する prefix label / scope label を判定:

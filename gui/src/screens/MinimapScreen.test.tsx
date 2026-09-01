@@ -536,3 +536,22 @@ describe('MinimapScreen', () => {
     expect(await axe(container)).toHaveNoViolations();
   }, 15000);
 });
+
+// #944 §D: 他 5 画面は冒頭に画面名と入力ファイル path を出すが、本画面だけ
+// どちらも無く、[⬦ ミニマップ切抜き] を押したユーザーが何をする画面か画面上
+// から知る手段が無かった。
+describe('#944 MinimapScreen header', () => {
+  it('names the screen and states its purpose', () => {
+    renderMinimap();
+    expect(screen.getByText('ミニマップ切抜き')).toBeInTheDocument();
+    expect(screen.getByText('エリアマップの領域を切り出す')).toBeInTheDocument();
+  });
+
+  it('shows the input file path like the other screens', () => {
+    renderMinimapWithPath();
+    const path = screen.getByTestId('minimap-path');
+    expect(path).toBeInTheDocument();
+    // sample fixture の source が file 名として出ること (path が空でない)
+    expect(path.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+  });
+});

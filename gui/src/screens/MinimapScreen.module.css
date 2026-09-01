@@ -8,6 +8,62 @@
   position: relative;
 }
 
+/* #944 §D: 他 5 画面と同じ header 構成 (戻るボタン + 入力ファイル path +
+   画面名 caption + 目的 title)。ExportScreen.module.css の同名クラスに揃える。 */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.backButton {
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--ae-gold-dim);
+  background: none;
+  border: 1px solid var(--ae-gold-dim);
+  border-radius: 2px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.backButton:hover {
+  color: var(--ae-gold-bright);
+  border-color: var(--ae-gold-bright);
+}
+
+.headerFileName {
+  font-family: var(--ae-font-body);
+  font-size: 13px;
+  color: var(--ae-text-bright);
+  margin-bottom: 4px;
+}
+
+.caption {
+  font-family: var(--ae-font-ui);
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: var(--ae-gold-dim);
+  text-transform: uppercase;
+}
+
+.title {
+  font-family: var(--ae-font-ui);
+  font-size: 20px;
+  color: var(--ae-gold-bright);
+  margin-top: 2px;
+  letter-spacing: 1px;
+}
+
+.purpose {
+  font-family: var(--ae-font-body);
+  font-size: 12px;
+  color: var(--ae-text-dim);
+  margin-top: 4px;
+  max-width: 60ch;
+}
+
 .videoPane {
   flex: 1;
   min-height: 0;

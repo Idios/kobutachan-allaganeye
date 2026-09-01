@@ -4,6 +4,12 @@ on:
   pull_request:
     types: [opened, edited, synchronize]
 
+# Fable 欄の semantic 検査が PR の変更ファイル一覧を読むため明示宣言する (#945)。
+# ambient default に依存すると、default が絞られた瞬間に gate が fail-closed で落ちる。
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   validate-checklist:
     runs-on: ubuntu-latest
@@ -15,4 +21,20 @@ jobs:
         with:
           script: |
             const checker = require('./.github/scripts/check-pr-checklist.js');
+            await checker({ github, context, core });
+
+  # #946: Pre-flight (Iron Law 6 サブ条) の鮮度検査。
+  # **`ci.yml` に置いてはいけない** — あちらは `pull_request: branches: [main, "develop-*"]` の
+  # filter があり、本 gate が生まれる原因になった `release/*` base の PR では 1 job も起動しない
+  # (= 完全な no-op)。branch filter を持たない当 workflow が唯一の適格な配置先である。
+  validate-preflight-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Pre-flight freshness
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const checker = require('./.github/scripts/check-preflight-freshness.js');
             await checker({ github, context, core });

@@ -276,6 +276,22 @@
   color: var(--ae-text-bright);
 }
 
+/* #944 §D: 検知失敗時の案内 (CLI にしかない --masked / --vtuber を含む)。 */
+.errorAdvice {
+  font-family: var(--ae-font-body);
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--ae-text-dim);
+  border-left: 2px solid rgba(var(--ae-gold-rgb), 0.35);
+  padding: 4px 0 4px 12px;
+  max-width: 72ch;
+}
+
+.errorAdvice code {
+  font-family: var(--ae-font-mono);
+  color: var(--ae-gold);
+}
+
 .errorMessage {
   flex: 1;
   min-height: 0;

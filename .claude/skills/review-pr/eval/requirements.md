@@ -132,7 +132,7 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 PR 本文に「Refs #656 + #662 / Round 4」と書かれた fix PR。#656 は cp932 encoding bug の元 issue で、過去に #657 (Python 側 fix)、#662 (Rust 側 fix) が merged 済 (前回 fix で 2 回目の修正、本 PR で 3 回目)。
 
 1. **[critical]** **G-1**: Step 1.1 (同 issue 過去 PR 検出) で `gh pr list --search "#656" --state merged --limit 10` を実行し、件数 ≥1 (= 2 件) を検出
-2. **[critical]** **G-2**: 検出した件数を Step 5b トリアージ表の **冒頭警告行**として追加 (「同 issue で過去に merged PR `2` 件あります (PR #657, #662)。前回 fix の root cause が今回の変更で完全解消しているか、Step 5 / 5a で重点的に確認してください」)
+2. **[critical]** **G-2**: 検出した件数を Step 5b トリアージ表の **冒頭警告行**として追加 (「同 issue で過去に merged PR `2` 件あります (PR #657, #662)。前回 fix の **再発 root cause** ((a)、§「root cause の 2 用法」) が今回の変更で完全解消しているか、Step 5 / 5a で重点的に確認してください」)
 3. **[critical]** **G-3**: block / threshold は設けない (spec O2 (a) 確定値、警告のみ)
 4. **[critical]** **G-4**: 「意図的な multi-phase 分割」確認の言及がある (`docs/refactor-pattern.md` 参照可能性)
 
@@ -145,7 +145,7 @@ PR 本文: `scripts/build-portable-zip.ps1` の `get-pip.py` DL URL を `https:/
 1. **[critical]** **H-1**: Step 5 で M2 外部依存規約 (`docs/l2-workflow.md` §外部依存規約) を引いて URL 規約適合を逐条検証
 2. **[critical]** **H-2**: `master` / `main` / `latest` / `raw HEAD` を含む URL (= `raw/main/`) を検出し、Step 5b トリアージ表で **(A) PR 内修正** とする
 3. **[critical]** **H-3**: F2 (#649→#651→#703→#721 hotfix 連発) を reference として参照する
-4. **[critical]** **H-4**: Codex 起動条件 (diff > 15 file / root cause ≥2 / L1 core) は満たさない (touched 1 file 単発 fix) ため optional Codex review を**起動しない**判断 (起動しても可だが起動条件は満たさない旨を明示)
+4. **[critical]** **H-4**: Codex 起動条件 (条件1 大規模 > 15 file or > 500 lines / 条件2 再発 root cause ≥2 件 / 条件3 core 変更対象ファイル 該当 ≥1) は満たさない (touched 1 file 単発 fix) ため optional Codex review を**起動しない**判断 (起動しても可だが起動条件は満たさない旨を明示)
 5. installer 系 PR の immutable URL 規約違反は典型的な (A) trigger (B 化しない)
 
 ---
@@ -155,7 +155,7 @@ PR 本文: `scripts/build-portable-zip.ps1` の `get-pip.py` DL URL を `https:/
 PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector module を含む)。`/review-pr` Step 5a で C3 起動条件すべて該当のため Codex review (tier 1 = `codex-companion.mjs review`) を実行、Codex CLI exit code 1 + stderr に `Error: rate limit exceeded (429)` が含まれる。
 
 1. **[critical]** **I-1**: Codex CLI fail を検出 (exit code 非ゼロ + stderr keyword `rate.?limit` または `429`) → **token 枯渇 (明確)** 判定
-2. **[critical]** **I-2**: 自動 fallback として superpowers `requesting-code-review` subagent を起動 (Codex 用 focus 文字列を流用)
+2. **[critical]** **I-2**: 自動 fallback として superpowers `requesting-code-review` subagent を起動する。**focus は「Codex へ渡した文字列の流用」ではない** — tier 1 の `codex-companion.mjs review` は focus positional を受け付けないため流用元の文字列は存在しない。`docs/l2-workflow.md` §「Step 5 の focus 導出手順」で**導出した** focus を fallback subagent へ渡すこと (#856 item4 で矛盾解消)
 3. **[critical]** **I-3**: Step 6 レビュー報告に「Codex fallback notice」(`> **Codex fallback notice**: ...` template) を必須記載 (Iron Law 5 整合)
 4. **[critical]** **I-4**: fallback 経路 (`docs/l2-workflow.md` §Codex fallback) を参照する
 5. **[critical]** **I-5**: 重要 PR (大規模 refactor) なので user に AskUserQuestion で「Codex 復旧待ち / Claude fallback で push」3 択を提示する
@@ -170,6 +170,6 @@ PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector m
 モック: PR 作成直前の Pre-flight Step 5 実行計画を executor に立てさせる。
 
 1. **[critical]** **P-1**: Step 5 の実行手段を companion script 直接呼び出し (tier 1、`codex-companion.mjs adversarial-review`) と特定し、slash `/codex:adversarial-review` を agent 自身が invoke する計画にしない
-2. **[critical]** **P-2**: focus 文字列に project 固有焦点 (Iron Law 3 scope creep / encoding boundary / GPU fallback / 同 issue 過去 PR root cause) を含める
+2. **[critical]** **P-2**: focus 文字列を固定の例示リストから選ばず**本 PR の diff から導出**する — 新設・変更した外部入力境界 (CLI option / metadata field / GUI 自由入力 / 環境変数) と、そこから到達する不可逆操作 (上書き / 削除 / truncate) の対応ペアを列挙して focus に含める。ペアがゼロなら「ゼロである」ことを focus に明記する (導出手順は `docs/l2-workflow.md` §「Step 5 の focus 導出手順」。Refs #935 P2-1 で固定 3 項目の例示から置換。**旧条文 (Iron Law 3 scope creep / encoding boundary / GPU fallback / 同 issue 過去 PR root cause の 4 例示を含めれば pass) に戻さないこと** — 例示リストは新しい欠陥クラスへの検出力を持たない)
 3. **P-3**: invocation path の詳細参照先として docs/l2-workflow.md §Step 5 の invocation path (3-tier、#795) に到達する
 4. **P-4**: Codex CLI fail 時は tier 2 fallback (C6) の存在を認識し、fallback 時は Codex fallback notice 記載が必要と述べる

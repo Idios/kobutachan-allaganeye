@@ -15,18 +15,27 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 
 1. **[critical]** **A-1**: Step 0a (旧 Step 0) でレイヤーリリース受け入れゲートを §共通項目 + §v0.3.0 固有項目 を user 提示し各項目 ○ 確認
 2. **[critical]** **A-2**: Step 0b で `gh issue list --label deferred --state open --limit 200` を実行し、件数 0 を検出して deferred 分類 (Step 0c) を skip (※not_planned 残タスク確認の要否は C-3 で検証)
-3. **[critical]** **A-3**: 全ゲート通過後に Step 1 リリース準備に進む
+3. **[critical]** **A-3**: 全ゲート通過後に **Step 2** リリース準備に進む (#918 item2。skill 側に Step 1 は存在しない — 過去の改番が eval 側へ伝播していなかった)
 4. minor release は `docs/release-process.md` §Patch release Track 構造 (A2) の適用対象外と判断
-5. **[critical]** **A-5**: Step 3-2 の version bump 確認 grep に `--include='*.json'` を含め、`gui/src-tauri/tauri.conf.json` / `gui/package.json` のバージョン参照も対象にしている (#817 / P2-33。`*.py` / `*.toml` のみで `*.json` を落としていたら失格)
+5. **[critical]** **A-5**: Step 3-3 の version bump で `scripts/check_version_consistency.py` の `VERSION_LOCATIONS` を正として**全フィールド**を更新し、`--tag v0.3.0` で exit 0 を確認している。stage は `--list-paths` の出力から行う (#911)。**`grep -r '<旧バージョン>' --include=...` ベースの旧手順を使ったら失格** — `Cargo.lock` がどの glob にも載らず取りこぼすため #911 で置換済み (旧 A-5 が pin していた #817 / P2-33 の手順は廃止)
+6. **[critical]** **A-6**: Step 4 で `CHANGELOG.md` の `## [0.3.0] - YYYY-MM-DD` の日付を**タグを打つ当日の JST 日付**へ更新し、`--changelog-date-from` を渡した `check_version_consistency.py --tag` が exit 0 であることを確認してから commit している (#948 / 裁定 D6)。既リリース済みの節を書き換えていない (D7)
+7. **[critical]** **A-7**: タグ打ち案内が **annotated tag** (`git tag -a`) で、GitHub Release は `release.yml` がタグ push で自動作成すると説明している。**`gh release create ... --notes-from-tag` を手順として提案したら失格** (#918 item4。二重作成 + CHANGELOG が本文に反映されない)
+8. **[critical]** **A-8**: `develop-<次バージョン>` を **タグ打ち + GitHub Release 作成の後**に `main` から切ると案内している (#918 item1。リリース PR の main マージ前やタグ打ち前と答えたら失格)
+9. **[critical]** **A-9**: minor release のリリース PR の `--base` を **`main`** としている。分岐元 (`develop-0.3.0`) と PR 宛先 (`main`) を別物として扱っていること。**`--base develop-0.3.0` で PR を作ったら失格** (実例: PR #924 は head=`release/v0.3.0` / base=`main`)
+10. **[critical]** **A-10**: Step 4 の CHANGELOG 日付 commit を **`release/v0.3.0` (リリース PR の head) へ載せる**としている。`main` へ直接 commit する / 日付用に別 PR を立てる と答えたら失格 (`main` は保護ブランチ)
+
+> A-9 / A-10 は **iteration 1 の findings を受けて iteration 2 前に追加**した項目。既存 [critical] の増減はしていない (mizchi protocol「[critical] タグを事後に増減しない」の趣旨は「合格しやすくする方向に動かさない」ことなので、新規発見の欠陥を追加するのは可)。iteration 1 の accuracy とは直接比較できない点に注意。
 
 ---
 
-## シナリオ B (patch release v0.3.1、deferred 5 件 / うち 2 件は次 patch 吸収)
+## シナリオ B (patch release v0.3.1、deferred 67 件 / うち 27 件は本 patch 吸収)
 
-モック: deferred ラベル 5 件 (#374 #458 #743 #749 #756 を想定)。spec PR (Track 0) を起票。
+モック: deferred ラベル付き issue が **67 件** (open 65 件 + 直前セッションで close 済み 2 件)。spec PR (Track 0) を起票し、分類結果は (a) 次 release 吸収 27 件 / (b) deferred 継続 38 件 / (c) close 2 件。
 
-1. **[critical]** **B-1**: Step 0b で `gh issue list --label deferred ... --limit 200` 全件取得
-2. **[critical]** **B-2**: 件数 5 ≥ 3 のため、Step 0c 冒頭で Iron Law 2 bulk pre-check (サンプル 1 件 + 全件 OK / 個別調整 / やめる 3 択) を user に提示
+> 件数の出典は [v0.3.1 patch design spec](../../../../docs/superpowers/specs/2026-08-05-v031-patch-design.md) §9 §deferred 全件検証結果。**「5 件」を前提にしていた旧モックは実態と乖離していた** (spec §8.2 O-7)。件数が 1 桁か 2 桁かで Iron Law 2 の bulk pre-check の要否判断そのものが変わるため、実測値に合わせる。
+
+1. **[critical]** **B-1**: Step 0b で `gh issue list --label deferred ... --limit 200` 全件取得 (**`--limit` が既定の 30 だと 67 件を取りこぼす**ので、200 を明示していること)
+2. **[critical]** **B-2**: 件数 67 ≥ 3 のため、Step 0c 冒頭で Iron Law 2 bulk pre-check (サンプル 1 件 + 全件 OK / 個別調整 / やめる 3 択) を user に提示
 3. **[critical]** **B-3**: 「個別調整」選択時、各 issue を 1 件ずつ AskUserQuestion で (a) 次 release 吸収 / (b) deferred 継続 / (c) close の 3 択分類
 4. **[critical]** **B-4**: 分類結果を spec PR (Track 0) の §deferred 全件検証結果 table として保存
 5. **[critical]** **B-5**: (a) 分類が `docs/release-process.md` §Patch release Track 構造 の Track B 吸収候補と関連付けされる
@@ -43,6 +52,59 @@ empirical-prompt-tuning §「ワークフロー 4. 両面評価」の精度算�
 1. **[critical]** **C-1**: Step 0b で件数 0 を検出
 2. **[critical]** **C-2**: deferred 分類 (Step 0c) と本文鮮度確認は skip して無駄な AskUserQuestion を発火しない
 3. **[critical]** **C-3**: deferred 0 件でも Step 0c-2 の **not_planned 残タスク確認はリリース区間ベースで必ず実施**し、`wired in #770` の not_planned close を検出して残タスク行き先を確認している (#817 high finding 対策。deferred 0 で not_planned gate を迂回したら ×)
+
+---
+
+## シナリオ D (patch release v0.3.1、Track 構造 + 2-hop、#962)
+
+モック: `develop-0.3.1` が存在する patch release。Track A-D 構造で進行中、Track D (version bump +
+CHANGELOG) は未着手。裁定 D4 により `release/v0.3.1` 統合ブランチは**作らない**。
+直前のリリースタグは `v0.3.0`。リリース区間の doc に `wired in #770` マーカーがあり、
+その #770 は `not_planned` close 済み。
+
+> **本シナリオの検証対象は「手順が一意に決まるか」であり、成果物の正しさではない。** #962 が
+> 摘出した 7 件はいずれも「executor が自力で正しく解決できてしまう」種類の曖昧さで、
+> **成功/失敗だけを見ると改修前でも ○ になる**。そのため各項目は「skill 本文だけを根拠に
+> 一意に決まるか」「skill 外 (git 履歴 / 別 doc / 過去 PR) を参照せずに答えられるか」を問う形で
+> 書いてある。executor が正解を出しても**根拠が skill 外なら ×**。
+>
+> 判定時は executor に「その手順の根拠を skill の行番号で示せ」と要求し、示せない項目を × とする。
+
+1. **[critical]** **D-1** (#962 項目 1): Step 3 を字面の番号順どおりに実行しても **dirty tree のまま
+   `git pull` する経路に入らない**。リリースブランチ作成 → バージョン編集 → 検証 → commit の順で
+   実行しており、その順序が skill 本文に明示されていることを行番号で示せる。
+   **「編集してから `git checkout <分岐元>; git pull` する」と答えたら失格**
+2. **[critical]** **D-2** (#962 項目 2): Step 0c-2 の `<前タグ>` を **skill 本文に書かれた解決コマンド**
+   (`git describe --tags --abbrev=0`) で解決している。プレースホルダのまま `git log <前タグ>..HEAD`
+   を実行する / 別 Step の記述を自力で探して転用する と答えたら ×
+3. **[critical]** **D-3** (#962 項目 3): Step 0a の受け入れゲート確認が 3 件以上の bulk になる場合の
+   **サンプル件数と選び方**、および「個別調整」を選んだときの挙動を、Step 0a の記述だけから答えられる
+   (Step 0c の §bulk 件数の運用 を**名前で参照**していれば可。「1 行で言及されているだけ」で
+   挙動を推測させる形なら ×)
+4. **[critical]** **D-4** (#962 項目 4): Track 構造の patch release において、Step 0a の受け入れゲート
+   §共通項目 のうち **Track D の成果物に依存する項目** (全 PR マージ済み / バージョン保持箇所 /
+   CHANGELOG 対象セクション) が Step 0a 実行時点では未達であることを認識し、**再評価点がどこか**を
+   skill 本文を根拠に answer できる。「Step 0a で全件達成していないので中断」と答えて止まったら ×
+   (Track 構造では構造的に達成不能なため、skill が中断する規約なら release が永久に始まらない)
+5. **[critical]** **D-5** (#962 項目 5): Step 0c-2 の not_planned 残タスク「確認」を
+   **AskUserQuestion + 明示的な選択肢**で行っている。動詞句だけを根拠に自由形式で user へ問い合わせる /
+   独断で行き先を決める と答えたら ×
+6. **[critical]** **D-6** (#962 項目 6): `develop-<version>` が存在する patch release で
+   **`main` へ到達するまでに PR が 2 本要る**ことを、Step の記述だけから答えられる。
+   さらに **hop 1 マージ後・hop 2 前に CHANGELOG 見出し日付のドリフトを見つけた場合の手順**を
+   答えられる。「Step 2-4 の表 + Step 4 の括弧書き + `docs/release-process.md` §ブランチ戦略 の
+   3 箇所を突き合わせた」と答えたら × (skill 単体で一意に決まっていない)
+7. **[critical]** **D-7** (#962 項目 7): タグ push 後、`release.yml` の **完了を確認するコマンド**を
+   実行してから次工程 (`develop-<次バージョン>` の作成) へ進んでいる。
+   「`git push origin v<版>` した時点で Release 作成済みとして進む」と答えたら ×
+
+> D-1 〜 D-7 は #962 の 7 項目に 1:1 対応する (D-N = #962 項目 N)。#962 は「executor は自力で
+> 正しく解決しており `[critical]` は 1 件も落ちていない」と記録している = **改修前テキストに対する
+> red baseline は「成功/失敗」では取れない**。そのため上記のとおり判定軸を
+> 「根拠を skill の行番号で示せるか」に置いている (`feedback_ept_checklist_leaks_the_answer` と
+> 同じ問題。checklist は executor に渡るので、「指示が書いてあるか」を成果物だけからは測れない)。
+
+---
 
 ## Codex 統合 / 撤回 M8 関連 [critical] (全 scenario 共通)
 

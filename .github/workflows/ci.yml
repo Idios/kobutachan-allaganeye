@@ -9,8 +9,24 @@ on:
   # fallback で継承することで incremental build (~30-60s) に短縮する。
   push:
     branches: [main, "develop-*"]
+  # #947 -- pull_request の branches filter は **PR の base** に適用される。
+  # `release/*` を統合ブランチに使う minor release では、そこへ流し込む中間 PR が
+  # 構造的に無検査で通っていた (v0.3.0 実測: #927 / #929 / #930 / #931 / #932 /
+  # #938 / #939 / #940 / #941 / #942 / #943 の 11 本。#938 は Python 実装 3 +
+  # テスト 3 を変更しながら走った check は `validate-checklist` 1 個だけ)。
+  #
+  # **`push.branches` (上記 L10-11) には `release/*` を足さない。** 足すと
+  # `release/* -> main` の PR は release ブランチの生存期間ずっと open なので、
+  # 同一 commit に対し push run (`github.ref=refs/heads/release/vX`) と
+  # pull_request run (`github.ref=refs/pull/N/merge`) の 2 本が起動する。下の
+  # concurrency group は ref を含む (L26) ため別 group となり dedupe されず、
+  # windows runner を含む full CI が丸ごと 2 倍走る。
+  #
+  # この filter が見ていない集合: branches filter は allowlist なので、ここに
+  # 列挙しない base (将来 `hotfix/*` 等を切る場合) は依然として無検査のままになる。
+  # 「全 base をカバーした」ことは意味しない。
   pull_request:
-    branches: [main, "develop-*"]
+    branches: [main, "develop-*", "release/*"]
 
 concurrency:
   # 同一 ref への連続 push は前 run を cancel して無駄を省く。ただし main /
@@ -28,7 +44,11 @@ jobs:
         with:
           python-version: "3.11.9"
           cache: "pip"
-          cache-dependency-path: pyproject.toml
+          # block scalar 必須。スカラのままカンマ区切りにすると setup-python は
+          # 全体を 1 個の glob として扱い、constraints.txt が無視される。
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
 
       - name: Cache FFmpeg archive
         id: cache-ffmpeg
@@ -64,7 +84,7 @@ jobs:
           LD_LIBRARY_PATH="/tmp/ffmpeg/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" /tmp/ffmpeg/bin/ffprobe -version
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev]" -c constraints.txt
 
       - name: Regenerate Python metadata types from JSON Schema
         run: python scripts/codegen/generate.py --py
@@ -89,6 +109,60 @@ jobs:
       - name: Test (exclude tests/hooks/ — runs in hook-test job)
         run: pytest --ignore=tests/hooks/
 
+  # #934: path sandbox の **Windows 固有の解決** を CI で踏むための狭い job。
+  #
+  # 上の `python` job は ubuntu なので、`E:foo` (drive-relative) や `..\x.mp4`
+  # (backslash 区切り) が出力先の外を指すかどうかは **一度も Windows の意味論で
+  # 評価されない**。`\` も `:` も POSIX では正当なファイル名文字なので、ubuntu 上では
+  # 「出力先の中に留まる」側だけが踏まれ、Windows 側の解決が壊れても緑のままになる。
+  # 本 project は Windows 向けに配布する CLI で、ここは #930 で実際にデータ損失を
+  # 出した書込 sandbox と同じ経路なので、その差分だけを Windows で回す。
+  #
+  # #965 で `scripts/check_doc_code_refs.py` の MAX_PATH 回避も同じ理由でここに
+  # 相乗りしている (Windows でしか症状が出ない = ubuntu job では revert しても緑)。
+  # job 名は #934 由来のままだが、**扱う対象は「Windows 固有の path 意味論」全般**。
+  #
+  # **全スイートは回さない** — ffmpeg / GPU を要する経路は既存の job と実機検証の
+  # 担当であり、ここを太らせると Windows runner の待ち時間だけが増える。
+  # `export_cli` を除外しているのは、CLI 経路が encoder 列挙で ffmpeg を要求するため
+  # (この job は ffmpeg を入れない)。resolver 層の path 判定はすべて含まれている。
+  python-windows-path-sandbox:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]" -c constraints.txt
+
+      # shell: bash を明示する。既定の pwsh は native command の stderr を
+      # NativeCommandError へ包み、exit 0 でも $? を false にすることがある
+      # (docs/l2-workflow.md / PowerShell の既知の罠)。
+      # `check_doc_code_refs` (#965) をここに足しているが、**MAX_PATH の gate と
+      # しては期待しないこと**。2026-08-30 実測: GitHub の windows-latest は
+      # `LongPathsEnabled=1` で、260 文字超でも素の `os.stat` が成功する。つまり
+      # **症状自体が再現せず、MAX_PATH 系のテストは self-skip するか vacuous になる**。
+      # 実際に revert を捕まえているのは述語の経路を固定する spy テストで、そちらは
+      # 長いパスを作らないので ubuntu の python job でも走る。
+      #
+      # それでもここに入れるのは、**Windows 固有の破綻を踏むため**。実例として
+      # `os.name` を patch した状態の `Path()` が Windows 版 Python 3.11 で
+      # `NotImplementedError` になり、pytest ごと INTERNALERROR で落ちた
+      # (ubuntu では緑だった)。
+      #
+      # `-rs` は縮退を可視化するため。理由を出さないと **gate が no-op になった
+      # ことがログ上 `s` の 1 文字と区別できない**。
+      - name: Test (path sandbox / metadata contracts / doc-code-refs)
+        shell: bash
+        run: pytest tests/test_export_pool.py tests/test_path_schema_contracts.py tests/scripts/test_check_doc_code_refs.py -q -rs -k "not export_cli"
+
   hook-test:
     runs-on: ubuntu-latest
     steps:
@@ -98,13 +172,19 @@ jobs:
         with:
           python-version: "3.11.9"
           cache: "pip"
-          cache-dependency-path: pyproject.toml
+          # block scalar 必須。スカラのままカンマ区切りにすると setup-python は
+          # 全体を 1 個の glob として扱い、constraints.txt が無視される。
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-          pip install jsonschema
+          pip install -e ".[dev]" -c constraints.txt
+          # jsonschema も constraints 経由にする。ここを素通しにすると同一
+          # workflow 内に constraints 非適用の解決が 1 本残る。
+          pip install jsonschema -c constraints.txt
 
       - name: Install jq (for format-cleanup-log.sh smoke test)
         run: sudo apt-get update && sudo apt-get install -y jq
@@ -250,6 +330,88 @@ jobs:
         shell: bash
         run: bash .github/scripts/check-error-hint-drift.sh
 
+  doc-code-refs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+
+      # scripts/check_doc_code_refs.py は標準ライブラリのみで動くため
+      # pip install を持たない (依存を増やさず job を軽く保つ)。
+      # exit 1 = 参照が壊れている / exit 2 = 検査自体が壊れている (#912 / #910)。
+      - name: Check doc -> code references (link / symbol / spawn coverage)
+        shell: bash
+        run: python scripts/check_doc_code_refs.py
+
+  feature-announcement:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
+
+      # SSoT は typer runtime registry (`typer.main.get_command(app).commands`)
+      # なので、`doc-code-refs` と違い CLI を import できる状態が要る。
+      # `allaganeye/cli.py` の `@app.command` を静的走査する実装だと、
+      # #944 で実際に漏れた `minimap` / `export` (どちらも `register(app)` 経由)
+      # がちょうど検査対象外になる。
+      - name: Install allaganeye (CLI registry を読むため)
+        run: pip install -e . -c constraints.txt
+
+      # 同梱 README.txt は source を grep せず pwsh で実際に描画して検査する
+      # (here-string / 関数境界の取り違えによる false-green を避けるため)。
+      # pwsh は ubuntu-latest runner にプリインストールされている。
+      # exit 1 = 告知漏れ / exit 2 = 検査自体が壊れている (#944)。
+      - name: Check shipped CLI subcommands are announced in entry docs
+        shell: bash
+        run: python scripts/check_feature_announcement.py
+
+  screenshot-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+
+      # scripts/check_screenshot_freshness.py は標準ライブラリのみで動くため
+      # pip install を持たない。**git 履歴も使わない**: actions/checkout@v4 の
+      # 既定 fetch-depth: 1 では `git log -- <path>` が全ファイルについて同じ
+      # 1 commit を返し、commit 日時比較も blob 変化点の追跡も無条件 green に
+      # なる (2026-08-20 実測)。照合は source の内容ハッシュで行う。
+      # exit 1 = 撮り直し漏れ / exit 2 = 検査自体が壊れている (#944)。
+      - name: Check README screenshots are captured from current GUI sources
+        shell: bash
+        run: python scripts/check_screenshot_freshness.py
+
+  changelog-style:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+
+      # scripts/check_changelog_style.py は標準ライブラリのみで動くため
+      # pip install を持たない。走査対象は `## [Unreleased]` (無ければ最新
+      # version セクション) のみで、既リリース済みセクションは見ない (裁定 D7)。
+      # exit 1 = 規約違反 / exit 2 = 検査自体が壊れている (#952)。
+      # 規約の正は docs/release-process.md §CHANGELOG entry の記述規約。
+      - name: Check CHANGELOG entry style (internal jargon / Internal section)
+        shell: bash
+        run: python scripts/check_changelog_style.py
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:
@@ -266,12 +428,54 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # #876 -- PSGallery / PowerShellGet は windows runner 上で間欠的に
+      # "No match was found for the specified search criteria and module name
+      # 'Pester'" を返す (PR #874 で実発生。19 分前の #871 マージ run では成功
+      # していたので transient)。retry で自癒させ、この job の結果が
+      # 「Pester テストの成否」だけを反映するようにする。
+      #
+      # **成否判定を Install-Module の error semantics に委ねない。**
+      # PackageManagement のエラーは -ErrorAction Stop / $ErrorActionPreference
+      # を素通りして非終了のまま抜けることがあるため、毎 attempt の後に
+      # `Get-Module -ListAvailable` で **実際に 5.0.0 以上が入ったか** を確認する。
+      # これが無いと「install に失敗したのに retry せず次へ進み、後段で落ちる」
+      # 経路が残り、retry が silent な no-op になる。
+      #
+      # この retry が見ていない集合:
+      #   - PSGallery が恒久障害なら 3 回とも失敗して従来どおり red になる (正しい)
+      #   - module の cache 化はしていないので install 自体は毎 run 走る
+      #     (#876 の選択肢 (b) は不採用。cache key の陳腐化という別の穴を作るため)
+      #   - **正常時には永久に不発**。通常の PR では 1 回目で成功するので、
+      #     この分岐が生きているかは通常の緑からは分からない (発火実証は
+      #     存在しないモジュール名を流して行う。PR 本文に run URL を記録)
       - name: Install Pester v5
         shell: pwsh
         run: |
-          Install-Module Pester -MinimumVersion 5.0.0 -Scope CurrentUser -Force -SkipPublisherCheck
-          Import-Module Pester -MinimumVersion 5.0.0
-          (Get-Module Pester).Version
+          $ErrorActionPreference = 'Stop'
+          $moduleName = 'Pester'
+          $minVersion = [version]'5.0.0'
+          $maxAttempts = 3
+          $installed = $null
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            try {
+              Install-Module $moduleName -MinimumVersion $minVersion -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
+            } catch {
+              Write-Host "::warning::Install-Module ${moduleName}: attempt ${attempt}/${maxAttempts} threw: $($_.Exception.Message)"
+            }
+            $installed = Get-Module -ListAvailable -Name $moduleName |
+              Where-Object { $_.Version -ge $minVersion } |
+              Sort-Object Version -Descending |
+              Select-Object -First 1
+            if ($null -ne $installed) { break }
+            Write-Host "::warning::${moduleName} >= ${minVersion} still not available after attempt ${attempt}/${maxAttempts}"
+            if ($attempt -lt $maxAttempts) { Start-Sleep -Seconds (15 * $attempt) }
+          }
+          if ($null -eq $installed) {
+            throw "Install-Module ${moduleName}: version ${minVersion} or later is not available after ${maxAttempts} attempt(s)"
+          }
+          Write-Host "Installed ${moduleName} $($installed.Version) on attempt ${attempt}/${maxAttempts}"
+          Import-Module $moduleName -MinimumVersion $minVersion
+          (Get-Module $moduleName).Version
 
       - name: Run Pester tests
         shell: pwsh

@@ -6,6 +6,12 @@
 
 本 doc は [#590](https://github.com/Idios/kobutachan-allaganeye/issues/590) で起票し、[#589](https://github.com/Idios/kobutachan-allaganeye/issues/589) (PreviewScreen の state mutation flow / disabled 理由表示 / silent edit loss) の root cause を構造的に再発防止することが第一目的。
 
+> **実装参照の書き方 (CI で検査される、[#910](https://github.com/Idios/kobutachan-allaganeye/issues/910))**: 実装箇所は **行番号 anchor を使わず名前参照で書く**。行番号は GUI コードに 1 PR 入るだけで無言でズレるため。書式は「ファイルへの相対リンク + `の` + backtick で囲んだ symbol」で、例えば [PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `handleApply` のように書く (この一文自体が検査対象の実例になっている)。`の` が「その symbol はそのファイルにある」という所属の主張になる。この形の参照は `scripts/check_doc_code_refs.py` (CI job `doc-code-refs`) が検査し、リンク先ファイルと `symbol` の実在を確認する。照合はリンク先の**コメントを除去した** source に対して行うので、リネーム後にコメントだけ古い名前が残っている状態は stale として落ちる。テンプレートリテラルを指すときは固定 prefix (例: `` `fallback-notice-` ``) を書けば検査できる。
+>
+> **検査されない範囲**: `の` で束縛されていない backtick (散文・UI ラベル・CSS 値・状態名) は検査対象外で、記述内容の正しさも見ない。詳細は `scripts/check_doc_code_refs.py` の docstring §「この gate が見ていない集合」を参照。
+>
+> **同一セル内で同じファイルの symbol を続けて挙げるときは、可読性が落ちる手前まで束縛形にする** ([#960](https://github.com/Idios/kobutachan-allaganeye/issues/960))。束縛した分だけ検査対象が増えるので束縛が原則だが、同じリンクを 3 連続以上並べるとセルが読めなくなるため、そこからは bare backtick にしてよい (実例: §1.2 の `loadErrorState` / `addErrorState` は 2 連続なので両方束縛、§2.5.9 は `PROGRESS_COMPLETE` を束縛して `EXPORT_ERROR` / `CANCEL_CONFIRMED` は bare)。**bare にした分は検査対象から外れる**ので、追加・改名時は手で実在確認すること。
+
 ## 1. 共通原則
 
 6 画面すべての UI 部品は本節の原則に準拠する。違反は #589 系統のバグとして扱い、レビュー時は本節を逐条照合する。
@@ -39,7 +45,7 @@
 - inline hint は赤字エラーではなく `var(--ae-text-dim)` 系の補助色。情報レベル
 - 理由文は **行動指針を含む形** (例:「サンプル動画では保存できません。実際の動画を選択してください。」)。否定形だけで終わらせない
 
-**アンチパターン**: 理由表示なしの disabled。ユーザーは原因不明で「壊れた」と認識する ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `[適用]` button (`aria-label="apply"`) の `applying || !filePath` による sample mode 永続 disabled が #589 該当ケース。[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で tooltip / inline hint / 上部 banner を実装し解消済)。
+**アンチパターン**: 理由表示なしの disabled。ユーザーは原因不明で「壊れた」と認識する ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `aria-label="apply"` button (`[適用]`) の `applying || !filePath` による sample mode 永続 disabled が #589 該当ケース。[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で tooltip / inline hint / 上部 banner を実装し解消済)。
 
 ### 1.3 silent loss 防止: dirty consume 側で confirm
 
@@ -233,7 +239,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 状態 | `idle` (phase=`idle`) / `disabled` (phase=`selecting/probing/selected/probeError`) |
 | 遷移トリガー | `onClick` → `selectRecent(item)` → reducer `RECENT_PICKED` (phase=`idle → probing`) → `probeAndDispatch(item.path)`。drop と同じ probe 経路を辿るので、metadata 不整合 / 解像度差異もそこで再評価される |
 | store mutation | mount 時に `recentStore.load()` で `<install dir>/recent.json` (PR #655 Round 2: Portable ZIP 哲学に揃えて exe ディレクトリ配置) をロード。probe 成功時に `recentStore.add(path)` で履歴更新 (重複は最新化、最大 10 件、`\\?\` extended-length prefix は Rust 側で strip) |
-| 例外 / edge case | (1) 履歴ゼロ件: 「履歴はまだありません」placeholder ([recent-empty](../gui/src/screens/DropScreen.tsx))。(2) ファイル不在: Rust `read_recent` / `add_recent` が `Path::exists()` で確認し、不在 entry を**自動 prune** + 永続化更新 (PR #655 Round 2: 旧 grayed-out + warning notice UX を撤廃)。(3) `recent.json` 破損: 空配列扱い (`read_recent_sync` が `unwrap_or_default`、Rust 側)。(4) 同 path 再選択: dedup でトップに移動 + mtime / addedAt 更新 (Windows は case-insensitive + separator-insensitive 比較)。(5) `read_recent` / `add_recent` の Tauri command 自体が AppError で reject された場合 (Rust 側の I/O 例外等): `recentStore.loadError` / `addError` に message + `loadErrorHint` / `addErrorHint` に AppError hint がセットされ、`recentHeading` 直後に inline notice (`<InlineErrorHint>` 経由、`role="alert"` + `data-testid="recent-notice"`) を表示。`loadError` 優先、両 null で非表示、dismiss なし、次回 load/add 成功で自動消去 (#698 A-minimal、PR #733) |
+| 例外 / edge case | (1) 履歴ゼロ件: 「履歴はまだありません」placeholder ([recent-empty](../gui/src/screens/DropScreen.tsx))。(2) ファイル不在: Rust `read_recent` / `add_recent` が `Path::exists()` で確認し、不在 entry を**自動 prune** + 永続化更新 (PR #655 Round 2: 旧 grayed-out + warning notice UX を撤廃)。(3) `recent.json` 破損: 空配列扱い (`read_recent_sync` が `unwrap_or_default`、Rust 側)。(4) 同 path 再選択: dedup でトップに移動 + mtime / addedAt 更新 (Windows は case-insensitive + separator-insensitive 比較)。(5) `read_recent` / `add_recent` の Tauri command 自体が AppError で reject された場合 (Rust 側の I/O 例外等): [recentStore.ts](../gui/src/state/recentStore.ts) の `loadErrorState` / [recentStore.ts](../gui/src/state/recentStore.ts) の `addErrorState` に message + AppError hint がセットされ、`recentHeading` 直後に inline notice (`<InlineErrorHint>` 経由、`role="alert"` + `data-testid="recent-notice"`) を表示。`loadErrorState` 優先、両 null で非表示、dismiss なし、次回 load/add 成功で自動消去 (#698 A-minimal、PR #733) |
 | 表示 | 各 item は `[◈] [full path] [date] [GB]` の row。長い path は CSS の `direction: rtl` truncate で**左側を `…` で省略**して file-name 末尾を常に可視に保つ。hover で title tooltip にフルパス |
 
 #### §2.1.4 SelectedCard (probe 結果カード)
@@ -302,7 +308,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 
 **目的**: `start_detect` (#569) に渡す検知パラメータを GUI 上で調整。値は `appStateStore.detectionParams` に保存され、`reset()` まで session 中保持される (localStorage 永続化なし、再起動時は default に戻る)。
 
-**スコープ (3 パラメータ)**: `blackout_threshold` / `workers` / `gpu`。`--no-audio` は audio module frozen (#327、`allaganeye/audio/__init__.py` の `AUDIO_FROZEN`) のため UI 不公開、#327 解凍後に再追加する。
+**スコープ (3 パラメータ)**: `blackout_threshold` / `workers` / `gpu`。`--no-audio` は audio module frozen (#327、`allaganeye/audio/__init__.py` の `AUDIO_FROZEN`) のため UI 不公開。解凍は #865 で「期限なし凍結」に決着しており、再追加の予定はない（方針が変われば再検討）。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -370,7 +376,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
   - 各 input: `<label htmlFor>` (slider / numeric) で関連付け、tri-state は `aria-label="gpu mode"` + `role="radio"`
   - リセット button: `aria-label` で disabled 理由 (default 値) を明示
 - Tab order: header toggle → (展開時) blackout slider → workers numeric → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ
-- **`--no-audio` UI 不採用**: `allaganeye/audio/__init__.py` の `AUDIO_FROZEN` により audio module は frozen 状態 (#327、`split_matches.py` の `_run_audio_scan` が live probe して skip) のため `--no-audio` flag は実質 no-op。GUI 側でのみ控え (Rust `DetectParams.no_audio` field 自体は #569 で実装済み、#327 解凍時に再公開)
+- **`--no-audio` UI 不採用**: `allaganeye/audio/__init__.py` の `AUDIO_FROZEN` により audio module は frozen 状態 (#327、`split_matches.py` の `_run_audio_scan` が live probe して skip) のため `--no-audio` flag は実質 no-op。GUI 側でのみ控え (Rust `DetectParams.no_audio` field 自体は #569 で実装済み。再公開は解凍が前提だが、#865 で期限なし凍結に決着済み)
 
 ### §2.2 detecting
 
@@ -637,7 +643,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 - **(差異 2)** `preview_restoreError` を §2.4 ヘッダから除外 (RestoreButton 共通 component 内のエラー表示として §2.3.4 / §2.4.13 で扱う。§2.4 ヘッダは preview 画面レベル状態のみ列挙)
 - 両者は意図的な分担であり矛盾ではない。後続 §3 (相互リンク + クロスリファレンス) で全画面の状態名と mermaid の対応関係を一括整理する
 
-**editing**: 編集対象パネルを示す local state `editing: 'start' | 'end'` ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `const [editing, setEditing]`)。`editing` で `currentT` / `setCurrentT` / `activeVideoRef` が分岐し、stepRow / keyboard / FrameStrip の操作対象を決める。`editing` は phase とは独立で、画面マウント中は常に `'start' | 'end'` のいずれか。
+**editing**: 編集対象パネルを示す local state `editing: 'start' | 'end'` ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `const [editing, setEditing]`)。`editing` で `currentT` / [PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `commitCurrentT` / `activeVideoRef` が分岐し、stepRow / keyboard / FrameStrip の操作対象を決める。`editing` は phase とは独立で、画面マウント中は常に `'start' | 'end'` のいずれか。
 
 **store**: 読み書きは `metadataStore` の `metadata`, `dirty`, `applying`, `applyError`, `filePath`, `updateMatch`, `apply`, `discardEdits` と `appStateStore` の `selectedMatchIndex`, `navigate`, `selectedVideoPath`。書き込み経路は `updateMatch` (matchName / startT / endT は debounce 200ms で coalesce、matchType は §1.1 例外で即時 commit) / `apply` ([適用]) / `discardEdits` (back / export confirm OK で最後の persisted 状態へ revert) / `RestoreButton.restore` (§2.4.13) / `navigate` (back / export / RestoreButton 成功) のみ。
 
@@ -697,7 +703,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 状態 | `inactive` / `active` (`editing === 'start'` で IN、`'end'` で OUT) |
 | 遷移トリガー | `onClick` → `props.onActivate()` → `setEditing('start' \| 'end')` |
 | store mutation | なし (local state) |
-| 例外 / edge case | inactive Pane の video / tcInput クリックは `onActivate()` を呼んだ後に play/pause / TC 編集に進む 2 段経路 (§2.4.5 / §2.4.6 で詳述)。`active` 切替で `currentT` / `setCurrentT` / `activeVideoRef` の参照が IN/OUT 間で切り替わる |
+| 例外 / edge case | inactive Pane の video / tcInput クリックは `onActivate()` を呼んだ後に play/pause / TC 編集に進む 2 段経路 (§2.4.5 / §2.4.6 で詳述)。`active` 切替で `currentT` / [PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `commitCurrentT` / `activeVideoRef` の参照が IN/OUT 間で切り替わる |
 
 #### §2.4.5 Pane.video (`<video>`)
 
@@ -725,7 +731,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | --- | --- |
 | 種類 | button × 6 ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `styles.stepRow` 内 `styles.stepButton`)。`-10s / -1s / -1F / +1F / +1s / +10s`。`title="<label> (<key hint>)"` で keyboard 等価操作明示、`aria-label="nudge <label>"` |
 | 状態 | `idle` / `disabled` (sample mode: `isSample=true` で disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済 → §1.4) |
-| 遷移トリガー | `onClick` → frame ボタンは `nudgeFrame(±1)` (frame-grid snap)、秒 ボタンは `nudge(±1 \| ±10)` (累積) → 内部で `setCurrentT(...)` → schedule effect 経由で 200ms 後に `updateMatch({ edited })` commit |
+| 遷移トリガー | `onClick` → frame ボタンは `nudgeFrame(±1)` (frame-grid snap)、秒 ボタンは `nudge(±1 \| ±10)` (累積) → 内部で [PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `commitCurrentT` → schedule effect 経由で 200ms 後に `updateMatch({ edited })` commit |
 | store mutation | debounce 完了時 `metadataStore.metadata.matches[i].edited.start_time/end_time`、`dirty=true` |
 | 例外 / edge case | global keyboard ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `handleKey`) が ←/→/Shift+←→/Alt+←→ に同等の `nudge` / `nudgeFrame` を割り当てる。INPUT/TEXTAREA/SELECT に focus 中はキーボードを `return` で吸わない (TC input への入力を妨げない)。frame-grid snap は IEEE 754 丸め誤差で `t + 1/fps` の frame portion が advance しないケースを回避するため frame 番号ベースで step (例: 2438.75 + 1/120 → frame .90 のままバグ) |
 
@@ -745,7 +751,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | --- | --- |
 | 種類 | sub-component ([FrameStrip.tsx](../gui/src/components/FrameStrip.tsx)、PreviewScreen の `styles.strip` 内に配置)。±3s 範囲、12 frames @ 0.5s 間隔、現境界中心の thumb 列 + #645 で **brightness overlay** (SVG semi-transparent、`pointer-events: none` で thumbnail click を阻害しない) を追加 |
 | 状態 | `displayOnly` (frame の sample) + interactive (frame click)。`brightness overlay` は thumb 上に半透明 SVG layer を重ねる: 輝度波形 (gold) / 閾値線 (red dashed) / blackout band (cyan)。 sample mode: thumb click は no-op (isSample=true で `onSelectFrame` を呼ばない、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) → §1.4)。brightness data は currentT ±3s で `extract_brightness_window` invoke (200ms debounce、currentT 変動に追従) |
-| 遷移トリガー | thumb `onClick` → `props.onSelectFrame(t)` → `setCurrentT(t)` → schedule effect 経由で 200ms 後に `updateMatch({ edited })` commit。brightness fetch は currentT / videoSource / isSample / match.index 変更で再発火 (200ms debounce) |
+| 遷移トリガー | thumb `onClick` → `props.onSelectFrame(t)` → [PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `commitCurrentT` → schedule effect 経由で 200ms 後に `updateMatch({ edited })` commit。brightness fetch は currentT / videoSource / isSample / match.index 変更で再発火 (200ms debounce) |
 | store mutation | debounce 完了時 `metadataStore.metadata.matches[i].edited.start_time/end_time`、`dirty=true`。brightness overlay は store mutation なし (PreviewScreen 内 local state、`brightnessWindow` / `overlayError`) |
 | 例外 / edge case | `editing` で `inThumbs` / `outThumbs` を切替表示。thumbs の生成は ffmpeg `generate_match_thumbnails` (Rust 経由) で、boundary が 0.5s 以上動いた時のみ再フェッチ。失敗時は空配列 (UI は空 strip 表示)、エラー文言は出さない (#465 設計判断)。brightness overlay は data なし or fetch 失敗時に SVG 自体が render されない (back-compat、優雅な degrade); fetch 失敗時は inline 診断メッセージを strip 直下に表示 (`toErrorState(e)` → `overlayState.message` + `<InlineErrorHint hint={overlayState.hint} />`)。sample mode (`filePath===null`) は invoke せず `buildLocalBrightness(currentT, 3, 10).map(s => s.b)` で synthetic 波形 |
 
@@ -783,7 +789,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 | 項目 | 内容 |
 | --- | --- |
-| 種類 | RestoreButton 共通 component ([RestoreButton.tsx](../gui/src/components/RestoreButton.tsx)、PreviewScreen の `styles.actionsRow` 内)。`onRestored={() => navigate('complete')}` で復元成功後に complete へ戻る |
+| 種類 | RestoreButton 共通 component ([RestoreButton.tsx](../gui/src/components/RestoreButton.tsx))。配置は [PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `styles.actionsRow` 内。`onRestored={() => navigate('complete')}` で復元成功後に complete へ戻る |
 | 状態 | §2.3.4 と共通 (`idle` / `busy` / `disabled`) |
 | 遷移トリガー | confirm → `restore()` → 成功で `onRestored` callback → `navigate('complete')` |
 | store mutation | §2.3.4 と共通。preview 画面では navigate('complete') が追加発火 |
@@ -844,7 +850,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 - `errorMessage` (phase=`error`、全試合 fail) → inline `role="alert"` ([ExportScreen.tsx](../gui/src/screens/ExportScreen.tsx) の `styles.errorMessage`)
 - per-match `s.error` → listItem 内 inline `role="alert"` ([ExportScreen.tsx](../gui/src/screens/ExportScreen.tsx) の `styles.listError`、120 文字 slice)
-- per-match `s.fallbackNotice` (#591 GPU encoder fallback 通知) → listItem 内 `role="status"` ([ExportScreen.tsx](../gui/src/screens/ExportScreen.tsx) の `data-testid="fallback-notice-${index}"`、エラーではなく info)
+- per-match `s.fallbackNotice` (#591 GPU encoder fallback 通知) → listItem 内 `role="status"` ([ExportScreen.tsx](../gui/src/screens/ExportScreen.tsx) の `fallback-notice-` prefix を持つ `data-testid`、エラーではなく info)
 - `openFolderError` ([フォルダを開く] 失敗) → primary button 直下に inline `role="alert"` ([ExportScreen.tsx](../gui/src/screens/ExportScreen.tsx) の `styles.openFolderError` + `data-testid="open-folder-error-hint"`)
 
 global toast 未採用 (画面が log 中心で各情報源と表示位置が固定されているため、inline 集約で十分)。Phase 2.5 / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) で他画面と統一した toast 方針が決まればそれに合わせる。
@@ -902,7 +908,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | input: `idle` / `disabled` (`running \|\| cancelling \|\| isSample`。sample mode disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) → §1.4)。hint: `displayOnly` |
 | 遷移トリガー | input `onChange` → 即時 `setNamePattern(value)` |
 | store mutation | なし (session-local) |
-| 例外 / edge case | `formatName` で `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}` を置換。`{start}` は `formatStartForFilename` で `MM-SS` / `H-MM-SS` 形式 (Windows filename で `:` 不可のため `-` 置換)。未知トークン (`{foo}` 等) は置換されず literal のまま出るだけで syntax error にはしない。ただし **置換キーなし等で 2 つ以上の match が同一ファイルに解決する pattern は、CLI 側の `resolve_export_output_paths` が ffmpeg 起動前 (mkdir よりも前) に検出し、1 件も書き出さずに exit 5** (#930 / #938)。GUI も `--stdin` で同じ `export` command を呼ぶため同じ preflight を通り、invoke reject → `EXPORT_ERROR` (§2.5.7) になる。**前回 run が残した同名ファイルへの上書き** (ffmpeg `-y`) は従来どおりで拒否対象ではない (§2.5.12)。拒否 5 条件の正は [cli-spec.md](cli-spec.md) の `--name-pattern` |
+| 例外 / edge case | `formatName` で `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}` を置換。`{start}` は `formatStartForFilename` で `MM-SS` / `H-MM-SS` 形式 (Windows filename で `:` 不可のため `-` 置換)。未知トークン (`{foo}` 等) は置換されず literal のまま出るだけで syntax error にはしない。ただし **置換キーなし等で 2 つ以上の match が同一ファイルに解決する pattern は、CLI 側の `resolve_output_paths` が ffmpeg 起動前 (mkdir よりも前) に検出し、1 件も書き出さずに exit 5** (#930 / #938)。GUI も `--stdin` で同じ `export` command を呼ぶため同じ preflight を通り、invoke reject → `EXPORT_ERROR` (§2.5.7) になる。**前回 run が残した同名ファイルへの上書き** (ffmpeg `-y`) は従来どおりで拒否対象ではない (§2.5.12)。拒否 5 条件の正は [cli-spec.md](cli-spec.md) の `--name-pattern` |
 
 #### §2.5.6 コーデック selector (copy / h264 buttons)
 
@@ -940,7 +946,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | --- | --- |
 | 種類 | button ([ExportScreen.tsx](../gui/src/screens/ExportScreen.tsx) の `styles.primaryButton`、`aria-label="書き出し開始"`)。`!completed && !error` でのみ render |
 | 状態 | `idle` (label `⬦ 書き出し開始`) / `running` (label `書き出し中…`、disabled) / `cancelling` (label `中断中…`、disabled) / `disabled` (`!videoSource`) |
-| 遷移トリガー | `onClick` → `handleStartExport()` → `dispatch(START_CLICKED)` (idle→running) → 単発 `invoke('start_export', ...)` → Python subprocess が N 並列 ffmpeg を spawn → 各試合完了ごとに `export-progress` イベントで `PROGRESS_EVENT` dispatch → 全完了で `PROGRESS_COMPLETE` / 全失敗で `EXPORT_ERROR` / cancel で `CANCEL_CONFIRMED` |
+| 遷移トリガー | `onClick` → `handleStartExport()` → `dispatch(START_CLICKED)` (idle→running) → 単発 `invoke('start_export', ...)` → Python subprocess が N 並列 ffmpeg を spawn → 各試合の進捗は `export-progress` イベントで per-match state を直接更新 (reducer は経由しない) → 終了時 (cancel でも全失敗でもない、それ以外すべて) に [export.ts](../gui/src/screens/reducers/export.ts) の `PROGRESS_COMPLETE` / 全失敗で `EXPORT_ERROR` / cancel で `CANCEL_CONFIRMED` |
 | store mutation | `appStateStore.lastExportOutputDir` (`handleStartExport` 冒頭で `setLastExportOutputDir(outDir)`、minimap 画面の出力先 default 引き継ぎ用、[#893](https://github.com/Idios/kobutachan-allaganeye/issues/893))。metadata 側は無変更。ほかに `matchStates` / `exportStartMs` / `nowMs` / 内部 phase (local state) が更新 |
 | 例外 / edge case | `!metadata` または `!videoSource` で early return。ad-hoc exclude (`excludedIndexes`) のみ Python 側 `--exclude` に渡して除外。永続 skip (`type_override === 'skip'`) と `post_match: true` は `--exclude` に載らず、`--stdin` metadata 経由で Python 側 filter (`export.py` の `type_override == "skip"` / `post_match` 無条件 skip) が除外する。単発 `invoke('start_export', ...)` で Python subprocess を起動、Python pool が N 並列で ffmpeg を spawn。§1.2 disabled 理由: sample mode は「サンプル動画では保存できません」/ `!videoSource` は「動画ファイルが選択されていません。drop 画面に戻って選択してください」/ running / cancelling は当該ボタン非表示で代替。([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で sample mode 対応実装済) |
 
@@ -1002,7 +1008,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | checkbox: `checked` (`isIncluded`) / `unchecked` (`isAdHocExcluded`) / `disabled` (`isPersistSkip \|\| isPostMatch \|\| running \|\| cancelling`)。statusMark: `pending(○) / running(●) / done(✓) / error(!) / skipped(—)` (post_match 行は常に `—`)。per-match progress bar: `running \|\| completed \|\| done \|\| error` で表示。post_match 行は `listItemPostMatch` (dimmed) + `data-post-match="true"` + badge「試合後」([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) |
 | 遷移トリガー | checkbox `onChange` → `toggleMatchExclusion(matchIndex)` (`excludedIndexes` add/delete)。Tauri event `export-progress` payload `{match_index, percent, stage, message, fallback_from}` で `matchStates[index]` 更新 |
 | store mutation | なし |
-| 例外 / edge case | duration 表示は `m.edited` がある場合 `effectiveEnd - effectiveStart` を `fmtMatchDuration` で再計算 (旧実装は CLI 初期値 `m.duration_display` 固定、preview 編集が反映されないバグの修正)。`s.error` は 120 文字で slice (UI が崩れないため)。`fallbackNotice` は GPU encoder fail で libx264 retry した試合に `role="status"` で表示 (エラーではない info、color: `var(--ae-accent)`)。あわせて status を `running` に倒す (NVENC の初期化失敗は 1 frame も encode せずに落ちるため fallback がその match の**最初の** event になるのが通常ケースで、prior を保つと `○` (pending) のまま「libx264 で再試行中」と出る矛盾表示になる)。minimap の §2.6.16 と同型。checkbox tooltip で永続 skip (`preview 画面で skip 設定済 (変更不可)`) / post_match (`試合後の映像のため書き出し対象外です`、[#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) / 通常選択 (`書き出し対象から除外/復帰`) を区別。post_match の機能的な export 除外は Phase 1 の `export.py` skip が正で、本行は表示・選択 UX のみ。post_match 行の name 表示も通常行と同じ命名規則 template 由来のファイル名形式のまま (書き出されないが専用表記はしない、[#891](https://github.com/Idios/kobutachan-allaganeye/issues/891)) — 書き出し対象外の伝達は checkbox disabled + tooltip + mark `—` + badge が担う |
+| 例外 / edge case | duration 表示は `m.edited` がある場合 `effectiveEnd - effectiveStart` を `fmtMatchDuration` で再計算 (旧実装は CLI 初期値 `m.duration_display` 固定、preview 編集が反映されないバグの修正)。`s.error` は 120 文字で slice (UI が崩れないため)。`fallbackNotice` は GPU encoder fail で libx264 retry した試合に `role="status"` で表示 (エラーではない info、color は [tokens.css](../gui/src/styles/tokens.css) の `--ae-gold-bright`)。あわせて status を `running` に倒す (NVENC の初期化失敗は 1 frame も encode せずに落ちるため fallback がその match の**最初の** event になるのが通常ケースで、prior を保つと `○` (pending) のまま「libx264 で再試行中」と出る矛盾表示になる)。minimap の §2.6.16 と同型。checkbox tooltip で永続 skip (`preview 画面で skip 設定済 (変更不可)`) / post_match (`試合後の映像のため書き出し対象外です`、[#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) Phase 2) / 通常選択 (`書き出し対象から除外/復帰`) を区別。post_match の機能的な export 除外は Phase 1 の `export.py` skip が正で、本行は表示・選択 UX のみ。post_match 行の name 表示も通常行と同じ命名規則 template 由来のファイル名形式のまま (書き出されないが専用表記はしない、[#891](https://github.com/Idios/kobutachan-allaganeye/issues/891)) — 書き出し対象外の伝達は checkbox disabled + tooltip + mark `—` + badge が担う |
 
 #### §2.5.16 emptyNote
 
@@ -1206,7 +1212,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | マークは `post_match` → `—` / `done` → `✓` / `running` → `●` / `error` → `!` / `skipped` → `—` / それ以外 → `○`。checkbox は `disabled={isSample \|\| type_override === 'skip' \|\| post_match \|\| running \|\| cancelling}` で、`checked` は skip / post_match / excluded のいずれにも該当しないときのみ true。進捗バーは `running \|\| completed \|\| status === 'done' \|\| status === 'error'` のときだけ render される。`post_match` 行は `styles.listItemPostMatch` (減光) + `data-post-match="true"` |
 | 遷移トリガー | checkbox `onChange` → `toggleMatchExclusion(index)` が local `excluded` の in/out を切り替える。進捗 / エラー / fallbackNotice は `minimap-progress` イベント由来 |
 | store mutation | なし (local `excluded` / `matchStates`) |
-| 例外 / edge case | **GPU fallback notice** ([#899](https://github.com/Idios/kobutachan-allaganeye/issues/899)): `stage === 'fallback'` の progress を受けると `message` (無ければ `` `${fallback_from ?? 'GPU encoder'} 失敗、libx264 で再試行` ``) を per-match に刻む。あわせて status を `running` に倒す (NVENC の初期化失敗は 1 frame も encode せずに落ちるため fallback がその match の**最初の** event になるのが通常ケースで、prior を保つと `○` (pending) のまま「libx264 で再試行中」と出る矛盾表示になる)。libx264 で encode をやり直すため進捗が 0% に戻ること自体は正しい挙動。`role="status"` の非 assertive 通知として `var(--ae-accent)` 色で表示する。per-match エラー文字列は 120 文字で切り詰める。表示ファイル名は §2.6.11 の `namePattern` を `formatMatchFilename` ([filename.ts](../gui/src/utils/filename.ts)) で展開した結果 (`{idx:03}` / `{idx}` / `{type}` / `{start}` / `{date}` を置換。`{start}` は `MM-SS` / `H-MM-SS` 形式で、`m.edited` があるときは編集後の `start_time` を使う、#932) |
+| 例外 / edge case | **GPU fallback notice** ([#899](https://github.com/Idios/kobutachan-allaganeye/issues/899)): `stage === 'fallback'` の progress を受けると `message` (無ければ `` `${fallback_from ?? 'GPU encoder'} 失敗、libx264 で再試行` ``) を per-match に刻む。あわせて status を `running` に倒す (NVENC の初期化失敗は 1 frame も encode せずに落ちるため fallback がその match の**最初の** event になるのが通常ケースで、prior を保つと `○` (pending) のまま「libx264 で再試行中」と出る矛盾表示になる)。libx264 で encode をやり直すため進捗が 0% に戻ること自体は正しい挙動。`role="status"` の非 assertive 通知として [tokens.css](../gui/src/styles/tokens.css) の `--ae-gold-bright` 色で表示する。per-match エラー文字列は 120 文字で切り詰める。表示ファイル名は §2.6.11 の `namePattern` を `formatMatchFilename` ([filename.ts](../gui/src/utils/filename.ts)) で展開した結果 (`{idx:03}` / `{idx}` / `{type}` / `{start}` / `{date}` を置換。`{start}` は `MM-SS` / `H-MM-SS` 形式で、`m.edited` があるときは編集後の `start_time` を使う、#932) |
 
 #### §2.6.17 ConflictModal (minimap-local)
 

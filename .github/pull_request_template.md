@@ -55,7 +55,9 @@ heading 名は `pr-checklist.yml` workflow の section-aware regex と完全一�
 #### ベース同期確認 (Pre-flight、`docs/l2-workflow.md` §「PR 作成 Pre-flight」)
 
 <!--
-plain bullet `-` で記述する (validate-checklist は `[x]` 化を要求しない、CI ゲート増設なし)。
+plain bullet `-` で記述する (validate-checklist は `[x]` 化を要求しない)。
+ただし **下 2 行の宣言フィールドは `check-preflight-freshness` job が機械検査する** (#946)。
+plain bullet だから CI 対象外、ではない。未記入・placeholder 放置は fail-closed で red になる。
 PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre-flight」参照):
 1. `git fetch origin <base>` で base 最新化
 2. `git log HEAD..origin/<base> --oneline` で取り込み未済 commit 列挙
@@ -69,6 +71,18 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre
 - 直近マージ PR の影響: なし / [#N] (touched files 交差: `<path>` → 確認済み)
 - 並行 PR 確認 (`gh pr list --search "<元issue#>" --state all`): なし / [#N] (理由: 別スコープ並走 / 重複なし)
 
+<!--
+下 2 行は Step 0 / Step 4 で **実際に観測した open PR 集合**をそのまま書き写す欄で、
+CI が PR 作成時点 (T0) の集合を再サンプリングして差分を取る (#946)。
+上の「並行 PR 確認」行との分担: あちらは `--state all` の結果に対する**判断**
+(別スコープ並走 / 重複なし) を書く欄、こちらは判断前の**生の観測結果**を書く欄。
+重複記入ではなく、判断の入力と出力を分けている。
+書式: `#938, #940` (無ければ `なし`)。`[#N,...]` を残したまま提出すると red になる。
+-->
+
+- Pre-flight 時点の同 issue open PR: [#N,...] (または なし)
+- Pre-flight 時点の同 base open PR: [#N,...] (または なし)
+
 #### Self-Test Report (machine-verified — 全件 `[x]` で validate-checklist 通過)
 
 <!--
@@ -76,11 +90,19 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre
 該当しない場合は `[x]` + 「N/A: <理由>」 を付記 (例: `[x] cargo check — N/A: gui/src-tauri/ 変更なし`)。
 未実施の場合は `[ ]` のままで CI fail させる (Iron Law 6 違反として明示)。
 (Refs #635) checkbox convention: 本節は machine-verified 限定なので全件 [x]、未実施は [ ] のまま CI fail させて自覚を促す。詳細は docs/l2-workflow.md §「Self-Test Report 規約」
+
+Fable 俯瞰レビュー (#945) の起動条件 — 次のいずれかに該当したら「実施」:
+  (a) doc-only PR (docs/** / *.md のみで code file 変更ゼロ)
+  (b) docs/superpowers/specs/** または docs/superpowers/plans/** への新規ファイル追加を含む
+該当時は「実施 (finding N 件 / 消化 M 件 / 残 K 件)」を **実数で** 記入する (N/M/K のままは CI red)。
+非該当時は「非実施 (理由: 2 条件のどちらに非該当か)」。
+起動条件は CI が変更ファイル一覧と突き合わせて検査する — 該当 PR で「非実施」と書くと red。
+詳細は .claude/skills/review-pr/SKILL.md §「optional 俯瞰レビュー」
 -->
 
 - [ ] `ruff check .` (python-core 変更時)
 - [ ] `ruff format --check .` (python-core 変更時)
-- [ ] `pyright` (python-core 変更時)
+- [ ] `pyright --pythonpath <repo root の .venv の python>` (python-core 変更時。`--pythonpath` 省略は false-red、#974)
 - [ ] `pytest` (python-core 変更時、slow 除外)
 - [ ] `cd gui && npm run lint` (gui-frontend 変更時)
 - [ ] `cd gui && npm run typecheck` (gui-frontend 変更時)
@@ -88,6 +110,7 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre
 - [ ] `cd gui && npm run build` (gui-frontend 変更時)
 - [ ] `cargo check --manifest-path gui/src-tauri/Cargo.toml` (gui-rust 変更時)
 - [ ] `Invoke-Pester -Path scripts/tests/` (installer-pester 変更時、Windows 上で)
+- [ ] Fable 俯瞰レビュー (#945): <上のコメントの起動条件を見て「実施 (finding N 件 / 消化 M 件 / 残 K 件)」または「非実施 (理由: ...)」に置き換える>
 
 #### 関連ドキュメント / マトリクス更新
 
@@ -96,6 +119,7 @@ PR 作成前 Pre-flight 4 ステップ (`docs/l2-workflow.md` §「PR 作成 Pre
 - [ ] CLAUDE.md / `docs/l2-workflow.md` の更新要否確認 — 不要なら `[x]` + 理由付記
 - [ ] 出力書式を変更した場合、`docs/cli-spec.md` の該当出力例も更新 (再発防止: #343 系)
 - [ ] docs / 識別子のリネーム時は `docs/l2-workflow.md` §「doc 節参照健全性確認」 で §「<旧名>」grep し残骸ゼロ確認
+- [ ] **CHANGELOG entry の要否を判断した** ([`docs/release-process.md`](../docs/release-process.md) §CHANGELOG entry の記述規約) — 利用者から見た振る舞いが変わる変更なら `## [Unreleased]` へ追記。内部専用なら本文に `CHANGELOG entry: 不要 (内部専用 — <CI ガード / 開発 doc / skill / テスト / 版 pin>)` を 1 行残す
 
 #### 実機検証 (machine-unverifiable — plain bullet で書く)
 

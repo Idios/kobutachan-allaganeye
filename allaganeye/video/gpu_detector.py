@@ -10,22 +10,18 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-import numpy as np
 
 from allaganeye.exceptions import STDERR_TAIL_BYTES, VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
 from allaganeye.video.capture_region import FULL_FRAME, CaptureRegion
 from allaganeye.video.detector import (
     SEEK_LEAD_SECONDS,
-    _FRAME_SIZE,
     _SAMPLE_HEIGHT,
     _SAMPLE_WIDTH,
-    _frame_brightness,
     _generate_timestamps,
     _proc_deadline_watchdog,
     _resolve_fps_rational,
     _sample_chunk_frames,
-    _use_legacy_fps_filter,
 )
 
 logger = logging.getLogger(__name__)
@@ -177,19 +173,16 @@ def scan_gpu(
     source_fps: float | None = None,
     region: CaptureRegion = FULL_FRAME,
 ) -> dict[float, float]:
-    """GPU mode: chunked parallel decode (#576: new path or legacy via env var).
+    """GPU mode: chunked parallel decode (#576).
 
     Splits the video timeline into chunks and runs one long-lived ffmpeg
-    process per chunk with GPU-accelerated decoding.  Each process uses
-    one of two paths to output one frame per interval, which is read from
-    stdout and analyzed for brightness:
-
-    - **v0.3.0 default**: dual seek (``-ss <chunk_start - 5>`` before ``-i`` +
-      ``-ss 5`` after ``-i``) + ``-fps_mode passthrough`` + ``-vf select='not(mod(n,N))'``
-      (frame-index based, deterministic; ffmpeg version 非依存)
-    - **legacy rollback**: ``-vf fps=1/{interval}`` (PTS based, transitional)
-      -- enabled only when env var ``ALLAGANEYE_DETECT_FPS_FILTER=1`` is set
-      (v0.3.x patch release で削除予定)
+    process per chunk with GPU-accelerated decoding.  Each process emits
+    one frame per interval, which is read from stdout and analyzed for
+    brightness, using dual seek (``-ss <chunk_start - 5>`` before ``-i`` +
+    ``-ss 5`` after ``-i``) + ``-fps_mode passthrough`` +
+    ``-vf select='not(mod(n,N))'`` (frame-index based, deterministic;
+    ffmpeg version 非依存).  The PTS-based ``fps=1/{interval}`` rollback
+    path was removed in #864.
 
     Returns dict mapping timestamp -> brightness, same as CPU mode.
 
@@ -403,28 +396,17 @@ def _decode_chunk(
 ) -> tuple[dict[float, float], str]:
     """GPU chunk decode dispatcher (#576).
 
-    Falls back to legacy fps-filter path when env var
-    ``ALLAGANEYE_DETECT_FPS_FILTER=1`` or no rational fps supplied.
+    Always uses the dual-seek + select-filter path.  The pre-#576
+    fps-filter path and its transitional env var escape hatch were
+    removed in #864, so an unresolvable frame rate raises
+    ``VideoProcessingError`` from ``_resolve_fps_rational`` (which
+    ``scan_gpu`` surfaces as a GPU failure -> CPU fallback) instead of
+    silently degrading to the version-dependent legacy path.
 
     *region* (default ``FULL_FRAME``) selects the brightness sub-rectangle and
     is threaded to the brightness site so GPU stays bit-exact with the CPU
     ``_frame_brightness`` path (Phase 1 B3, Codex #8).
     """
-    use_legacy = _use_legacy_fps_filter() or (
-        source_fps_num is None and source_fps_den is None and source_fps is None
-    )
-    if use_legacy:
-        return _decode_chunk_legacy(
-            video_path,
-            chunk_start,
-            chunk_end,
-            sample_interval,
-            codec=codec,
-            chunk_timestamps=chunk_timestamps,
-            vendor=vendor,
-            region=region,
-        )
-
     fps_num, fps_den = _resolve_fps_rational(
         source_fps_num,
         source_fps_den,
@@ -443,155 +425,6 @@ def _decode_chunk(
         is_tail_chunk,
         region=region,
     )
-
-
-def _decode_chunk_legacy(
-    video_path: Path,
-    chunk_start: float,
-    chunk_end: float,
-    sample_interval: float,
-    codec: str | None = None,
-    chunk_timestamps: list[float] | None = None,
-    vendor: str | None = None,
-    region: CaptureRegion = FULL_FRAME,
-) -> tuple[dict[float, float], str]:
-    """Legacy fps-filter chunk decode (pre-#576). Kept for env var rollback.
-
-    Returns ``(results_dict, stderr_text)`` so the caller can inspect
-    GPU usage from the first completed chunk.
-
-    When *chunk_timestamps* is supplied, the N-th emitted frame is mapped
-    to ``chunk_timestamps[N]`` (the global sample grid) instead of
-    ``chunk_start + N*sample_interval`` (#392).  Mirrors
-    ``_decode_chunk_cpu``'s labeling so CPU and GPU produce dicts keyed
-    identically on the same physical content.  Falls back to the chunk-
-    local formula when ``chunk_timestamps`` is None for backwards
-    compatibility with the unit tests that invoke the function directly.
-
-    When *vendor* is provided (#546), the ffmpeg command uses the
-    vendor-specific decoder (e.g. ``-hwaccel qsv -c:v av1_qsv``).  When
-    vendor is None, falls back to the legacy NVIDIA CUVID path to keep
-    existing unit tests working.
-
-    For hwaccels in ``_HWACCELS_NEED_HWDOWNLOAD`` (currently d3d11va #553
-    and qsv #550), ffmpeg outputs frames to a GPU surface rather than
-    system memory.  The wrapper then adds
-    ``-hwaccel_output_format <surface_fmt>`` (mapped via
-    ``_HWACCEL_OUTPUT_FORMAT_MAP``) and prepends ``hwdownload,format=nv12,``
-    to the ``-vf`` chain so the subsequent fps/scale/format=gray filters
-    receive system-memory nv12 frames.
-    """
-    chunk_duration = chunk_end - chunk_start
-    fps_value = 1.0 / sample_interval
-
-    decoder: str | None = None
-    hwaccel_name: str | None = None
-    if vendor and codec:
-        decoder = _GPU_DECODER_MAP.get(vendor, {}).get(codec)
-        hwaccel_name = _VENDOR_HWACCEL_MAP.get(vendor)
-    # Legacy path: vendor=None -> NVIDIA CUVID (tests call _decode_chunk
-    # directly without vendor, so keep the historical behavior).
-    if decoder is None and vendor is None:
-        decoder = _CUVID_CODEC_MAP.get(codec or "")
-        if decoder:
-            hwaccel_name = "cuda"
-
-    needs_hwdownload = (
-        hwaccel_name is not None and hwaccel_name in _HWACCELS_NEED_HWDOWNLOAD
-    )
-    if decoder and hwaccel_name:
-        hwaccel_args = ["-hwaccel", hwaccel_name]
-        if needs_hwdownload:
-            # d3d11va / qsv は decode 結果を GPU surface に置くため、
-            # filter graph に渡す前に system memory への download が
-            # 必要 (#553 / #550)。`-hwaccel_output_format` で surface
-            # format を明示 (d3d11va -> d3d11, qsv -> qsv) し、後段の
-            # hwdownload filter と整合させる。
-            surface_fmt = _HWACCEL_OUTPUT_FORMAT_MAP.get(hwaccel_name, hwaccel_name)
-            hwaccel_args += ["-hwaccel_output_format", surface_fmt]
-        hwaccel_args += ["-c:v", decoder]
-    else:
-        hwaccel_args = ["-hwaccel", "auto"]
-
-    vf_prefix = "hwdownload,format=nv12," if needs_hwdownload else ""
-
-    cmd = [
-        find_ffmpeg(),
-        *hwaccel_args,
-        "-ss",
-        str(chunk_start),
-        "-t",
-        str(chunk_duration),
-        "-i",
-        str(video_path),
-        "-vf",
-        f"{vf_prefix}fps={fps_value},scale={_SAMPLE_WIDTH}:{_SAMPLE_HEIGHT},format=gray",
-        "-f",
-        "rawvideo",
-        "-pix_fmt",
-        "gray",
-        "pipe:1",
-    ]
-
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=max(300, int(chunk_duration * 2)),
-        )
-    except FileNotFoundError as e:
-        raise VideoProcessingError(
-            "ffmpeg not found. Please install ffmpeg and ensure it is in PATH."
-        ) from e
-    except subprocess.TimeoutExpired as e:
-        raise VideoProcessingError(
-            f"GPU decode timed out for chunk {chunk_start}"
-        ) from e
-
-    stderr_text = proc.stderr.decode(errors="replace")
-
-    if proc.returncode != 0:
-        raise VideoProcessingError(
-            "GPU decode failed",
-            context={
-                "command": " ".join(str(c) for c in cmd),
-                "return_code": proc.returncode,
-                "chunk": f"{chunk_start:.1f}-{chunk_end:.1f}",
-                "stderr_tail": stderr_text[-STDERR_TAIL_BYTES:],
-            },
-        )
-
-    # Parse raw frames from stdout
-    data = proc.stdout
-    results: dict[float, float] = {}
-    frame_idx = 0
-    offset = 0
-
-    if chunk_timestamps is not None:
-        # Caller supplied pre-computed global grid timestamps -- map by
-        # index so CPU and GPU agree on dict keys (#392).  Stop when the
-        # pre-assigned list runs out even if ffmpeg emitted extra frames
-        # (can happen with keyframe-aligned -ss seeks near chunk_end).
-        while offset + _FRAME_SIZE <= len(data) and frame_idx < len(chunk_timestamps):
-            frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
-            results[chunk_timestamps[frame_idx]] = _frame_brightness(frame, region)
-            offset += _FRAME_SIZE
-            frame_idx += 1
-    else:
-        # Legacy path: derive timestamp from chunk_start + k*interval.
-        # Kept for existing callers / unit tests that invoke _decode_chunk
-        # directly without a pre-computed list.  New code should always
-        # pass chunk_timestamps from scan_gpu.
-        while offset + _FRAME_SIZE <= len(data):
-            frame = np.frombuffer(data[offset : offset + _FRAME_SIZE], dtype=np.uint8)
-            brightness = _frame_brightness(frame, region)
-            timestamp = round(chunk_start + frame_idx * sample_interval, 4)
-            if timestamp < chunk_end:
-                results[timestamp] = brightness
-            offset += _FRAME_SIZE
-            frame_idx += 1
-
-    return results, stderr_text
 
 
 def _decode_chunk_v2(
@@ -645,7 +478,7 @@ def _decode_chunk_v2(
         chunk_start - input_seek
     )  # = SEEK_LEAD_SECONDS unless chunk_start < SEEK_LEAD_SECONDS
 
-    # Resolve decoder / hwaccel for the selected vendor (same logic as legacy).
+    # Resolve decoder / hwaccel for the selected vendor (#546).
     decoder: str | None = None
     hwaccel_name: str | None = None
     if vendor and codec:

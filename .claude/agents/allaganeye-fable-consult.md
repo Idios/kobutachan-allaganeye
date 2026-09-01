@@ -1,5 +1,5 @@
 ---
-name: fable-consult
+name: allaganeye-fable-consult
 description: 全体的なレビュー・相談用（設計方針/UX/ドキュメント整合/受け入れ条件の網羅性・妥当性/俯瞰的セカンドオピニオン）。コード技術詳細の adversarial レビューは Codex を使うこと。
 model: fable
 tools: Read, Grep, Glob, WebSearch, WebFetch
@@ -34,3 +34,7 @@ tools: Read, Grep, Glob, WebSearch, WebFetch
 - サブエージェントの起動（Agent tool）は行わない
 - 指摘は主エージェントに構造化して返し、独断で修正・commit しない
 - 不明点は臆測せず「確認すべき点」として返す
+
+## モデル非依存のロール仕様（fallback 用）
+
+本文（対象・非対象・制約）はモデル非依存のロール定義であり、Claude 利用不可時の fallback では DeepSeek が本ファイルを読んで同じロールを代行する。**本ロールの fallback は単一モデルでの代行ではなく「Codex & DeepSeek V4 Pro の並列独立クロスレビュー → 主エージェントが突合（異モデル視点は Codex 側のみ）」**である。`model:` frontmatter は Claude Code 用であり、fallback では無視される。対応表・実行メカニズムは CLAUDE.md §モデルルーティング および `docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md` を参照。

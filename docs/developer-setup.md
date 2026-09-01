@@ -202,12 +202,99 @@ source .venv/bin/activate
 パッケージをインストールする:
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev]" -c constraints.txt
 ```
+
+**`-c constraints.txt` を省略しないでください。** `pyproject.toml` の範囲指定は「範囲内の最新」に解決されるため、それだけでは CI・他の開発者・配布物と同じ版になりません (#916)。省略すると `pytest tests/test_dependency_pins.py` が赤くなります。
 
 > SSH を使う場合: `git clone git@github.com:Idios/kobutachan-allaganeye.git`
 >
 > **注意**: 仮想環境を使わずに `pip install -e .` すると、`allaganeye` コマンドが PATH の通らないディレクトリにインストールされることがあります（特に Microsoft Store 版 Python）。仮想環境の使用を推奨します。
+
+### lint ツールの版を CI と揃える (#907)
+
+`ruff` と `pyright` は `pyproject.toml` の dev extras で **exact pin** してあります (`ruff==0.16.1` / `pyright==1.1.411`)。
+
+**範囲指定 (`>=0.16,<0.17` 等) では足りません。** CI は毎回まっさらな環境へ `pip install -e ".[dev]" -c constraints.txt` するため、範囲内の新リリースが出た瞬間に CI だけが上がり、ローカルは古い範囲内バージョンのまま残ります。これは pin が潰そうとしている drift そのものです。`pyright` は patch リリースで診断が変わるため特に危険です。
+
+pin を更新した後は必ず再インストールしてください。
+
+```bash
+pip install -e ".[dev]" -c constraints.txt --upgrade
+```
+
+現在の版は **CLI に聞いて**確認します。
+
+```bash
+ruff --version
+pyright --version
+```
+
+**`pyright` はパッケージ版と実行版が別物になりえます。** PyPI の `pyright` は wrapper で、解析器本体の版は `PYRIGHT_PYTHON_FORCE_VERSION` / `PYRIGHT_PYTHON_PYLANCE_VERSION` で上書きできます (`pyright/_utils.py` の `_get_configured_pyright_version()`)。実測:
+
+```text
+$ PYRIGHT_PYTHON_FORCE_VERSION=1.1.405 pyright --version
+pyright 1.1.405
+$ python -c "import importlib.metadata as m; print(m.version('pyright'))"
+1.1.411
+```
+
+つまり `importlib.metadata` で確認しても runtime の版は保証されません。**`pyright --version` の出力が pin と一致すること**を確認してください。上記の環境変数を設定している場合は、CI (未設定) と結果が食い違います。
+
+> **版の一致は解析対象の環境を保証しません (#974)。** `pyright` は解析する環境を PATH 上の `python` から**別に**解決するため、版が pin どおりでも `.venv` を見ずに `reportMissingImports` を量産することがあります。ゲートを回すときは **§4 開発用コマンド に載せたコマンドをそのまま**使ってください (どの呼び方が実際に venv を解決するかは §4 の注記に実測表があります)。
+
+### Windows: `pyright` の install が MAX_PATH で失敗する場合 (#907)
+
+`pyright` は typeshed の stub を大量に同梱しており、パスの深いところへ入れると **Windows の MAX_PATH** に当たって install が失敗します。エラーは次の形で出ます。
+
+```text
+ERROR: Could not install packages due to an OSError: [Errno 2] No such file or directory:
+'...\site-packages\pyright\dist\dist\typeshed-fallback\stubs\...\<長いファイル名>.pyi'
+```
+
+**原因はディスク不足でもパッケージ破損でもなくパス長です。**
+
+数え方を明示します。以下「suffix」は **site-packages の直後の区切り文字を含めた**部分の長さです。**pyright 1.1.411 で全 6344 ファイルを走査した最長 suffix は 127 文字**でした。
+
+```text
+\pyright\dist\dist\typeshed-fallback\stubs\oauthlib\oauthlib\oauth2\rfc6749\grant_types\resource_owner_password_credentials.pyi
+```
+
+**エラーに出るパスが最長とは限りません** (install 順で最初に失敗したものが表示されます)。上の 127 は pyright 1.1.411 の実測値で、版が変われば変わります。次のコマンドで測り直せます。
+
+```bash
+python -c "import pathlib,pyright; r=pathlib.Path(pyright.__file__).parent; sp=r.parent; print(max(len(str(f)[len(str(sp)):]) for f in r.rglob('*')), r)"
+```
+
+`site.getsitepackages()` を決め打ちせず **`pyright` のパッケージ位置から導出**しているので、venv の内外やユーザー site へ落ちた場合でも正しい場所を測ります。測定先のパスも併せて出力するので、意図した環境を見ているか確認してください。
+
+**install が完了している環境で実行してください。** 後述の partial install が残っていると、そこを import できてしまい**実際より小さい値を黙って返します** (本 repo の環境で実測 120)。`python -c "import importlib.metadata as m; m.version('pyright')"` が `PackageNotFoundError` を出す場合は partial install です。
+
+Windows の ANSI API はフルパスを **259 文字まで**しか扱えません (終端 NUL を含めて 260)。つまり `len(site-packages) + 127 > 259` で失敗し、これは **site-packages が 133 文字以上**と同値です。
+
+| site-packages の場所 | 長さ | + suffix 127 | 判定 |
+| --- | --- | --- | --- |
+| Microsoft Store 版 Python のユーザー site-packages (`%LOCALAPPDATA%\Packages\PythonSoftwareFoundation.Python.3.12_...\LocalCache\local-packages\Python312\site-packages`) | 138 | 265 | **NG** (上限 259 超) |
+| repo 直下の `.venv` (`<repo>\.venv\Lib\site-packages`) | 74 | 201 | OK (余裕 58 文字) |
+| worktree 内の `.venv` (`<repo>\.claude\worktrees\<name>\.venv\Lib\site-packages`) | 119 | 246 | OK (余裕 13 文字) |
+
+**対処は仮想環境を使うこと**です (本 doc が元々推奨している方法)。repo 直下の `.venv` が最も余裕があります。
+
+`LongPathsEnabled` を有効化する方法もありますが、レジストリ変更 + 管理者権限が必要で、他の開発者環境に前提を持ち込むため**推奨しません**。現在の設定は次で確認できます。
+
+```powershell
+Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled
+```
+
+書き込み先の長さは次で確認できます。venv の外では pip の書き込み先が一意に決まらない (システム側が書ければそこへ、書けなければユーザー側へ落ちる) ため、両方を表示します。
+
+```bash
+python -c "import sys,site,sysconfig; venv = sys.prefix != sys.base_prefix; cands = [('venv', sysconfig.get_paths()['purelib'])] if venv else [('system', sysconfig.get_paths()['purelib']), ('user', site.getusersitepackages())]; [print(k, len(q), len(q)+127, 'OK' if len(q)+127 <= 259 else 'NG') for k,q in cands]"
+```
+
+**このコマンドが返すのは既定の `pip install` 構成での目安であって保証ではありません。** `PIP_TARGET` / `PIP_PREFIX` / `pip install --target` / pip config の `target` などで書き込み先を変えている場合、venv の中にいても pip は表示されたパスとは別の場所へ書きます。**確実な判定は実際に `pip install` を走らせること**で、本節はそれが失敗したときに原因を読み解くためのものです。
+
+**install が途中で失敗すると partial な `pyright` ディレクトリが残ります。** その状態では `importlib.metadata` が `PackageNotFoundError` を出す一方でファイルは存在するため、再 install の前に残骸を削除してください (削除自体も MAX_PATH に当たる場合は `robocopy` で空ディレクトリと同期する方法があります)。
 
 ### 仮想環境を抜ける
 
@@ -288,7 +375,7 @@ git pull
 ```
 
 editable install (`pip install -e .`) のため、通常は `git pull` だけで更新が反映されます。
-依存パッケージが追加・変更された場合のみ `pip install -e ".[dev]"` の再実行が必要です。
+依存パッケージが追加・変更された場合のみ `pip install -e ".[dev]" -c constraints.txt` の再実行が必要です。
 
 ## 4. 開発用コマンド
 
@@ -302,13 +389,41 @@ pytest -m slow
 # 単体テスト
 pytest tests/test_detector.py
 
-# Lint
+# Lint (touched file だけでなく repo 全体を対象にする。`.` を省略しない)
 ruff check .
 ruff format --check .
 
-# 型チェック
-pyright
+# 型チェック (--pythonpath で解析対象を明示する。理由は下の注記)
+# git 解決形なので repo root でも worktree でも同じ venv を指す
+pyright --pythonpath "$(dirname "$(git rev-parse --git-common-dir)")/.venv/Scripts/python.exe"   # Windows
+pyright --pythonpath "$(dirname "$(git rev-parse --git-common-dir)")/.venv/bin/python"             # macOS / Linux
 ```
+
+> **`ruff format --check` は必ず `.` を付けて repo 全体で回す (#907)**: 触ったファイルだけを指定すると、subagent や別 PR が入れた変更を取りこぼして CI の Format check だけが赤になります。CI (`.github/workflows/ci.yml`) も `ruff format --check .` で全 repo を見ます。
+>
+> **版がずれていると同じコマンドでも結果が変わります。** `ruff` / `pyright` は `pyproject.toml` の dev extras で上限付きに pin してあるので、pin を更新したら `pip install -e ".[dev]" -c constraints.txt --upgrade` を実行してから回してください (§パッケージのインストール の注記参照)。
+>
+> **`pyright` は `--pythonpath` を省略しないでください (#974)**: `pyright` は解析対象の環境を **PATH 上の `python`** から解決します。venv を activate していない状態で回すと venv の site-packages を見ず、大量の `reportMissingImports` を出します (実測: `183 errors, 4 warnings`。うち `Import "pytest" could not be resolved` 等)。
+>
+> **どの呼び方が効くかは実測した。** `--pythonpath --verbose` で pyright が実際に採った search path を見た結果:
+>
+> | 呼び方 | cwd | 解析対象 |
+> | --- | --- | --- |
+> | `pyright` (素) | どこでも | PATH の `python`。activate 依存で不定 |
+> | `python -m pyright` | worktree | **venv ではない** (system python の site-packages が出た)。wrapper は `sys.executable` を pyright へ渡さないので、`python -m` にしても解析対象は変わらない |
+> | `pyright --pythonpath .venv/Scripts/python.exe` | repo root | venv ✓ (`exit 0`) |
+> | 同上 | worktree | **`183 errors` / `exit 1`** — worktree に `.venv` は無い |
+> | `pyright --pythonpath <repo root の .venv を絶対パスで>` | どこでも | venv ✓ (`exit 0`) |
+>
+> したがって **`--pythonpath` が唯一の確実な指定手段**で、`python -m pyright` はこの問題を解決しません。§4 に載せた `git rev-parse --git-common-dir` から解決する形は、repo root でも worktree でも同じ venv を指すので copy-paste でそのまま使えます (両方で `exit 0` を実測)。
+>
+> **worktree で相対パスを使わないでください。** `.claude/worktrees/<name>/` に `.venv` は存在しません (venv は repo root にのみ作る)。相対指定は**存在しない interpreter を渡すこと**になり、この症状をそのまま再現します。
+>
+> **`pyright` は解決できない interpreter を渡しても hard fail せず、ただ赤くなります。** 赤の理由が画面に出ないので、`reportMissingImports` が大量に出たら**まず環境の解決を疑ってください** (型エラーを直そうとしても直りません)。
+>
+> **CI は PATH の python へ直接 install するのでこの問題が起きず、ローカルだけが赤くなります。** そのため CI (`.github/workflows/ci.yml`) は素の `pyright` のままで正しく、ここを揃える必要はありません。
+>
+> なお **`pyright --version` の一致確認ではこの問題を検出できません**。版が pin どおりでも、解析対象の環境はそれとは別に解決されるためです。
 
 ### Windows: Pester v5 (scripts/ 用 PowerShell ユニットテスト)
 
@@ -354,7 +469,7 @@ allaganeye split <video_path> --dry-run       # 検知のみ、分割しない
 allaganeye split <video_path> --gpu           # GPU アクセラレーション検知
 allaganeye split <video_path> --workers 8     # ワーカー数指定
 allaganeye split <video_path> --no-cache      # キャッシュ無視で再検知
-allaganeye split <video_path> --no-audio      # 音声昇格の無効化フラグ（#327 で凍結中のため現在は常にスキップ）
+allaganeye split <video_path> --no-audio      # 音声昇格の無効化フラグ（#327 で凍結、#865 で期限なし凍結が正式方針。常にスキップ）
 allaganeye split <video_path> -v              # verbose 出力
 allaganeye split <video_path> -q              # 進捗抑制
 
@@ -438,3 +553,31 @@ bump 頻度: 4-6 か月毎を目安、PyInstaller 公式 release notes を確認
 Python interpreter 自体は CI 上 `actions/setup-python@v5` で 3.11.9 に pin される (`.github/workflows/release.yml`)。local build では `python --version` (PATH 上の `python` コマンド) を build script 冒頭で sanity check する。
 
 > **履歴**: 旧 Python 3.11 embed + get-pip.py SHA pin フローは [#649](https://github.com/Idios/kobutachan-allaganeye/issues/649) (PR [#651](https://github.com/Idios/kobutachan-allaganeye/pull/651)) → [PR #675](https://github.com/Idios/kobutachan-allaganeye/pull/675) Round 2 #7 → [#681](https://github.com/Idios/kobutachan-allaganeye/issues/681) / PR [#703](https://github.com/Idios/kobutachan-allaganeye/pull/703) の versioned tag 化を経て [#752](https://github.com/Idios/kobutachan-allaganeye/issues/752) で PyInstaller `--onedir` に移行した。
+
+### 依存 constraints の bump 手順 (#916)
+
+Python 依存は 2 層で管理します。
+
+| ファイル | 役割 | 書き方 |
+| --- | --- | --- |
+| `pyproject.toml` | **外部への互換範囲の宣言** (公開契約)。PyPI から install する第三者が満たすべき範囲 | 上限付きの範囲 (`>=X,<Y`)。直接 import するものだけを宣言する |
+| `constraints.txt` | **この repo 自身の再現環境**。CI / ローカル / Portable ZIP build を同一版に揃える | `name==version` の exact pin のみ |
+
+**範囲指定は再現環境になりません。** `opencv-python-headless>=4.8,<5` は実測で 4.14.0.94 に解決します (bit-exact baseline を取得した 4.13.0.92 とは別実装)。再現は `constraints.txt` の `==` が担います。
+
+bump 手順:
+
+1. `constraints.txt` の該当行を更新する。値は必ず `pyproject.toml` の範囲内にすること (矛盾すると pip が `ResolutionImpossible` で落ちる)
+2. `pip install -e ".[dev]" -c constraints.txt --upgrade` で再インストールする
+3. `pytest tests/test_dependency_pins.py` が緑になることを確認する。**pip は constraints file の未使用行を無言で無視する**ため、この test が「pin が実際に効いているか」の唯一の検査です
+4. 影響範囲に応じて追加検証する (下表)
+
+| bump するもの | 追加で必要な検証 |
+| --- | --- |
+| `opencv-python-headless` / `numpy` / `scipy` | **bit-exact baseline の再取得** (`pytest -m slow_detect`、実機 GPU で数時間規模)。検出出力が変わりうるため必須。`cv2` の場合は `tests/test_dependency_pins.py` の `getBuildInformation` の `GUI:` 行 assert も実出力に合わせて再確認する |
+| `datamodel-code-generator` / `black` / `isort` | `python scripts/codegen/generate.py --py` を実行し `git diff --exit-code allaganeye/metadata_types.py` が緑であること (CI の codegen gate と同じ検査) |
+| `rich` | `pytest tests/test_cli.py` (help 出力の整形に影響する) |
+
+同時に触る場所: `constraints.txt` / `pyproject.toml` (範囲を外れる場合) / `.github/workflows/ci.yml` (install 行を増やした場合は `-c` を付ける) / `scripts/build-portable-zip.ps1` (同上。Pester の `Dependency constraints wiring (#916)` が statement 数と call-form を pin している)。
+
+**`-c` の射程外**: `[build-system] requires` の `setuptools` は PEP 517 の分離ビルド環境で解決されるため constraints では固定できません。`pip` 自身の版も固定していません。第三者の `pip install kobutachan-allaganeye` にも効きません (そちらは `pyproject.toml` の範囲だけが効く)。

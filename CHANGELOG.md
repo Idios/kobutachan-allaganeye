@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+<!-- 開発中の変更は `## [Unreleased]` 節を作ってそこへ足す (リリース時に
+     `## [<版>] - YYYY-MM-DD` へ改名する)。書き方は
+     docs/release-process.md §CHANGELOG entry の記述規約 を参照。
+     利用者から見た振る舞いが変わらない変更 (CI ガード / 開発 doc / skill /
+     テスト / 版 pin) に entry は不要。その場合は PR 本文に
+     「CHANGELOG entry: 不要 (内部専用 -- <種別>)」を 1 行残す。
+
+     空の `## [Unreleased]` を置いたままにしないこと。
+     scripts/check_changelog_style.py は `## [Unreleased]` があればそこだけを
+     走査するため、空節を残すとリリース節が**検査対象から外れて緑になる**。 -->
+
+## [0.3.1] - 2026-09-01
+
+### Changed
+
+- **同梱の説明書 (README.txt) に v0.3.0 で追加した機能を追記**
+  ([#944](https://github.com/Idios/kobutachan-allaganeye/issues/944)):
+  ZIP に入っている README.txt のコマンド例が `split` だけだったため、v0.3.0 で
+  増えた機能に説明書から辿り着けませんでした。試合の書き出し (`export`)、
+  エリアマップの切り抜き (`minimap`)、検知だけを行う `detect`、チャット欄を
+  画像でマスクした録画や配信レイアウト録画向けのオプションを追記しています。
+- **GUI の画面表示を補強** ([#944](https://github.com/Idios/kobutachan-allaganeye/issues/944)):
+  ミニマップ切抜き画面に画面名・説明・一覧へ戻るボタンを追加しました。検知で
+  試合が見つからなかったときの案内に、しきい値の調整では直らない録画 (チャット欄を
+  画像でマスクした録画 / 配信レイアウト録画) の対処を追記しています。完了画面には
+  「試合後」区間の内訳とバッジの説明を、最初の画面にはバージョンを表示します。
+- **配布 ZIP に同梱する依存の版を固定** ([#916](https://github.com/Idios/kobutachan-allaganeye/issues/916)):
+  **同じ動画を入れても、ZIP をいつ入手したかで検出結果がわずかに変わることが
+  ありました。** v0.3.0 までの ZIP には、ビルドした時点で入手できる最新の画像処理
+  ライブラリが入っていたためです。v0.3.1 以降は同梱する版を固定したので、同じ
+  バージョンの ZIP なら結果が揃います。
+
+### Removed
+
+- **旧検知方式へ戻す環境変数を削除** ([#864](https://github.com/Idios/kobutachan-allaganeye/issues/864)):
+  v0.3.0 で「次の修正版で削除予定」と告知していた `ALLAGANEYE_DETECT_FPS_FILTER` を
+  削除しました。設定しても**何も起こりません** (無視されます) ので、シェルや
+  タスクスケジューラに残している場合は消して構いません。**検出結果は v0.3.0 から
+  変わりません**。詳細は
+  [docs/video-processing.md](docs/video-processing.md) を参照。
+
+### Fixed
+
+- **`metadata.json` に記録される出力ファイル名が、出力先の指定によらず同じ形になりました**
+  ([#934](https://github.com/Idios/kobutachan-allaganeye/issues/934)):
+  これまで `allaganeye split -o <出力先>` に**絶対パス**を渡すと、`metadata.json` の
+  `output_file` にその絶対パスがそのまま書き込まれていました (`allaganeye detect` は
+  `match_001.mp4` のようなファイル名だけを書くため、**同じ項目の意味がコマンドによって
+  食い違う**状態でした)。絶対パスが書かれた `metadata.json` は、出力フォルダを移動したり
+  別の PC で開いたりすると正しく読めなくなります。今後はどちらのコマンドでも
+  `match_001.mp4` のように **`metadata.json` と同じフォルダからのファイル名**で記録します。
+  既存の `metadata.json` はそのまま読めます (再検知は不要です)。詳細は
+  [docs/metadata-spec.md](docs/metadata-spec.md) を参照。
+- **`allaganeye -v` でバージョンが表示されるようになりました**
+  ([#376](https://github.com/Idios/kobutachan-allaganeye/issues/376)):
+  これまで小文字の `-v` は `Error: No such option: -v` になり、大文字の `-V` が
+  必要でした。なお `allaganeye split <動画> -v` の `-v` は従来どおり詳細表示の
+  ままです。詳細は [docs/cli-spec.md](docs/cli-spec.md) を参照。
+- **出力を `| head` などで途中打ち切りしてもエラーで終了しなくなりました**
+  ([#652](https://github.com/Idios/kobutachan-allaganeye/issues/652)):
+  `allaganeye split <動画> -v | head -20` のように出力の先頭だけを見ると、
+  これまでは `OSError: [Errno 22] Invalid argument` とエラーの詳細表示を残して
+  異常終了していました。
+
 ## [0.3.0] - 2026-08-04
 
 L3 (配信形式対応 + 性能改善) リリース。エリアマップ切り抜き (`minimap` CLI + GUI 画面) と

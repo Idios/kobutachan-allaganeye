@@ -1,5 +1,6 @@
 """Split command: orchestrates video probing, detection, and splitting."""
 
+import errno
 import json
 import logging
 import math
@@ -8,7 +9,8 @@ import re
 import shutil
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, cast
@@ -63,6 +65,64 @@ class Gap(TypedDict):
 
 
 logger = logging.getLogger(__name__)
+
+
+# ``errno`` values that mean "the thing we were writing to is gone" (#652).
+# POSIX raises EPIPE (BrokenPipeError); Windows + Python 3.12 raises a plain
+# ``OSError`` with EINVAL when the read end of a pipe has already exited, e.g.
+# ``allaganeye split <video> -v | head -20``.
+_CLOSED_STREAM_ERRNOS = frozenset({errno.EPIPE, errno.EINVAL})
+
+
+def is_closed_stream_error(exc: BaseException) -> bool:
+    """True when *exc* means stdout went away rather than a real I/O failure (#652).
+
+    Safe to use at **application scope** (around a whole command), so it must be
+    narrow: a blanket ``except OSError`` would turn a genuine failure (ENOSPC while
+    writing metadata.json, say) into a silent success, which is strictly worse than
+    the traceback this is meant to remove.
+
+    ``ValueError`` is deliberately NOT accepted here. It only means "closed stream"
+    when it came out of a stream operation; at application scope any ``ValueError``
+    could be an ordinary bug. Concretely, ``integrity.check()`` parses the bundled
+    manifest with ``int(entry["size"])``, so a corrupted manifest raises
+    ``ValueError`` -- classifying that as a closed pipe would report **exit 0 for a
+    failed integrity check** whose contract is exit 7 (Codex adversarial-review).
+    Use :func:`is_closed_stream_op_error` at the stream call site instead.
+    """
+    if isinstance(exc, BrokenPipeError):
+        return True
+    return isinstance(exc, OSError) and exc.errno in _CLOSED_STREAM_ERRNOS
+
+
+def is_closed_stream_op_error(exc: BaseException) -> bool:
+    """:func:`is_closed_stream_error`, plus ``ValueError``, for stream call sites.
+
+    Only correct where the guarded operation *is* a read/write/flush on the stream,
+    so a ``ValueError`` can only be io's "I/O operation on closed file". Never use
+    this to wrap application logic.
+    """
+    if isinstance(exc, ValueError):
+        return True
+    return is_closed_stream_error(exc)
+
+
+@contextmanager
+def _tolerate_closed_stdout() -> Iterator[None]:
+    """Swallow progress-rendering errors caused by a closed stdout (#652).
+
+    Progress bars are decoration: if the consumer of our stdout has exited there
+    is nothing actionable, and propagating kills a detection that is otherwise
+    fine. Same shape as the precedent in
+    ``allaganeye/detection/progress_emitter.py`` for the JSON Lines emitter.
+    """
+    try:
+        yield
+    except (OSError, ValueError) as exc:
+        if not is_closed_stream_op_error(exc):
+            raise
+        logger.debug("stdout closed; skipping progress render", exc_info=True)
+
 
 # v3 (#821): masked auto-fallback (flag なしでも 0-blackout で発火) の導入で
 # 「missing masked = 標準 path と同一挙動」が成立しなくなったため、pre-#821
@@ -1132,13 +1192,15 @@ def _run_detection(
             placeholder to clear (#434).
             """
             if eager_phases:
-                sys.stdout.write("\033[2K")
-                sys.stdout.flush()
+                with _tolerate_closed_stdout():  # #652
+                    sys.stdout.write("\033[2K")
+                    sys.stdout.flush()
 
         def on_progress(completed: int, total: int, blackout_count: int) -> None:
             advance = completed - detecting_state["last_pos"]
             if advance > 0:
-                detecting_bar.update(advance)
+                with _tolerate_closed_stdout():  # #652
+                    detecting_bar.update(advance)
             detecting_state["last_pos"] = completed
 
         def on_chunk_dispatch(num_chunks: int) -> None:
@@ -1157,7 +1219,8 @@ def _run_detection(
                     _PROGRESS_LABEL_WIDTH
                 )
             )
-            detecting_bar.render_progress()
+            with _tolerate_closed_stdout():  # #652
+                detecting_bar.render_progress()
 
         def on_chunk(done: int, total: int, eta_seconds: float) -> None:
             # Update label so users see movement between chunk completions
@@ -1184,7 +1247,8 @@ def _run_detection(
                 refine_state["last"] = 0
             advance = completed - refine_state["last"]
             if advance > 0:
-                refine_state["bar"].update(advance)
+                with _tolerate_closed_stdout():  # #652
+                    refine_state["bar"].update(advance)
             refine_state["last"] = completed
 
         def on_scorebar(completed: int, total: int) -> None:
@@ -1208,7 +1272,8 @@ def _run_detection(
                 scorebar_state["last"] = 0
             advance = completed - scorebar_state["last"]
             if advance > 0:
-                scorebar_state["bar"].update(advance)
+                with _tolerate_closed_stdout():  # #652
+                    scorebar_state["bar"].update(advance)
             scorebar_state["last"] = completed
 
         try:
@@ -1543,6 +1608,53 @@ def _split_and_write_metadata(
     typer.echo(f"Metadata: {Path(os.path.abspath(metadata_path))}")
 
 
+def _output_file_field(path: Path, output_dir: Path) -> str:
+    """Serialise ``matches[].output_file`` **relative to the metadata.json directory**.
+
+    ``metadata.json`` is written to ``output_dir / "metadata.json"``, and the JSON
+    Schema documents ``output_file`` as "MP4 filename relative to the metadata.json
+    directory". The two producers hand this function different shapes:
+
+    * ``split`` passes what :func:`split_video` returned, i.e. ``output_dir /
+      match_NNN.mp4`` -- carrying the output directory, absolute whenever ``-o``
+      was absolute
+    * ``detect`` passes bare placeholder names (``match_NNN.mp4``) that are
+      *already* relative to ``output_dir``
+
+    Serialising both with ``Path.as_posix`` verbatim (#463 .. #933) made the two
+    producers disagree: ``detect`` wrote ``match_001.mp4`` while ``split -o E:/out``
+    wrote ``E:/out/match_001.mp4``, so the same field meant different things
+    depending on which command produced the file. The absolute form also breaks the
+    moment the output folder is moved or read on another machine -- the same
+    relative/absolute round-trip failure ``source`` had in #930. Anchoring on
+    ``output_dir`` here gives both producers one shape (#934).
+
+    Paths that do not live under ``output_dir`` keep a ``..``-prefixed relative form
+    rather than being silently shortened to their basename: shortening would point
+    the reader at a sibling file that does not exist. :func:`split_video` always
+    writes inside ``output_dir``, so that branch is not reachable from the CLI.
+    """
+    try:
+        return path.relative_to(output_dir).as_posix()
+    except ValueError:
+        pass
+    if path.is_absolute():
+        try:
+            return Path(os.path.relpath(path, os.path.abspath(output_dir))).as_posix()
+        except ValueError:
+            # Windows raises when the two paths sit on different drives -- there is
+            # no relative form to return. Not reachable from the CLI (``split_video``
+            # builds its paths from ``output_dir``), but by the time this runs the
+            # MP4s are already on disk, so aborting the metadata write would lose the
+            # split. Fall back to the absolute path: it does not satisfy the
+            # "relative to the metadata.json directory" contract, but it is at least
+            # resolvable, and it is the pre-#934 behaviour.
+            return path.as_posix()
+    # Relative and not under ``output_dir``: already anchored on it (detect's
+    # placeholders). Leave it alone rather than re-anchoring it on the cwd.
+    return path.as_posix()
+
+
 def _build_metadata_payload(
     *,
     video_path: Path,
@@ -1657,7 +1769,7 @@ def _build_metadata_payload(
                     # Anything other than "fl_match" is normalized to "unknown"
                     # -- matches the prior dict.get fallback semantics.
                     "type": "fl_match" if b.get("type") == "fl_match" else "unknown",
-                    "output_file": f.as_posix(),
+                    "output_file": _output_file_field(f, config.output_dir),
                 }
                 for i, (b, f) in enumerate(zip(boundaries, output_files, strict=True))
             ]
@@ -2248,8 +2360,16 @@ def _is_valid_capture_region(region: object) -> bool:
     return True
 
 
-def _capture_regions_from_cache_data(data: dict) -> "CaptureRegions | None":
+def _capture_regions_from_cache_data(
+    data: dict, *, cache_path: Path | None = None
+) -> "CaptureRegions | None":
     """Pure parser: capture region timeline from an already-parsed cache dict (#810/#879).
+
+    *cache_path* is diagnostic only (#906): when supplied it names the offending
+    file in the corruption warning. It was lost when this function was extracted
+    from the path-taking ``_read_cached_capture_regions`` in #879, leaving the
+    warning without any way to tell which cache to delete. Optional so callers
+    that genuinely have no path still get the warning, just without the name.
 
     (元 _read_cached_capture_regions の synthesis ロジックをそのまま移設:
     present は sanitize、absent+non-vtuber+non-masked は FULL_FRAME 合成、
@@ -2281,8 +2401,9 @@ def _capture_regions_from_cache_data(data: dict) -> "CaptureRegions | None":
         sanitized = _sanitize_capture_regions(cached)
         if sanitized is None:
             logger.warning(
-                "Dropping malformed capture_regions from cache "
-                "(corrupted or hand-edited cache value -- region unknown)"
+                "Dropping malformed capture_regions from cache %s "
+                "(corrupted or hand-edited cache value -- region unknown)",
+                cache_path if cache_path is not None else "(path unavailable)",
             )
         return sanitized
     # cached is None: key absent or explicit null -- legacy absent semantics.
@@ -2375,5 +2496,5 @@ def _load_cache_hit(
     return CacheHit(
         boundaries=boundaries,
         masked_fallback_used=_masked_fallback_from_cache_data(data),
-        capture_regions=_capture_regions_from_cache_data(data),
+        capture_regions=_capture_regions_from_cache_data(data, cache_path=cache_path),
     )

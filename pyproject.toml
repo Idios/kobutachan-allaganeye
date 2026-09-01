@@ -4,21 +4,52 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kobutachan-allaganeye"
-version = "0.3.0"
+version = "0.3.1"
 description = "FF14 Frontline video auto-highlight extraction tool"
 license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
-    # click 8.4 / typer 0.25+ は click 例外を typer._click 名前空間へ分離し、
-    # cli.py の単一ダッシュ hint (NoSuchOption 捕捉) と debug_brightness の
-    # typer.Exit 捕捉を破壊する (CI 2026-05-27、develop-0.3.0 全体が赤化)。
-    # 既知 good ライン (typer 0.24.x / click 8.3.x) に pin して回帰を防ぐ。
-    # click は cli.py / tests が直接 import するため明示依存として宣言。
+    # === typer / click は恒久 pin (#863 で決着、暫定ではない) ===
+    #
+    # PR #808 が CI 破損対策として入れた暫定 pin を、#916 の実測調査を踏まえて
+    # 恒久方針へ確定させたもの。**上限を外してはいけない。**
+    #
+    # 上限の根拠 (PR #808 当時のコメントには誤りがあったので訂正した):
+    #   - click の vendoring が入ったのは **typer 0.26.0** (2026-05-26) であって
+    #     0.25 ではない。typer 0.25.0 / 0.25.1 は依然 `click>=8.2.1` を外部依存と
+    #     して要求する (PyPI メタデータ実測)。
+    #   - `click<8.4` が要るのは **本 repo が click 8.4 と非互換だからではない**。
+    #     repo が触る click API (`click.Group` / `click.exceptions.*` /
+    #     `click._termui_impl.ProgressBar`) は click 8.4.2 でも健在。
+    #     必要なのは typer 0.25.x 以下が click 8.4 と非互換だから。upstream
+    #     (fastapi/typer PR #1753) は click 8.4.0 リリース当日に master へ
+    #     `click>=8.2.1,<8.4` の cap を merge したが、その cap を含む release を
+    #     出さないまま 0.26.0 で vendoring へ移行した。つまり cap 付きの typer は
+    #     存在しないので、本 repo 側で click に上限を持つ必要がある。
+    #
+    # typer 0.26+ へ上げるのが単なる import 先の置換で済まない理由:
+    #   - vendored click には `Group` / `Option` / `Argument` クラスが存在せず、
+    #     `TyperGroup(_click.Command)` へ型階層が平坦化されている。
+    #     cli.py の `isinstance(cmd, click.Group)` と tests/test_cli.py の同種
+    #     assert は型階層ごと設計変更になる。
+    #   - `typer.testing.CliRunner` が `click.testing` を import しなくなるため、
+    #     click.testing へ当てている monkeypatch が silent に no-op 化する。
+    #   - 移行先の例外クラス群は private な `typer._click.exceptions` にしかなく、
+    #     公開 API へ逃がせない (恒久解にならない)。
+    #   -> patch release の範囲を超えるため、移行は別 issue で扱う。
+    #
+    # click は cli.py / tests が直接 import するため明示依存として宣言する。
     "typer>=0.9,<0.25",
     "click>=8.0,<8.4",
     "numpy>=1.24",
     "scipy>=1.11",
-    "opencv-python-headless>=4.8",
+    # 上限は 5.x の numerics が未検証のため (#916 裁定 D8)。5.x 移行は #951 で
+    # deferred (GT / bit-exact baseline の再取得が要る)。
+    # **範囲だけでは repo の再現環境にならない**: `>=4.8,<5` は実測で 4.14.0.94
+    # (2026-07-29 リリース) に解決し、bit-exact baseline を取得した 4.13.0.92
+    # とは別実装になる。repo 内の再現は constraints.txt の exact pin が担う。
+    # 本行は「PyPI から install する第三者が満たすべき互換範囲」の宣言。
+    "opencv-python-headless>=4.8,<5",
 ]
 
 [project.scripts]
@@ -33,8 +64,27 @@ include = ["allaganeye*"]
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
-    "ruff>=0.4",
-    "pyright>=1.1",
+    # lint / 型チェックは **exact pin** で CI とローカルの版を揃える (#907)。
+    # 範囲指定 (>=0.16,<0.17) では不十分: CI は毎回まっさらな環境へ
+    # `pip install -e ".[dev]"` するため、範囲内の新リリース (0.16.2 等) が出た
+    # 瞬間に CI だけが勝手に上がり、ローカルは古い範囲内バージョンのまま残る。
+    # これは本 pin が潰そうとしている drift そのもの。pyright は patch
+    # リリースで診断が変わるため特に危険。
+    # markdownlint が scripts/check-markdownlint.sh:22 の CLI2_VERSION で
+    # 既に解いているのと同じ「ローカル・CI 同版」規律を lint 全体へ広げる。
+    # 更新手順: 本行を書き換え -> `pip install -e ".[dev]" --upgrade` ->
+    # **`ruff --version` / `pyright --version` が本 pin と一致することを確認**
+    # -> `ruff check .` / `ruff format --check .` / `pyright --pythonpath ...` を repo 全体で
+    # 回して緑を確認 -> commit。取り込みタイミングを計画的に選ぶのが目的。
+    #
+    # version 確認を省かないこと: pyright の PyPI パッケージは wrapper で、
+    # PYRIGHT_PYTHON_FORCE_VERSION / PYRIGHT_PYTHON_PYLANCE_VERSION を設定
+    # していると **パッケージ版を pin しても実行される解析器の版が変わる**
+    # (実測: FORCE_VERSION=1.1.405 で `pyright --version` は 1.1.405、
+    # importlib.metadata は 1.1.411)。CI はこれらを設定しないため、ローカル
+    # だけ緑という状態が起きうる。詳細は docs/developer-setup.md 参照。
+    "ruff==0.16.1",
+    "pyright==1.1.411",
     "datamodel-code-generator>=0.25",
     "jsonschema>=4",
 ]

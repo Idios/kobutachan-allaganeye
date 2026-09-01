@@ -1,12 +1,24 @@
 name: Markdownlint
 
 on:
+  # #947 -- `release/*` を base とする PR でも起動させる (理由は ci.yml の同節を参照)。
+  #
+  # **paths filter は撤去した。** required status check に `markdownlint` を含める
+  # ため。GitHub は workflow 全体が paths filter で skip された場合その check を
+  # **report しない**ので、required にすると `.md` を 1 本も触らない PR が
+  # "Expected -- waiting for status" のまま恒久的にマージ不能になる。
+  # 実測 (2026-08-20): PR #926 / #903 (base=`develop-0.3.0`、`.md` 0 件) の
+  # statusCheckRollup に `markdownlint` は存在しなかった。
+  #
+  # 副作用として gate の対象集合が「`.md` を触った PR」から「全 PR」へ広がる。
+  # つまり **既存 `.md` の違反も毎回検査される**。markdownlint-cli2 は
+  # ubuntu runner で数秒〜十数秒なので実行コストは許容する。
+  #
+  # この gate が見ていない集合: 検査するのは markdownlint ルール違反のみで、
+  # 記述内容の正しさ・実装との整合は見ない (それは doc-code-refs /
+  # feature-announcement / screenshot-freshness の担当)。
   pull_request:
-    branches: [main, "develop-*"]
-    paths:
-      - "**/*.md"
-      - ".markdownlint-cli2.yaml"
-      - ".github/workflows/markdownlint.yml"
+    branches: [main, "develop-*", "release/*"]
 
 jobs:
   markdownlint:

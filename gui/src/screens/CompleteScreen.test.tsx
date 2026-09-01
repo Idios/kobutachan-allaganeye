@@ -576,4 +576,87 @@ describe('#805 CompleteScreen post_match no-crash guard', () => {
     expect(within(normalRow).queryByText('試合後')).toBeNull();
     expect(normalRow.className).not.toMatch(/listItemPostMatch/);
   });
+
+  // #944 §D: 「試合数」(全件) と export 見出しの件数がずれて見える件の説明。
+  it('shows the post_match breakdown next to 試合数 (#944)', () => {
+    render(<CompleteScreen />);
+    expect(screen.getByTestId('complete-post-match-note')).toHaveTextContent(
+      'うち 1 件は試合後',
+    );
+  });
+
+  // #944 §D: 試合後バッジに説明が無く、何を意味するか画面上から知れなかった。
+  it('explains the 試合後 badge via a tooltip (#944)', () => {
+    render(<CompleteScreen />);
+    const badge = within(screen.getByTestId('match-row-2')).getByText('試合後');
+    expect(badge).toHaveAttribute('title');
+    expect(badge.getAttribute('title')).toMatch(/--keep-trailing/);
+  });
+});
+
+// #944 §D: masked fallback は 0 暗転時に自動発火するが GUI へ何も伝えて
+// いなかった (`masked_fallback_used` が schema にあるのに未描画)。
+describe('#944 CompleteScreen masked fallback notice', () => {
+  const match = {
+    index: 1,
+    start_time: 100,
+    end_time: 1000,
+    start_display: '01:40',
+    end_display: '16:40',
+    duration: 900,
+    duration_display: '15m00s',
+    type: 'fl_match' as const,
+    output_file: 'match_001.mp4',
+  };
+  const baseParams = {
+    sample_interval: 2,
+    blackout_threshold: 15,
+    min_match_duration: 300,
+    min_blackout_duration: 3,
+    no_audio: false,
+    use_gpu: null,
+    workers: null,
+  };
+  function metaWith(maskedFallbackUsed: boolean | undefined) {
+    return {
+      source: 'C:\\videos\\rec.mkv',
+      source_duration: 1200,
+      source_duration_display: '20:00',
+      detected_at: '2026-06-26T00:00:00Z',
+      detection_params:
+        maskedFallbackUsed === undefined
+          ? baseParams
+          : { ...baseParams, masked_fallback_used: maskedFallbackUsed },
+      matches: [match],
+      gaps: [],
+    };
+  }
+
+  function mount(maskedFallbackUsed: boolean | undefined) {
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.setState({
+      metadata: metaWith(maskedFallbackUsed) as never,
+      hasBackup: false,
+    });
+    useAppStateStore.getState().navigate('complete');
+    return render(<CompleteScreen />);
+  }
+
+  it('shows the notice when the masked fallback actually fired', () => {
+    mount(true);
+    expect(
+      screen.getByTestId('complete-masked-fallback-notice'),
+    ).toHaveTextContent('--masked');
+  });
+
+  it('stays silent when the fallback did not fire', () => {
+    mount(false);
+    expect(screen.queryByTestId('complete-masked-fallback-notice')).toBeNull();
+  });
+
+  it('stays silent on pre-#821 metadata that has no such field', () => {
+    mount(undefined);
+    expect(screen.queryByTestId('complete-masked-fallback-notice')).toBeNull();
+  });
 });
