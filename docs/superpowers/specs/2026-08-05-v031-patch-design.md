@@ -602,7 +602,7 @@ base は全 Track `develop-0.3.1` (D4)。Track の意味づけは [`docs/release
 | O-3 | #922 を doc 修正で解くか `release.yml` 修正で解くか | 決定に依存して Track が B / C に分かれる |
 | O-4 | 配布 build (`build-portable-zip.ps1:473`) に constraints を効かせるか | 効かせないと出荷物の cv2 が未固定のまま残る (R1 表) |
 | O-5 | JST 深夜帯 (00:00-09:00 JST) にタグを打つ運用を許容するか | 許容するなら G1-3 は `Asia/Tokyo` 固定で足りる。禁止するなら規約に 1 行足して検査を単純化できる |
-| O-6 | `annotated tag object` の `taggerdate` が `version-check` job の checkout 後に読めるか (`actions/checkout@v4` は既定 `fetch-depth: 1`) | 実 CI で試すしかない。読めない場合は `github.event.head_commit.timestamp` が唯一の基準日になる |
+| O-6 | `annotated tag object` の `taggerdate` が `version-check` job の checkout 後に読めるか (`actions/checkout@v4` は既定 `fetch-depth: 1`) | **決着 (2026-09-02 実測): 既定では読めない。** checkout は commit SHA を tag 名へマップするだけで tag object を取得せず、CI 上の ref は lightweight になる (`refs/tags/v0.3.1 commit`、run 33528826207)。`fetch-tags: true` と明示 refspec fetch の 2 段で取得するよう `release.yml` を修正した。`head_commit.timestamp` への fallback は採らない (規約とズレた日付を通すため) |
 | O-7 | `.claude/skills/release/eval/requirements.md:24` のシナリオ B が「patch release v0.3.1、deferred 5 件」を前提にしている (実際は 64 件) | #918 の PR で eval も同時更新する。しないと次の EPT で旧前提が復活する |
 
 ### 8.3 本 spec が意図的に扱わないもの
