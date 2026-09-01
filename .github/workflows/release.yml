@@ -90,22 +90,20 @@ jobs:
     outputs:
       version: ${{ steps.parse.outputs.version }}
     steps:
-      # fetch-tags は必須。既定の checkout は tag push でも **tag object を
-      # 取得しない** -- 実測 (2026-09-02, run 33528826207):
+      # **`fetch-tags: true` を付けてはいけない** (実測 2026-09-02, run 33532643958):
       #
-      #   git fetch ... --depth=1 origin +074a47e...:refs/tags/v0.3.1
-      #   git for-each-ref --format='%(refname) %(objecttype)' 'refs/tags/*'
-      #   -> refs/tags/v0.3.1 commit
+      #   git fetch --prune --depth=1 origin +52c802b...:refs/tags/v0.3.1
+      #   fatal: Cannot fetch both 52c802b... and refs/tags/v0.3.1 to refs/tags/v0.3.1
+      #   The process '/usr/bin/git' failed with exit code 128
       #
-      # commit SHA を tag 名へマップするだけなので、ローカルの ref は
-      # **lightweight** になり `%(taggerdate)` が常に空を返す。annotated tag を
-      # 正しく打っていても version-check が「taggerdate を取得できません」で
-      # 落ちる = このガードは導入以来 1 度も本来の日付判定に到達していなかった。
-      # (#948 導入時の spec §8.2 O-6 は「既定でも読める」と記録していたが、
-      #  実測はそうなっていない。)
+      # tag push 時の checkout は `+<SHA>:refs/tags/<tag>` というマッピングで
+      # fetch する。`fetch-tags: true` は `--no-tags` を外すので tag auto-follow が
+      # 同じ destination ref を取り合い、**checkout step ごと落ちる**。
+      #
+      # tag object の取得は下の guard step 内の明示 refspec fetch が担う
+      # (そちらが load-bearing)。既定の checkout が tag object を取得しないこと
+      # 自体は別途実測済み (run 33528826207: `refs/tags/v0.3.1 commit` = lightweight)。
       - uses: actions/checkout@v4
-        with:
-          fetch-tags: true
 
       - uses: actions/setup-python@v5
         with:
@@ -122,9 +120,10 @@ jobs:
       # (docs/release-process.md §タグ運用) が定義する「タグを打つ日」そのもの。
       #
       # **読めるようにするのは呼び出し側の責任**である。既定の checkout では
-      # 読めない (上の checkout step のコメントに実測を記録)。tag object を
-      # 取得するのは (a) checkout の `fetch-tags: true` と (b) 下の明示 refspec
-      # fetch の 2 段で、どちらか片方でも成立すればよい形にしてある。
+      # 読めない (上の checkout step のコメントに実測を記録)。tag object の取得は
+      # **下の明示 refspec fetch 1 本**が担う。checkout の `fetch-tags: true` で
+      # 冗長化しようとしたが、destination ref を取り合って checkout ごと落ちた
+      # (実測 run 33532643958)。ここは冗長化できない。
       #
       # 旧記述は「既定 fetch-depth: 1 でも読める (spec §8.2 O-6 の決着)」と
       # 書いていたが、**これは誤り**だった (2026-09-02 実測で反証)。
@@ -146,14 +145,14 @@ jobs:
 
           TAG="${GITHUB_REF#refs/tags/}"
 
-          # tag ref を明示 refspec で取り直す。checkout 側の `fetch-tags: true` に
-          # 加えた二重化で、**checkout の実装詳細に依存しないため**にここに置く。
+          # tag ref を明示 refspec で取り直す。**tag object を取得する唯一の経路**。
           # 既定の checkout は commit SHA を tag 名へマップするだけで annotated
           # tag object を持ってこない (実測 run 33528826207)。その状態では
           # `%(taggerdate)` が空になり、正しく打ったタグでも下で必ず落ちる。
-          # `refs/tags/<tag>:refs/tags/<tag>` の refspec なら tag object ごと来る。
-          # 失敗しても即 fail にはしない ((a) が効いていれば下の判定は通る) が、
-          # **黙らせない**。握り潰すと、CI 側 (network / permission) の失敗でも
+          # `refs/tags/<tag>:refs/tags/<tag>` の refspec なら tag object ごと来る
+          # (`--force` で checkout が作った commit 形の ref を上書きする)。
+          # 失敗しても即 fail にはしない (下の空判定が拾う) が、**黙らせない**。
+          # 握り潰すと、CI 側 (network / permission) の失敗でも
           # 下の「annotated tag で打ち直してください」だけが出て、運用者に無関係な
           # 原因を疑わせる。今回まさにその誤帰属で 1 サイクル失っている。
           git fetch --no-tags --force origin "refs/tags/${TAG}:refs/tags/${TAG}" \
