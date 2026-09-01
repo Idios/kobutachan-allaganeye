@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      scripts/check_changelog_style.py は `## [Unreleased]` があればそこだけを
      走査するため、空節を残すとリリース節が**検査対象から外れて緑になる**。 -->
 
-## [0.3.1] - 2026-09-01
+## [0.3.1] - 2026-09-02
 
 ### Changed
 
