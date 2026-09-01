@@ -426,7 +426,7 @@ jobs:
       #
       # M1 (Refs spec L-α): matrix で 2 shell 並列実行する場合、artifact 名衝突を
       # 避けるため pwsh のみで upload。PS 5.1 job は smoke-test 専用で artifact 不要。
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.shell == 'pwsh' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))
         with:
           name: allaganeye-windows-v${{ needs.version-check.outputs.version }}
@@ -439,7 +439,7 @@ jobs:
       # baseline JSON lives at the parent (build/portable/) so it needs its
       # own upload step. Gated to pwsh-only matching the main upload gate
       # (avoid duplicate artifacts from powershell.exe runner).
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.shell == 'pwsh' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))
         with:
           name: allaganeye-baseline-v${{ needs.version-check.outputs.version }}
