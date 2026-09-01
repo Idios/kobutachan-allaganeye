@@ -53,7 +53,7 @@
 # 比較は numpy の縮約を経由しており、baseline は bit-exact 比較なので
 # 数値実装の差が境界を動かしうる。
 opencv-python-headless==4.13.0.92
-numpy==2.4.4
+numpy==2.4.6
 scipy==1.17.1
 
 # --- codegen gate (.github/workflows/ci.yml) の出力を決める整形系 ---
