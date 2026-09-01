@@ -45,6 +45,7 @@ import pytest
 _TESTS_DIR = pathlib.Path(__file__).parent
 _FPS_KWARGS = frozenset({"source_fps", "source_fps_num", "source_fps_den"})
 _TARGET = "detect_match_boundaries"
+_REAL_VIDEO_ENV = ("ALLAGANEYE_SAMPLE_VIDEO_DIR", "ALLAGANEYE_AUDIO_TEST_VIDEO")
 
 
 def _marker_names(node: ast.AST) -> set[str]:
@@ -60,52 +61,83 @@ def _marker_names(node: ast.AST) -> set[str]:
     return names
 
 
-def _module_is_slow(tree: ast.Module) -> bool:
-    """True if the module sets a ``pytestmark`` mentioning a slow marker."""
+def _module_uses_real_video(tree: ast.Module, source: str) -> bool:
+    """True if the module drives the detector over a real recording.
+
+    Two signals, either sufficient:
+
+    1. **any slow marker** (module ``pytestmark``, or a function/class decorator)
+    2. **a real-video env var** -- the module resolves its input from
+       ``ALLAGANEYE_SAMPLE_VIDEO_DIR`` / ``ALLAGANEYE_AUDIO_TEST_VIDEO``
+
+    **Module granularity, deliberately.** The obvious rule -- "the call is
+    lexically inside a slow-marked function or class" -- has a hole the suite
+    already contains: ``tests/test_scorebar_regression.py`` puts its
+    ``detect_match_boundaries`` calls in module-level *fixtures*, outside the
+    slow-marked classes that consume them. A lexical rule leaves the very files
+    #864 fixed unguarded (Codex adversarial-review, 2026-09-01).
+
+    Signal 2 exists because ``tests/generate_baselines.py`` -- also fixed by
+    #864 -- is a plain helper module with no markers at all, so signal 1 alone
+    would not reach it.
+
+    Widening does not cost false-reds. Measured 2026-09-01 over every module
+    that calls the detector: in scope 5 (``test_integration`` /
+    ``test_l3_phase2_parity`` / ``test_regression_330`` /
+    ``test_scorebar_regression`` / ``generate_baselines``), out of scope 3
+    (``test_detector`` 39 calls / ``test_gpu_detector`` 1 / ``test_split_matches``
+    2) -- and those three mock the decode path, so passing no fps is correct
+    there.
+    """
+    if any(env in source for env in _REAL_VIDEO_ENV):
+        return True
     for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        if any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets):
-            return "slow" in ast.dump(node.value)
-    return False
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets
+        ):
+            if "slow" in ast.dump(node.value):
+                return True
+    return any(
+        any(m.startswith("slow") for m in _marker_names(node))
+        for node in ast.walk(tree)
+    )
+
+
+def _passes_fps(node: ast.Call) -> bool:
+    """True if the call supplies a frame rate the detector can actually resolve.
+
+    ``_resolve_fps_rational`` needs ``source_fps``, or **both** halves of the
+    rational pair. Accepting any one of the three would green-light
+    ``source_fps_num=`` alone, which still raises at runtime.
+    """
+    passed = {kw.arg for kw in node.keywords if kw.arg}
+    return "source_fps" in passed or {"source_fps_num", "source_fps_den"} <= passed
 
 
 def _slow_calls_without_fps(path: pathlib.Path) -> list[int]:
-    """Line numbers of slow-marked ``detect_match_boundaries`` calls lacking fps."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    module_slow = _module_is_slow(tree)
-    offenders: list[int] = []
-    scope: list[ast.AST] = []
+    """Line numbers of ``detect_match_boundaries`` calls lacking a resolvable fps.
 
-    class Visitor(ast.NodeVisitor):
-        def _enter(self, node: ast.AST) -> None:
-            scope.append(node)
-            self.generic_visit(node)
-            scope.pop()
-
-        visit_FunctionDef = _enter
-        visit_AsyncFunctionDef = _enter
-        visit_ClassDef = _enter
-
-        def visit_Call(self, node: ast.Call) -> None:
-            func = node.func
-            name = getattr(func, "attr", None) or getattr(func, "id", None)
-            if name == _TARGET:
-                in_slow_scope = module_slow or any(
-                    any(m.startswith("slow") for m in _marker_names(s)) for s in scope
-                )
-                passed = {kw.arg for kw in node.keywords if kw.arg}
-                if in_slow_scope and not (passed & _FPS_KWARGS):
-                    offenders.append(node.lineno)
-            self.generic_visit(node)
-
-    Visitor().visit(tree)
-    return offenders
+    Only real-video modules are inspected (see ``_module_uses_real_video``).
+    """
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    if not _module_uses_real_video(tree, source):
+        return []
+    return sorted(
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (getattr(node.func, "attr", None) or getattr(node.func, "id", None))
+        == _TARGET
+        and not _passes_fps(node)
+    )
 
 
-def _scan_all() -> dict[str, list[int]]:
+def _scan_all(root: pathlib.Path | None = None) -> dict[str, list[int]]:
+    """Offenders under ``root`` (default: this tests directory), keyed by filename."""
+    base = root if root is not None else _TESTS_DIR
     found: dict[str, list[int]] = {}
-    for path in sorted(_TESTS_DIR.rglob("*.py")):
+    for path in sorted(base.rglob("*.py")):
         lines = _slow_calls_without_fps(path)
         if lines:
             found[path.name] = lines
@@ -113,10 +145,10 @@ def _scan_all() -> dict[str, list[int]]:
 
 
 def test_slow_detector_calls_pass_fps() -> None:
-    """Every slow-marked ``detect_match_boundaries`` call must supply the fps."""
+    """Every real-video ``detect_match_boundaries`` call must supply the fps."""
     offenders = _scan_all()
     assert offenders == {}, (
-        "slow-marked detect_match_boundaries call(s) do not pass source_fps / "
+        "real-video detect_match_boundaries call(s) do not pass source_fps / "
         f"source_fps_num / source_fps_den: {offenders}. Since #864 removed the "
         "fps-filter fallback these raise VideoProcessingError when executed. "
         "Mirror the production detect_kwargs (allaganeye/commands/split_matches.py)."
@@ -138,6 +170,58 @@ def test_guard_finds_a_violation_when_one_is_injected(tmp_path: pathlib.Path) ->
         encoding="utf-8",
     )
     assert _slow_calls_without_fps(offender) == [4]
+
+
+def test_scan_discovers_files_recursively(tmp_path: pathlib.Path) -> None:
+    """``_scan_all`` must actually walk the tree, not just return ``{}``.
+
+    The per-file check above can be perfect while discovery is broken -- a bad
+    glob, a wrong root, or an exception swallowed per file would leave
+    `test_slow_detector_calls_pass_fps` green having read nothing.
+    """
+    nested = tmp_path / "sub" / "deeper"
+    nested.mkdir(parents=True)
+    (nested / "test_injected_nested.py").write_text(
+        "import pytest\n"
+        "pytestmark = pytest.mark.slow\n"
+        "def test_x():\n"
+        "    detect_match_boundaries(video)\n",
+        encoding="utf-8",
+    )
+    assert _scan_all(tmp_path) == {"test_injected_nested.py": [4]}
+
+
+def test_real_scan_actually_reads_the_known_call_sites() -> None:
+    """The real tests directory must contain the call sites this guard exists for.
+
+    Pins the scan against a silently empty corpus: if these modules were renamed
+    or the detector call was refactored away, the guard would keep passing while
+    covering nothing. Assert the population is non-empty and compliant, rather
+    than only that the offender set is empty.
+    """
+    covered = {
+        path.name: _slow_calls_without_fps(path)
+        for path in sorted(_TESTS_DIR.rglob("*.py"))
+        if _module_uses_real_video(
+            ast.parse(path.read_text(encoding="utf-8")),
+            path.read_text(encoding="utf-8"),
+        )
+        and _TARGET in path.read_text(encoding="utf-8")
+    }
+    for name in (
+        "test_regression_330.py",
+        "test_integration.py",
+        "test_l3_phase2_parity.py",
+        "test_scorebar_regression.py",
+        # marker を 1 つも持たない helper。env var signal でしか届かないので、
+        # signal 2 を消すと静かに射程外へ落ちる (#864 が直した 3 件の 1 つ)。
+        "generate_baselines.py",
+    ):
+        assert name in covered, (
+            f"{name} is no longer in scope of this guard "
+            f"(slow marker or detector call gone?). In scope: {sorted(covered)}"
+        )
+        assert covered[name] == [], f"{name} has offending calls: {covered[name]}"
 
 
 def test_guard_accepts_the_fixed_form(tmp_path: pathlib.Path) -> None:
@@ -168,6 +252,68 @@ def test_guard_ignores_non_slow_callers(tmp_path: pathlib.Path) -> None:
         encoding="utf-8",
     )
     assert _slow_calls_without_fps(unit) == []
+
+
+def test_guard_rejects_a_half_rational_pair(tmp_path: pathlib.Path) -> None:
+    """``source_fps_num`` without ``source_fps_den`` still raises at runtime.
+
+    ``_resolve_fps_rational`` requires both halves (or the float). A predicate
+    that accepts "any one of the three" would pass this and fail on the machine.
+    """
+    half = tmp_path / "test_injected_half.py"
+    half.write_text(
+        "import pytest\n"
+        "pytestmark = pytest.mark.slow_detect\n"
+        "def test_x():\n"
+        "    detect_match_boundaries(video, source_fps_num=60)\n",
+        encoding="utf-8",
+    )
+    assert _slow_calls_without_fps(half) == [4]
+
+
+def test_guard_covers_fixtures_outside_the_slow_test_bodies(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A fixture that calls the detector counts, even outside a slow-marked body.
+
+    This is the shape ``tests/test_scorebar_regression.py`` uses: the call lives
+    in a module-level fixture and only the consuming classes carry the marker.
+    A lexical "inside a slow scope" rule misses it -- which is how the #864 sweep
+    could have regressed unnoticed in the very files it fixed.
+    """
+    fixture_shaped = tmp_path / "test_injected_fixture.py"
+    fixture_shaped.write_text(
+        "import pytest\n"
+        "@pytest.fixture\n"
+        "def detection(meta):\n"
+        "    return detect_match_boundaries(video, duration_hint=meta['duration'])\n"
+        "@pytest.mark.slow_detect\n"
+        "class TestThing:\n"
+        "    def test_x(self, detection):\n"
+        "        assert detection\n",
+        encoding="utf-8",
+    )
+    assert _slow_calls_without_fps(fixture_shaped) == [4]
+
+
+def test_guard_ignores_modules_with_no_slow_marker(tmp_path: pathlib.Path) -> None:
+    """Module granularity must not spill into fully-mocked unit modules.
+
+    Measured 2026-09-01: ``test_detector.py`` / ``test_gpu_detector.py`` /
+    ``test_split_matches.py`` carry zero slow markers, so widening the rule to
+    the module does not make their unmocked-fps callers red.
+    """
+    unit_module = tmp_path / "test_injected_unit_module.py"
+    unit_module.write_text(
+        "import pytest\n"
+        "@pytest.fixture\n"
+        "def detection():\n"
+        "    return detect_match_boundaries(video)\n"
+        "def test_x(detection):\n"
+        "    assert detection\n",
+        encoding="utf-8",
+    )
+    assert _slow_calls_without_fps(unit_module) == []
 
 
 @pytest.mark.parametrize(
