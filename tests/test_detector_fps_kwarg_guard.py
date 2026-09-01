@@ -103,6 +103,46 @@ def _module_uses_real_video(tree: ast.Module, source: str) -> bool:
     )
 
 
+def _target_bindings(tree: ast.Module) -> tuple[set[str], set[str]]:
+    """Local names that reach the detector: (function aliases, module aliases).
+
+    Resolving imports matters because the suite already uses an aliased form
+    (``tests/test_l3_phase2_parity.py`` calls ``det.detect_match_boundaries``),
+    so ``from ... import detect_match_boundaries as dmb`` is not an exotic style
+    here -- and a name-only matcher misses it entirely (Codex adversarial-review
+    round 2, 2026-09-01: measured as an empty result on an injected alias).
+    """
+    func_names: set[str] = set()
+    module_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == _TARGET:
+                    func_names.add(alias.asname or alias.name)
+                elif alias.name == "detector":
+                    module_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.endswith(".detector") or alias.name == "detector":
+                    module_names.add(alias.asname or alias.name.split(".")[-1])
+    return func_names, module_names
+
+
+def _is_target_call(node: ast.Call, funcs: set[str], modules: set[str]) -> bool:
+    """True if ``node`` calls the detector, directly or through an alias."""
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id == _TARGET or func.id in funcs
+    if isinstance(func, ast.Attribute):
+        # `det.detect_match_boundaries(...)` -- accept the attribute name on any
+        # receiver (a module alias we failed to resolve still reads correctly),
+        # and also `<module alias>.<anything>` is not enough on its own.
+        if func.attr == _TARGET:
+            return True
+        return func.attr in funcs and isinstance(func.value, ast.Name)
+    return False
+
+
 def _passes_fps(node: ast.Call) -> bool:
     """True if the call supplies a frame rate the detector can actually resolve.
 
@@ -123,13 +163,33 @@ def _slow_calls_without_fps(path: pathlib.Path) -> list[int]:
     tree = ast.parse(source)
     if not _module_uses_real_video(tree, source):
         return []
+    funcs, modules = _target_bindings(tree)
     return sorted(
         node.lineno
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
-        and (getattr(node.func, "attr", None) or getattr(node.func, "id", None))
-        == _TARGET
+        and _is_target_call(node, funcs, modules)
         and not _passes_fps(node)
+    )
+
+
+def _target_call_count(path: pathlib.Path) -> int:
+    """AST-recognized detector calls in ``path`` (0 if the module is out of scope).
+
+    The anti-vacuity pin uses this rather than a substring search: an
+    ``import ... as dmb`` line contains the target name while the module may
+    contain no recognized call at all, which would let the pin vouch for a file
+    the scanner never actually inspects.
+    """
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    if not _module_uses_real_video(tree, source):
+        return 0
+    funcs, modules = _target_bindings(tree)
+    return sum(
+        1
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _is_target_call(node, funcs, modules)
     )
 
 
@@ -172,6 +232,45 @@ def test_guard_finds_a_violation_when_one_is_injected(tmp_path: pathlib.Path) ->
     assert _slow_calls_without_fps(offender) == [4]
 
 
+@pytest.mark.parametrize(
+    ("import_line", "call"),
+    [
+        (
+            "from allaganeye.video.detector import detect_match_boundaries as dmb",
+            "dmb(video)",
+        ),
+        (
+            "from allaganeye.video import detector as det",
+            "det.detect_match_boundaries(video)",
+        ),
+        (
+            "import allaganeye.video.detector as d",
+            "d.detect_match_boundaries(video)",
+        ),
+    ],
+)
+def test_guard_follows_import_aliases(
+    import_line: str, call: str, tmp_path: pathlib.Path
+) -> None:
+    """An alias must not be an escape hatch.
+
+    Measured 2026-09-01 on the name-only matcher: the ``as dmb`` form returned
+    an empty offender list while the module still contained an unguarded call.
+    ``tests/test_l3_phase2_parity.py`` already calls through a module alias, so
+    this shape is in the suite, not hypothetical.
+    """
+    aliased = tmp_path / "test_injected_alias.py"
+    aliased.write_text(
+        "import pytest\n"
+        f"{import_line}\n"
+        "pytestmark = pytest.mark.slow_detect\n"
+        "def test_x():\n"
+        f"    {call}\n",
+        encoding="utf-8",
+    )
+    assert _slow_calls_without_fps(aliased) == [5]
+
+
 def test_scan_discovers_files_recursively(tmp_path: pathlib.Path) -> None:
     """``_scan_all`` must actually walk the tree, not just return ``{}``.
 
@@ -198,15 +297,16 @@ def test_real_scan_actually_reads_the_known_call_sites() -> None:
     or the detector call was refactored away, the guard would keep passing while
     covering nothing. Assert the population is non-empty and compliant, rather
     than only that the offender set is empty.
+
+    Membership is decided by **AST-recognized call count**, not by a substring
+    search for the target name. A bare ``import ... as dmb`` line contains the
+    name, so a substring pin would vouch for a module in which the scanner
+    recognizes nothing (Codex adversarial-review round 2).
     """
     covered = {
         path.name: _slow_calls_without_fps(path)
         for path in sorted(_TESTS_DIR.rglob("*.py"))
-        if _module_uses_real_video(
-            ast.parse(path.read_text(encoding="utf-8")),
-            path.read_text(encoding="utf-8"),
-        )
-        and _TARGET in path.read_text(encoding="utf-8")
+        if _target_call_count(path) > 0
     }
     for name in (
         "test_regression_330.py",
