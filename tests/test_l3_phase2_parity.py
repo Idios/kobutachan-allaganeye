@@ -32,7 +32,17 @@ def test_vtuber_split_removes_in_match_overspilt():
     res = (meta["width"], meta["height"])
     # vtuber=True path: classifier removes in-match band-crop blackouts.
     matches_vtuber = det.detect_match_boundaries(
-        video, duration_hint=meta["duration"], src_resolution=res, vtuber=True
+        video,
+        duration_hint=meta["duration"],
+        src_resolution=res,
+        vtuber=True,
+        # #864: this call does not raise today because vtuber=True branches into
+        # the timeline path before the CPU chunk decode. It is still wrong to
+        # omit the fps: when the timeline path degrades to the band-crop path it
+        # reaches the decode, and production always supplies these.
+        source_fps=meta["fps"],
+        source_fps_num=meta["fps_num"],
+        source_fps_den=meta["fps_den"],
     )
     # Phase 1 over-split baseline (vtuber=True without Phase 2 classify) split far
     # more; here we assert the classified result is a sane, small match count.

@@ -90,6 +90,18 @@ def _run_detection(
         min_blackout_duration=3.0,
         src_resolution=(metadata["width"], metadata["height"]),
         codec=metadata["codec"],
+        # #864: mirror the production detect_kwargs (split_matches.py). Without
+        # these, this helper resolved no fps at all. Before #864 that silently
+        # degraded to the pre-#576 fps-filter path; after the removal it raises
+        # VideoProcessingError, so the test could never have run.
+        #
+        # It went unnoticed because both tests here skip unless
+        # ALLAGANEYE_AUDIO_TEST_VIDEO is set, so the #864 sweep that fixed the
+        # sibling callers (tests/test_scorebar_regression.py, and
+        # tests/generate_baselines.py) never saw this one execute.
+        source_fps=metadata["fps"],
+        source_fps_num=metadata["fps_num"],
+        source_fps_den=metadata["fps_den"],
     )
 
 
