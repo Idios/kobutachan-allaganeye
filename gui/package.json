@@ -18,7 +18,7 @@
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "react": "19.2.5",
-    "react-dom": "19.2.5",
+    "react-dom": "19.2.8",
     "zod": "4.3.6",
     "zustand": "5.0.12"
   },
@@ -31,7 +31,7 @@
     "@types/jest-axe": "3.5.9",
     "@types/node": "25.6.0",
     "@types/react": "19.2.14",
-    "@types/react-dom": "19.2.3",
+    "@types/react-dom": "19.2.5",
     "@vitejs/plugin-react": "6.0.1",
     "ajv": "8.18.0",
     "ajv-formats": "3.0.1",
