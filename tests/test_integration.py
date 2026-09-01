@@ -495,6 +495,13 @@ def gpu_cpu_results(
         min_match_duration=300.0,
         min_blackout_duration=3.0,
         src_resolution=(source_metadata["width"], source_metadata["height"]),
+        # #864: mirror the production detect_kwargs (split_matches.py). Without
+        # these the CPU decode path raises VideoProcessingError, so this fixture
+        # could never run. It stayed invisible because TestGpuCpuConsistency is
+        # marked slow_gpu, which the #864 sweep (run as -m slow_detect) skipped.
+        source_fps=source_metadata["fps"],
+        source_fps_num=source_metadata["fps_num"],
+        source_fps_den=source_metadata["fps_den"],
     )
     gpu = detect_match_boundaries(
         source_mkv,
@@ -505,6 +512,11 @@ def gpu_cpu_results(
         min_match_duration=300.0,
         min_blackout_duration=3.0,
         src_resolution=(source_metadata["width"], source_metadata["height"]),
+        # #864: same as the CPU call above. The GPU path falls back to CPU when
+        # hardware acceleration is unavailable, so it needs the fps too.
+        source_fps=source_metadata["fps"],
+        source_fps_num=source_metadata["fps_num"],
+        source_fps_den=source_metadata["fps_den"],
     )
 
     write_fixture_cache(
