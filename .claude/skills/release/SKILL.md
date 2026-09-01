@@ -545,7 +545,7 @@ security 再チェック: 非実施 (理由: …)
 
 - patch リリース: マージされたブランチで `git tag -a v<新バージョン> -m "Release v<新バージョン>: <概要>"` → `git push origin v<新バージョン>`
 - minor/major リリース: `develop-<新バージョン>` を `main` にマージしてから `main` でタグ打ち
-- **annotated tag（`-a`）で打つ**。`version-check` job は CHANGELOG 見出し日付の基準日として annotated tag の `taggerdate` を第一候補に読む
+- **annotated tag（`-a`）で打つ**。`version-check` job は CHANGELOG 見出し日付の基準日として annotated tag の `taggerdate` を**唯一の基準**として読む (取れなければ fail。commit 日時への fallback は無い)
 - **GitHub Release は `git push origin v<新バージョン>` で [`release.yml`](../../../.github/workflows/release.yml) が自動作成する**。本文は [`scripts/extract_release_notes.py`](../../../scripts/extract_release_notes.py) が CHANGELOG.md の該当セクションから抽出し、Portable ZIP も自動添付される
   - **`git push` はトリガであって完了ではない (#962 項目 7)。** `release.yml` はタグ push を trigger に**非同期**で走り、Windows ビルド + PyInstaller + FFmpeg DL を含むため十数分かかる。push した時点を「Release 作成済み」と扱うと、`develop-<次バージョン>` を切る判断 (Step 2-6) が実際の完了より先に出る。**次の 2 つがどちらも通ってから**先へ進む:
 
@@ -561,3 +561,48 @@ security 再チェック: 非実施 (理由: …)
     `gh run watch` が非ゼロで返る / `assets=0` / `draft=true` のいずれかなら、**`develop-<次バージョン>` をまだ切らない**。原因を潰すか、[`docs/release-process.md`](../../../docs/release-process.md) §手動リリース手順 (CI 迂回) に従う
   - 手動で `gh release create ... --notes-from-tag` を叩かない（#918 item4）。Release が二重作成されるうえ、`--notes-from-tag` はタグメッセージを本文にするため CHANGELOG の内容が反映されない
   - CI 障害等で手動作成が必要な場合のみ、[`docs/release-process.md`](../../../docs/release-process.md) §手動リリース手順 (CI 迂回) に従う（Actions の一時無効化を含む手順一式がある）
+
+#### タグ push 後に `version-check` が落ちた場合の打ち直し (2026-09-02 実運用で確立)
+
+**Step 4 が扱うのはタグを打つ「前」の日付 drift だけ**で、打った後に落ちた場合の復旧経路は
+どこにも書かれていなかった (v0.3.1 でその場で発明することになった)。同じことを繰り返さない
+ため手順を固定する。
+
+前提の確認を先にする。**`release` job は `version-check` に `needs` で依存するため、
+version-check が落ちた場合 Release も ZIP も作られない**。まずそれを実物で確認する:
+
+```bash
+gh release view "v<版>" --repo Idios/kobutachan-allaganeye --json name,isDraft,assets
+# -> "release not found" が正常 (作られていれば先にそれを消す)
+```
+
+そのうえで:
+
+1. **原因を直す PR を `main` へ出す。** `main` は保護ブランチなのでタグ済み commit に直接
+   commit できない。§ブランチ戦略 のルール 5 (ホットフィックス) に該当し、`main` から
+   ブランチを切って `main` へ戻す。**`develop-<版>` は既に削除されていることが多い**
+   (hop 2 のマージで消える) ので、そこを head にしようとして詰まらないこと
+2. **旧タグを消す。** リモートとローカルの両方:
+
+   ```bash
+   git push origin :refs/tags/v<版>
+   git tag -d v<版>
+   ```
+
+3. **打ち直す。** 新しい `main` HEAD に対して annotated tag で:
+
+   ```bash
+   git checkout main && git pull
+   git tag -a v<版> -m "Release v<版>: <概要>"
+   git push origin v<版>
+   ```
+
+4. **日付の再帰に注意。** 1 の PR の CI (十数分) とマージで **JST の日付を跨ぐと、
+   CHANGELOG 見出しがまたズレて同じ失敗に戻る**。跨ぎそうなら 1 の PR に見出し日付の更新を
+   同梱し、**マージ直後に間を置かず 2-3 を実行する**。v0.3.1 では 08-31 -> 09-01 -> 09-02 と
+   2 度更新することになった
+
+> **原因の切り分けを先にする。** 「taggerdate を取得できません」は**打ち方の問題とは限らない**。
+> CI 側で tag object を取得できていないだけのこともある (v0.3.1 で実際に発生し、
+> `release.yml` の checkout を修正した)。エラーの直前に fetch の warning が出ていないか、
+> job ログの `git for-each-ref ... 'refs/tags/*'` の出力が `tag` か `commit` かを先に見る。

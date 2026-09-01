@@ -152,7 +152,12 @@ jobs:
           # tag object を持ってこない (実測 run 33528826207)。その状態では
           # `%(taggerdate)` が空になり、正しく打ったタグでも下で必ず落ちる。
           # `refs/tags/<tag>:refs/tags/<tag>` の refspec なら tag object ごと来る。
-          git fetch --no-tags --force origin "refs/tags/${TAG}:refs/tags/${TAG}" || true
+          # 失敗しても即 fail にはしない ((a) が効いていれば下の判定は通る) が、
+          # **黙らせない**。握り潰すと、CI 側 (network / permission) の失敗でも
+          # 下の「annotated tag で打ち直してください」だけが出て、運用者に無関係な
+          # 原因を疑わせる。今回まさにその誤帰属で 1 サイクル失っている。
+          git fetch --no-tags --force origin "refs/tags/${TAG}:refs/tags/${TAG}" \
+            || echo "::warning::refs/tags/${TAG} の fetch に失敗しました (CI 側要因の可能性)。以降で taggerdate が取れない場合はこの warning を先に疑うこと"
 
           # lightweight tag / ref 欠落では空文字が返る (exit 0)。
           REFERENCE_DATE="$(git for-each-ref --format='%(taggerdate:iso-strict)' "refs/tags/${TAG}")"
@@ -160,7 +165,7 @@ jobs:
             echo "--- diagnostics ---"
             echo "ref object type: $(git cat-file -t "${TAG}" 2>&1 || true)"
             git for-each-ref --format='%(refname) %(objecttype)' 'refs/tags/*' || true
-            echo "::error::${TAG} から taggerdate を取得できません。annotated tag で打ち直してください (git tag -a ${TAG} -m '...')。CHANGELOG 見出し日付の基準日はタグ作成時刻であり、commit 日時で代用しません (docs/release-process.md §タグ運用)"
+            echo "::error::${TAG} から taggerdate を取得できません。**上に fetch の warning が出ていないかを先に確認**すること (出ていれば CI 側要因で、タグの打ち方は無関係)。warning が無ければ lightweight tag なので annotated で打ち直してください (git tag -a ${TAG} -m '...')。CHANGELOG 見出し日付の基準日はタグ作成時刻であり、commit 日時で代用しません (docs/release-process.md §タグ運用)"
             exit 1
           fi
           echo "基準日: annotated tag ${TAG} の taggerdate = ${REFERENCE_DATE}"

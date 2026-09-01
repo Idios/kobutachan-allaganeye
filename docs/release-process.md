@@ -75,7 +75,7 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
   - タグを打つ直前に見出し日付を当日へ更新し、**リリース PR の head (`release/vX.Y.Z`) へ commit する** (`main` は保護ブランチなのでマージ後には直せない)。手順は [`.claude/skills/release/SKILL.md`](../.claude/skills/release/SKILL.md) §Step 4
   - 機械検査は [`scripts/check_version_consistency.py`](../scripts/check_version_consistency.py) の `--tag` 指定時のみ発火する。基準日は **annotated tag の `taggerdate` のみ**を `--changelog-date-from` で渡す。`head_commit.timestamp` へ fallback しない — あれは「タグが指す commit の日時」であってタグを打った日時ではなく、commit とタグ push が日を跨ぐと規約とズレた値を「正」として通してしまうため。`taggerdate` が取れない場合 (lightweight tag) は fail させ、`git tag -a` で打ち直す
   - **検査対象外の集合**は同スクリプトの `check_changelog_heading()` docstring に列挙してある
-- コマンド: `git tag -a v0.x.0 -m "Release v0.x.0: <レイヤー名>"` (**annotated tag**。`taggerdate` が日付検査の第一基準になるため lightweight tag は使わない)
+- コマンド: `git tag -a v0.x.0 -m "Release v0.x.0: <レイヤー名>"` (**annotated tag**。`taggerdate` が日付検査の**唯一の基準**になるため lightweight tag は使わない (取れなければ fail し、commit 日時へは fallback しない))
 - `git push origin v0.x.0` すると [`.github/workflows/release.yml`](../.github/workflows/release.yml) が発火し、Windows Portable ZIP (`allaganeye-v<version>-windows.zip`) のビルドと GitHub Release への成果物自動添付を実行する (#461)
   - ビルドは [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) で PyInstaller `--onedir` により Python interpreter + 全依存 (numpy / scipy / opencv-python-headless / typer / allaganeye 本体) を frozen application 化 (`scripts/installer/requirements-pyinstaller.txt` で pyinstaller / hooks-contrib version pin、CI `actions/setup-python@v5` で Python 3.11.9 pin) し、FFmpeg LGPLv3 shared (BtbN FFmpeg-Builds win64-lgpl-shared、libdav1d 入り) を同梱する (#752)
     - ダウンロードする外部バイナリ (FFmpeg) はスクリプト内に **SHA256 ダイジェストをハードコードして検証** する。ダイジェスト不一致時はビルドを fail。FFmpeg は BtbN の **monthly snapshot タグ** (`autobuild-YYYY-MM-{28,29,30,31}-*`、~24 ヶ月 retention) と特定アセット名を URL にピン留めして再現性を確保する (`latest` タグは日次更新の可動ポインタなので不可、daily 中間タグは ~14 日で GC されるため不可。詳細 #705)
@@ -91,6 +91,7 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
     1. **ローカルで作る** — §手動リリース手順 (CI 迂回) の [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) を直接実行する
     2. **リリース PR の CI から取る** — `release.yml` の `pull_request` trigger は base…head の全 diff で評価されるため、リリース PR では起動し `upload-artifact` の `pull_request` 分岐が成立する (実測: PR #924 の `build-windows (pwsh)` job)。取るのは `allaganeye-windows-v<version>` の方 (同時に上がる `allaganeye-baseline-v<version>` は `baseline.json` のみ)。**ただしこの artifact は展開済み payload で、1 / 3 の ZIP が持つ最上位 `allaganeye-v<version>/` ディレクトリを含まない** — 「展開 = インストール」の確認に使うときは形が違う点に注意 (`release` job が再 zip して wrapper を復元している)
     3. **タグ push 後の Release 添付から取る** — `refs/tags/v*` の push で自動作成される GitHub Release に添付される
+- **タグ push 後に `version-check` が落ちた場合の打ち直し手順**は [`.claude/skills/release/SKILL.md`](../.claude/skills/release/SKILL.md) §タグ push 後に `version-check` が落ちた場合の打ち直し にある (旧タグ削除 / ルール 5 経由の main PR / 日付再更新の再帰)
 - `/release` スキルは develop → main PR 作成・CHANGELOG 更新の支援に使う (Release 作成自体は上記 workflow が担う)
 
 ## CHANGELOG entry の記述規約 (#952)

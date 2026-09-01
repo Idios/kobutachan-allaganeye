@@ -568,6 +568,8 @@ Track A′ ── PR-A1 (#907)  ruff/pyright pin 先行 ★直列★
 
 **未検証の前提 (実装時に決着):** annotated tag object の `taggerdate` が `version-check` job (`release.yml:87` の `actions/checkout@v4`、既定 `fetch-depth: 1`) の checkout 後に読めるか (spec §8.2 O-6)。読めない場合は `github.event.head_commit.timestamp` が唯一の基準日になる。
 
+**決着 (2026-09-02 実測、spec §8.2 O-6)**: 既定では**読めない**。checkout は commit SHA を tag 名へマップするだけで tag object を取得せず、CI 上の ref は lightweight になる。ただし `head_commit.timestamp` への fallback は**採らなかった** (タグを打った日時ではないため)。代わりに `release.yml` 側で tag object を取得するようにした。
+
 **EPT: 適用する** (`/release` skill の手順変更を伴うため)。
 
 **受け入れゲート:**

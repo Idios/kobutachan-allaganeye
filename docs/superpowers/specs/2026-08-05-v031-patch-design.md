@@ -236,7 +236,7 @@ E1 (routing がアドバイザリで skill / hook に 0 件) / E5 (見出し日�
 
 1. **規約を先に確定する** (D6)。`docs/release-process.md` §タグ運用 に「CHANGELOG 見出し日付 = タグを打つ日 (JST)」を 1 行で定義し、§共通項目 のチェックリスト項目を「対象バージョンセクションが存在 (日付 = タグ打ち日 JST / 主要変更点 / breaking changes)」へ具体化する
 2. `.claude/skills/release/SKILL.md` の §タグ打ち・GitHub Release 作成 の直前に「見出し日付を当日に更新して commit する」手順を追加する。**現在 skill 全体で `changelog` の grep hit が 0 件**であり、`docs/release-process.md:81` の「/release スキルは CHANGELOG 更新の支援に使う」が実体を伴っていない乖離も同時に解消する
-3. `scripts/check_version_consistency.py` に `_check_changelog_heading()` を追加する。`--tag` 指定時のみ発火。`--changelog-date-from <ISO8601>` を CLI 引数で受け、workflow 側が `${{ github.event.head_commit.timestamp }}` を渡す (単体テスト可能な形にする)
+3. `scripts/check_version_consistency.py` に `_check_changelog_heading()` を追加する。`--tag` 指定時のみ発火。`--changelog-date-from <ISO8601>` を CLI 引数で受け、workflow 側が基準日を渡す (単体テスト可能な形にする)。**訂正 (2026-09-02)**: 計画時は `${{ github.event.head_commit.timestamp }}` を渡す想定だったが、出荷したのは **annotated tag の `taggerdate` のみ**を渡す形である (commit 日時はタグを打った日時ではないため。Codex adversarial-review の high finding)。この方針は `tests/scripts/test_check_version_consistency.py` が pin している
 4. `scripts/extract_release_notes.py:13` の regex を日付必須へ厳格化し、`tests/scripts/test_extract_release_notes.py` を新設する (現在この script には対応テストが存在しない)
 
 **タイムゾーンの扱い (必須)**: GitHub Actions runner は既定 UTC である。**過去 4 タグ中 2 件 (v0.1.1 02:55 JST / v0.2.1 08:43 JST) で JST 日付と UTC 日付が 1 日ずれる。** naive 実装は 50% の確率で false-red を出し、リリース当日にタグを打ち直す羽目になる。
