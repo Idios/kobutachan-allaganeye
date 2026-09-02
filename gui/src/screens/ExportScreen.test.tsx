@@ -1518,3 +1518,38 @@ describe('#805 ExportScreen post_match no-crash guard', () => {
     });
   });
 });
+
+// #964: name-pattern プレビュー sandbox 警告 (CLI pool.py 層 1 の mirror)。
+// ロジック自体は utils/namePatternSandbox.test.ts が網羅するため、ここでは
+// 「警告が画面に出る / 出ない」の配線を pin する。
+describe('ExportScreen name-pattern preview warnings (#964)', () => {
+  it('shows no warning for the valid default pattern', () => {
+    render(<ExportScreen />);
+    expect(screen.queryByTestId('name-pattern-warning')).toBeNull();
+  });
+
+  it('warns when the pattern escapes the output directory', async () => {
+    const user = userEvent.setup();
+    render(<ExportScreen />);
+    const name = screen.getByLabelText('name pattern');
+    await user.clear(name);
+    await user.type(name, '../victim.mp4');
+    const warn = screen.getByTestId('name-pattern-warning');
+    expect(within(warn).getByText(/外に解決されます/)).toBeInTheDocument();
+    expect(
+      within(warn).getByText(/"\.\.\/victim\.mp4"/),
+    ).toBeInTheDocument();
+  });
+
+  it('warns when the pattern maps two matches onto one file (no {idx})', async () => {
+    const user = userEvent.setup();
+    render(<ExportScreen />);
+    const name = screen.getByLabelText('name pattern');
+    await user.clear(name);
+    await user.type(name, '{type}.mp4');
+    const warn = screen.getByTestId('name-pattern-warning');
+    // sample fixture は fl_match を複数含むため同一ファイル衝突になる
+    expect(within(warn).getByText(/同じファイル/)).toBeInTheDocument();
+    expect(within(warn).getByText(/\{idx\}/)).toBeInTheDocument();
+  });
+});
