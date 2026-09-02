@@ -1210,3 +1210,22 @@ def test_release_workflow_does_not_fall_back_to_commit_timestamp() -> None:
 def test_release_workflow_still_triggers_on_constraints_change() -> None:
     """PR-A2 (#916) が入れた `constraints.txt` の paths を壊していないこと。"""
     assert "constraints.txt" in _release_workflow()
+
+
+def test_release_workflow_fetches_tag_object_by_explicit_refspec() -> None:
+    """`version-check` が annotated tag object を明示 refspec fetch で取得していること (F8)。
+
+    tag push 時の checkout は commit SHA を tag 名へマップするだけで annotated tag object
+    を持ってこない (実測 run 33528826207)。`%(taggerdate)` を読めるのは下の
+    `refs/tags/${TAG}:refs/tags/${TAG}` の明示 refspec fetch 1 本だけである。
+
+    checkout に `fetch-tags: true` を足して冗長化しようとしたが、tag auto-follow が
+    同じ destination ref を取り合い **checkout step ごと落ちた** (実測 run 33532643958)。
+    ここは冗長化できないため、`fetch-tags: true` が version-check の checkout に無いこと
+    も pin する (これを足すと checkout ごと落ちる)。
+
+    この test は**文字列 pin であって挙動保証ではない** (挙動は tag push でしか観測できない)。
+    """
+    workflow = _release_workflow_effective()
+    assert "refs/tags/${TAG}:refs/tags/${TAG}" in workflow
+    assert "fetch-tags: true" not in workflow
