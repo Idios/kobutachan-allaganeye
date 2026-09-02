@@ -22,10 +22,11 @@ skill §打ち直し で機構化済み / CHANGELOG 日付打ち直し / 実機�
 
 ## 2. スコープ (計画時点)
 
-### 2.1 deferred (a) 吸収候補 (4 件)
+### 2.1 deferred (a) 吸収候補 (9 件)
 
-2026-09-02 の Step 0c で Idios が (a) 次 release 吸収を選択した 4 件。
-50 件 ≥ 3 のため Iron Law 2 の事前確認を経て承認された (dispatch が (a) 候補 4 件を指定)。
+2026-09-02 の Step 0c で Idios が (a) 次 release 吸収を選択した 9 件。
+50 件 ≥ 3 のため Iron Law 2 の事前確認を経て承認された (dispatch が (a) 候補 4 件を指定、
+追加 5 件は 2026-09-02 に Idios が選択)。
 
 | issue | 内容 | 判断理由 |
 | --- | --- | --- |
@@ -33,6 +34,11 @@ skill §打ち直し で機構化済み / CHANGELOG 日付打ち直し / 実機�
 | #997 | [task] areamap GT の pin 済み case に assert する test が無い | 回帰防止のテスト強化 |
 | #998 | [task] 検証依存セット台帳と E: 原本の乖離 (手動分割 MP4 7 本が欠落) | v0.3.1 実機ゲート skip 6 件の直接原因。Idios の物理作業 (E: から 7 本復元) が前提 |
 | #1008 | [task] screenshot-freshness の粒度 + 撮り直し手順が ERR_MODULE_NOT_FOUND | GUI PR 毎の撮り直しコスト削減。手順修正は配置の判断を伴う (issue コメントに実測) |
+| #925 | [task] masked 録画の baseline 回帰ゲートを追加 (現状は不変性確認のみで正しさ未検証) | P2-medium。masked 検出が不変性確認のみで正しさ未検証のギャップを解消 |
+| #937 | [bug] export/minimap 出力パスの同一性判定に残る 4 経路 (hardlink / 8.3 / macOS / 予約デバイス名) | #930 系の path 安全 bug。前提 #934 CLOSED で着手可能 |
+| #964 | [bug] GUI の name-pattern プレビューが sandbox 検証を持たず、exit 5 で拒否される名前をそれらしく表示する | #930 系。GUI と CLI の検証を揃える UX/整合性 bug |
+| #957 | [task] typer 0.26+ (click vendoring) への移行判断と CLI 内部 API 依存の解消 | 依存ハイジーン。技術的負債の解消 |
+| #933 | v0.3.0 doc 監査でスコープ外に置いた項目 (CI スキャナ / audit 閾値 / doc 陳腐化 9 件) | §B 残 3 項目の doc 整理 |
 
 ### 2.2 依存更新 (Dependabot)
 
@@ -65,26 +71,21 @@ v0.3.1 リリース後に Dependabot が発行した 10 件のうち、7 件を�
 
 | 分類 | 件数 |
 | --- | --- |
-| (a) 次 release 吸収 | 4 |
-| (b) deferred 継続 | 46 |
+| (a) 次 release 吸収 | 9 |
+| (b) deferred 継続 | 41 |
 | (c) close | 0 |
 
 ### 3.1 (a) 次 release 吸収 (4 件)
 
 §2.1 を参照。
 
-### 3.2 (b) deferred 継続 (46 件)
+### 3.2 (b) deferred 継続 (41 件)
 
 | issue # | title | 分類 | 判断理由 |
 | --- | --- | --- | --- |
 | #968 | [task] GUI が書き出し先の絶対パスを受け取っておらず、#930 のパス可視化が CLI 限定になっている | (b) deferred 継続 | L2a GUI、P3-low |
-| #964 | [bug] GUI の name-pattern プレビューが sandbox 検証を持たず、exit 5 で拒否される名前をそれらしく表示する | (b) deferred 継続 | L2a GUI、P3-low |
-| #957 | [task] typer 0.26+ (click vendoring) への移行判断と CLI 内部 API 依存の解消 | (b) deferred 継続 | 依存判断 |
 | #953 | [question] GUI minimap: 実行中の画面離脱で進捗表示を失う扱いの決着 | (b) deferred 継続 | L2a GUI |
 | #951 | [task] cv2 5.x 移行の判断と baseline 再取得 | (b) deferred 継続 | baseline 再取得と同機会に |
-| #937 | [bug] export/minimap 出力パスの同一性判定に残る 4 経路 (hardlink / 8.3 / macOS / 予約デバイス名) | (b) deferred 継続 | 前提 #934 が CLOSED で充足済み、再評価待ち |
-| #933 | v0.3.0 doc 監査でスコープ外に置いた項目 (CI スキャナ / audit 閾値 / doc 陳腐化 9 件) | (b) deferred 継続 | 前例 §9.4.1 から持ち越し。§B 3 項目 + §A 閾値判断が残 |
-| #925 | [task] masked 録画の baseline 回帰ゲートを追加 (現状は不変性確認のみで正しさ未検証) | (b) deferred 継続 | L3 |
 | #921 | [task] --vtuber: 試合間 gap 約 70 秒未満での結合を解消する | (b) deferred 継続 | L3 |
 | #882 | [task] 検証データ保全の恒久策 (第 3 系統) 追加 | (b) deferred 継続 | 前例 §9.4.1 から持ち越し。Idios 環境側の作業 |
 | #867 | [task] L3: #809 audit 追記 AC 残 2 点の移設 (cache 感度 + red tests) | (b) deferred 継続 | L3 |
@@ -134,7 +135,7 @@ v0.3.1 リリース後に Dependabot が発行した 10 件のうち、7 件を�
 
 ## 4. 受け入れ基準
 
-- [ ] deferred (a) 4 件がすべて close される、または close できない理由が記録される
+- [ ] deferred (a) 9 件がすべて close される、または close できない理由が記録される
 - [ ] 依存更新: open の high アラート #34 (browserslist) が #1028 で解消され、tag 時点で open の security alert が 0 件
 - [ ] #1025 (react-dom) の決着: react + react-dom を同時に手で当てる、または据え置きの裁定
 - [ ] #1021 (numpy) の決着: baseline 再取得を計画に載せる、または据え置きの裁定
@@ -147,7 +148,7 @@ v0.3.1 リリース後に Dependabot が発行した 10 件のうち、7 件を�
 | Track | 内容 | 状態 |
 | --- | --- | --- |
 | Track A | 依存更新 (Dependabot) | open-ended。マージで次の bump が発行される (open-pull-requests-limit 3 に張り付く)。締め切りは Track D 直前の Step 5 security 再チェック時点で open のものは次サイクル (security alert は例外) |
-| Track B | deferred (a) 4 件 | #975 / #997 / #998 / #1008 |
+| Track B | deferred (a) 9 件 | #975 / #997 / #998 / #1008 / #925 / #937 / #964 / #957 / #933 |
 | Track D | CHANGELOG 見出し確定 | version bump は `9191bed` で済み |
 
 直列制約・裁定:
