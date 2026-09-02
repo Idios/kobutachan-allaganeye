@@ -25,7 +25,7 @@ skill §打ち直し で機構化済み / CHANGELOG 日付打ち直し / 実機�
 ### 2.1 deferred (a) 吸収候補 (4 件)
 
 2026-09-02 の Step 0c で Idios が (a) 次 release 吸収を選択した 4 件。
-50 件 ≥ 3 のため Iron Law 2 bulk pre-check (サンプル 1 件 = #998) を経て承認された。
+50 件 ≥ 3 のため Iron Law 2 の事前確認を経て承認された (dispatch が (a) 候補 4 件を指定)。
 
 | issue | 内容 | 判断理由 |
 | --- | --- | --- |
