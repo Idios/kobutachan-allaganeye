@@ -229,7 +229,7 @@ jobs:
       # binary name without whitespace is used directly).
       # #770 -- npm cache を有効化して `npm install` の registry fetch 時間を短縮
       # (22s → ~10s)。gui-rust ジョブ (ci.yml) と同じ cache key で共有される。
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
