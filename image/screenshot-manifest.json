@@ -50,5 +50,5 @@
     "gui/src/**/*.test.ts",
     "gui/src/**/*.test.tsx"
   ],
-  "sources_sha256": "e38f86a6c879e19e48333cc550d592dbf066b3513d3f291b75759d66714161f4"
+  "sources_sha256": "c427874381797ad3bbf42ecbe605e5148e43f1a309c4b7f99eda12943c9ab63d"
 }
