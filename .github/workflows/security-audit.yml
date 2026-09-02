@@ -222,6 +222,11 @@ jobs:
         working-directory: gui
         # npm audit は package-lock.json を直接読むため `npm ci` 不要 (gui-frontend job と
         # 重複していた installation step を除去、~20-40s 短縮)
-        # high 以上で fail。dev-only の moderate/low は通過 (現状 ajv moderate
-        # ReDoS が deferred 状態、Track A で fast-uri は 3.1.2 解消済)
-        run: npm audit --audit-level=high
+        # moderate 以上で fail (#933)。dependency-review job の `fail-on-severity:
+        # moderate` と閾値を揃えた。決定時の実測 (2026-09-02) では
+        # `--audit-level=moderate` / `low` とも 0 vulnerabilities (旧 deferred だった
+        # ajv moderate ReDoS は fast-uri 3.1.5 (#1020) で解消済み)。high のままだと
+        # Dependabot (medium も alert 化) と CI green が乖離するため下げた。npm audit に
+        # ignore 機構は無いので、将来 dev-only moderate が出た場合は `--omit=dev` 併用
+        # か対応可否を本コメントに記録する。
+        run: npm audit --audit-level=moderate

@@ -226,7 +226,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | button ([DropScreen.tsx](../gui/src/screens/DropScreen.tsx) の `styles.browseButton`) |
-| 状態 | `idle` (phase=`idle/probeError`) / `disabled` (phase=`selecting/probing/selected`) |
+| 状態 | `idle` (phase=`idle`) / `disabled` (phase=`selecting/probing`)。phase=`selected` / `probeError` では dropZone ごと SelectedCard (§2.1.4) / ErrorCard (§2.1.7) に置換され、本 button は render されない |
 | 遷移トリガー | `onClick` → `pickAndProbe()` → reducer `BROWSE_CLICKED` (phase=`idle → selecting`) または `BROWSE_CLICKED` (phase=`probeError → selecting`) |
 | store mutation | probe 成功時のみ `appStateStore.setSelectedVideoPath(path)` (この時点ではまだ呼ばれない、§2.1.6 [OK] で発火) |
 | 例外 / edge case | 1.2 disabled 理由: selecting 中は `<LoadingSpinner label="選択中" />`、probing 中は `<LoadingSpinner label="解析中" />` を button 直後に併記 (#587 で inline テキストから spinner 付き表示に置換)。**現状 tooltip は未実装** — §1.2 準拠として `aria-describedby` + `title` を後続 PR で追加 (本 doc が source of truth) |
@@ -464,7 +464,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 状態 | `idle` (phase=`running`) / `disabled` (phase=`cancelling/cancelled/completed/error`) |
 | 遷移トリガー | `onClick` → reducer `CANCEL_CLICKED` (phase=`running → cancelling`)。`cancelling` phase の副作用 effect が `kill_tracked_processes` を invoke (失敗は `console.error` のみ、best-effort) → 完了後に `CANCEL_CONFIRMED` を発火し `cancelling → cancelled` 遷移 ([#813](https://github.com/Idios/kobutachan-allaganeye/issues/813))。kill が in-flight `start_detect` を reap すると Rust 側 `untrack_child` が None を返し `subprocess.cancelled` で reject、reducer が `DETECT_ERROR during cancelling → cancelled` で吸収するため error 画面化しない |
 | store mutation | なし (cancelled 検出後の effect で `appStateStore.navigate('drop')` のみ) |
-| 例外 / edge case | §1.2 disabled 理由表示について、現状 `disabled={phase !== 'running'}` のみで tooltip / inline hint 未実装 → 後続 PR で `title="検知実行中のみ中断できます"` 等を追加 (本 doc が source of truth)。`cancelling` 中の連打は disabled で物理的に防止 |
+| 例外 / edge case | §1.2 disabled 理由は #587 で実装済み — `DisabledTooltip` が `title="検知実行中のみ中断できます"` を付与する (`disabled={phase !== 'running'}`)。inline hint は主要 CTA でないため無し。`cancelling` 中の連打は disabled で物理的に防止 |
 
 #### §2.2.8 Detecting error view path display (#676)
 
@@ -539,20 +539,20 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | button + inline error ([RestoreButton.tsx](../gui/src/components/RestoreButton.tsx) の `RestoreButton`、`styles.button` + `styles.error`) |
-| 状態 | `idle` (`hasBackup=true` && `restoring=false`) / `busy` (`restoring=true`、ラベル `…`) / `disabled` (`hasBackup=false` または `restoring=true`) |
+| 状態 | `idle` (`hasBackup=true` && `restoring=false` && sample mode でない) / `busy` (`restoring=true`、ラベル `…`) / `disabled` (`hasBackup=false` または `restoring=true` または sample mode (`filePath=null` + metadata あり、#633)) |
 | 遷移トリガー | `onClick` → `confirmFn(confirmMessage)` で確認 → OK なら `metadataStore.restore()` (atomic copy `metadata.original.json` → `metadata.json`) → 成功なら `onRestored?` callback |
-| store mutation | `metadataStore.restoring`, `metadataStore.metadata` (再 load), `metadataStore.dirty=false` (apply の rollback として), `metadataStore.hasBackup` (`refreshBackupStatus`) |
-| 例外 / edge case | confirm キャンセル → 何もしない。restore 失敗 → `restoreError` を inline `role="alert"` で表示。complete 画面では `onRestored` 未指定 (preview 画面は navigate('complete') を渡す)。§1.2 通り disabled 理由は priority 順: `restoring` → `isSample` (理由: 'サンプル動画では保存できません') → `!hasBackup` (理由: 'バックアップが存在しません') で tooltip + inline hint を表示 ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済) |
+| store mutation | `metadataStore.restoring` / `metadataStore.restoreErrorState` / `metadataStore.metadata` 再 load (`restore()` が内部で `load()` を呼び、`dirty=false`・`hasBackup` 更新・draft 検出 (`loadDraft`) が連動)。#814 以降は restore 後の reload 失敗を restore 失敗として `restoreErrorState` に反映 |
+| 例外 / edge case | confirm キャンセル → 何もしない。restore 失敗 → `restoreErrorState` を inline `role="alert"` で表示。complete 画面では `onRestored` 未指定 (preview 画面は navigate('complete') を渡す)。§1.2 通り disabled 理由は priority 順: `restoring` → `isSample` (理由: 'サンプル動画では保存できません') → `!hasBackup` (理由: 'バックアップが存在しません') で tooltip + inline hint を表示 ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済) |
 
 #### §2.3.5 [境界を調整] button
 
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | button ([CompleteScreen.tsx](../gui/src/screens/CompleteScreen.tsx) の `styles.adjustButton`、`aria-label="境界を調整"`) |
-| 状態 | `idle` (selectedMatch あり) / `disabled` (`!selectedMatch`、つまり `matches=[]`) |
+| 状態 | `idle` (selectedMatch あり) / `disabled` (`!selectedMatch`)。mount 時の auto-select effect が `matches` 先頭を選択するため、実質 `matches=[]` のときのみ disabled |
 | 遷移トリガー | `onClick` → `appStateStore.openPreviewFor(selectedMatch.index)` (内部で `selectMatch` + `navigate('preview')`) |
 | store mutation | `appStateStore.selectedMatchIndex`, `appStateStore.screen='preview'` |
-| 例外 / edge case | §1.3 dirty=true 時の confirm が現状未実装 (canonical: 「未保存の変更があります。破棄して別の試合を開きますか？」)。後続で `if (dirty) confirm(...)` を入れる必要あり。§1.2 disabled 理由 tooltip ("試合が選択されていません") は現状未実装 |
+| 例外 / edge case | §1.3 dirty=true 時の confirm が現状未実装 (canonical: 「未保存の変更があります。破棄して別の試合を開きますか？」)。後続で `if (dirty) confirm(...)` を入れる必要あり。§1.2 disabled 理由は #587 で実装済み — `DisabledTooltip` が `reason="試合が選択されていません"` + inline hint を表示する |
 
 #### §2.3.6 [全試合書き出し] button
 

@@ -35,8 +35,10 @@ export interface MatchThumbProps {
  * is kept as a fallback for sample mode and any failure path so the layout
  * never collapses.
  *
- * Hits the existing thumbnail cache (`~/.allaganeye/cache/<hash>/thumbs/`),
- * so repeat renders re-use generated frames without re-spawning ffmpeg.
+ * Hits the existing thumbnail cache (`<install dir>/cache/<hash>/thumbs/` — next
+ * to the executable since PR #655 Round 2; dev builds use
+ * `target/debug/cache/...`), so repeat renders re-use generated frames without
+ * re-spawning ffmpeg.
  */
 export function MatchThumb({
   index,
