@@ -83,7 +83,7 @@ dev = [
     # (実測: FORCE_VERSION=1.1.405 で `pyright --version` は 1.1.405、
     # importlib.metadata は 1.1.411)。CI はこれらを設定しないため、ローカル
     # だけ緑という状態が起きうる。詳細は docs/developer-setup.md 参照。
-    "ruff==0.16.1",
+    "ruff==0.16.5",
     "pyright==1.1.411",
     "datamodel-code-generator>=0.25",
     "jsonschema>=4",
