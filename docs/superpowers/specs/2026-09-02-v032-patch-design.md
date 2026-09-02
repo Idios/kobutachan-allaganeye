@@ -1,8 +1,11 @@
 # v0.3.2 patch release 設計書 — deferred 50 件の棚卸し + 依存更新の吸収
 
-- **status**: Track 0 (計画時点)
+- **status**: Track 0 (計画時点) → 2026-09-02 追記 (Track B 追加 5 件 merge / Track A 裁定記録)
 - **作成日**: 2026-09-02
 - **最終更新**: 2026-09-02
+- **追記 (2026-09-02、Track B 進行後)**: 追加 5 件は対応 PR が develop-0.3.2 へ merge 済み
+  — #933 → #1032 / #937 → #1033 / #964 → #1034 / #957 → #1035 / #925 → #1036。
+  Track A の裁定 (#1025/#1021) と #1019 の対処を §4 に記録。
 - **対象リリース**: v0.3.2 (patch)
 - **base ブランチ**: `develop-0.3.2` (= `9191bed`、0.3.2 へ bump 済み)
 - **Track 構造**: [`docs/release-process.md` §Patch release の Track 構造](../../release-process.md#patch-release-の-track-構造)
@@ -75,7 +78,7 @@ v0.3.1 リリース後に Dependabot が発行した 10 件のうち、7 件を�
 | (b) deferred 継続 | 41 |
 | (c) close | 0 |
 
-### 3.1 (a) 次 release 吸収 (4 件)
+### 3.1 (a) 次 release 吸収 (9 件)
 
 §2.1 を参照。
 
@@ -133,22 +136,38 @@ v0.3.1 リリース後に Dependabot が発行した 10 件のうち、7 件を�
 - **本文鮮度**: 前例 §9.4.4 の 4 件 (#964 / #518 / #933 / #326) は 08-31 時点のコメント提示のまま
   本文未更新 (updatedAt 08-31)。v0.3.2 でも再び鮮度切れとして検出。本文 edit は起票者 (Idios) 判断。
 
-## 4. 受け入れ基準
+## 4. 受け入れ基準 (2026-09-02 更新)
 
 - [ ] deferred (a) 9 件がすべて close される、または close できない理由が記録される
-- [ ] 依存更新: open の high アラート #34 (browserslist) が #1028 で解消され、tag 時点で open の security alert が 0 件
-- [ ] #1025 (react-dom) の決着: react + react-dom を同時に手で当てる、または据え置きの裁定
-- [ ] #1021 (numpy) の決着: baseline 再取得を計画に載せる、または据え置きの裁定
-- [ ] #998 復元後、実機ゲート skip 0 件
+      — 追加 5 件 (#925 / #933 / #937 / #957 / #964) は PR #1032 / #1033 / #1034 / #1035 /
+      #1036 で **develop-0.3.2 へ merge 済み** (2026-09-02)。残 4 件 (#975 / #997 / #998 /
+      #1008) は本 spec の別トラック対象 (2026-09-02 時点 open、merge PR なし)
+- [ ] 依存更新: open の high アラート #34 (browserslist) が #1028 で解消され、tag 時点で
+      open の security alert が 0 件
+      — develop の lockfile は 4.28.8 (= patched 4.28.7 以上) で修正済み。GitHub alert は
+      **default branch (main) 基準**のため release merge (= tag) で自動 close する
+      (2026-09-02 時点 open は #34 のみ)。tag 時点で 0 件を確認する
+- [x] #1025 (react-dom) の決着: **据え置き** (2026-09-02、Idios 承認)
+      — react 19.2.5 の peer 制約により react + react-dom の同時 bump が必要。patch の枠を
+      超えるため次サイクル (v0.4.0 候補) で react と同時に手で当てる
+- [x] #1021 (numpy) の決着: **据え置き** (2026-09-02、Idios 承認)
+      — 2.4.6 へ上げると bit-exact baseline (numpy 2.4.4 / opencv 4.13.0.92 で取得) が崩れる。
+      baseline 再取得 (#951、cv2 5.x 移行と同機会) に合わせて実施
+- [ ] #998 復元後、実機ゲート skip 0 件 — 未 (Idios の E: からの 7 本復元待ち、2026-09-02)
 - [ ] `python scripts/check_version_consistency.py --tag v0.3.2` が exit 0
-- [ ] #1019 (upload-artifact v7) と download-artifact v4 の組み合わせが release job で実走確認される (または download-artifact を同時に上げる)
+      — 未 (tag 手順の CHANGELOG 見出し確定で解消。2026-09-02 時点の差分は CHANGELOG
+      見出しの 1 件のみ)
+- [x] #1019 (upload-artifact v7) と download-artifact v4 の組み合わせが release job で
+      実走確認される (または download-artifact を同時に上げる)
+      — **download-artifact を v7 へ同時上げ** (PR #1037、2026-09-02 merge)。v4 は v5+ の
+      artifact backend を読めないため。tag push 時の release job 実走は v0.3.2 リリースで確認
 
 ## 5. Track 割り当て + 直列制約 + 裁定
 
 | Track | 内容 | 状態 |
 | --- | --- | --- |
 | Track A | 依存更新 (Dependabot) | open-ended。マージで次の bump が発行される (open-pull-requests-limit 3 に張り付く)。締め切りは Track D 直前の Step 5 security 再チェック時点で open のものは次サイクル (security alert は例外) |
-| Track B | deferred (a) 9 件 | #975 / #997 / #998 / #1008 / #925 / #937 / #964 / #957 / #933 |
+| Track B | deferred (a) 9 件 | 追加 5 件 (#925/#937/#964/#957/#933) は merge 済み (2026-09-02、PR #1032-#1036)。残 4 件 (#975 / #997 / #998 / #1008) は別トラック対象 (2026-09-02 時点 open) |
 | Track D | CHANGELOG 見出し確定 | version bump は `9191bed` で済み |
 
 直列制約・裁定:
