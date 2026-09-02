@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      scripts/check_changelog_style.py は `## [Unreleased]` があればそこだけを
      走査するため、空節を残すとリリース節が**検査対象から外れて緑になる**。 -->
 
+## [0.3.2] - 2026-09-03
+
+### Changed
+
+- **書き出し画面のファイル名プレビューが、実際に拒否される名前を事前に警告するように
+  なりました** ([#964](https://github.com/Idios/kobutachan-allaganeye/issues/964)):
+  出力先フォルダの外を指す名前 (`..` を含む / 絶対パス) や、Windows で使えない名前
+  (予約デバイス名など)、複数の試合が同じファイル名になるパターンを、書き出しを始める
+  前のプレビュー時点で警告します (従来は書き出し開始時にエラーになっていました)。
+  実際の書き出し可否の判定は従来どおりコマンド側が行います。
+
 ## [0.3.1] - 2026-09-02
 
 ### Changed
