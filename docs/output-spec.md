@@ -231,7 +231,7 @@ Metadata: <metadata.json path>
 
 > **根拠 (#930)**: `-o` に渡された相対パスをそのまま表示していたため、shell の quote 落ちで `E:\royalstraightflesh\videos\20260127` が `E:royalstraightfleshvideos20260127` (ドライブ相対) に化けた際、**実際の書き出し先が読み取れなかった**。quote 落ち自体はユーザーの入力ミスだが、表示がそれを可視化できていなかったことが欠陥である。
 
-**GUI プレビューとの非対称 (既知・未解消)**: GUI の name-pattern プレビュー (`gui/src/utils/filename.ts` の `formatMatchFilename`) は pattern を展開するだけで、CLI 側 (`allaganeye/export/pool.py`) が持つ sandbox 検証一式 (下記の層 1: 脱出 / source 上書き / Windows 不正名 (「:」・予約デバイス名) / 出力衝突) を**持たない**。そのため GUI 上では「書き出し時に exit 5 で拒否される名前」がプレビューとして正常に見える。**本節の契約は CLI 出力に対するものであり、GUI プレビューの検証欠落は #964 で追跡する** (CLI 側が exit 5 で拒否するためデータ損失は起きず、失敗を早く知れない UX の問題)。層 2 / 層 3 は実ファイルの identity を扱うため GUI プレビューへ移植できない (層 1 のみが移植対象、#964)。
+**GUI プレビューとの対応 (#964 で mirror 実装済み)**: GUI の name-pattern プレビューは `gui/src/utils/namePatternSandbox.ts` (`computeNamePatternIssues`) が **層 1 と同一の検証を mirror** し、プレビュー時点で警告表示する (`NamePatternWarnings`、ExportScreen / MinimapScreen の命名規則入力下)。警告は「書き出し時に CLI が exit 5 で拒否される」ことを先回りして知らせるもので、**書き出し自体はブロックしない** (字句解決のため symlink 等の実 FS 状態は再現できず、最終 gate は CLI 側の exit 5 のまま)。層 2 / 層 3 は実ファイルの identity (`st_dev`/`st_ino`) を扱うため GUI プレビューへ移植できない。
 
 **name-pattern sandbox 検証の層構造 (#930 + #937)**: CLI の出力パス検証は preflight の文字列・解決パス検査だけでは塞げない経路 (hardlink / 8.3 短縮名 / 予約デバイス名) があるため、**判定の置き場所**を 3 層に分けている。
 

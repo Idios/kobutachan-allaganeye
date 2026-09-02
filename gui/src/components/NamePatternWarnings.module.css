@@ -1,0 +1,29 @@
+/*
+ * #964 — name-pattern プレビュー警告。CLI 側が exit 5 で拒否する名前を
+ * プレビュー時点で知らせる情報表示 (error ではなく status 扱い)。
+ */
+
+.warnBox {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(var(--ae-danger-rgb), 0.4);
+  border-left: 3px solid var(--ae-danger);
+  background: rgba(var(--ae-danger-rgb), 0.08);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.title {
+  color: var(--ae-danger);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.item {
+  color: var(--ae-text-dim);
+}
