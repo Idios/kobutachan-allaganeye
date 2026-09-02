@@ -1,0 +1,181 @@
+{
+ "source_file": "20250527-29/20250527-29/2026-05-29 20-58-34.mkv",
+ "source_size_bytes": 161130344441,
+ "source_dir_label": "vtuber-samples",
+ "source_env_var": "ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER",
+ "detect_command": "python -m allaganeye detect <video> -o <out> --no-cache",
+ "masked_fallback_used": true,
+ "adjudicated_by": "Idios (目視、2026-09-02)",
+ "adjudicated_at": "2026-09-02",
+ "notes": "#18 と #19 の間 (6:26:16-6:49:36) は配信休憩 (Idios 目視裁定、試合の取りこぼしなし) / detect (masked fallback 自動発動) 出力を 2026-09-02 に生成。境界は Idios が目視裁定して確定する (未裁定の間は baseline commit しない)。 全 boundary を目視で確認し一致を裁定 (start=zone-in 明け / end=試合終了)。録画先頭より前の試合なし。",
+ "matches": [
+  {
+   "index": 1,
+   "start_time": 432.5,
+   "end_time": 1247.5,
+   "type": "fl_match",
+   "start_display": "07:12",
+   "end_display": "20:47"
+  },
+  {
+   "index": 2,
+   "start_time": 1497.25,
+   "end_time": 2352.25,
+   "type": "fl_match",
+   "start_display": "24:57",
+   "end_display": "39:12"
+  },
+  {
+   "index": 3,
+   "start_time": 2661.5,
+   "end_time": 3421.25,
+   "type": "fl_match",
+   "start_display": "44:21",
+   "end_display": "57:01"
+  },
+  {
+   "index": 4,
+   "start_time": 3536.75,
+   "end_time": 4201.25,
+   "type": "fl_match",
+   "start_display": "58:56",
+   "end_display": "1:10:01"
+  },
+  {
+   "index": 5,
+   "start_time": 4342.5,
+   "end_time": 5228.0,
+   "type": "fl_match",
+   "start_display": "1:12:22",
+   "end_display": "1:27:08"
+  },
+  {
+   "index": 6,
+   "start_time": 5342.75,
+   "end_time": 6171.5,
+   "type": "fl_match",
+   "start_display": "1:29:02",
+   "end_display": "1:42:51"
+  },
+  {
+   "index": 7,
+   "start_time": 6407.75,
+   "end_time": 7352.0,
+   "type": "fl_match",
+   "start_display": "1:46:47",
+   "end_display": "2:02:32"
+  },
+  {
+   "index": 8,
+   "start_time": 7524.75,
+   "end_time": 8197.0,
+   "type": "fl_match",
+   "start_display": "2:05:24",
+   "end_display": "2:16:37"
+  },
+  {
+   "index": 9,
+   "start_time": 8312.75,
+   "end_time": 9333.25,
+   "type": "fl_match",
+   "start_display": "2:18:32",
+   "end_display": "2:35:33"
+  },
+  {
+   "index": 10,
+   "start_time": 9496.75,
+   "end_time": 10368.5,
+   "type": "fl_match",
+   "start_display": "2:38:16",
+   "end_display": "2:52:48"
+  },
+  {
+   "index": 11,
+   "start_time": 11199.5,
+   "end_time": 12070.75,
+   "type": "fl_match",
+   "start_display": "3:06:39",
+   "end_display": "3:21:10"
+  },
+  {
+   "index": 12,
+   "start_time": 12352.25,
+   "end_time": 13316.25,
+   "type": "fl_match",
+   "start_display": "3:25:52",
+   "end_display": "3:41:56"
+  },
+  {
+   "index": 13,
+   "start_time": 13530.75,
+   "end_time": 14548.5,
+   "type": "fl_match",
+   "start_display": "3:45:30",
+   "end_display": "4:02:28"
+  },
+  {
+   "index": 14,
+   "start_time": 14700.75,
+   "end_time": 15761.0,
+   "type": "fl_match",
+   "start_display": "4:05:00",
+   "end_display": "4:22:41"
+  },
+  {
+   "index": 15,
+   "start_time": 15923.75,
+   "end_time": 16909.5,
+   "type": "fl_match",
+   "start_display": "4:25:23",
+   "end_display": "4:41:49"
+  },
+  {
+   "index": 16,
+   "start_time": 17071.25,
+   "end_time": 18102.0,
+   "type": "fl_match",
+   "start_display": "4:44:31",
+   "end_display": "5:01:42"
+  },
+  {
+   "index": 17,
+   "start_time": 18294.75,
+   "end_time": 19304.0,
+   "type": "fl_match",
+   "start_display": "5:04:54",
+   "end_display": "5:21:44"
+  },
+  {
+   "index": 18,
+   "start_time": 19844.75,
+   "end_time": 20582.75,
+   "type": "fl_match",
+   "start_display": "5:30:44",
+   "end_display": "5:43:02"
+  },
+  {
+   "index": 19,
+   "start_time": 21041.0,
+   "end_time": 22042.25,
+   "type": "fl_match",
+   "start_display": "5:50:41",
+   "end_display": "6:07:22"
+  },
+  {
+   "index": 20,
+   "start_time": 22260.75,
+   "end_time": 23176.375,
+   "type": "fl_match",
+   "start_display": "6:11:00",
+   "end_display": "6:26:16"
+  },
+  {
+   "index": 21,
+   "start_time": 24576.0,
+   "end_time": 25583.5,
+   "type": "fl_match",
+   "start_display": "6:49:36",
+   "end_display": "7:06:23"
+  }
+ ]
+}
