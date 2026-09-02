@@ -492,7 +492,10 @@ jobs:
         with:
           python-version: '3.11.9'
 
-      - uses: actions/download-artifact@v4
+      # #1019: upload-artifact を v7 へ上げたため download も v7 に揃える
+      # (v4 は v5+ の artifact backend を読めない)。upload と download の
+      # major を一致させること。
+      - uses: actions/download-artifact@v7
         with:
           name: allaganeye-windows-v${{ needs.version-check.outputs.version }}
           path: dist/allaganeye-v${{ needs.version-check.outputs.version }}
