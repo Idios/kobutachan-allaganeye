@@ -66,7 +66,7 @@ scipy==1.17.1
 # (直接依存ではない = 宣言すると事実と違う)。transitive の版だけをここで固定する。
 # datamodel-code-generator は pyproject.toml の dev extras で >=0.25 として宣言済み
 # なので、ここでは範囲内の exact 値を与えるだけ。
-datamodel-code-generator==0.72.1
+datamodel-code-generator==0.76.0
 black==26.5.1
 isort==8.0.1
 
