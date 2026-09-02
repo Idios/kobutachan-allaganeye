@@ -85,6 +85,29 @@ otherwise make every Windows-gated test in this module a silent no-op there.
 """
 
 
+_WIN32_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+"""Win32 reserved device names (#937 (a)).
+
+``NUL`` / ``CON`` / ``PRN`` / ``AUX`` / ``COM1-9`` / ``LPT1-9`` are reserved
+by the Win32 namespace: device-name parsing routes the name to the device
+instead of a directory entry, so writing to it is not a file operation -- it
+can "succeed" with no output file at all (the ``#937`` observation behind this
+guard) or fail outright depending on which API opens it (CPython's own
+``open()`` was measured to create a real zero-byte file on one build, which is
+why this is a *name* validation, not a behavioural premise). Either way the
+name is not a usable file name, so it is blocked up front next to the ``:``
+ADS rule rather than folded into the identity key.
+
+Only the bare name (after Win32's trailing-dot/space trim) is reserved:
+``NUL.mp4`` measured as an ordinary file on Windows (#937), so an extension
+keeps the name legal.
+"""
+
+
 def _render_and_sandbox(
     m: ExportMatch,
     pattern: str,
@@ -145,6 +168,23 @@ def _render_and_sandbox(
             "':', so two matches can silently land on one file (note: the "
             "{type} token is taken verbatim from metadata.json)"
         )
+    # #937 (a): reserved device names. ``NUL``/``CON``/``PRN``/``AUX``/
+    # ``COM1-9``/``LPT1-9`` never create a file -- the write opens the device
+    # and "succeeds" with zero output. Same shape as the ``:`` rule above:
+    # any component below the anchor that, after Win32's trailing-dot/space
+    # trim, is exactly a reserved name is rejected up front (cheap, certain).
+    # An extension keeps the component legal (``NUL.mp4`` is an ordinary file).
+    if _IS_WINDOWS:
+        for part in resolved.parts[1:]:
+            if part.rstrip(". ").upper() in _WIN32_RESERVED_NAMES:
+                raise ConfigValidationError(
+                    f"--name-pattern produced an invalid Windows filename "
+                    f"{rendered!r}: {part!r} is a reserved device name (NUL / CON / "
+                    "PRN / AUX / COM1-9 / LPT1-9). Windows writes to the device "
+                    "instead of creating a file, so the export would report success "
+                    "with no output (note: the {type} token is taken verbatim from "
+                    "metadata.json)"
+                )
     return rendered, candidate, resolved
 
 
@@ -162,6 +202,13 @@ def _identity_key(resolved: Path) -> Path:
     On POSIX this is a no-op: a trailing dot or space is a significant part of
     the name there, so ``clip.mp4.`` really is a second file and must stay
     legal. Rejecting it would be a regression, not a fix.
+
+    #937 (c): macOS case-insensitive volumes (default APFS / HFS+) are *also*
+    left alone. macOS is not a supported platform for this tool (Windows only,
+    per CLAUDE.md), and catching that case would need a per-volume
+    case-sensitivity probe on Darwin plus a case-folding key -- a design that
+    only pays off once macOS is on the supported list. Reached only on an
+    unsupported platform, so it is recorded here rather than implemented.
 
     A component made *only* of dots/spaces is left alone -- stripping it would
     invent an empty component. This is safe against the obvious worry, that
@@ -327,6 +374,53 @@ def resolve_output_path(
     return candidate
 
 
+def _verify_written_identity(written: Sequence[Path]) -> None:
+    """#937 (b): post-write duplicate-file detection for the alias cases a
+    path-based preflight cannot see (hardlink pair / NTFS 8.3 short name).
+
+    The preflight (:func:`resolve_output_paths`) runs before any output file
+    exists, so it keys on the *resolved path* -- which is exactly why it misses
+    two names that the OS maps onto one file only once both exist: a pre-placed
+    hardlink pair whose names match two rendered names, or a ``LONGFI~1.MP4``
+    short-name alias of a name an earlier match just created. Both write
+    ``"succeeds"`` twice while only one file's content survives.
+
+    This is deliberately **post-write**: the writes have already happened, so
+    it cannot prevent the collision, but it turns "success summary" into an
+    explicit failure the user can act on (which is strictly better than the
+    silent loss the preflight's string checks were built to close). Reached
+    only with a pre-arranged output directory or a crafted metadata.json, so
+    this is a last line of defence, not a hot path.
+
+    Missing files are skipped: a stub/mocked writer that reports success
+    without creating output has no identity to compare (and a real ffmpeg
+    failure leaves no usable file to alias either).
+
+    Raises:
+        ConfigValidationError: two *distinct* output paths share one
+            ``(st_dev, st_ino)`` -- they are the same file.
+    """
+    by_identity: dict[tuple[int, int], Path] = {}
+    for p in written:
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue  # not on disk -> nothing to alias
+        key = (st.st_dev, st.st_ino)
+        first = by_identity.get(key)
+        if first is not None and first != p:
+            raise ConfigValidationError(
+                "two exported matches landed on the same file: "
+                f"{first} and {p} share one filesystem identity "
+                f"(dev={st.st_dev}, ino={st.st_ino}); a pre-existing hardlink "
+                "pair or an NTFS 8.3 short-name alias makes two names denote "
+                "one file, which no path-string check can see before both "
+                "names exist. Remove the alias from the output directory and "
+                "re-run, then verify the earlier output's content (#937 (b))"
+            )
+        by_identity[key] = p
+
+
 def export_matches(
     matches: list[ExportMatch],
     slots: list[EncoderSlot],
@@ -367,6 +461,19 @@ def export_matches(
 
     cancel_event = cancel_event or threading.Event()
 
+    # #937 (b): a pre-existing output that is a hardlink alias of the source
+    # video passes the path-based overwrite check (different name, same file).
+    # Truncating it would destroy the input mid-run, so the worker compares the
+    # *real* identity before ffmpeg opens the file. Missing source (stubs /
+    # tests) means nothing to protect -> no-op.
+    try:
+        _source_identity = (
+            os.stat(source_video).st_dev,
+            os.stat(source_video).st_ino,
+        )
+    except OSError:
+        _source_identity = None
+
     queue: Queue[ExportMatch] = Queue()
     for m in matches:
         queue.put(m)
@@ -374,6 +481,7 @@ def export_matches(
     summary = ExportSummary()
     summary_lock = threading.Lock()
     cancelled_results: list[bool] = []  # any worker saw cancel
+    written_outputs: list[Path] = []  # successfully written outputs (post-write check)
 
     def worker(slot: EncoderSlot) -> None:
         while not cancel_event.is_set():
@@ -395,6 +503,30 @@ def export_matches(
             output_path = resolve_output_path(
                 m, name_pattern, output_dir=output_dir, source_video=source_video
             )
+            # #937 (b): pre-write source-alias guard (see _source_identity above).
+            # Raise ConfigValidationError (exit 5) out of the worker so the run
+            # aborts instead of truncating the input through a hardlink alias.
+            if _source_identity is not None:
+                try:
+                    out_stat = os.stat(output_path)
+                except OSError:
+                    out_stat = None
+                if (
+                    out_stat is not None
+                    and (
+                        out_stat.st_dev,
+                        out_stat.st_ino,
+                    )
+                    == _source_identity
+                ):
+                    cancel_event.set()
+                    raise ConfigValidationError(
+                        f"--name-pattern output {output_path} is a hardlink alias "
+                        f"of the source video {source_video}: writing it would "
+                        "truncate the input. Remove the pre-existing hardlink from "
+                        "the output directory (the path-based overwrite check "
+                        "cannot see this -- #937 (b))"
+                    )
             try:
                 result = run_export_attempt(
                     video=source_video,
@@ -426,6 +558,7 @@ def export_matches(
                 )
                 with summary_lock:
                     summary.success += 1
+                    written_outputs.append(output_path)
             except ExportError as e:
                 progress_cb(ProgressEvent.error(m.index, e))
                 with summary_lock:
@@ -439,6 +572,13 @@ def export_matches(
         futures = [ex.submit(worker, slot) for slot in slots]
         for f in futures:
             f.result()  # propagate exceptions (workers catch internally, so normally None)
+
+    # #937 (b): post-write duplicate-file detection. Runs only after every
+    # worker finished, so it sees the final on-disk state (a pre-existing
+    # hardlink pair or an 8.3 alias created by an earlier match in this run).
+    # Raises ConfigValidationError (exit 5) instead of reporting a success
+    # summary for a run in which one output silently clobbered another.
+    _verify_written_identity(written_outputs)
 
     # Codex review #3: cancel check uses cancel_event.is_set() alone
     summary.cancelled = cancel_event.is_set() or bool(cancelled_results)
