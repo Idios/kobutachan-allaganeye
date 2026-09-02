@@ -1,0 +1,109 @@
+{
+ "source_file": "20250527-29/20250527-29/2026-05-27 21-27-57.mkv",
+ "source_size_bytes": 88412562353,
+ "source_dir_label": "vtuber-samples",
+ "source_env_var": "ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER",
+ "detect_command": "python -m allaganeye detect <video> -o <out> --no-cache",
+ "masked_fallback_used": true,
+ "adjudicated_by": "Idios (目視、2026-09-02)",
+ "adjudicated_at": "2026-09-02",
+ "notes": "detect (masked fallback 自動発動) 出力を 2026-09-02 に生成。境界は Idios が目視裁定して確定する (未裁定の間は baseline commit しない)。 全 boundary を目視で確認し一致を裁定 (start=zone-in 明け / end=試合終了)。録画先頭より前の試合なし。",
+ "matches": [
+  {
+   "index": 1,
+   "start_time": 291.25,
+   "end_time": 1160.5,
+   "type": "fl_match",
+   "start_display": "04:51",
+   "end_display": "19:20"
+  },
+  {
+   "index": 2,
+   "start_time": 1321.5,
+   "end_time": 2311.5,
+   "type": "fl_match",
+   "start_display": "22:01",
+   "end_display": "38:31"
+  },
+  {
+   "index": 3,
+   "start_time": 2485.0,
+   "end_time": 3357.75,
+   "type": "fl_match",
+   "start_display": "41:25",
+   "end_display": "55:57"
+  },
+  {
+   "index": 4,
+   "start_time": 3483.25,
+   "end_time": 4512.0,
+   "type": "fl_match",
+   "start_display": "58:03",
+   "end_display": "1:15:12"
+  },
+  {
+   "index": 5,
+   "start_time": 4736.0,
+   "end_time": 5585.75,
+   "type": "fl_match",
+   "start_display": "1:18:56",
+   "end_display": "1:33:05"
+  },
+  {
+   "index": 6,
+   "start_time": 5855.25,
+   "end_time": 6866.0,
+   "type": "fl_match",
+   "start_display": "1:37:35",
+   "end_display": "1:54:26"
+  },
+  {
+   "index": 7,
+   "start_time": 7225.0,
+   "end_time": 8129.0,
+   "type": "fl_match",
+   "start_display": "2:00:25",
+   "end_display": "2:15:29"
+  },
+  {
+   "index": 8,
+   "start_time": 8282.5,
+   "end_time": 9260.25,
+   "type": "fl_match",
+   "start_display": "2:18:02",
+   "end_display": "2:34:20"
+  },
+  {
+   "index": 9,
+   "start_time": 9351.0,
+   "end_time": 10375.75,
+   "type": "fl_match",
+   "start_display": "2:35:51",
+   "end_display": "2:52:55"
+  },
+  {
+   "index": 10,
+   "start_time": 10537.75,
+   "end_time": 11535.0,
+   "type": "fl_match",
+   "start_display": "2:55:37",
+   "end_display": "3:12:15"
+  },
+  {
+   "index": 11,
+   "start_time": 11632.75,
+   "end_time": 12787.75,
+   "type": "fl_match",
+   "start_display": "3:13:52",
+   "end_display": "3:33:07"
+  },
+  {
+   "index": 12,
+   "start_time": 13021.0,
+   "end_time": 13902.125,
+   "type": "fl_match",
+   "start_display": "3:37:01",
+   "end_display": "3:51:42"
+  }
+ ]
+}
