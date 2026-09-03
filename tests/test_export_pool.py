@@ -14,6 +14,7 @@ resolver's own contract) plus pool concurrency/cancel/failure behaviour.
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -604,4 +605,214 @@ def test_pool_rejects_alternate_data_stream(tmp_path: Path):
                 pattern="{type}",
                 matches=make_pair("clip.mp4", "clip.mp4::$DATA"),
                 output_dir=out_dir,
+            )
+
+
+# --------------------------------------------------------------------------
+# Reserved device names (#937 (a)).
+#
+# ``NUL`` / ``CON`` / ``PRN`` / ``AUX`` / ``COM1-9`` / ``LPT1-9`` are device
+# names on Windows: writing to one "succeeds" but no file is created, so the
+# run would report success for output that does not exist -- the same "written
+# but gone" class as the path-identity bugs above, via a different mechanism.
+# The name alone decides (no filesystem state), so it is blocked in input
+# validation like the ``:`` ADS rule, not folded into the identity key.
+# The logic is Windows-gated; CI runs on ubuntu, so the switch is driven
+# directly (the OS behaviour varies by API -- see the _WIN32_RESERVED_NAMES
+# docstring in pool.py -- which is why this stays a name validation rather
+# than a behavioural premise).
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "reserved",
+    ["NUL", "CON", "PRN", "AUX", "COM1", "COM9", "LPT1", "LPT9", "com3", "nul"],
+)
+def test_pool_rejects_reserved_device_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reserved: str
+):
+    """A rendered bare device name is rejected before any ffmpeg run."""
+    monkeypatch.setattr(pool_module, "_IS_WINDOWS", True)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(
+                tmp_path,
+                pattern="{type}",
+                matches=make_pair(reserved, "ordinary"),
+                output_dir=out_dir,
+            )
+
+
+def test_pool_rejects_reserved_device_name_in_subdirectory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A reserved name as an interior component is rejected the same way."""
+    monkeypatch.setattr(pool_module, "_IS_WINDOWS", True)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(
+                tmp_path,
+                pattern="{type}/{idx:03}.mp4",
+                matches=make_pair("AUX", "ordinary"),
+                output_dir=out_dir,
+            )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "NUL.mp4",  # measured on Windows: an extension makes it an ordinary file
+        "nulll.mp4",
+        "ordinary",
+        "COM10.mp4",  # only COM1-9 are reserved
+    ],
+)
+def test_pool_accepts_non_reserved_device_names(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str
+):
+    """Reverse pin: only the *bare* device name is reserved -- no over-reject."""
+    monkeypatch.setattr(pool_module, "_IS_WINDOWS", True)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    def fake_run(*args: Any, **kwargs: Any) -> ExportResult:
+        return ExportResult(
+            match_index=-1,
+            output_path=kwargs["output"],
+            duration_ms=1,
+            encoder_used="libx264",
+        )
+
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=fake_run):
+        summary = _run_pool(
+            tmp_path,
+            pattern="{type}",
+            matches=make_pair(name, "pair_b"),
+            output_dir=out_dir,
+        )
+    assert summary.success == 2
+
+
+def test_pool_accepts_device_name_off_windows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """POSIX has no device names -- 'NUL' is an ordinary filename there."""
+    monkeypatch.setattr(pool_module, "_IS_WINDOWS", False)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    def fake_run(*args: Any, **kwargs: Any) -> ExportResult:
+        return ExportResult(
+            match_index=-1,
+            output_path=kwargs["output"],
+            duration_ms=1,
+            encoder_used="libx264",
+        )
+
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=fake_run):
+        summary = _run_pool(
+            tmp_path,
+            pattern="{type}",
+            matches=make_pair("NUL", "pair_b"),
+            output_dir=out_dir,
+        )
+    assert summary.success == 2
+
+
+# --------------------------------------------------------------------------
+# Post-write filesystem-identity verification (#937 (b)).
+#
+# The path-string checks above cannot see aliases that only exist once files
+# are on disk: a pre-placed hardlink pair whose names match two rendered
+# names, or an NTFS 8.3 short name that aliases a name an earlier match in
+# the same run created. export_matches therefore re-checks the *written*
+# outputs by (st_dev, st_ino) after the pool finishes. Reachable only with a
+# pre-arranged output directory or a crafted metadata.json -- but the
+# alternative is a success summary for a silently lost file.
+# --------------------------------------------------------------------------
+
+
+def test_pool_post_write_rejects_hardlink_alias_pair(tmp_path: Path):
+    """Two rendered names that were hardlinks before the run are one file."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    a = out_dir / "clip_a.mp4"
+    b = out_dir / "clip_b.mp4"
+    a.write_bytes(b"pre-existing hardlink")
+    os.link(a, b)  # same inode, two names
+
+    def fake_run(*args: Any, **kwargs: Any) -> ExportResult:
+        return ExportResult(
+            match_index=-1,
+            output_path=kwargs["output"],
+            duration_ms=1,
+            encoder_used="libx264",
+        )
+
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=fake_run):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(
+                tmp_path,
+                pattern="{type}.mp4",
+                matches=make_pair("clip_a", "clip_b"),
+                output_dir=out_dir,
+            )
+
+
+def test_pool_post_write_accepts_distinct_outputs(tmp_path: Path):
+    """Two ordinary pre-existing files keep working -- no over-reject."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "clip_a.mp4").write_bytes(b"a")
+    (out_dir / "clip_b.mp4").write_bytes(b"b")
+
+    def fake_run(*args: Any, **kwargs: Any) -> ExportResult:
+        return ExportResult(
+            match_index=-1,
+            output_path=kwargs["output"],
+            duration_ms=1,
+            encoder_used="libx264",
+        )
+
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=fake_run):
+        summary = _run_pool(
+            tmp_path,
+            pattern="{type}.mp4",
+            matches=make_pair("clip_a", "clip_b"),
+            output_dir=out_dir,
+        )
+    assert summary.success == 2
+
+
+# --------------------------------------------------------------------------
+# Pre-write source-identity guard (#937 (b)).
+#
+# The preflight overwrite check compares resolved *paths*, so an output name
+# that is a hardlink alias of the source video slips past it -- and writing it
+# would truncate the input mid-run. The worker compares the real
+# (st_dev, st_ino) identity before ffmpeg opens the file: cheap, and it
+# prevents an irreversible write instead of detecting it afterwards.
+# --------------------------------------------------------------------------
+
+
+def test_pool_refuses_output_hardlinked_to_source(tmp_path: Path):
+    """An output that already IS the source (hardlink alias) must not be written."""
+    source = tmp_path / "in.mp4"
+    source.write_bytes(b"SOURCE CONTENT")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    os.link(source, out_dir / "000.mp4")
+
+    with patch("allaganeye.export.pool.run_export_attempt", side_effect=_explode):
+        with pytest.raises(ConfigValidationError):
+            _run_pool(
+                tmp_path,
+                pattern="{idx:03}.mp4",
+                matches=make_matches(1),
+                output_dir=out_dir,
+                source_video=source,
             )

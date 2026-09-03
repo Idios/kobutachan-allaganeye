@@ -24,8 +24,10 @@ import { useFocusTrap } from '../hooks/useFocusTrap';
 import { isAppError } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
+import { NamePatternWarnings } from '../components/NamePatternWarnings';
 import { fmtMatchDuration, fmtTime } from '../utils/time';
 import { formatMatchFilename } from '../utils/filename';
+import { computeNamePatternIssues } from '../utils/namePatternSandbox';
 import { splitPath, stripExtendedPathPrefix } from '../utils/path';
 import { elementRectToSourcePx, validateRegionPx, type RegionPx } from '../utils/region';
 import { deriveDefaultOutDir } from './ExportScreen';
@@ -529,6 +531,19 @@ export function MinimapScreen() {
     : Math.round(totalPercentSum / countedMatches.length);
 
   const elapsedSec = cropStartMs === null ? null : Math.max(0, (nowMs - cropStartMs) / 1000);
+
+  // #964: name-pattern プレビュー sandbox 警告。行は実際に CLI へ渡る集合
+  // (countedMatches) と同一の値 (境界調整済み start / {type}) で展開する。
+  const namePatternIssues = computeNamePatternIssues({
+    pattern: namePattern,
+    outputDir: outDir,
+    sourceVideo: videoSource,
+    rows: countedMatches.map((m) => ({
+      index: m.index,
+      type: m.type,
+      startSec: m.edited?.start_time ?? m.start_time,
+    })),
+  });
   const totalProgressUnits = totalPercentSum / 100;
   const remainingUnits = Math.max(0, countedMatches.length - totalProgressUnits);
   const remainingSec =
@@ -820,6 +835,9 @@ export function MinimapScreen() {
                 サポート済トークンだが、この hint だけ取りこぼしていた */}
             変数: {'{idx}'} {'{idx:03}'} {'{start}'} {'{type}'} {'{date}'}
           </div>
+          {/* #964: CLI が exit 5 で拒否する名前をプレビュー時点で警告する
+              (pool.py 層 1 の mirror)。切り抜きはブロックしない。 */}
+          <NamePatternWarnings issues={namePatternIssues} />
         </div>
       </div>
 

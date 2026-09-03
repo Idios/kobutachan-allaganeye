@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kobutachan-allaganeye"
-version = "0.3.1"
+version = "0.3.2"
 description = "FF14 Frontline video auto-highlight extraction tool"
 license = "MIT"
 requires-python = ">=3.11"
@@ -37,6 +37,24 @@ dependencies = [
     #   - 移行先の例外クラス群は private な `typer._click.exceptions` にしかなく、
     #     公開 API へ逃がせない (恒久解にならない)。
     #   -> patch release の範囲を超えるため、移行は別 issue で扱う。
+    #
+    # --- #957 再確認 (2026-09-02、typer 0.27.2 で実測): **pin 継続のまま** ---
+    # 上記の 0.26.0 時点の実測を最新版で更新した結果:
+    #   - typer 0.27.2 の外部依存は shellingham / rich / annotated-doc /
+    #     colorama のみで、**click を外部依存として要求しなくなった**
+    #     (vendoring の完成)。移行 = repo から top-level click を撤去し、
+    #     全 import を private な `typer._click.*` へ寄せることを意味する
+    #   - vendored click の型階層は 0.26.0 と同じく平坦化されたまま
+    #     (`Group` / `Option` / `Argument` は存在せず `Command` /
+    #     `Parameter` のみ。0.27.2 の wheel で直接確認)
+    #   - 例外群 / `ProgressBar` / CliRunner の monkeypatch 対象は全て
+    #     `typer._click.*` (private) にしか存在しない
+    #  置換設計 (移行時に実施): `isinstance(cmd, click.Group)` (cli.py) は
+    #  `cmd.commands` への duck-typing か `typer.core.TyperGroup` 型で置換可能。
+    #  判断: private API (`typer._click`) 依存は semver 上いつ壊れても
+    #  おかしくないため patch release の枠では受容しない。移行の trigger は
+    #  「typer / click に security fix 追従が必要になったとき」または次 minor の
+    #  計画的消化 (#957 で追跡)。判断記録は issue #957 を参照。
     #
     # click は cli.py / tests が直接 import するため明示依存として宣言する。
     "typer>=0.9,<0.25",
@@ -83,7 +101,7 @@ dev = [
     # (実測: FORCE_VERSION=1.1.405 で `pyright --version` は 1.1.405、
     # importlib.metadata は 1.1.411)。CI はこれらを設定しないため、ローカル
     # だけ緑という状態が起きうる。詳細は docs/developer-setup.md 参照。
-    "ruff==0.16.1",
+    "ruff==0.16.5",
     "pyright==1.1.411",
     "datamodel-code-generator>=0.25",
     "jsonschema>=4",

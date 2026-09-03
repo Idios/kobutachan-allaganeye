@@ -555,3 +555,32 @@ describe('#944 MinimapScreen header', () => {
     expect(path.textContent?.trim().length ?? 0).toBeGreaterThan(0);
   });
 });
+
+// #964: name-pattern プレビュー sandbox 警告 (CLI pool.py 層 1 の mirror)。
+// ロジック自体は utils/namePatternSandbox.test.ts が網羅するため、ここでは
+// 「警告が画面に出る / 出ない」の配線を pin する。
+describe('MinimapScreen name-pattern preview warnings (#964)', () => {
+  it('shows no warning for the valid default pattern', () => {
+    renderMinimapWithPath();
+    expect(screen.queryByTestId('name-pattern-warning')).toBeNull();
+  });
+
+  it('warns when the pattern escapes the output directory', () => {
+    renderMinimapWithPath();
+    fireEvent.change(screen.getByLabelText('name pattern'), {
+      target: { value: '../victim.mp4' },
+    });
+    const warn = screen.getByTestId('name-pattern-warning');
+    expect(warn.textContent).toContain('外に解決されます');
+  });
+
+  it('warns when the pattern maps two matches onto one file (no {idx})', () => {
+    renderMinimapWithPath();
+    fireEvent.change(screen.getByLabelText('name pattern'), {
+      target: { value: '{type}.mp4' },
+    });
+    const warn = screen.getByTestId('name-pattern-warning');
+    expect(warn.textContent).toContain('同じファイル');
+    expect(warn.textContent).toContain('{idx}');
+  });
+});

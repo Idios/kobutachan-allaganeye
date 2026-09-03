@@ -5,11 +5,13 @@ import { useEffect, useReducer, useState } from 'react';
 
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { InlineErrorHint } from '../components/InlineErrorHint';
+import { NamePatternWarnings } from '../components/NamePatternWarnings';
 import { SampleModeBanner } from '../components/SampleModeBanner';
 import { toErrorState } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { formatMatchFilename } from '../utils/filename';
+import { computeNamePatternIssues } from '../utils/namePatternSandbox';
 import { splitPath, stripExtendedPathPrefix } from '../utils/path';
 import pathStyles from '../styles/path-display.module.css';
 import { fmtMatchDuration, fmtTime } from '../utils/time';
@@ -500,6 +502,20 @@ export function ExportScreen() {
   const errorCount = countedMatches.filter(
     (m) => matchStates[m.index]?.status === 'error',
   ).length;
+
+  // #964: name-pattern プレビュー sandbox 警告。行は実際に CLI へ渡る集合
+  // (countedMatches) と同一の値 (境界調整済み start / {type}) で展開する。
+  // 一覧の各行表示 (formatName) と同じ入力なので、警告と行名が食い違わない。
+  const namePatternIssues = computeNamePatternIssues({
+    pattern: namePattern,
+    outputDir: outDir,
+    sourceVideo: videoSource,
+    rows: countedMatches.map((m) => ({
+      index: m.index,
+      type: m.type,
+      startSec: m.edited?.start_time ?? m.start_time,
+    })),
+  });
   // #545 review #7 / 5 回目テスト #4 (2026-04-25):
   // 旧実装は `doneCount / total * 100` で「完了ファイル数のみ」ベースだった
   // ため、1 ファイル目 encode 中は overall progress が 0% 固定で動かず、
@@ -641,6 +657,9 @@ export function ExportScreen() {
             <div className={styles.nameHint}>
               変数: {'{idx}'} {'{idx:03}'} {'{start}'} {'{type}'} {'{date}'}
             </div>
+            {/* #964: CLI が exit 5 で拒否する名前をプレビュー時点で警告する
+                (pool.py 層 1 の mirror)。書き出しはブロックしない。 */}
+            <NamePatternWarnings issues={namePatternIssues} />
           </div>
 
           <div>

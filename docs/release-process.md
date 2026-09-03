@@ -278,7 +278,15 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 - [ ] **G2: minimap 領域提案の回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_areamap_slow.py`。エリアマップ window の seed 検出と per-match consensus の提案精度を検証する。**crop / encode 経路は対象外**で、切り抜き映像そのものの妥当性は M3 で目視確認する。**9 件が collect され、SKIP ゼロで PASS することを確認する** (marker を省くと `pyproject.toml` の `addopts = "-m 'not slow and not baseline_regen'"` により全件 deselect され、無検証のままゲートが通る)。GT 動画が実機から欠けている場合、該当ケースは hard fail ではなく SKIP になる ([#992](https://github.com/Idios/kobutachan-allaganeye/issues/992))。SKIP が出たときは検証されていない GT があるということなので、`tests/baselines/source-videos.sha256.json` の台帳から動画を復元して再実行する (§サンプル動画/GT データの保全 は [`docs/testing-guide.md`](testing-guide.md) 参照)。欠落を許容する判断をした場合のみ `tests/test_areamap_slow.py` の `_KNOWN_MISSING_GT_IDS` に理由付きで記録し、その旨をリリース PR 本文に残す
 - [ ] **G3: VTuber timeline GT 回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_vtuber_gt_regression.py`。6 配信者 / GT 67 試合に対する recall と spurious を検証する。`--vtuber` を当該リリースで公開扱いにする場合は必須 (`/release` Step 0c で判断)。**検出ロジック / GT データ / ハーネスのいずれかを触った commit の後は再実行する**。`allaganeye/commands/split_matches.py` の `_VTUBER_ALGO_VERSION` の bump が再実行要否の目印になる
 
-> **masked 検出の根拠 (v0.3.0 時点)**: masked は専用の baseline ゲートを持たない。根拠は PR [#915](https://github.com/Idios/kobutachan-allaganeye/pull/915) で実施した 3 サンプルの不変性確認 (masked fallback 発動時の segment 数が再実行間で一致) に留まり、**出力の正しさは検証していない**。G1 と同形の pin 済み baseline への置き換えは [#925](https://github.com/Idios/kobutachan-allaganeye/issues/925) で追跡する。
+> **masked 検出の根拠**: v0.3.2 (#925) で **pin 済み baseline 回帰ゲートを追加** —
+> `pytest -m "slow_detect and not baseline_regen" tests/test_masked_baseline_regression.py`
+> (masked 録画 2 本 = masked-20260527 / masked-20260529 の matches/gaps が pin 済み
+> baseline と bit-exact 一致)。baseline は Idios が目視裁定した ground truth
+> (`tests/baselines/v0.3.0/masked-gt/*.json`) と一致することを確認して commit した。
+> v0.3.0 リリース時点では本ゲートは無く、根拠は PR
+> [#915](https://github.com/Idios/kobutachan-allaganeye/pull/915) の 3 サンプル不変性確認
+> (masked fallback 発動時の segment 数が再実行間で一致) に留まり、**出力の正しさは
+> 検証されていなかった**。
 
 **手動検証 (M)** — GPU / 長時間動画 / GUI / 配布物は mock 不可のため Idios 実機で実施する (Iron Law 6)。PR 本文には machine-unverifiable として plain bullet で記録する。
 

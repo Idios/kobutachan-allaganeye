@@ -21,7 +21,9 @@ export interface RecentEntry {
 }
 
 export interface RecentState {
-  /** Latest snapshot from `~/.allaganeye/recent.json`, newest first. */
+  /** Latest snapshot from `<install dir>/recent.json` (next to the executable;
+   * dev builds use `target/debug/recent.json` — see the Rust `recent_path()`
+   * doc comment; relocated from `~/.allaganeye/` in PR #655 Round 2), newest first. */
   entries: RecentEntry[];
   /** Set true after the first successful `load()` so the UI can skip the empty-state flicker on subsequent re-mounts. */
   loaded: boolean;

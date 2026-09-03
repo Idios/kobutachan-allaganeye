@@ -231,7 +231,15 @@ Metadata: <metadata.json path>
 
 > **根拠 (#930)**: `-o` に渡された相対パスをそのまま表示していたため、shell の quote 落ちで `E:\royalstraightflesh\videos\20260127` が `E:royalstraightfleshvideos20260127` (ドライブ相対) に化けた際、**実際の書き出し先が読み取れなかった**。quote 落ち自体はユーザーの入力ミスだが、表示がそれを可視化できていなかったことが欠陥である。
 
-**GUI プレビューとの非対称 (既知・未解消)**: GUI の name-pattern プレビュー (`gui/src/utils/filename.ts` の `formatMatchFilename`) は pattern を展開するだけで、CLI 側 (`allaganeye/export/pool.py`) が持つ 4 つの sandbox 検証 (出力先外への脱出 / source 上書き / Windows 不正名 / 出力衝突) を**持たない**。そのため GUI 上では「書き出し時に exit 5 で拒否される名前」がプレビューとして正常に見える。**本節の契約は CLI 出力に対するものであり、GUI プレビューの検証欠落は #964 で追跡する** (CLI 側が exit 5 で拒否するためデータ損失は起きず、失敗を早く知れない UX の問題)。
+**GUI プレビューとの対応 (#964 で mirror 実装済み)**: GUI の name-pattern プレビューは `gui/src/utils/namePatternSandbox.ts` (`computeNamePatternIssues`) が **層 1 と同一の検証を mirror** し、プレビュー時点で警告表示する (`NamePatternWarnings`、ExportScreen / MinimapScreen の命名規則入力下)。警告は「書き出し時に CLI が exit 5 で拒否される」ことを先回りして知らせるもので、**書き出し自体はブロックしない** (字句解決のため symlink 等の実 FS 状態は再現できず、最終 gate は CLI 側の exit 5 のまま)。層 2 / 層 3 は実ファイルの identity (`st_dev`/`st_ino`) を扱うため GUI プレビューへ移植できない。
+
+**name-pattern sandbox 検証の層構造 (#930 + #937)**: CLI の出力パス検証は preflight の文字列・解決パス検査だけでは塞げない経路 (hardlink / 8.3 短縮名 / 予約デバイス名) があるため、**判定の置き場所**を 3 層に分けている。
+
+1. **preflight (書き込み前・文字列/解決パス)**: `resolve_output_paths` が ①出力ディレクトリ外への脱出 ②source video への上書き ③同一ファイルへの衝突 (大文字小文字・`..`・末尾 dot/space は `_identity_key` で fold) ④Windows 不正名 (`:` = NTFS ADS、`#930`) ⑤予約デバイス名 (`NUL`/`CON`/`PRN`/`AUX`/`COM1-9`/`LPT1-9`、`#937` (a)) を exit 5 で拒否。`allaganeye/export/pool.py` の `_render_and_sandbox` / `resolve_output_paths`
+2. **worker 再検証 + source hardlink ガード (書き込み直前)**: `export_matches` が per-match で層 1 を再検証 (preflight を通らない caller = GUI / in-process の最終防壁) し、さらに書き込み対象が **source video の hardlink alias** (`st_dev`/`st_ino` 一致) なら書き込み前に拒否 (#937 (b))。path 比較では見えない「出力名 = source の別名」による入力 truncate を防ぐ
+3. **post-write identity 検証 (書き込み後)**: `_verify_written_identity` が成功出力の実ファイルを (st_dev, st_ino) で突合し、**hardlink pair / NTFS 8.3 短縮名 alias** を exit 5 で報告 (#937 (b))。preflight は出力ファイルが未作成のため原理的に見えない経路の事後検出 (事前拒否ではなく「成功と誤報告しない」)
+
+**macOS (APFS/HFS+ の case-insensitive volume) は対応 platform 外** (Windows のみ動作確認) のため対象外 (#937 (c))。塞ぐには Darwin での volume case-sensitivity probe が必要で、macOS を対応 platform に含める判断とセットで扱う。層 2 / 層 3 への到達には**作為的な `metadata.json` (予約デバイス名 / 脱出) か、あらかじめ仕込まれた出力ディレクトリ (hardlink) か、対応外 platform** が要り、release blocker ではない。
 
 **本契約の 3 点セット** ([`docs/l2-workflow.md` §規約・ガード導入の 3 点セット](l2-workflow.md) 準拠):
 
