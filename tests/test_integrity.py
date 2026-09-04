@@ -424,7 +424,7 @@ def test_load_manifest_raises_on_bom_prefixed_json(tmp_path: Path) -> None:
     regression in the build script gets caught at pytest time in addition
     to the Pester / Rust layers.
 
-    Detected during #729 root cause analysis (CLAUDE.md セクション バグ修正時の方針:
+    Detected during #729 root cause analysis (AGENTS.md セクション バグ修正時の方針:
     同種バグの横展開チェック). The Python integrity check would also have
     failed on BOM-prefixed manifest, but CI smoke (release.yml shell: pwsh)
     never produced BOM-prefixed manifest so the failure path was untested.

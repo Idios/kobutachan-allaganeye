@@ -355,7 +355,7 @@ subprocess / IPC / OS API を介した encoding fix を行うときは、**以�
 
 実装 PR では各 fix が 3 層のうちどこを touch するか PR 本文に明示。3 層に跨る fix は **Phase 分割の対象**になりうる (`docs/refactor-pattern.md`)。
 
-#### `codex rescue` 限定使用 (C4、spec O5 (b) 確定)
+#### `codex exec` 限定使用 (C4、spec O5 (b) 確定)
 
 根本原因分析 / 類似バグ調査 phase で `codex` CLI の rescue を限定的に併用してよい。常用は禁止 (Codex review = tier 1 `codex` CLI review を優先)。詳細は §Codex 運用 §rescue を参照。
 
@@ -399,11 +399,11 @@ Codex を Iron Law 3 / 5 と衝突しない形で workflow に統合する。設
 - 全 turn 自動の Stop-time review gate は **OFF のまま**保持 (spec O1 (b) 確定)
 - 代わりに `review-pr` (Step 5a) と `iterate-review` 内で**明示 invocation**
 - Iron Law 6 Pre-flight Step 5 として Codex adversarial-review を必ず実行 ([`docs/l2-workflow.md` §PR 作成 Pre-flight](docs/l2-workflow.md#pr-作成-pre-flight-iron-law-6-サブ条))
-- **invocation path は 3-tier** (#795): **tier 1 (default) = `codex` CLI 直接呼び出し** (`codex adversarial-review`、terminal から Codex を実行) / tier 2 (fallback) = Codex CLI fail 時のみ主エージェント (DeepSeek) が直接レビュー + Codex fallback notice (C6) / tier 3 (escalation) = Idios が直接 invoke。詳細は [`docs/l2-workflow.md` §Step 5 の invocation path](docs/l2-workflow.md#step-5-の-invocation-path-3-tier795)
+- **invocation path は 3-tier** (#795): **tier 1 (default) = `codex` CLI 直接呼び出し** (`codex review`、terminal から Codex を実行) / tier 2 (fallback) = Codex CLI fail 時のみ主エージェント (DeepSeek) が直接レビュー + Codex fallback notice (C6) / tier 3 (escalation) = Idios が直接 invoke。詳細は [`docs/l2-workflow.md` §Step 5 の invocation path](docs/l2-workflow.md#step-5-の-invocation-path-3-tier795)
 
 ### rescue (C4)
 
-- `codex rescue` は **root-cause 調査専用** (spec O5 (b) 確定、常用禁止)
+- `codex exec` は **root-cause 調査専用** (spec O5 (b) 確定、常用禁止)
 - rescue は agent からの invoke 可 (3-tier (#795) の制約は review / adversarial-review のみ。rescue を tier 3 = Idios 専用と誤読しない)
 - 機能実装 / refactor / docs 改修等の default invocation は禁止
 - 使う場合は rescue prompt に `<action_safety>` で「scope を超える finding → 独断 fix 禁止、BLOCKED 報告」を必ず明記 (M3 整合)

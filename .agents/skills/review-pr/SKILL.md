@@ -182,9 +182,9 @@ gh pr checks <PR番号>
 
 PR の変更種別に応じて以下を確認する。**code quality (logic / architecture / security) 部分は plugin subagent に委譲し、project 固有の doc 整合性確認のみを本 skill で実施する**。
 
-#### 5.0 plugin subagent による code quality review (Skill `requesting-code-review`)
+#### 5.0 subagent による code quality review
 
-`requesting-code-review` skill が dispatch する `code-reviewer` subagent に code quality 観点 (logic correctness / architecture / security / code smell / best practices) のレビューを委譲する。subagent は本 skill の責務外の項目 (受け入れ条件 / base sync / 並行 PR / project doc 整合 / マージ後 handoff) には介入しない。
+spawn_agent による code quality レビュー に code quality 観点 (logic correctness / architecture / security / code smell / best practices) のレビューを委譲する。subagent は本 skill の責務外の項目 (受け入れ条件 / base sync / 並行 PR / project doc 整合 / マージ後 handoff) には介入しない。
 
 **起動条件**: **原則すべての PR で起動する。非起動は 1 条件だけ** — 変更ファイルが **すべて** `docs/**` または `*.md` (= documentation のみ) の場合に限り起動しない。委譲先の観点 (logic / architecture / security / code smell) は code diff を前提としており、documentation しか無い PR では no-op review にしかならないため。
 
@@ -528,9 +528,9 @@ Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §C
 
    ユーザー確認 3 択 (Recommended 順):
    - (A) Codex 復旧待ち (本 PR 一時 abort、Codex 復旧後に再 invoke) [Recommended]
-   - (B) Claude fallback で push (superpowers `requesting-code-review` subagent fallback)
+   - (B) Claude fallback で push (subagent レビュー (spawn_agent) fallback)
    - (C) abort (本 PR 全体停止、user 手動判断)
-3. **明確な failure (重要 PR でない)** → 自動 fallback: superpowers `requesting-code-review` subagent を起動する。**focus の渡し方 (#856 item4)**: tier 1 の `codex CLI review` は **focus positional を受け付けない**ため「Codex に渡した focus 文字列」は**存在しない**。「流用」できる文字列は無いので、fallback subagent には [`docs/l2-workflow.md` §「Step 5 の focus 導出手順」](../../../docs/l2-workflow.md) で**導出した focus を渡す** (project 固有 focus を Codex 側へ渡す場合に `adversarial-review` subcommand で使うはずだったものと同じ導出結果)
+3. **明確な failure (重要 PR でない)** → 自動 fallback: subagent レビュー (spawn_agent) を起動する。**focus の渡し方 (#856 item4)**: tier 1 の `codex CLI review` は **focus positional を受け付けない**ため「Codex に渡した focus 文字列」は**存在しない**。「流用」できる文字列は無いので、fallback subagent には [`docs/l2-workflow.md` §「Step 5 の focus 導出手順」](../../../docs/l2-workflow.md) で**導出した focus を渡す** (project 固有 focus を Codex 側へ渡す場合に `adversarial-review` subcommand で使うはずだったものと同じ導出結果)
 4. **曖昧 (重要 PR でない)** → user に ユーザー確認 (再試行 / Claude fallback / abort) 3 択
 5. fallback 実行時は **Step 6 レビュー報告に「Codex fallback notice」を必須記載** (Iron Law 5 整合、template は docs/l2-workflow.md §Codex fallback 参照)
 

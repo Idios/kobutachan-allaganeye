@@ -19,7 +19,7 @@ export type MatchEditPatch = Partial<
 /**
  * Normalize a filesystem path for source-equality comparison (#517, review).
  *
- * The current platform is Windows-only (see CLAUDE.md), so two paths that
+ * The current platform is Windows-only (see AGENTS.md), so two paths that
  * differ only in separator (`\` vs `/`) or letter case should be treated as
  * pointing at the same file. Without normalization a draft whose source was
  * captured with one convention is dropped as stale even though it's the same

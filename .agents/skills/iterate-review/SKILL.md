@@ -59,7 +59,7 @@ base 最新化 + 直近マージ PR + 並行 worktree PR 重複確認は `review
 
 > **subagent 起動規約**: 本 dispatch は [`docs/l2-workflow.md` §subagent 起動規約](../../../docs/l2-workflow.md#subagent-起動規約-746-phase-c--741-task-5-教訓) に準拠する。`__ITERATE_REVIEW_SUBAGENT_MODE__` marker + `(A)*` / ambiguous_judgments の自己申告 (下記 prompt template の item 6 / 7) で HARD-GATE (Stop conditions / 独断 fix 禁止) を担保する。controller (本 skill) が Step 2.2 validation で「無視 / 観察のみ / スコープ対象外」キーワード単独行を parse error とすることで、subagent の独断 fix 倍数を 0 に抑える。F6 / F7 と同型の事象を再発させない。
 >
-> **Codex fallback (C6)**: subagent が `review-pr` 内で Codex review (tier 1 = companion script `codex CLI review` の Bash 実行。slash `codex review` は `disable-model-invocation: true` のため agent から invoke 不可 = Idios 専用 tier 3、`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照) を実行して fail した場合は [`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback) の手順に従い superpowers `requesting-code-review` subagent を fallback として起動する。Final summary comment (Step 4) に「Codex fallback notice」を必須記載 (Iron Law 5 整合)。**Step 2.3 の per-round Round summary ユーザー確認 ではなく、収束時に 1 回投稿する Step 4 の summary comment を指す。**
+> **Codex fallback (C6)**: subagent が `review-pr` 内で Codex review (tier 1 = companion script `codex CLI review` の Bash 実行。slash `codex review` は `disable-model-invocation: true` のため agent から invoke 不可 = Idios 専用 tier 3、`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照) を実行して fail した場合は [`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback) の手順に従い subagent レビュー (spawn_agent) を fallback として起動する。Final summary comment (Step 4) に「Codex fallback notice」を必須記載 (Iron Law 5 整合)。**Step 2.3 の per-round Round summary ユーザー確認 ではなく、収束時に 1 回投稿する Step 4 の summary comment を指す。**
 >
 > **Codex 出力の読み取り (#949、openai-codex 1.0.4 時点)**: Codex review が exit 0 で完了した場合、subagent は `review-pr` §「Codex 出力の読み取り」に従い `codex CLI status --json` で `jobClass == "review"` の job id を特定し、`result <job-id>` で**保存済み全文**を読んでから finding を統合する (**job id は省略しない**)。stdout に見えた分だけで triage するのは禁止。読み取りに失敗した (= `result` が exit 非ゼロ) 場合は理由を 1 行記録する義務があり、subagent は下記 prompt template item 7 の `## meta` に `Codex 出力読み取り` 行として申告し、controller はそれを Step 4 の Final summary へ転記する。**fallback ではないので Codex fallback notice とは別行**。`--background` / `--wait` は付けない (受理されるが無視される)。
 
@@ -485,7 +485,7 @@ PR は <R> ラウンドの review-fix で収束。全 findings 解消完了。
 
 (Round 内で Codex review (`codex CLI review`) が fail し fallback で代替実行した場合は以下を必須記載。fallback ゼロなら "(なし)" を残す)
 
-> **Codex fallback notice**: Round <N> で Codex CLI が <検出条件: rate.?limit / 429 / quota / auth / timeout 等> で fail したため、Claude Code (requesting-code-review) で代替実行しました。
+> **Codex fallback notice**: Round <N> で Codex CLI が <検出条件: rate.?limit / 429 / quota / auth / timeout 等> で fail したため、DeepSeek の直接レビューで代替実行しました。
 > Codex 側の review は次セッションで再試行を推奨します。
 > stderr 要約: <stderr の先頭 200 字>
 

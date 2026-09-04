@@ -68,7 +68,7 @@ from allaganeye.audio.scan import scan_fanfare_hits
 # * the 2026-06-10 audit items P2-1 (corroboration) and P2-5 (memory), see
 #   `docs/audits/2026-06-10-full-audit.md`
 #
-# CLAUDE.md section "音声昇格" carries the same decision for readers who never
+# AGENTS.md section "音声昇格" carries the same decision for readers who never
 # open this file.
 AUDIO_FROZEN: Final[bool] = True
 
