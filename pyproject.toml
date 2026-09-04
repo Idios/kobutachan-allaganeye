@@ -58,7 +58,7 @@ dependencies = [
     #
     # click は cli.py / tests が直接 import するため明示依存として宣言する。
     "typer>=0.9,<0.25",
-    "click>=8.0,<8.4",
+    "click>=8.0,<8.6",
     "numpy>=1.24",
     "scipy>=1.11",
     # 上限は 5.x の numerics が未検証のため (#916 裁定 D8)。5.x 移行は #951 で
