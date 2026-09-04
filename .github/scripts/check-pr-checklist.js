@@ -418,8 +418,8 @@ const FABLE_LABEL_RE = /Fable[ 	　]*俯瞰レビュー/;
 const FABLE_PLACEHOLDER_RE = /finding[ 	]*N|消化[ 	]*M|残[ 	]*K|理由:[ 	]*\.\.\.|置き換える/;
 
 function isDocPath(p) {
-  // `.claude/skills/**/*.md` のような**振る舞いを規定する prompt** も documentation 側に含める。
-  // Fable の担当は「文書・方針・プロセス」(CLAUDE.md §Fable と Codex の棲み分け) であり、
+  // `.agents/skills/**/*.md` のような**振る舞いを規定する prompt** も documentation 側に含める。
+  // Fable の担当は「文書・方針・プロセス」(AGENTS.md §Fable と Codex の棲み分け) であり、
   // skill prompt の改訂はまさにその対象。したがって拡張子 .md は一律 doc として扱う (#945 で明示)。
   return p.startsWith('docs/') || p.toLowerCase().endsWith('.md');
 }
@@ -524,7 +524,7 @@ function validateFableRow(selfTestRows, files) {
       ok: false,
       reason:
         `Fable 俯瞰レビューの起動条件 ${which} に該当していますが \`非実施\` と記入されています。` +
-        '`Agent(subagent_type=allaganeye-fable-consult)` を実行し ' +
+        '別途 Claude Code セッションで Fable（allaganeye-fable-consult ロール）を実行し ' +
         '`実施 (finding N 件 / 消化 M 件 / 残 K 件)` を実数で記入してください。',
     };
   }
@@ -615,7 +615,7 @@ async function checkPrChecklist({ github, context, core }) {
   const fable = validateFableRow(selfTestRows, files);
   if (!fable.ok) {
     core.setFailed(
-      `${fable.reason} 詳細は .claude/skills/review-pr/SKILL.md §「optional 俯瞰レビュー」を参照。`
+      `${fable.reason} 詳細は .agents/skills/review-pr/SKILL.md §「optional 俯瞰レビュー」を参照。`
     );
     return;
   }

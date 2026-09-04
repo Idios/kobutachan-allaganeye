@@ -53,8 +53,7 @@ description: deferred issue レビュー → バージョンバンプ → リリ
 
 ### Step 0a-2: リリース俯瞰レビュー (allaganeye-fable-consult、必須) (#945)
 
-Step 0a の全件達成 (Track 構造の patch release では Step 0a 項目 4 の読み替え後の意味) を確認したら、**`Agent(subagent_type=allaganeye-fable-consult)` を起動して
-リリース記述を俯瞰レビューさせる**。本ステップはスキップできない。
+Step 0a の全件達成 (Track 構造の patch release では Step 0a 項目 4 の読み替え後の意味) を確認したら、**別途 Claude Code セッションで Fable（allaganeye-fable-consult ロール）にリリース記述の俯瞰レビューを依頼する**。本ステップはスキップできない。
 
 **対象** (2 点をまとめて渡す。**本 step の時点で実在するものだけを挙げてある**):
 
@@ -546,7 +545,7 @@ security 再チェック: 非実施 (理由: …)
 - patch リリース: マージされたブランチで `git tag -a v<新バージョン> -m "Release v<新バージョン>: <概要>"` → `git push origin v<新バージョン>`
 - minor/major リリース: `develop-<新バージョン>` を `main` にマージしてから `main` でタグ打ち
 - **annotated tag（`-a`）で打つ**。`version-check` job は CHANGELOG 見出し日付の基準日として annotated tag の `taggerdate` を**唯一の基準**として読む (取れなければ fail。commit 日時への fallback は無い)
-- **GitHub Release は `git push origin v<新バージョン>` で [`release.yml`](../../../.github/workflowsrelease.yml) が自動作成する**。本文は [`scripts/extract_release_notes.py`](../../../scripts/extract_release_notes.py) が CHANGELOG.md の該当セクションから抽出し、Portable ZIP も自動添付される
+- **GitHub Release は `git push origin v<新バージョン>` で [`release.yml`](../../../.github/workflows/release.yml) が自動作成する**。本文は [`scripts/extract_release_notes.py`](../../../scripts/extract_release_notes.py) が CHANGELOG.md の該当セクションから抽出し、Portable ZIP も自動添付される
   - **`git push` はトリガであって完了ではない (#962 項目 7)。** `release.yml` はタグ push を trigger に**非同期**で走り、Windows ビルド + PyInstaller + FFmpeg DL を含むため十数分かかる。push した時点を「Release 作成済み」と扱うと、`develop-<次バージョン>` を切る判断 (Step 2-6) が実際の完了より先に出る。**次の 2 つがどちらも通ってから**先へ進む:
 
     ```bash

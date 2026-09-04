@@ -97,7 +97,7 @@ Fable 俯瞰レビュー (#945) の起動条件 — 次のいずれかに該当�
 該当時は「実施 (finding N 件 / 消化 M 件 / 残 K 件)」を **実数で** 記入する (N/M/K のままは CI red)。
 非該当時は「非実施 (理由: 2 条件のどちらに非該当か)」。
 起動条件は CI が変更ファイル一覧と突き合わせて検査する — 該当 PR で「非実施」と書くと red。
-詳細は .claude/skills/review-pr/SKILL.md §「optional 俯瞰レビュー」
+詳細は .agents/skills/review-pr/SKILL.md §「optional 俯瞰レビュー」
 -->
 
 - [ ] `ruff check .` (python-core 変更時)
@@ -116,7 +116,7 @@ Fable 俯瞰レビュー (#945) の起動条件 — 次のいずれかに該当�
 
 - [ ] 関連ドキュメント更新 (`docs/cli-spec.md` / `docs/design-overview.md` / `README.md` 等) — 該当なしなら `[x]` + 理由付記
 - [ ] **新規 CLI オプション追加時**: [`docs/output-spec.md`](../docs/output-spec.md) のマトリクス更新 (#405) — 該当なしなら `[x]` + 理由付記
-- [ ] CLAUDE.md / `docs/l2-workflow.md` の更新要否確認 — 不要なら `[x]` + 理由付記
+- [ ] AGENTS.md / `docs/l2-workflow.md` の更新要否確認 — 不要なら `[x]` + 理由付記
 - [ ] 出力書式を変更した場合、`docs/cli-spec.md` の該当出力例も更新 (再発防止: #343 系)
 - [ ] docs / 識別子のリネーム時は `docs/l2-workflow.md` §「doc 節参照健全性確認」 で §「<旧名>」grep し残骸ゼロ確認
 - [ ] **CHANGELOG entry の要否を判断した** ([`docs/release-process.md`](../docs/release-process.md) §CHANGELOG entry の記述規約) — 利用者から見た振る舞いが変わる変更なら `## [Unreleased]` へ追記。内部専用なら本文に `CHANGELOG entry: 不要 (内部専用 — <CI ガード / 開発 doc / skill / テスト / 版 pin>)` を 1 行残す

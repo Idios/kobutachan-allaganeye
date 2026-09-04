@@ -249,7 +249,7 @@ openai-codex plugin の `commands/adversarial-review.md` frontmatter には **`d
 
 tier 1 が成功している限り「Codex review 実施済」の記載は正当 (Iron Law 5 整合)。tier 2 で代替した場合は Codex fallback notice を必ず記載し、Codex review 済と誤認させない。
 
-> **歴史記録の扱い (#854 R2 確定)**: 実行済み dated plans/specs (`docs/superpowers/plans/` / `docs/superpowers/specs/`) 内の slash 表記 (`/codex:review` 等) は当時の実行記録 (historical record) であり、本 3-tier への遡及書き換えは行わない。sweep で検出しても対応不要 (living doc = AGENTS.md / 本 doc / skill / hook / 現行 roadmap (現時点は `docs/superpowers/specs/2026-06-29-v030-l3-roadmap.md`。roadmap 交代時は本注記も更新する) のみが整合対象)。
+> **歴史記録の扱い (#854 R2 確定)**: 実行済み dated plans/specs (`docs/superpowers/plans/` / `docs/superpowers/specs/`) 内の slash 表記 (`/codex:review` 等) は当時の実行記録 (historical record) であり、本 3-tier への遡及書き換えは行わない。sweep で検出しても対応不要 (living doc = AGENTS.md / 本 doc / skill / hook / 現行 roadmap (現時点は `docs/superpowers/plans/2026-09-04-v040-roadmap.md`。roadmap 交代時は本注記も更新する) のみが整合対象)。
 
 #### Codex 出力の読み取り (#949、openai-codex 1.0.4 時点)
 

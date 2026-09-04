@@ -289,7 +289,7 @@ Step 3 (受け入れ条件) / Step 5 (ロジック・ドキュメント) が拾�
 
 **optional 俯瞰レビュー (allaganeye-fable-consult、#945)**
 
-以下のいずれかを満たす PR で `Agent(subagent_type=allaganeye-fable-consult)` を起動する。**Codex とは対象が違う** — Codex は「コード / テスト diff の技術的欠陥」、Fable は「文書・方針・プロセスの整合と網羅性」(`AGENTS.md` §「Fable と Codex の棲み分け」):
+以下のいずれかを満たす PR で、別途 Claude Code セッションで Fable（allaganeye-fable-consult ロール）に俯瞰レビューを依頼する。**Codex とは対象が違う** — Codex は「コード / テスト diff の技術的欠陥」、Fable は「文書・方針・プロセスの整合と網羅性」(`AGENTS.md` §「Fable と Codex の棲み分け」):
 
 - **doc-only PR** (`docs/**` / `*.md` のみで code file の変更がゼロ)、または
 - **spec doc / plan doc の新規追加を含む PR** (`docs/superpowers/specs/**` / `docs/superpowers/plans/**` に新規ファイル)
@@ -469,13 +469,13 @@ Codex review 起動: 判定不能 (理由: 変更ファイル一覧の取得が�
 
 Codex review が exit 0 で完了したら、**finding を stdout から拾う前に保存済み全文を読む**。契約の正は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md) で、本 step はその適用にあたる。
 
-1. review を実行した worktree の cwd のまま、**`CLAUDE_PLUGIN_ROOT` を張り直してから**直前の review job の **id を特定する**。以下は**同じ Bash 呼び出しの中で**実行する — Bash tool は呼び出し間で env var を保持しないため、review 実行時の `export` はこの時点で消えており、空のまま使うと `node "/scripts/codex CLI"` に展開されて `MODULE_NOT_FOUND` になる (実測):
+1. review を実行した worktree の cwd のまま、**`CLAUDE_PLUGIN_ROOT` を張り直してから**直前の review job の **id を特定する**。以下は**同じ Bash 呼び出しの中で**実行する — Bash tool は呼び出し間で env var を保持しないため、review 実行時の `export` はこの時点で消えており、空のまま使うと `node "/scripts/codex-companion.mjs"` に展開されて `MODULE_NOT_FOUND` になる (実測):
 
    ```bash
    cd "<review を実行した worktree の絶対パス>"   # cwd は turn 境界で main repo へドリフトしうる。明示する
    ls "$HOME/.claude/plugins/cache/openai-codex/codex/"
    export CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<解決した version>"
-   node "$CLAUDE_PLUGIN_ROOT/scripts/codex CLI" status --json
+   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" status --json
    ```
 
    > **`cd` を省略しない。** 呼び出し間で消えるのは env var だけではない — 本 repo では
@@ -490,7 +490,7 @@ Codex review が exit 0 で完了したら、**finding を stdout から拾う�
 2. その id を**明示して** `result` を実行する (`--json` は不要。プレーン出力が rendered 全文。`CLAUDE_PLUGIN_ROOT` は step 1 と同じ Bash 呼び出しなら張り直し不要):
 
    ```bash
-   node "$CLAUDE_PLUGIN_ROOT/scripts/codex CLI" result <job-id>
+   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result <job-id>
    ```
 
    **id を省略しない。** 省略時の選択は `jobClass` を見ずに「現 session の最新完了 job」を返すだけなので、同じ session で `codex rescue` や `task` を走らせていると **review ではない job の出力を review の finding として取り込む**
