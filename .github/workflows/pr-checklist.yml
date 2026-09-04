@@ -14,7 +14,7 @@ jobs:
   validate-checklist:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check PR checklist
         uses: actions/github-script@v9
@@ -30,7 +30,7 @@ jobs:
   validate-preflight-freshness:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check Pre-flight freshness
         uses: actions/github-script@v9

@@ -103,7 +103,7 @@ jobs:
       # tag object の取得は下の guard step 内の明示 refspec fetch が担う
       # (そちらが load-bearing)。既定の checkout が tag object を取得しないこと
       # 自体は別途実測済み (run 33528826207: `refs/tags/v0.3.1 commit` = lightweight)。
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -215,7 +215,7 @@ jobs:
       # actions/cache persists the directory across runs keyed by asset SHA256.
       ALLAGANEYE_BUILD_CACHE_DIR: ${{ github.workspace }}/build-cache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -486,7 +486,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
