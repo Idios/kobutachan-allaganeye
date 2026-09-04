@@ -514,7 +514,7 @@ jobs:
         shell: bash
         run: python scripts/extract_release_notes.py '${{ needs.version-check.outputs.version }}' release-notes.md
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/allaganeye-v*-windows.zip
           body_path: release-notes.md
