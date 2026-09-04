@@ -68,7 +68,7 @@ scipy==1.17.1
 # なので、ここでは範囲内の exact 値を与えるだけ。
 datamodel-code-generator==0.76.0
 black==26.5.1
-isort==8.0.1
+isort==9.0.1
 
 # --- CLI 出力の整形に効く transitive ---
 # typer が --help / traceback の整形に使う。rich 15 以降は色付き環境で option 名を
