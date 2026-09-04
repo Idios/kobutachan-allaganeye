@@ -60,15 +60,15 @@ main (リリースタグのみ)
 | --- | --- | --- |
 | 計画立案 | Plan モード + AskUserQuestion + TodoWrite | タスクの分解、リスク・曖昧点の事前洗い出し、実装前の計画合意 |
 | 実装 | Claude の通常ツール (Edit/Write/Bash) + TodoWrite | 実装 + unit/integration テスト + 実機検証 (long-running / GPU / audio 統合は mock 不可) + PR 作成。スコープ逸脱時は Plan モードに戻る |
-| PR review-fix loop | `/iterate-review` | PR 作成後の review-fix ループ自動化 (Round cap 5、(A) 強優先、握り潰し防止 validation、収束時 summary コメント 1 個投稿) |
-| PR レビュー | `/review-pr` | PR レビュー + #367 受け入れ基準チェックリスト検証 + マージ判断 |
-| issue 起票 | `/create-task` | issue 起票 (定型テンプレート適用) |
-| issue クローズ | `/close-issue` | マージ後の受け入れ条件実測再検証 + 残タスクトリアージ + `gh issue close` 実行 (Iron Law 4 担保ルート、#594 で `/review-pr` から責務分離、#607 で `Refs #N` fallback 対応 / #606 で eval/reports 構造整理) |
-| リリース | `/release` | リリースタグ、CHANGELOG、main へのマージ |
+| PR review-fix loop | `iterate-review` | PR 作成後の review-fix ループ自動化 (Round cap 5、(A) 強優先、握り潰し防止 validation、収束時 summary コメント 1 個投稿) |
+| PR レビュー | `review-pr` | PR レビュー + #367 受け入れ基準チェックリスト検証 + マージ判断 |
+| issue 起票 | `create-task` | issue 起票 (定型テンプレート適用) |
+| issue クローズ | `close-issue` | マージ後の受け入れ条件実測再検証 + 残タスクトリアージ + `gh issue close` 実行 (Iron Law 4 担保ルート、#594 で `review-pr` から責務分離、#607 で `Refs #N` fallback 対応 / #606 で eval/reports 構造整理) |
+| リリース | `release` | リリースタグ、CHANGELOG、main へのマージ |
 
 権限境界 (close 操作、コード変更操作等) は**人間 = ユーザーが判断**する責任とする。Claude は曖昧点を `AskUserQuestion` でユーザーに確認する。
 
-**`/iterate-review` の起動経路**: user 手動 (`/iterate-review <PR#>`) と agent 自動 (PR 作成セッションが PR 作成後に skill として呼ぶ) の両方をサポート。Iron Law 6 Pre-flight 通過後に呼ぶこと。
+**`iterate-review` の起動経路**: user 手動 (`iterate-review <PR#>`) と agent 自動 (PR 作成セッションが PR 作成後に skill として呼ぶ) の両方をサポート。Iron Law 6 Pre-flight 通過後に呼ぶこと。
 
 反復利用される手順があれば、実運用でパターンが固まった時点で新規 skill を追加する (事前に空の skill は作らない)。
 
@@ -197,7 +197,7 @@ gh pr list --search "<元issue#>" --state all \
 
 #### Step 5 の focus 導出手順 (Refs #935 P2-1)
 
-focus は**固定の例示リストから選ぶのではなく、本 PR の diff から導出する**。過去の失敗例を並べた固定リストは「その数種類だけを見る」検出器になり、新しい欠陥クラスに対しては検出力を持たない。PR #930 の要因分析がこの点を実証している — 「security」「入力境界」という抽象語の観点は既に skill に存在したうえで、`/iterate-review` 6 ラウンド (30 findings) を含む 5 層のレビューが不可逆データ損失を 1 件も検出できなかった。**検出力は具体列挙にのみ宿る。**
+focus は**固定の例示リストから選ぶのではなく、本 PR の diff から導出する**。過去の失敗例を並べた固定リストは「その数種類だけを見る」検出器になり、新しい欠陥クラスに対しては検出力を持たない。PR #930 の要因分析がこの点を実証している — 「security」「入力境界」という抽象語の観点は既に skill に存在したうえで、`iterate-review` 6 ラウンド (30 findings) を含む 5 層のレビューが不可逆データ損失を 1 件も検出できなかった。**検出力は具体列挙にのみ宿る。**
 
 **focus に必ず含める 1 項目**: 本 PR が新設・変更した**外部入力境界**と、そこから到達する**不可逆操作**の対応ペア。
 
@@ -322,7 +322,7 @@ node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result <job-id>
 - **取り込み未済 commit あり、touched files 交差あり**: `git merge origin/<base>` (または rebase) で取り込み → Iron Law 6 自動チェック (`ruff` / `pyright` / `pytest` / `npm run lint`/`typecheck`/`test`/`build` / `cargo check` 等、変更 path に応じて) を再実行 → PR 作成
 - **並行 PR 検出**: 各 PR の状態 (open / merged) を確認。重複なら計画見直し or `AskUserQuestion` でユーザー判断
 
-確認結果は **PR テンプレート §「ベース同期確認」** (4 項目 + 宣言フィールド 2 件を plain bullet で) に記録する。`validate-checklist` は checkbox しか数えないため 4 項目側は CI 対象外だが、レビュー時に `/review-pr` Step 2 が `gh pr view` 経由で機械的に再確認するため、握り潰しは禁止。
+確認結果は **PR テンプレート §「ベース同期確認」** (4 項目 + 宣言フィールド 2 件を plain bullet で) に記録する。`validate-checklist` は checkbox しか数えないため 4 項目側は CI 対象外だが、レビュー時に `review-pr` Step 2 が `gh pr view` 経由で機械的に再確認するため、握り潰しは禁止。
 
 **宣言フィールド 2 件は `validate-preflight-freshness` job が機械検査する** (#946、`.github/scripts/check-preflight-freshness.js`)。「plain bullet だから CI ゲート対象外」は本節に限り**成り立たない**ので注意する。
 
@@ -351,7 +351,7 @@ gate が見ていない集合 (自己申告ゆえの後追い記入 / `Refs #N` 
 
 > originally from `feedback_pr_review_base_merge_regression.md`, absorbed 2026-05-01
 
-**CI green は内部整合性のみを保証し、機能 regression の防御線にはならない**。base 取り込み merge commit を見たら、以下の手順で base / PR head の同ファイル比較を実施する (PR 作成時 + `/review-pr` Step 2.3 で実施)。
+**CI green は内部整合性のみを保証し、機能 regression の防御線にはならない**。base 取り込み merge commit を見たら、以下の手順で base / PR head の同ファイル比較を実施する (PR 作成時 + `review-pr` Step 2.3 で実施)。
 
 #### 検証手順
 
@@ -405,7 +405,7 @@ PR 作成前のローカル自動チェックは、変更ファイル path に�
 ### 複合判定ルール
 
 - 上記の複数種別にまたがれば **すべて実行** (例: python + gui-frontend なら 8 個の lint/test ジョブ全部)
-- 完全 docs-only でも path 識別子変更を含むなら `.github/workflows/` と `allaganeye/` への波及確認 (`/review-pr` の §D doc-only PR 検証手順と整合)
+- 完全 docs-only でも path 識別子変更を含むなら `.github/workflows/` と `allaganeye/` への波及確認 (`review-pr` の §D doc-only PR 検証手順と整合)
 - `.claude/hooks/`, `.agents/skills/`, `.claude/settings*.json` 変更は **メタ変更** として「skill 自体の eval が必要か」を `AskUserQuestion` で確認
 
 ### fail 時の対応
@@ -477,7 +477,7 @@ options:
 - 未説明のまま PR を出す場合、当該ゲートは `pass` ではなく **`観測あり・未説明`** と記録する
 - **観測ゼロだったなら「観測ゼロ」と 1 行書く** (§「規約・ガード導入の 3 点セット」②)。無記載は「異常がなかった」と「記録しなかった」を区別できない
 
-**レビュー側の発火点**: [`/review-pr`](../.agents/skills/review-pr/SKILL.md) Step 5a の long-running / integration 検証観点が、実機検証の記録に `観測:` 行または「観測ゼロ」の記載があるかを確認する。未記載なら Step 5b トリアージ表へ計上する。
+**レビュー側の発火点**: [`review-pr`](../.agents/skills/review-pr/SKILL.md) Step 5a の long-running / integration 検証観点が、実機検証の記録に `観測:` 行または「観測ゼロ」の記載があるかを確認する。未記載なら Step 5b トリアージ表へ計上する。
 
 > **なぜこの規約が要るか (PR #930 の経緯)**: 手動ゲート M1 (export 実機確認) で「出力パスの表示がおかしい」という異常は**実際に観測されていた**。しかし「export 自体は正常 (3/3 が NVENC で完走)」を根拠にゲートは pass と記録され、パス表示の件は別件として切り離された。後にパス処理を全経路 audit したところ、その表示異常と同じ根 (入力パスの解決規則) からデータ損失を含む blocker が 3 件見つかった。**異常は観測されていた — 記録されなかっただけである。** なお本件は v0.3.0 タグ打ち**前**に `release/v0.3.0` へ merge されており、公開リリースには載っていない。「観測されたが pass と記録された」という事実こそが本規約の根拠である。
 
@@ -496,7 +496,7 @@ PR 本文の checkbox のうち **`受け入れ条件` / `Acceptance criteria` /
 
 **日常の PR (base=`develop-*`) では job が red でもマージは構造的にブロックされない。** #947 の決着 (2026-08-20) により `validate-checklist` は required status check になったが、**保護対象は `main` と `release/*` だけ**で `develop-*` は無保護のまま。したがって日常の開発 PR では red は依然「気づくための信号」であり、マージ阻止機構として効くのは `release/*` と `main` へ入る 2 箇所だけである。
 
-保護対象・required の 8 件・除外理由の正は [`docs/release-process.md` §ブランチ保護と required status checks](release-process.md) にある (ruleset は repo 外設定で diff に現れないため、同節が SSoT)。`develop-*` を保護しない理由は `/release` Step 4 が patch release で `develop-<version>` へ直接 commit する手順を残しているため。
+保護対象・required の 8 件・除外理由の正は [`docs/release-process.md` §ブランチ保護と required status checks](release-process.md) にある (ruleset は repo 外設定で diff に現れないため、同節が SSoT)。`develop-*` を保護しない理由は `release` Step 4 が patch release で `develop-<version>` へ直接 commit する手順を残しているため。
 
 ### Why
 
@@ -601,13 +601,13 @@ issue ref がある PR も、期待値 / 現状 は PR 本文に **簡潔に inl
 
 ### Iron Law 6 サブ条との関係
 
-本規約は PR template (`.github/pull_request_template.md`) と一致する。template の `## 期待値` / `## 現状` / `## 修正内容` を埋めずに PR 作成すると `/review-pr` で blocker 扱い。
+本規約は PR template (`.github/pull_request_template.md`) と一致する。template の `## 期待値` / `## 現状` / `## 修正内容` を埋めずに PR 作成すると `review-pr` で blocker 扱い。
 
 ## (A) PR 内修正優先 規約
 
 > originally from `feedback_pr_internal_fix_policy.md`, absorbed 2026-05-01
 
-レビューで摘出した課題は、原則として該当 PR 内で全て対策する。`/review-pr` のトリアージ表で (B) 新規 issue 起票 / (C) 既存 issue 追記 を選びたくなる場面でも、まず (A) 本 PR 内修正を第一候補にする。
+レビューで摘出した課題は、原則として該当 PR 内で全て対策する。`review-pr` のトリアージ表で (B) 新規 issue 起票 / (C) 既存 issue 追記 を選びたくなる場面でも、まず (A) 本 PR 内修正を第一候補にする。
 
 ### Why
 
@@ -615,7 +615,7 @@ issue ref がある PR も、期待値 / 現状 は PR 本文に **簡潔に inl
 
 ### How to apply
 
-- `/review-pr` Step 5b トリアージ表で (B) 新規 issue / (C) 既存 issue 追記 を考えた瞬間、まず「本 PR 内で対応できないか」を検討する
+- `review-pr` Step 5b トリアージ表で (B) 新規 issue / (C) 既存 issue 追記 を考えた瞬間、まず「本 PR 内で対応できないか」を検討する
 - 例外: スコープ逸脱が明らかに大きい (別レイヤー実装変更 / GPU 統合等で工数 1 セッション超 / 別担当領域) 場合のみ (B) を提案。その場合も `AskUserQuestion` で「(A) 本 PR 拡大 / (B) 別 issue」の選択肢を提示し、ユーザーに判断を委ねる
 - `AskUserQuestion` で (A) only / (A)+(B) 混合 / 個別調整 の選択肢を提示する場合、(A) only を **「Recommended」** として提示する
 - 例外的に (B) になる典型: 別 issue が既に存在し、まだクローズされていない場合 (重複防止) / scope-guard skill が「同 PR で対応すると Iron Law 3 違反」と判定した場合
@@ -708,7 +708,7 @@ git grep -nE 'の「PR 作成前」|の「<旧概念>」' .claude/ docs/ .github
 
 ## レビュー受け入れ基準 (#367 対策)
 
-PR #343 のような「複数 Issue が不完全修正のままクローズされる」事故を防ぐため、`/review-pr` skill は以下を自動検証する:
+PR #343 のような「複数 Issue が不完全修正のままクローズされる」事故を防ぐため、`review-pr` skill は以下を自動検証する:
 
 ### 検証項目 (マージ前必須)
 
@@ -724,17 +724,17 @@ PR #343 のような「複数 Issue が不完全修正のままクローズさ�
 ### Issue クローズルール
 
 - PR マージ = 自動クローズではない (`Closes`, `Fixes` キーワード**禁止**)
-- `Refs #N` 形式が正規記法 (PR タイトル + 本文)。`/close-issue` Step 1 は `closedByPullRequestsReferences` 空時に `gh api repos/.../issues/<N>/timeline` (cross-referenced-event) + `gh search prs '"Refs #N"'` の Hybrid fallback で紐づく PR を列挙し、Step 2 ケース B fallback は `gh pr view <PR#> --json body --jq '.body' | grep -oE '#[0-9]+'` で N 件 issue を抽出する (#607)
-- `/review-pr` (レビューセッション) では `gh issue close` を実行しない (#594 で責務分離。レビュー専用セッションは「観察・指摘・依頼」に徹する原則と整合)
-- マージ後の issue クローズは専用 skill **`/close-issue <issue番号>`** で実施する。本 skill は Iron Law 4 (マージ後実測再検証) を担保する唯一のルート
-- `/close-issue` の責務:
+- `Refs #N` 形式が正規記法 (PR タイトル + 本文)。`close-issue` Step 1 は `closedByPullRequestsReferences` 空時に `gh api repos/.../issues/<N>/timeline` (cross-referenced-event) + `gh search prs '"Refs #N"'` の Hybrid fallback で紐づく PR を列挙し、Step 2 ケース B fallback は `gh pr view <PR#> --json body --jq '.body' | grep -oE '#[0-9]+'` で N 件 issue を抽出する (#607)
+- `review-pr` (レビューセッション) では `gh issue close` を実行しない (#594 で責務分離。レビュー専用セッションは「観察・指摘・依頼」に徹する原則と整合)
+- マージ後の issue クローズは専用 skill **`close-issue <issue番号>`** で実施する。本 skill は Iron Law 4 (マージ後実測再検証) を担保する唯一のルート
+- `close-issue` の責務:
   1. 紐づく PR を全件マージ済み確認 (`closedByPullRequestsReferences` または `Refs #N` fallback 経由で取得、1:1 / 束ね PR / Phase 分割 の各ケース判定)
-  2. 受け入れ条件をマージ後 base ブランチ (main / develop-x.x.x) で実測再検証 (静的 grep + 短時間単体テスト + `/test-pr` 既実施確認)
+  2. 受け入れ条件をマージ後 base ブランチ (main / develop-x.x.x) で実測再検証 (静的 grep + 短時間単体テスト + `test-pr` 既実施確認)
   3. issue 本文の未チェック `- [ ]` 全消化確認
   4. 残タスクは (B) 新 issue 起票 / (C) 既存 issue 追記 にトリアージ (握り潰し禁止、Iron Law 1, 3)
   5. ユーザー (Idios) 承認後に `gh issue close <番号> --comment "実測再検証完了 ... [<session-id>]"`
-- 運用フロー: `/review-pr` (レビュー & LGTM) → `gh pr merge --squash` → `/close-issue <番号>` (実測再検証 & クローズ)
-- **束ね PR** (1 PR で N issue close) は issue 単位で `/close-issue <番号>` を呼び分ける (各 issue の受け入れ条件を独立検証、Iron Law 1)
+- 運用フロー: `review-pr` (レビュー & LGTM) → `gh pr merge --squash` → `close-issue <番号>` (実測再検証 & クローズ)
+- **束ね PR** (1 PR で N issue close) は issue 単位で `close-issue <番号>` を呼び分ける (各 issue の受け入れ条件を独立検証、Iron Law 1)
 - **Phase 分割** (N PR で 1 issue close) は最終 PR マージ後に 1 回呼び出す (全 PR 統合状態で受け入れ条件再検証。最終 PR 未マージなら close 不可)
 - 残タスクが判明した場合は (B) 新 issue 起票して親 issue に link、または (C) 既存 issue にコメント追記してから本 issue をクローズ
 - 詳細手順: `.agents/skills/close-issue/SKILL.md`
@@ -790,11 +790,11 @@ grep -rnE '(別 ?issue|別途 ?issue|後続 ?issue|follow-?up issue)[^#]*(で|�
 
 > **(4) で `| grep -vE '#[0-9]{3,}'` による自動免除を使わないこと (Refs #966 の実測)**。「同一行に 3 桁の `#` があれば追跡済み」という判定は、**その `#` が当の先送りの追跡先とは限らない**ため leak を素通りさせる。実例: `docs/detection-map.md:61` は「#576 で新 path を default 化 … v0.3.x で**削除予定**」で、撤去の追跡先は #576 ではなく **#864**。無関係な #576 のせいで行ごと免除され、#870 が対象とする当の leak クラスを落としていた。**免除ありで 7 hit / 免除なしで 13 hit** — 差の 6 件を人が仕分ける方が、leak を見逃すより安い。各 hit は「行内の `#NNN` が本当にこの先送りを追跡しているか」を 1 件ずつ確認する。
 
-**hit の扱い**: (2)-(4) の hit は**違反ではなく triage 候補**である。各 hit を「実在 issue を伴う宣言か / 単なる process 記述か / 起票漏れか」で仕分け、起票漏れのみ [`/create-task`](../.agents/skills/create-task/SKILL.md) へ回す。特に (4) は process を説明する散文 (「(B) 別 issue 起票」等) も拾うため、**仕分け前提の粗い網**であることを承知して使う。網を細くして取りこぼすより、粗く拾って仕分ける方を選んでいる。
+**hit の扱い**: (2)-(4) の hit は**違反ではなく triage 候補**である。各 hit を「実在 issue を伴う宣言か / 単なる process 記述か / 起票漏れか」で仕分け、起票漏れのみ [`create-task`](../.agents/skills/create-task/SKILL.md) へ回す。特に (4) は process を説明する散文 (「(B) 別 issue 起票」等) も拾うため、**仕分け前提の粗い網**であることを承知して使う。網を細くして取りこぼすより、粗く拾って仕分ける方を選んでいる。
 
 **非実施時の記録義務**: 4 系統のうち実施しなかったものがあれば、triage 結果に `triage 入力 (N): 未実施 (理由: <1 行>)` を残す (§「規約・ガード導入の 3 点セット」②)。無記載は「実施して 0 件」と「実施しなかった」を区別できない。
 
-**close 時の点検との関係**: #817 で `/close-issue` と `/release` に入れた追跡切れ防止チェックは **close 時点の点検**、本節は **triage 時点の総点検**であり相補関係にある。片方があれば他方が不要になるものではない (close 時に見落とした宣言を triage が拾い、triage の後に閉じた issue を close 時チェックが拾う)。
+**close 時の点検との関係**: #817 で `close-issue` と `release` に入れた追跡切れ防止チェックは **close 時点の点検**、本節は **triage 時点の総点検**であり相補関係にある。片方があれば他方が不要になるものではない (close 時に見落とした宣言を triage が拾い、triage の後に閉じた issue を close 時チェックが拾う)。
 
 ## 計画フェーズの運用
 
@@ -909,8 +909,8 @@ node .github/scripts/<gate>.js <fixture>; echo "exit=$?"   # 非ゼロを期待
 
 | 契機 | 何をするか |
 | --- | --- |
-| [`/review-pr`](../.agents/skills/review-pr/SKILL.md) Step 5 | PR が CI job / hook / skill step を**新設**している場合、本節の 3 点に照らして逐条検証し、欠けていれば Step 5b トリアージ表に計上する |
-| [`/create-task`](../.agents/skills/create-task/SKILL.md) §ガード / 規約 / チェックを追加する issue の受け入れ条件 | 「ガードを追加する」issue を起票する際、`## 受け入れ条件` に 3 点セットを反映する |
+| [`review-pr`](../.agents/skills/review-pr/SKILL.md) Step 5 | PR が CI job / hook / skill step を**新設**している場合、本節の 3 点に照らして逐条検証し、欠けていれば Step 5b トリアージ表に計上する |
+| [`create-task`](../.agents/skills/create-task/SKILL.md) §ガード / 規約 / チェックを追加する issue の受け入れ条件 | 「ガードを追加する」issue を起票する際、`## 受け入れ条件` に 3 点セットを反映する |
 | [`AGENTS.md`](../AGENTS.md) §開発ワークフロー | 発見可能性の確保のため 1 行リンクを置く |
 | `superpowers:brainstorming` | **規律のみ (コード上の発火点ではない)。** plugin skill は本 repo に存在せず編集できないため、再発防止機構を設計する creative work で本節を引くのは実行者の規律に依存する。**この行を「実装済みの発火点」と数えない** |
 
@@ -925,7 +925,7 @@ node .github/scripts/<gate>.js <fixture>; echo "exit=$?"   # 非ゼロを期待
 
 ## ルールと強制メカニズム
 
-本プロジェクトの基本ルールは **Iron Law** としてセッション開始時に全て注入される (`.claude/hooks/session-start.sh`)。詳細な条文はそのファイルを正とし、本ドキュメントでは重複記載しない。
+本プロジェクトの基本ルールは **Iron Law** (6 条 + Red Flags) として `AGENTS.md` §Iron Law に記される。**条文と Red Flags の正は AGENTS.md** (Claude Code review session では `.claude/hooks/session-start.sh` が同内容を注入する)。本ドキュメントでは重複記載しない。
 
 ### 強制メカニズム
 
@@ -933,10 +933,10 @@ node .github/scripts/<gate>.js <fixture>; echo "exit=$?"   # 非ゼロを期待
 
 | 層 | 実装 | 役割 |
 | --- | --- | --- |
-| 1 | `SessionStart` hook (`.claude/hooks/session-start.sh`) | セッション開始・`/clear`・compact 時に Iron Law + Red Flags を `<EXTREMELY_IMPORTANT>` で会話先頭に注入 |
-| 2 | `enforce-acceptance-criteria` skill | `/review-pr` から呼ばれる Gate Function。受け入れ条件の逐条検証 |
-| 3 | `scope-guard` skill | スコープ逸脱検知で AskUserQuestion を強制 |
-| 4 | `/review-pr` skill | PR レビューのオーケストレーション。上記 2 を必ず呼び出す |
+| 1 | `AGENTS.md` (Zed project rules) / `SessionStart` hook (`.claude/hooks/session-start.sh`、Claude Code review session) | Iron Law + Red Flags をセッション先頭で常時読込 |
+| 2 | `enforce-acceptance-criteria` skill | `review-pr` から呼ばれる Gate Function。受け入れ条件の逐条検証 |
+| 3 | `scope-guard` skill | スコープ逸脱検知でユーザー確認を強制 |
+| 4 | `review-pr` skill | PR レビューのオーケストレーション。上記 2 を必ず呼び出す |
 | 5 | `PreToolUse` hook (`.claude/hooks/preuse.py`, #401 由来) | Bash 実行時の確認ゲート |
 | 6 | PR テンプレート (`.github/pull_request_template.md`) | Iron Law 1/3/4 の逐条チェックリスト |
 | 7 | ユーザー最終承認 | マージは全て Idios が実行、未達 PR は差し戻し |
@@ -975,15 +975,15 @@ prefix は strip されて `gh issue close 123` が実行される。`[preuse:by
 **単一セッションが順次タスクを実行**するため、フェーズ間のハンドオフは不要:
 
 ```text
-Plan モードで計画合意 → 実装 (TodoWrite で進捗管理) → PR 作成 → /review-pr → (修正あれば再実装) → テスト実行 → ユーザー承認 → ユーザーがマージ
+Plan モードで計画合意 → 実装 (TodoWrite で進捗管理) → PR 作成 → review-pr → (修正あれば再実装) → テスト実行 → ユーザー承認 → ユーザーがマージ
 ```
 
 各フェーズの完了時点で次フェーズに渡すコンテキストを明示する (PR 番号、テスト結果等)。
 
 修正が必要な場合の扱いは起動コンテキストで分ける:
 
-- **PR 作成と同一セッションで `/review-pr` を呼んだ場合**: 同セッション内で PR ブランチに追加コミットを積み、再度 `/review-pr` を呼び出す。
-- **レビュー専用セッション (セッション先頭で `/review-pr` のみ実行) の場合**: PR ブランチへの **書き込み系操作 (`Edit` / `commit` / `push`) は一切行わず**、PR コメントで PR 作成セッションに具体的な修正指示を依頼する (`git checkout` 自体は read 目的なら可。詳細は `.agents/skills/review-pr/SKILL.md` 冒頭「重要」節参照)。PR 作成セッションが修正 commit & push した後、別セッション or 同レビューセッションで `/review-pr` を再実行して受け入れ条件を再確認する。詳細は `.agents/skills/review-pr/SKILL.md` §「修正依頼コメント投稿」を参照。
+- **PR 作成と同一セッションで `review-pr` を呼んだ場合**: 同セッション内で PR ブランチに追加コミットを積み、再度 `review-pr` を呼び出す。
+- **レビュー専用セッション (セッション先頭で `review-pr` のみ実行) の場合**: PR ブランチへの **書き込み系操作 (`Edit` / `commit` / `push`) は一切行わず**、PR コメントで PR 作成セッションに具体的な修正指示を依頼する (`git checkout` 自体は read 目的なら可。詳細は `.agents/skills/review-pr/SKILL.md` 冒頭「重要」節参照)。PR 作成セッションが修正 commit & push した後、別セッション or 同レビューセッションで `review-pr` を再実行して受け入れ条件を再確認する。詳細は `.agents/skills/review-pr/SKILL.md` §「修正依頼コメント投稿」を参照。
 
 ## worktree メンテナンス (#477)
 
@@ -1126,7 +1126,7 @@ skill を**大幅改訂** (新節追加 / frontmatter description 書き換え�
 - skill 新規作成
 - frontmatter description 書き換え + 新節追加を伴う大幅改訂
 
-typo fix / リンク更新では過剰。`/iterate-review` のような中核 skill の改訂で特に有効。
+typo fix / リンク更新では過剰。`iterate-review` のような中核 skill の改訂で特に有効。
 
 ### 上流参照 (mizchi protocol を直接読む)
 
@@ -1151,11 +1151,11 @@ typo fix / リンク更新では過剰。`/iterate-review` のような中核 sk
 
 - PR Self-Test Report に `### empirical prompt tuning` セクションを設け、Iteration table (per-scenario success / accuracy / steps (tool_uses) / duration / structured reflection / ledger updates) を記録する
 - 例外: trivial wording fix (typo / link 修正 / コメント追記のみ) は skip 可、判断は `AskUserQuestion` で確認
-- Self-Test Report の `### empirical prompt tuning` section を欠いた skill 改修 PR は `/review-pr` で blocker 扱い (Iron Law 6 違反)
+- Self-Test Report の `### empirical prompt tuning` section を欠いた skill 改修 PR は `review-pr` で blocker 扱い (Iron Law 6 違反)
 
 ### 経緯
 
-2026-04-24 `/review-pr` skill 改修で実証済み (PR #537 / #562)。Iteration 0 baseline で構造的欠陥 6 件 (環境制約節欠落、Round N 記法不在、処置分類判定基準の弱さ、束ね PR 独立検証の明示不在、孤立 PR 手順不在、doc-only CI 波及観点なし) を検出し、Iteration 1 で全件解消。精度 0.98 → 1.00、[critical] 3/3 成功。書き手自身の自己レビューでは構造的欠陥に到達できなかった。参考: <https://github.com/mizchi/skills/tree/main/meta/empirical-prompt-tuning>
+2026-04-24 `review-pr` skill 改修で実証済み (PR #537 / #562)。Iteration 0 baseline で構造的欠陥 6 件 (環境制約節欠落、Round N 記法不在、処置分類判定基準の弱さ、束ね PR 独立検証の明示不在、孤立 PR 手順不在、doc-only CI 波及観点なし) を検出し、Iteration 1 で全件解消。精度 0.98 → 1.00、[critical] 3/3 成功。書き手自身の自己レビューでは構造的欠陥に到達できなかった。参考: <https://github.com/mizchi/skills/tree/main/meta/empirical-prompt-tuning>
 
 ## Codex fallback (C6、Codex token 枯渇 / failure 時)
 
@@ -1174,7 +1174,7 @@ Codex CLI (`codex-companion.mjs` runtime) が以下のいずれかで fail し�
 
 ### 検出 + fallback の擬似コード (skill 内実装イメージ)
 
-`/review-pr` Step 5a / `/iterate-review` Round 2.1 等で Codex を invoke した後の処理イメージ。agent からの通常実行は companion script 直接呼び出し (§Step 5 の invocation path (3-tier、#795) の tier 1。`review` / `adversarial-review` とも slash command は `disable-model-invocation: true` のため agent invoke 不可、slash 形式は tier 3 = Idios 専用)。**subcommand と focus の対応に注意**: `review` は focus positional を受けず非空 focus を reject する。project 固有 focus を渡す場合は `adversarial-review` を使う:
+`review-pr` Step 5a / `iterate-review` Round 2.1 等で Codex を invoke した後の処理イメージ。agent からの通常実行は companion script 直接呼び出し (§Step 5 の invocation path (3-tier、#795) の tier 1。`review` / `adversarial-review` とも slash command は `disable-model-invocation: true` のため agent invoke 不可、slash 形式は tier 3 = Idios 専用)。**subcommand と focus の対応に注意**: `review` は focus positional を受けず非空 focus を reject する。project 固有 focus を渡す場合は `adversarial-review` を使う:
 
 ```text
 # --background / --wait は付けない (受理されるが無視される。openai-codex 1.0.4 時点)
@@ -1219,19 +1219,19 @@ if fallback_invoked:
     report.append(format_fallback_notice(fallback_reason, run.stderr[:200]))
 ```
 
-実装は skill prompt 側 (`/review-pr` SKILL.md Step 5a / `/iterate-review` SKILL.md Step 2.1) で行う。Codex CLI のラッパー (`codex-companion.mjs`) との連携詳細は openai-codex plugin doc を参照。
+実装は skill prompt 側 (`review-pr` SKILL.md Step 5a / `iterate-review` SKILL.md Step 2.1) で行う。Codex CLI のラッパー (`codex-companion.mjs`) との連携詳細は openai-codex plugin doc を参照。
 
 ### Fallback 戦略
 
 | Codex 実行 (agent の通常 path) | 通常用途 | Fallback 内容 |
 | --- | --- | --- |
-| `codex-companion.mjs review` (C3 で `/review-pr` Step 5a に Bash 実行。focus positional 不可 — project 固有 focus を渡す場合は `adversarial-review` subcommand を使う。slash `/codex:review` は tier 3 = Idios 専用) | code quality adversarial pass | superpowers `requesting-code-review` subagent を起動して同等の adversarial review。focus 文字列は Codex に渡した (渡す予定だった) ものと同じ |
+| `codex-companion.mjs review` (C3 で `review-pr` Step 5a に Bash 実行。focus positional 不可 — project 固有 focus を渡す場合は `adversarial-review` subcommand を使う。slash `/codex:review` は tier 3 = Idios 専用) | code quality adversarial pass | superpowers `requesting-code-review` subagent を起動して同等の adversarial review。focus 文字列は Codex に渡した (渡す予定だった) ものと同じ |
 | `codex-companion.mjs adversarial-review` (C2 で Iron Law 6 Step 5 に Bash 実行 = tier 1。slash `/codex:adversarial-review` は tier 3 = Idios 専用) | Pre-flight 第 5 ゲート | superpowers `requesting-code-review` subagent + project 固有 focus を起動。`<grounding_rules>` 相当で「adversarial / approve させない姿勢」を明示 |
-| `/codex:rescue` (C4 で root-cause 調査時に invoke。`disable-model-invocation` なし = agent invoke 可、`codex:codex-rescue` subagent 経由) | bug 根本原因 + 類似バグ探索 | Claude main + superpowers `systematic-debugging` skill で自力調査。`/scope-guard` 規約は維持 (独断 fix 禁止) |
+| `/codex:rescue` (C4 で root-cause 調査時に invoke。`disable-model-invocation` なし = agent invoke 可、`codex:codex-rescue` subagent 経由) | bug 根本原因 + 類似バグ探索 | Claude main + superpowers `systematic-debugging` skill で自力調査。`scope-guard` 規約は維持 (独断 fix 禁止) |
 
 ### Fallback 実行時の必須記載 (Iron Law 5 整合)
 
-skill report (`/review-pr` Step 6 レビュー報告 / `/iterate-review` **Final summary comment (Step 4)**) に以下を**必ず明示**:
+skill report (`review-pr` Step 6 レビュー報告 / `iterate-review` **Final summary comment (Step 4)**) に以下を**必ず明示**:
 
 ```text
 > **Codex fallback notice**: 本 review は Codex CLI が <検出条件> で fail したため、
@@ -1259,7 +1259,7 @@ Claude Code が rate-limit / quota / usage limit 等で主エージェント・s
 ### 実行メカニズム（正直な制約）
 
 - DeepSeek は Claude Code の subagent になれないため、fallback は **Idios の手動切替**で運用する（hook 強制不可）。
-- fallback 時の skill 実行は **DeepSeek が `.agents/skills/*/SKILL.md` を read して手順を手動追従**する形。Claude Code のスラッシュコマンド（`/review-pr` 等）は invoke 不可。
+- fallback 時の skill 実行は **DeepSeek が `.agents/skills/*/SKILL.md` を read して手順を手動追従**する形。Claude Code のスラッシュコマンド（`review-pr` 等）は invoke 不可。
 - Claude Code 固有機構の置換:
 
 | Claude Code 固有機構 | fallback（Zed + DeepSeek）での置換 |
@@ -1267,7 +1267,7 @@ Claude Code が rate-limit / quota / usage limit 等で主エージェント・s
 | `Agent` tool（subagent dispatch） | Zed の `spawn_agent`（**model 指定不可** → 委譲先モデルは Idios が手動で選ぶ） |
 | `AskUserQuestion` | 散文での確認依頼 |
 | `superpowers:requesting-code-review` | DeepSeek 自身が code review を直接実施 |
-| `/review-pr` 等のスラッシュコマンド | SKILL.md を read して手動追従 |
+| `review-pr` 等のスラッシュコマンド | SKILL.md を read して手動追従 |
 | `codex-companion.mjs` | `codex` CLI 直呼び（terminal 権限依存） |
 
 ### Fable fallback（並列独立 + 主エージェント突合）
@@ -1327,7 +1327,7 @@ Claude fallback で作成した成果物（PR 本文 / spec / doc / 実装）に
                             ↓ Codex finding (read-only)
 ┌─────────────────────────────────────────────────────────────┐
 │ Stage 4: controller + Idios で triage                         │
-│         /review-pr Step 5b の (A) / (B) / (C) 分類            │
+│         review-pr Step 5b の (A) / (B) / (C) 分類            │
 │         Codex finding は 出所 = codex:review として統合        │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -1336,7 +1336,7 @@ Claude fallback で作成した成果物（PR 本文 / spec / doc / 実装）に
 
 | 軸 | Iron Law 6 Pre-flight Step 5 (C2) | subagent + Codex 直列構成 (C5、本節) |
 | --- | --- | --- |
-| 起動タイミング | PR 作成**直前** (Step 0-4 通過後) | `/review-pr` 段階の **deep-dive** (Step 5a) |
+| 起動タイミング | PR 作成**直前** (Step 0-4 通過後) | `review-pr` 段階の **deep-dive** (Step 5a) |
 | Codex command | `adversarial-review` subcommand (approve させない姿勢、tier 1 = companion script) | `review` subcommand (code quality 一般、同) |
 | 必須 / オプション | **必須** (Pre-flight ゲート) | optional (起動条件 3 件: 条件 1 大規模 PR / 条件 2 **再発 root cause** 複数 / 条件 3 **core 変更対象ファイル**。定義の正は [`.agents/skills/review-pr/SKILL.md`](../.agents/skills/review-pr/SKILL.md) §「core 変更対象ファイル」 と §「root cause の 2 用法」) |
 | 直前 stage | Step 4 並行 PR 重複再確認 | superpowers subagent 実装 + reachability 確認 |
@@ -1370,7 +1370,7 @@ Python 依存側でも同型が起きた (#916)。`opencv-python-headless>=4.8` 
 | ソース | 形式 | 例 |
 | --- | --- | --- |
 | PyPA versioned tag | `https://github.com/pypa/<repo>/raw/<tag>/...` | get-pip.py |
-| BtbN monthly snapshot | `https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-YYYY-MM-{28,29,30,31}-*/...` | FFmpeg n8.1 |
+| BtbN monthly snapshot | `https://github.com/BtbN/FFmpeg-Buildsreleases/download/autobuild-YYYY-MM-{28,29,30,31}-*/...` | FFmpeg n8.1 |
 | npm registry version pin | `package.json` の `dependencies` で `"^X.Y.Z"` (transitive は package-lock.json で fix) | tauri / vite |
 | cargo registry version pin | `Cargo.toml` の `tauri = "2.11"` (transitive は Cargo.lock で fix) | tauri-utils |
 | SHA-pinned download | `https://.../...-<commit-hash>.tar.gz` + SHA256 checksum | FFmpeg checksum |
@@ -1395,7 +1395,7 @@ Python 依存側でも同型が起きた (#916)。`opencv-python-headless>=4.8` 
 
 1. 該当行のコメントに「must be immutable (versioned tag / SHA pinned)」と記載
 2. Pester regression (`scripts/tests/build-portable-zip.Tests.ps1`) で URL に `master`, `main`, `latest`, `HEAD` の literal が含まれていないことを assert
-3. `/review-pr` skill が installer / workflow PR を review するときに本 § を引いて URL 規約適合を Step 5b トリアージで逐条検証
+3. `review-pr` skill が installer / workflow PR を review するときに本 § を引いて URL 規約適合を Step 5b トリアージで逐条検証
 
 `pyproject.toml` / `constraints.txt` を編集する場合 (#916):
 

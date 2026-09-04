@@ -9,8 +9,8 @@
 - `.markdownlint-cli2.yaml` の header comment
 - `scripts/check-markdownlint.sh` の lint failure 時 stderr hint
 - `AGENTS.md` §コマンド の markdownlint 行直下
-- `/review-pr` skill Step 5b トリアージ (typical fixes table の 1 行として組込済、L-β β-2 で実装)
-- `/iterate-review` skill Step 2.4 (Markdown path の local check 行に参照、L-β β-2 で実装)
+- `review-pr` skill Step 5b トリアージ (typical fixes table の 1 行として組込済、L-β β-2 で実装)
+- `iterate-review` skill Step 2.4 (Markdown path の local check 行に参照、L-β β-2 で実装)
 
 ## ローカル実行
 

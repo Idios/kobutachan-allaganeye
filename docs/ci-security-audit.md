@@ -245,7 +245,7 @@ gh api repos/Idios/kobutachan-allaganeye/dependabot/alerts --paginate \
 release ブランチ上で lockfile を修正しても、`main` に merge されるまで alert は open のまま残る
 (v0.3.0 では npm 18 件がこの状態だった)。
 
-この確認は [`/release` SKILL.md](../.agents/skills/release/SKILL.md) §Step 5 が
+この確認は [`release` SKILL.md](../.agents/skills/release/SKILL.md) §Step 5 が
 タグ打ちの直前に実行する工程として規定している (#950)。
 
 #### `?state=all` を付けてはいけない (実測 2026-08-20、#950 O-1 の決着)

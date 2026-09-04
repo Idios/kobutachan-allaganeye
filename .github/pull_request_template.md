@@ -25,7 +25,7 @@ bullet list。何をしたか、必要なら file path:line で具体化。
 <!--
 Iron Law 1: 逐条検証
 元 issue の `## 受け入れ条件` を逐条コピーし、各項目に対応する diff / test を明示する。
-`/enforce-acceptance-criteria` skill が機械的に検証するので、曖昧な記述は避ける。
+`enforce-acceptance-criteria` skill が機械的に検証するので、曖昧な記述は避ける。
 スコープ外の項目も [x] にして理由を付記すること。
 heading 名は `pr-checklist.yml` workflow の section-aware regex と完全一致させる必要があるため変更不可
 (`.github/scripts/check-pr-checklist.js` 参照)。
