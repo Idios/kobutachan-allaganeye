@@ -1951,7 +1951,7 @@ fn validate_open_folder_request(path: &str) -> Result<(), AppError> {
 /// であり、本 app が close されても残るべき。`track_child` を呼ばないことで
 /// `kill_tracked_processes` (CloseRequested flow #523) の影響を受けない。
 ///
-/// Windows のみ対応 (AGENTS.md に「対応プラットフォーム: Windows のみ」と
+/// Windows のみ対応 (CLAUDE.md に「対応プラットフォーム: Windows のみ」と
 /// 明記)。将来 Linux / macOS 対応する際は `xdg-open` / `open` で分岐する。
 #[tauri::command]
 async fn open_folder_in_explorer(path: String) -> Result<(), AppError> {

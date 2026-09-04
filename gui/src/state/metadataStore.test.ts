@@ -1048,7 +1048,7 @@ describe('useMetadataStore (#517 draft)', () => {
     expect(state.draftSaveErrorState).toBeNull();
   });
 
-  // Review 指摘 A: path normalization. Platform is Windows-only (AGENTS.md),
+  // Review 指摘 A: path normalization. Platform is Windows-only (CLAUDE.md),
   // so separator / case differences must not be read as different sources.
   // Without normalization the draft is silently discarded even though it's
   // the same file (regression on 受け入れ条件 #3).
