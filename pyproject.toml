@@ -57,7 +57,7 @@ dependencies = [
     #  計画的消化 (#957 で追跡)。判断記録は issue #957 を参照。
     #
     # click は cli.py / tests が直接 import するため明示依存として宣言する。
-    "typer>=0.9,<0.25",
+    "typer>=0.9,<0.28",
     "click>=8.0,<8.4",
     "numpy>=1.24",
     "scipy>=1.11",
