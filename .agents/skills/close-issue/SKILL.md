@@ -1,13 +1,12 @@
 ---
 name: close-issue
-description: PR マージ後の issue クローズを担う skill。受け入れ条件をマージ後 base ブランチで実測再検証 (Iron Law 4 担保ルート) し、未消化チェックボックスや残タスクを (B) 新 issue / (C) 既存 issue 追記 にトリアージしてからユーザー承認で `gh issue close` を実行する。1:1 / 束ね PR (1 PR で N issue close) / Phase 分割 (N PR で 1 issue close) の各ケースに対応。`/review-pr` Step 8 から分離 (#594)
-user-invocable: true
-argument-hint: <issue番号>
+description: PR マージ後の issue クローズを担う skill。受け入れ条件をマージ後 base ブランチで実測再検証 (Iron Law 4 担保ルート) し、未消化チェックボックスや残タスクを (B) 新 issue / (C) 既存 issue 追記 にトリアージしてからユーザー承認で `gh issue close` を実行する。1:1 / 束ね PR (1 PR で N issue close) / Phase 分割 (N PR で 1 issue close) の各ケースに対応。`review-pr` Step 8 から分離 (#594)
+
 ---
 
 指定された issue を「マージ後の受け入れ条件実測再検証」を経てクローズする。
 
-> Iron Law 4 (`.claude/hooks/session-start.sh`) 担保ルート。詳細な条文は hook を参照。
+> Iron Law 4 (`AGENTS.md`) 担保ルート。詳細な条文は hook を参照。
 
 ## 制約
 
@@ -16,7 +15,7 @@ argument-hint: <issue番号>
 ## 起動
 
 ```text
-/close-issue <issue番号>
+close-issue <issue番号>
 ```
 
 issue 番号 1 つに対して 1 回呼び出す。issue ⇔ PR の関係に応じて以下の分岐 (ケース A/B/C) を持つ。
@@ -26,11 +25,11 @@ issue 番号 1 つに対して 1 回呼び出す。issue ⇔ PR の関係に応�
 ### 1. issue 取得
 
 ```bash
-gh issue view "$ARGUMENTS" --repo Idios/kobutachan-allaganeye \
+gh issue view "<issue番号>" --repo Idios/kobutachan-allaganeye \
   --json title,body,state,assignees,labels,closedByPullRequestsReferences --comments
 ```
 
-- `state == OPEN` を確認 (`CLOSED` の場合は本 skill 対象外、`AskUserQuestion` で再オープン or 別対応を確認)
+- `state == OPEN` を確認 (`CLOSED` の場合は本 skill 対象外、`ユーザー確認` で再オープン or 別対応を確認)
 - `closedByPullRequestsReferences` で紐づく PR 一覧を取得
 - 本文末尾の `作成: <session-id>` で起票元セッション ID を確認 (close コメント記載に使用)。記載なし / 空欄の場合は close コメント本文での「起票元 session-id」言及は省略可
 - **本 skill 実行 session-id の取得**: `pwd` で現在のディレクトリパス (例: `.../.claude/worktrees/hopeful-darwin-616414`) を取得し、最終ディレクトリ名を session-id とする (例: `hopeful-darwin-616414`)。Step 7 の close コメントには**実行 session-id を必ず含める** (起票 session-id の有無に関わらず)
@@ -42,7 +41,7 @@ gh issue view "$ARGUMENTS" --repo Idios/kobutachan-allaganeye \
 1. **timeline API (第 1 段)**:
 
    ```bash
-   gh api repos/Idios/kobutachan-allaganeye/issues/"$ARGUMENTS"/timeline \
+   gh api repos/Idios/kobutachan-allaganeye/issues/"<issue番号>"/timeline \
      --jq '[.[] | select(.event=="cross-referenced") | select(.source.issue.pull_request != null) | {pr: .source.issue.number, state: .source.issue.state}]'
    ```
 
@@ -52,7 +51,7 @@ gh issue view "$ARGUMENTS" --repo Idios/kobutachan-allaganeye \
 2. **`gh search prs` (第 2 段、timeline ゼロ件 or 補完用)**:
 
    ```bash
-   gh search prs '"Refs #'"$ARGUMENTS"'"' --repo Idios/kobutachan-allaganeye --json number,state,title,url
+   gh search prs '"Refs #'"<issue番号>"'"' --repo Idios/kobutachan-allaganeye --json number,state,title,url
    ```
 
    - PR 本文中の `Refs #N` 文字列で全 PR を検索
@@ -116,8 +115,8 @@ issue body から `## 受け入れ条件` 節 (または `## 確認項目 / 作�
 
 - ケース B: 本 issue 分の受け入れ条件のみ抽出 (他 issue 分は除外)。「束ねたから条件は共通」という独断は Iron Law 1 違反
 - ケース C: 全 PR の diff を統合してマッピング (Phase ごとに切り分けない)
-- **受け入れ条件外の追加変更の扱い**: PR diff には受け入れ条件項目に直接対応しない変更 (関連 doc 整合更新、ファイル内別 section 修正、`/review-pr` 段階で承認された scope-guard 例外、無関係 lint fix 等) が含まれることがある。これらは上記マッピング表には**含めず**、別途「補記欄」または「受け入れ条件外 diff」節に記録する。**受け入れ条件外 diff は close 判定 (○/×) の阻害要因にしない** (受け入れ条件 = 元 issue 本文の該当節に列挙された項目のみ)。ただし `/review-pr` 段階で scope-guard 観点で指摘されている残課題があれば、Step 6 トリアージで (B)/(C) として扱う
-- **ファイル内 section 粒度の分離**: 1 ファイル (例: `CLAUDE.md`) の中で受け入れ条件対応 section と無関係 section が同時に変更されている場合、対応 section のみを対応 diff として記録する。Section 単位の `grep` / `Read` で範囲を絞り込む (例: `grep -n "^## " CLAUDE.md` で section 開始行を一覧 → 対応 section の範囲内 diff のみ評価)
+- **受け入れ条件外の追加変更の扱い**: PR diff には受け入れ条件項目に直接対応しない変更 (関連 doc 整合更新、ファイル内別 section 修正、`review-pr` 段階で承認された scope-guard 例外、無関係 lint fix 等) が含まれることがある。これらは上記マッピング表には**含めず**、別途「補記欄」または「受け入れ条件外 diff」節に記録する。**受け入れ条件外 diff は close 判定 (○/×) の阻害要因にしない** (受け入れ条件 = 元 issue 本文の該当節に列挙された項目のみ)。ただし `review-pr` 段階で scope-guard 観点で指摘されている残課題があれば、Step 6 トリアージで (B)/(C) として扱う
+- **ファイル内 section 粒度の分離**: 1 ファイル (例: `AGENTS.md`) の中で受け入れ条件対応 section と無関係 section が同時に変更されている場合、対応 section のみを対応 diff として記録する。Section 単位の `grep` / `Read` で範囲を絞り込む (例: `grep -n "^## " AGENTS.md` で section 開始行を一覧 → 対応 section の範囲内 diff のみ評価)
 
 ### 5. マージ後の base ブランチで実測再検証
 
@@ -140,16 +139,16 @@ git log origin/<baseRefName> --oneline -20  # マージ済 PR の commit が含�
   - lint: `ruff check <path>` 実行
 - **実測必要** (本 skill 範囲外):
   - long-running テスト (動画処理 / GPU / audio 統合)、UI 動作確認、リリース動作検証等
-  - これらは PR レビュー段階で `/test-pr` 実施済みの前提。実施記録 (PR コメント / issue コメント / メモリ) を確認し、未実施なら ユーザー (Idios) に `/test-pr` 実施を依頼してから再 dispatch
+  - これらは PR レビュー段階で `test-pr` 実施済みの前提。実施記録 (PR コメント / issue コメント / メモリ) を確認し、未実施なら ユーザー (Idios) に `test-pr` 実施を依頼してから再 dispatch
 - **動的検証 vs 実測必要 の判定基準** (境界明示):
   - **動的検証可能** (skill 内で実行): unit/integration テストで `slow` マーカーなし + CI で実行されている範囲 + 30 秒以内目安。GPU/audio を伴わない CPU-only テスト。`ruff check` / `pyright` 等の静的解析。`pytest tests/test_x.py::test_y` で 1-2 件のみ単体実行
-  - **実測必要** (skill 範囲外、`/test-pr` 既実施確認のみ): `pytest -m slow`、動画処理 (1 分超)、GPU mode (`--gpu`)、audio 統合 (`audio/scan` フル走査)、UI 動作確認 (Tauri GUI 起動)、リリース動作検証
-  - 判断に迷う場合は `AskUserQuestion` でユーザー (Idios) に分類確認
-- **`/test-pr` 既実施記録の取得とアクセス不可時の対応**:
-  - PR コメント取得: `gh pr view <PR#> --comments` で `/test-pr` 実施記録の有無を確認
+  - **実測必要** (skill 範囲外、`test-pr` 既実施確認のみ): `pytest -m slow`、動画処理 (1 分超)、GPU mode (`--gpu`)、audio 統合 (`audio/scan` フル走査)、UI 動作確認 (Tauri GUI 起動)、リリース動作検証
+  - 判断に迷う場合は `ユーザー確認` でユーザー (Idios) に分類確認
+- **`test-pr` 既実施記録の取得とアクセス不可時の対応**:
+  - PR コメント取得: `gh pr view <PR#> --comments` で `test-pr` 実施記録の有無を確認
   - issue コメント取得: `gh issue view <番号> --comments` で同様に確認 (PR コメントに見つからない場合の fallback)
   - **コメント取得に成功して実施記録が見つかる**: 「実測必要」項目を ○ と判定し、記録のコメント URL / コマンド / 結果サマリを close コメントに引用する
-  - **コメント取得に失敗 or 実施記録が見つからない**: `AskUserQuestion` でユーザー (Idios) に「`/test-pr` 既実施か」を確認。記録不在の場合は close を保留し、`/test-pr` 実施依頼を提示する (skill 内で `/test-pr` を実行しない)
+  - **コメント取得に失敗 or 実施記録が見つからない**: `ユーザー確認` でユーザー (Idios) に「`test-pr` 既実施か」を確認。記録不在の場合は close を保留し、`test-pr` 実施依頼を提示する (skill 内で `test-pr` を実行しない)
   - 「PR 本文に実施したと書いてあるから OK」と独断して ○ にしない (実施記録の所在まで確認するのが必須)
 
 各項目に判定を付ける: ○ (満たす) / × (満たさない) / 部分的 / 実測必要。
@@ -162,7 +161,7 @@ issue 本文中の `## 受け入れ条件` 以外の `- [ ]` (例: `## 確認項
 
 - **実在 + マージ済 / クローズ済**: 当該タスクは追跡完了とみなして Step 6 トリアージ表の「処置済み」欄に記録
 - **実在 + open**: 当該 issue/PR の進行状況を確認。残タスク追跡先として有効、Step 6 では (C) 既存 issue 追記で運用可
-- **実在しない (404 / null)**: 当該タスクを「未追跡の残タスク」として扱う。Step 6 で (B) `/create-task` で正式に起票し、参照先番号の不在を close コメントの備考欄に記載する
+- **実在しない (404 / null)**: 当該タスクを「未追跡の残タスク」として扱う。Step 6 で (B) `create-task` で正式に起票し、参照先番号の不在を close コメントの備考欄に記載する
 
 **follow-up 宣言の起票漏れ確認 (番号なし、#817 / audit P2-39)**: 上記は「番号が言及されている」場合の確認だが、**番号を伴わない follow-up 宣言**は別途検出する。クローズ対象 PR の**本文およびレビューコメント** (`gh pr view <PR#> --comments`) に「別 issue で追跡 (予定)」「follow-up で対応」「(guard 等) 別リポジトリ側で対応」のような**将来対応の宣言があるのに行き先 issue 番号が書かれていない**場合、その follow-up は未起票の死角になっている可能性がある (P2-39: PR #811 の guard repo follow-up が未起票だった事例)。
 
@@ -172,31 +171,31 @@ issue 本文中の `## 受け入れ条件` 以外の `- [ ]` (例: `## 確認項
 - 行き先が**番号でなく URL / 外部 tracker** で示されている (例: guard repo の issue URL) — その場合は実在確認のみ
 - 単なる**例示 / 一般論 / 完了報告**であって将来対応の約束ではない
 
-上記いずれにも当たらず「未解決の約束だが行き先が無い」と判断したものだけを Step 6 で (B) `/create-task` 起票提案する (該当時は宣言の原文を引用)。**actionable な未解決宣言を「番号がないので追えない」と見送るのは握り潰しパターン**だが、benign な言及まで機械的に起票するのも誤り — Step 6 で actionable 性を判定するのが正。
+上記いずれにも当たらず「未解決の約束だが行き先が無い」と判断したものだけを Step 6 で (B) `create-task` 起票提案する (該当時は宣言の原文を引用)。**actionable な未解決宣言を「番号がないので追えない」と見送るのは握り潰しパターン**だが、benign な言及まで機械的に起票するのも誤り — Step 6 で actionable 性を判定するのが正。
 
-「PR 本文に書かれているから対応済み」と独断するのは握り潰しパターン (Iron Law 3 違反 / `/review-pr` skill の Red Flag に該当)。
+「PR 本文に書かれているから対応済み」と独断するのは握り潰しパターン (Iron Law 3 違反 / `review-pr` skill の Red Flag に該当)。
 
 ### 6. トリアージと残タスク処置
 
 - **全項目 ○**: ユーザーに close 提案 (Step 7 へ)
 - **1 項目以上 × or 部分的**: 残タスクを必ずトリアージ表に記載し、(B) / (C) のいずれかに振り分ける (Iron Law 1, 3 と整合、握り潰し禁止)
-  - **(B) 新 issue 起票**: 残タスクが本 issue のスコープから外れる場合、`/create-task` で別 issue として起票
+  - **(B) 新 issue 起票**: 残タスクが本 issue のスコープから外れる場合、`create-task` で別 issue として起票
   - **(C) 既存 issue 追記**: 既存の関連 issue に `gh issue comment` で残タスクを追記
-- **「実測必要」が残る場合**: ユーザーに `/test-pr` 等の手動検証実施を提案し、結果が来てから本 skill を再 dispatch
+- **「実測必要」が残る場合**: ユーザーに `test-pr` 等の手動検証実施を提案し、結果が来てから本 skill を再 dispatch
 
 トリアージ表テンプレート:
 
 | # | 残タスク | 出所 (受け入れ条件 #N / 確認項目 / その他) | 処置 (B/C) | 起票/追記先 |
 | --- | --- | --- | --- | --- |
-| 1 | <具体的な残タスク> | 受け入れ条件 #3 が部分的 | (B) | 新 issue (`/create-task` で起票予定) |
+| 1 | <具体的な残タスク> | 受け入れ条件 #3 が部分的 | (B) | 新 issue (`create-task` で起票予定) |
 
 「軽微だから記載不要」は禁止 (Iron Law 3 違反 / 握り潰しパターン)。
 
 ### 7. ユーザー承認後の close
 
-**重要 (close 実行前の絶対条件)**: Step 7 のユーザー承認は `AskUserQuestion` ツールを使い、ユーザー (Idios) の明示的な「はい」回答を得るまで `gh issue close` を実行しない。回答が得られていない / 「いいえ」 / 曖昧な回答の場合は close せず、ユーザーに残作業を返す。subagent や自動実行で `AskUserQuestion` を skip するのは Iron Law 4 + Iron Law 5 違反 (本 skill が Iron Law 4 の唯一の担保ルートであるため、ユーザー承認 gate を skip すると担保自体が失われる)。
+**重要 (close 実行前の絶対条件)**: Step 7 のユーザー承認は `ユーザー確認` ツールを使い、ユーザー (Idios) の明示的な「はい」回答を得るまで `gh issue close` を実行しない。回答が得られていない / 「いいえ」 / 曖昧な回答の場合は close せず、ユーザーに残作業を返す。subagent や自動実行で `ユーザー確認` を skip するのは Iron Law 4 + Iron Law 5 違反 (本 skill が Iron Law 4 の唯一の担保ルートであるため、ユーザー承認 gate を skip すると担保自体が失われる)。
 
-`AskUserQuestion` で以下を提示し、ユーザー (Idios) の承認を得る:
+`ユーザー確認` で以下を提示し、ユーザー (Idios) の承認を得る:
 
 - 受け入れ条件全項目 ○ + 未チェック `- [ ]` 全消化 + 残タスク (B)/(C) 処置完了 → close 実行
 - 上記未達 → close せず、ユーザーに残作業を返す
@@ -204,7 +203,7 @@ issue 本文中の `## 受け入れ条件` 以外の `- [ ]` (例: `## 確認項
 承認後、close コマンドを実行 (Windows + Git Bash で日本語本文は HEREDOC):
 
 ```bash
-gh issue close "$ARGUMENTS" --repo Idios/kobutachan-allaganeye --comment "$(cat <<'EOF'
+gh issue close "<issue番号>" --repo Idios/kobutachan-allaganeye --comment "$(cat <<'EOF'
 実測再検証完了 (close-issue skill / [<session-id>])
 
 - マージ済 PR: #<PR#1> [, #<PR#2>, ...]
@@ -212,7 +211,7 @@ gh issue close "$ARGUMENTS" --repo Idios/kobutachan-allaganeye --comment "$(cat 
 - 未チェック `- [ ]`: 全消化
 - 残タスク: なし [もしくは (B) 新 issue #<番号> / (C) 既存 issue #<番号> に追記]
 
-検証方法サマリ: <静的 grep / 単体テスト pytest / `/test-pr` 結果参照 等>
+検証方法サマリ: <静的 grep / 単体テスト pytest / `test-pr` 結果参照 等>
 EOF
 )"
 ```
@@ -227,12 +226,12 @@ EOF
 
 ### ケース B: 束ね PR (1 PR で N issue close)
 
-PR は 1 件、close 対象 issue は N 件。本 skill は **issue 単位** で起動するため、issue ごとに `/close-issue <番号>` を**呼び分ける**運用。
+PR は 1 件、close 対象 issue は N 件。本 skill は **issue 単位** で起動するため、issue ごとに `close-issue <番号>` を**呼び分ける**運用。
 
 - 各 issue の受け入れ条件は**独立**に逐条検証 (Step 4 で他 issue 分を混ぜない)
-- 例: PR #500 が #401 と #402 を close する場合 → `/close-issue 401` と `/close-issue 402` を別個に実行する
-- `/review-pr` の Step 5b で束ね PR の独立検証は完了している前提 (本 skill ではマージ後の実測再検証のみ担当)
-- ただし `/review-pr` 段階で独立検証が省略されていた疑いがある場合 (Step 5b トリアージ表に各 issue 分が分けられていない等)、本 skill 内で独立検証を補完する。「レビュー段階で済んでいるはず」の楽観で済ませない (Iron Law 1)
+- 例: PR #500 が #401 と #402 を close する場合 → `close-issue 401` と `close-issue 402` を別個に実行する
+- `review-pr` の Step 5b で束ね PR の独立検証は完了している前提 (本 skill ではマージ後の実測再検証のみ担当)
+- ただし `review-pr` 段階で独立検証が省略されていた疑いがある場合 (Step 5b トリアージ表に各 issue 分が分けられていない等)、本 skill 内で独立検証を補完する。「レビュー段階で済んでいるはず」の楽観で済ませない (Iron Law 1)
 
 ### ケース C: Phase 分割 (N PR で 1 issue close)
 
@@ -252,7 +251,7 @@ issue 本文に `## 受け入れ条件` 節がない、または整っていな�
 **適用手順**:
 
 1. issue 本文の代替記述 (`## 確認項目`、`## 完了条件`、`## 完了イメージ` 等) を受け入れ条件相当として扱う
-2. 該当節が皆無の場合、「PR で何を達成すれば close 可とみなせるか」を `AskUserQuestion` でユーザー (Idios) に確認
+2. 該当節が皆無の場合、「PR で何を達成すれば close 可とみなせるか」を `ユーザー確認` でユーザー (Idios) に確認
 3. ユーザー判断後、Step 4-5 を実施
 4. 「曖昧だから飛ばしてよい」は Iron Law 5 違反。必ずユーザー確認を経由する
 
@@ -263,7 +262,7 @@ Step 3 で全 PR が `MERGED` でないケース。
 **適用手順**:
 
 1. 状況をユーザーに報告 (`gh pr view` 出力を提示)
-2. 取りうる選択肢を `AskUserQuestion` で提示:
+2. 取りうる選択肢を `ユーザー確認` で提示:
    - (i) 未マージ PR のマージ完了を待つ (本 skill を一旦 terminate)
    - (ii) 該当 PR が放棄されている → 残タスクを (B) 新 issue 起票して issue 自体を `not planned` クローズ (ユーザー承認必須)
    - (iii) その他: ユーザー判断
@@ -276,7 +275,7 @@ worktree 内で `git fetch origin <baseRefName>` が失敗する、または検�
 **適用手順**:
 
 1. 静的検証 (`gh pr view --json files` + `Read` / `Grep`) で代替可能な範囲はそれで実施
-2. 動的検証が必須な項目は「実測必要」マークを付け、ユーザーに `/test-pr` 別環境実施を依頼
+2. 動的検証が必須な項目は「実測必要」マークを付け、ユーザーに `test-pr` 別環境実施を依頼
 3. 「環境制約で検証 skip」は Iron Law 4 違反。実測検証ルートを欠落させない
 
 ### §D. issue クローズ後にコメント追記が必要な場合
@@ -296,9 +295,9 @@ close 後に追加情報 (関連 PR 番号 / 検証ログ / 残タスク子 issu
 | 「PR diff 上の `- [ ]` 確認だけで close 可」 | Iron Law 4 違反。マージ後の base ブランチで実測再検証 (Step 5) が必須 |
 | 「束ねた issue だから 1 件で代表検証してよい」 | Iron Law 1 違反。各 issue を独立に逐条検証する (ケース B) |
 | 「Phase 1 マージ済みだから Phase 2 を待たずに close できる」 | ケース C 違反。最終 PR マージ後にのみ close 可能 |
-| 「実測必要項目を skill 内で全部検証しよう」 | long-running / GPU / audio は本 skill 範囲外。`/test-pr` 既実施を確認するに留める |
+| 「実測必要項目を skill 内で全部検証しよう」 | long-running / GPU / audio は本 skill 範囲外。`test-pr` 既実施を確認するに留める |
 | 「× 項目があるが軽微だから close してよい」 | Iron Law 3 違反。残タスクは (B)/(C) にトリアージ、握り潰し禁止 |
-| 「受け入れ条件節が無いから自分の判断で close 基準を決めよう」 | Iron Law 5 違反。`AskUserQuestion` でユーザー確認 (環境制約 §A) |
+| 「受け入れ条件節が無いから自分の判断で close 基準を決めよう」 | Iron Law 5 違反。`ユーザー確認` でユーザー確認 (環境制約 §A) |
 | 「ユーザー承認なしで close したほうが速い」 | Iron Law 4 + Iron Law 5 違反。close は必ず Step 7 のユーザー承認を経由 |
 | 「`closedByPullRequestsReferences` 空 = 紐づく PR なし」と即断してよい | Iron Law 4 で `Closes` 禁止のため当該フィールドは通常空。Step 1 fallback ルート (`gh api .../timeline` cross-referenced-event + `gh search prs '"Refs #N"'`) で再列挙する (`Refs #N` fallback サブセクション) |
 
@@ -306,8 +305,8 @@ close 後に追加情報 (関連 PR 番号 / 検証ログ / 残タスク子 issu
 
 - **`closedByPullRequestsReferences` のみで PR 件数判定**: 本プロジェクトは Iron Law 4 (`Closes` 禁止) のため当該フィールドは**通常空**。Step 1 fallback ルート (`gh api .../timeline` cross-referenced-event + `gh search prs '"Refs #N"'`) を経由して紐づく PR を列挙する。timeline API の state は `closed` (実態は merged の近似)、search の state は `merged` で明確 — dedupe 時は search の `merged` を真値として採用
 - **Phase 分割の見落とし**: 単一 PR で完結したつもりが、`Refs #N` 記述由来で複数 PR が立っているケースあり。Step 1 fallback で取得した PR 一覧の件数で機械判定する (Step 2 ケース C)
-- **束ね PR で他 issue 分の受け入れ条件まで検証**: ケース B では本 issue 分のみ抽出する。他 issue は別 `/close-issue` 呼び出しで扱う
-- **実測必要項目を skill 内で動的検証しようとする**: long-running は範囲外。ユーザーに `/test-pr` 既実施を確認するに留める (Step 5)
+- **束ね PR で他 issue 分の受け入れ条件まで検証**: ケース B では本 issue 分のみ抽出する。他 issue は別 `close-issue` 呼び出しで扱う
+- **実測必要項目を skill 内で動的検証しようとする**: long-running は範囲外。ユーザーに `test-pr` 既実施を確認するに留める (Step 5)
 - **× 項目を「軽微」と自己判定して close**: Iron Law 3 違反。トリアージ表で (B)/(C) に振り分ける (Step 6)
 - **close コメントから session-id / 検証方法サマリを省略**: 監査・トレーサビリティ用。Step 7 のテンプレートを省略しない
 - **未マージ PR があるのに skill を続行**: Step 3 で全 PR `MERGED` を確認、未マージなら terminate (環境制約 §B)
@@ -315,16 +314,16 @@ close 後に追加情報 (関連 PR 番号 / 検証ログ / 残タスク子 issu
 ## 呼び出し例
 
 ```text
-/close-issue 594
+close-issue 594
 ```
 
-ユーザーが issue 番号を指定して呼び出す。Claude は自動的に段階を進め、要所で `AskUserQuestion` により判断を仰ぐ (特に Step 6 のトリアージ確定 / Step 7 の close 承認)。
+ユーザーが issue 番号を指定して呼び出す。Claude は自動的に段階を進め、要所で `ユーザー確認` により判断を仰ぐ (特に Step 6 のトリアージ確定 / Step 7 の close 承認)。
 
 ## 参考
 
-- `/review-pr` SKILL.md Step 8 (本 skill へのハンドオフ元)
+- `review-pr` SKILL.md Step 8 (本 skill へのハンドオフ元)
 - `docs/issue-policy.md` §7 「Issue のライフサイクル管理」 / §8 「Issue クローズポリシー」
-- `docs/l2-workflow.md` §「レビュー受け入れ基準 (#367 対策)」 (review-pr → /close-issue の運用フロー、`### Issue クローズルール` サブセクション)
-- Iron Law 4 (`.claude/hooks/session-start.sh`)
+- `docs/l2-workflow.md` §「レビュー受け入れ基準 (#367 対策)」 (review-pr → close-issue の運用フロー、`### Issue クローズルール` サブセクション)
+- Iron Law 4 (`AGENTS.md`)
 - 本 skill 改修経緯: #594 (新設) / #607 (`Refs #N` fallback) / #606 (eval/reports 構造整理)
 - 先行事例 (empirical-prompt-tuning による skill 改修): #511 (review-pr ブラッシュアップ)

@@ -91,8 +91,9 @@ issue の優先度を示すラベル。全 issue に必須ではなく、優先�
 | `^\.github/workflows/` | l2-ci | ci |
 | `^\.github/ISSUE_TEMPLATE/` | l2-workflow | task / doc |
 | `^\.claude/` | l2-workflow | refactor(skill) / chore(hooks) |
+| `^\.agents/` | l2-workflow | refactor(skill) / chore(skills) |
 | `^docs/` | l2-docs | doc |
-| `^CLAUDE\.md$` | l2-docs | doc |
+| `^AGENTS\.md$` | l2-docs | doc |
 | `^README\.md$` | l2-docs | doc |
 | `^pyproject\.toml$` | l1-cli | chore |
 | `^\.markdownlint-cli2\.yaml$` | l2-ci | chore(ci) |
@@ -343,7 +344,7 @@ gh issue close <番号> --repo Idios/kobutachan-allaganeye \
   --comment "マージ確認: <session-id> ← PR #番号"
 ```
 
-詳細は `docs/l2-workflow.md` §「Issue クローズルール」 / `.claude/skills/close-issue/SKILL.md` を参照。
+詳細は `docs/l2-workflow.md` §「Issue クローズルール」 / `.agents/skills/close-issue/SKILL.md` を参照。
 
 **例外: 未完了のチェックボックスがある場合**
 

@@ -1,16 +1,16 @@
 ---
 name: scope-guard
 description: 実装中の「ついでに直した」スコープ逸脱を検知し、(a) 別 issue 起票 / (b) revert / (c) スコープ拡大 の 3 択をユーザー判断で強制する。Iron Law 3 の執行機構。
-user-invocable: true
+
 ---
 
-> Iron Law 3 (`.claude/hooks/session-start.sh`) の手順実装。詳細な背景・条文は hook を参照。
+> Iron Law 3 (`AGENTS.md`) の手順実装。詳細な背景・条文は hook を参照。
 
 ## 呼び出しタイミング
 
 - **実装中**: 着手 issue の範囲外変更を必要と判断した瞬間
 - **PR 作成直前**: `git diff --stat` で変更範囲を確認する際に必ず実行
-- **単独呼び出し**: `/scope-guard` で任意のタイミングでチェック
+- **単独呼び出し**: `scope-guard` で任意のタイミングでチェック
 
 ## 手順 (Gate Function)
 
@@ -26,7 +26,7 @@ gh issue view <ISSUE番号> --json title,body | python -c "import json,sys;d=jso
 もし着手 issue が不明 (作業ブランチ名に番号が無い等) なら、ユーザーに確認:
 
 ```text
-AskUserQuestion: 現在の作業ブランチはどの issue に対応しますか？
+ユーザー確認: 現在の作業ブランチはどの issue に対応しますか？
 ```
 
 ### Step 2: 変更範囲の確認
@@ -43,7 +43,7 @@ git diff --stat "$DEVELOP_BRANCH"...HEAD
 git diff "$DEVELOP_BRANCH"...HEAD --name-only
 ```
 
-ブランチ特定が不明瞭な場合は `AskUserQuestion` でユーザー確認。
+ブランチ特定が不明瞭な場合は `ユーザー確認` でユーザー確認。
 
 変更ファイル一覧を issue スコープと照合:
 
@@ -56,7 +56,7 @@ git diff "$DEVELOP_BRANCH"...HEAD --name-only
 
 **スコープ外変更が 1 件でもあれば、以下を実行**:
 
-1. `AskUserQuestion` でユーザーに方針確認:
+1. `ユーザー確認` でユーザーに方針確認:
    - **(a) 別 issue として起票**: 変更を revert せず、同 commit 内で但し書き、新 issue を起票して親 issue にリンク
    - **(b) 今すぐ revert**: `git reset <sha> -- <逸脱ファイル>` で変更を退避し、別ブランチで後日対応
    - **(c) スコープ拡大を認める**: 元 issue の scope を編集し、変更を正当化 (ユーザー判断必須)
@@ -66,15 +66,15 @@ git diff "$DEVELOP_BRANCH"...HEAD --name-only
 
 **フロー**: (b) revert を選択した場合は本スキル終了（作業ブランチから逸脱変更が消えたため Step 4 不要）。(a)/(c)/(d) を選択した場合は Step 4 に進み PR 本文への記載事項を確認する。
 
-### Codex commit 検査範囲 (C4、`/codex:rescue` 経由の commit を含める)
+### Codex commit 検査範囲 (C4、`codex rescue` 経由の commit を含める)
 
-`/codex:rescue` が `--write` で commit を作った場合、scope 外の独断 fix がないか本 skill が検査する:
+`codex rescue` が `--write` で commit を作った場合、scope 外の独断 fix がないか本 skill が検査する:
 
 ```bash
 git log --author='codex\|Codex' --oneline -10
 ```
 
-該当 commit があれば Step 2 の変更範囲確認に含める。Codex の独断 fix も Iron Law 3 の対象であり、本 skill の (a)/(b)/(c)/(d) 3 択を経由させる。詳細は `CLAUDE.md` §Codex 運用 §rescue を参照。
+該当 commit があれば Step 2 の変更範囲確認に含める。Codex の独断 fix も Iron Law 3 の対象であり、本 skill の (a)/(b)/(c)/(d) 3 択を経由させる。詳細は `AGENTS.md` §Codex 運用 §rescue を参照。
 
 ### Step 4: PR 作成前の最終確認
 
@@ -105,7 +105,7 @@ PR 作成直前に以下を PR 本文に明記:
 
 - **(A) 同 PR 修正可の目安**: CI YAML 1-2 箇所の path 書換え / テスト追加 1-2 ファイル / doc 追従 1-2 箇所
 - **(B) 別 issue 起票の目安**: 別レイヤー実装変更を伴う (検知パイプライン / GUI / CLI への連鎖修正) / 既存テスト再実行工数が長時間 (GPU / 音声統合で 30 分超) / 別担当領域
-- 判断に迷う場合は `AskUserQuestion` でユーザー (Idios) 判断に回す
+- 判断に迷う場合は `ユーザー確認` でユーザー (Idios) 判断に回す
 
 それ以外のドキュメント更新 (typo, 説明追加) は別 PR で。
 
