@@ -935,7 +935,7 @@ node .github/scripts/<gate>.js <fixture>; echo "exit=$?"   # 非ゼロを期待
 | --- | --- | --- |
 | 1 | `AGENTS.md` (Zed project rules) / `SessionStart` hook (`.claude/hooks/session-start.sh`、Claude Code review session) | Iron Law + Red Flags をセッション先頭で常時読込 |
 | 2 | `enforce-acceptance-criteria` skill | `review-pr` から呼ばれる Gate Function。受け入れ条件の逐条検証 |
-| 3 | `scope-guard` skill | スコープ逸脱検知でユーザー確認を強制 |
+| 3 | `scope-guard` skill | スコープ逸脱検知で AskUserQuestion を強制 |
 | 4 | `review-pr` skill | PR レビューのオーケストレーション。上記 2 を必ず呼び出す |
 | 5 | `PreToolUse` hook (`.claude/hooks/preuse.py`, #401 由来) | Bash 実行時の確認ゲート |
 | 6 | PR テンプレート (`.github/pull_request_template.md`) | Iron Law 1/3/4 の逐条チェックリスト |

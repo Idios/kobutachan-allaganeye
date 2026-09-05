@@ -15,9 +15,9 @@ PR 作成後の review → fix → review ループを自動化する。指定�
 
 1. Step 0: Pre-flight (PR open / draft / state 確認のみ。base sync は subagent dispatch 内 review-pr Step 2 に委譲)
 2. Step 1: ループ初期化 (Round=1, handoff_state=[], findings_history={}, divergence_counter=0)
-3. Step 2: Round N 実行 (subagent dispatch → parse → ユーザー確認 → fix/handoff → push → CI wait)
+3. Step 2: Round N 実行 (subagent dispatch → parse → AskUserQuestion → fix/handoff → push → CI wait)
 4. Step 3: 判定 (収束 / 発散 / 打ち切り)
-5. Step 4: Final summary comment (HEREDOC で投稿、ユーザー確認 3 択で承認)
+5. Step 4: Final summary comment (HEREDOC で投稿、AskUserQuestion 3 択で承認)
 6. Step 5: LGTM 候補通知 (user merge → close-issue handoff)
 
 詳細仕様: [docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md](../../../docs/superpowers/specs/2026-05-10-iterate-review-and-review-pr-redesign.md)
@@ -35,7 +35,7 @@ gh pr view <PR番号> --json state,isDraft,headRefName,baseRefName,closingIssues
 判定:
 
 - `state == CLOSED` または `state == MERGED` → 「ループ対象外」エラー終了
-- `isDraft == true` → ユーザー確認 3 択 (draft でも進める / draft 解除を待つ / abort)
+- `isDraft == true` → AskUserQuestion 3 択 (draft でも進める / draft 解除を待つ / abort)
 - それ以外 (state == OPEN + isDraft == false) → Step 1 へ
 
 #### Base sync + 並行 PR 確認
@@ -59,7 +59,7 @@ base 最新化 + 直近マージ PR + 並行 worktree PR 重複確認は `review
 
 > **subagent 起動規約**: 本 dispatch は [`docs/l2-workflow.md` §subagent 起動規約](../../../docs/l2-workflow.md#subagent-起動規約-746-phase-c--741-task-5-教訓) に準拠する。`__ITERATE_REVIEW_SUBAGENT_MODE__` marker + `(A)*` / ambiguous_judgments の自己申告 (下記 prompt template の item 6 / 7) で HARD-GATE (Stop conditions / 独断 fix 禁止) を担保する。controller (本 skill) が Step 2.2 validation で「無視 / 観察のみ / スコープ対象外」キーワード単独行を parse error とすることで、subagent の独断 fix 倍数を 0 に抑える。F6 / F7 と同型の事象を再発させない。
 >
-> **Codex fallback (C6)**: subagent が `review-pr` 内で Codex review (tier 1 = companion script `codex CLI review` の Bash 実行。slash `codex review` は `disable-model-invocation: true` のため agent から invoke 不可 = Idios 専用 tier 3、`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照) を実行して fail した場合は [`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback) の手順に従い subagent レビュー (spawn_agent) を fallback として起動する。Final summary comment (Step 4) に「Codex fallback notice」を必須記載 (Iron Law 5 整合)。**Step 2.3 の per-round Round summary ユーザー確認 ではなく、収束時に 1 回投稿する Step 4 の summary comment を指す。**
+> **Codex fallback (C6)**: subagent が `review-pr` 内で Codex review (tier 1 = companion script `codex CLI review` の Bash 実行。slash `codex review` は `disable-model-invocation: true` のため agent から invoke 不可 = Idios 専用 tier 3、`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照) を実行して fail した場合は [`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback) の手順に従い subagent レビュー (spawn_agent) を fallback として起動する。Final summary comment (Step 4) に「Codex fallback notice」を必須記載 (Iron Law 5 整合)。**Step 2.3 の per-round Round summary AskUserQuestion ではなく、収束時に 1 回投稿する Step 4 の summary comment を指す。**
 >
 > **Codex 出力の読み取り (#949、openai-codex 1.0.4 時点)**: Codex review が exit 0 で完了した場合、subagent は `review-pr` §「Codex 出力の読み取り」に従い `codex CLI status --json` で `jobClass == "review"` の job id を特定し、`result <job-id>` で**保存済み全文**を読んでから finding を統合する (**job id は省略しない**)。stdout に見えた分だけで triage するのは禁止。読み取りに失敗した (= `result` が exit 非ゼロ) 場合は理由を 1 行記録する義務があり、subagent は下記 prompt template item 7 の `## meta` に `Codex 出力読み取り` 行として申告し、controller はそれを Step 4 の Final summary へ転記する。**fallback ではないので Codex fallback notice とは別行**。`--background` / `--wait` は付けない (受理されるが無視される)。
 
@@ -70,7 +70,7 @@ __ITERATE_REVIEW_SUBAGENT_MODE__
 
 PR #<N> を review してください。`review-pr` skill を invoke しますが、以下の特例を必ず適用してください:
 
-1. Step 6 / Step 7 の ユーザー確認 / `gh pr comment` 投稿 を SKIP
+1. Step 6 / Step 7 の AskUserQuestion / `gh pr comment` 投稿 を SKIP
 2. Step 5b トリアージ表を markdown 表形式で final message に含める
 3. 以下の deferred topics は findings から exclude:
    <handoff_state を箇条書き、空なら "(なし)">
@@ -259,11 +259,11 @@ return に echo しない** (marker は入力側の契約)。
 **parse error 時の対処**:
 
 - 1 度目: 主セッションが subagent に対して具体的に欠陥を伝えて再 dispatch (Agent tool 再実行)。具体例: 「Step 5b 表 5 行目の (B) は trigger 根拠が `スコープ外` のみで 3 条件 AND 不成立。(A) に再分類して return せよ」
-- 2 度目: ユーザー確認 で user に「subagent が分類規約を満たさない findings を返している。手動でトリアージするか abort するか」を提示
+- 2 度目: AskUserQuestion で user に「subagent が分類規約を満たさない findings を返している。手動でトリアージするか abort するか」を提示
 
-#### Step 2.3 Round summary ユーザー確認 (1 round 1 回のみ)
+#### Step 2.3 Round summary AskUserQuestion (1 round 1 回のみ)
 
-Round N の集計表示 + ユーザー確認 2 択。Round 開始時の主要 gate (例外: Step 2.5 (B) 3+ bulk Iron Law 2 gate / Step 2.7 timeout gate / ambiguous_judgments 拡張)。
+Round N の集計表示 + AskUserQuestion 2 択。Round 開始時の主要 gate (例外: Step 2.5 (B) 3+ bulk Iron Law 2 gate / Step 2.7 timeout gate / ambiguous_judgments 拡張)。
 
 提示内容:
 
@@ -280,13 +280,13 @@ Round N findings:
 - (ii) abort (loop 中断、現状で create-task など手作業に切替)
 ````
 
-`ambiguous_judgments` がある場合、追加 ユーザー確認 でユーザー判断を仰ぐ。1 ユーザー確認 call は最大 4 questions まで束ねられる仕様 (= ユーザー確認 tool 上限) を活用し、5 件以上は複数 call に分割。1 round あたりの ユーザー確認 呼び出し総数は「Round summary 1 + ambiguous_judgments の必要分 + Step 2.5/2.7 の例外 gate」を上限とする。
+`ambiguous_judgments` がある場合、追加 AskUserQuestion でユーザー判断を仰ぐ。1 AskUserQuestion call は最大 4 questions まで束ねられる仕様 (= AskUserQuestion tool 上限) を活用し、5 件以上は複数 call に分割。1 round あたりの AskUserQuestion 呼び出し総数は「Round summary 1 + ambiguous_judgments の必要分 + Step 2.5/2.7 の例外 gate」を上限とする。
 
-##### ユーザー確認 設計規約 (scope 拡大選択肢を出さない、#732 教訓)
+##### AskUserQuestion 設計規約 (scope 拡大選択肢を出さない、#732 教訓)
 
-subagent reviewer が「scope 外」(= (B) 起票 or (A) re-run 推奨) と判定した finding について、controller (主セッション) が ユーザー確認 を組み立てる際、**「本 PR 内修正 (scope 拡大)」を選択肢に追加しない**。subagent recommendation を**第一の選択肢 (Recommended)** に置き、subagent が挙げた選択肢のみ提示する。user が `Other` で明示提案するまで scope 拡大は出さない。
+subagent reviewer が「scope 外」(= (B) 起票 or (A) re-run 推奨) と判定した finding について、controller (主セッション) が AskUserQuestion を組み立てる際、**「本 PR 内修正 (scope 拡大)」を選択肢に追加しない**。subagent recommendation を**第一の選択肢 (Recommended)** に置き、subagent が挙げた選択肢のみ提示する。user が `Other` で明示提案するまで scope 拡大は出さない。
 
-**Why**: PR #732 (#708 = bash + docs scope) で Round 2/3 ともに、subagent reviewer が「(A) re-run」または「(B) 新規 issue 起票」を recommended と判定したが、controller が ユーザー確認 に「本 PR 内修正」を選択肢として追加 → user が選択 → 本 PR 内 commit (`8eff1d2` / `ee77e37`) で scope 拡大が発生。両回とも user が「scope 拡大」を選んだが、それは controller が **そもそも選択肢として提示した**から。subagent recommended のみを提示していれば scope creep は発生しなかった。「Round 2 で 1 件本 PR 内修正した実績がある」を Round 3 で sweep に倒した根拠にしたのも、典型的な Red Flag 「ついで」合理化。
+**Why**: PR #732 (#708 = bash + docs scope) で Round 2/3 ともに、subagent reviewer が「(A) re-run」または「(B) 新規 issue 起票」を recommended と判定したが、controller が AskUserQuestion に「本 PR 内修正」を選択肢として追加 → user が選択 → 本 PR 内 commit (`8eff1d2` / `ee77e37`) で scope 拡大が発生。両回とも user が「scope 拡大」を選んだが、それは controller が **そもそも選択肢として提示した**から。subagent recommended のみを提示していれば scope creep は発生しなかった。「Round 2 で 1 件本 PR 内修正した実績がある」を Round 3 で sweep に倒した根拠にしたのも、典型的な Red Flag 「ついで」合理化。
 
 Iron Law 3 と AGENTS.md plugin override 規約は「user の明示判断が最優先」だが、選択肢の提示自体が誘導である以上、user の選択を「user 判断」と扱って scope creep を正当化するのは責任転嫁。
 
@@ -294,7 +294,7 @@ Iron Law 3 と AGENTS.md plugin override 規約は「user の明示判断が最�
 
 1. subagent reviewer の recommendation を **第一の選択肢 (Recommended)** にする
 2. ambiguous_judgments の処置は subagent が挙げた選択肢のみ提示。controller が独自に「本 PR 内修正」「scope 拡大」を**追加しない**
-3. scope 拡大が本当に必要 (連続して同種 finding が出る等) と思ったら、user に ユーザー確認 で問う前に **`scope-guard` skill** を呼び、scope 拡大の妥当性を独立判定する
+3. scope 拡大が本当に必要 (連続して同種 finding が出る等) と思ったら、user に AskUserQuestion で問う前に **`scope-guard` skill** を呼び、scope 拡大の妥当性を独立判定する
 4. user が `Other` 経由で「本 PR 内修正したい」と明示した場合のみ scope 拡大に倒す
 5. 「Round N で同じ **sweep root cause** ((b)、`review-pr` §「root cause の 2 用法」) を 1 件本 PR 内修正した」は Round N+1 で sweep の根拠に**ならない**。各 finding は独立に subagent recommended に従う
 
@@ -325,7 +325,7 @@ Iron Law 3 と AGENTS.md plugin override 規約は「user の明示判断が最�
 各 (B) に対し:
 
 1. **(B) trigger 3 条件 AND 達成** を再確認: `別領域・別機能` AND `1 セッション超の独立設計が必要` AND `本 PR 同梱で受け入れ条件検証が破綻` の **すべて満たす** ことを rationale で確認。1 つでも欠ける場合は (A) に再分類して Step 2.4 へ戻す
-2. **3 件以上の (B) は Iron Law 2 に従い ユーザー確認 で全件確認** (1 件 sample 提示 + 「全件 OK / 個別調整 / やめる」3 択)。3 件以上の (B) が一度に出るのは **設計疑い** のシグナルであり、user に「PR スコープが大きすぎる可能性」を提示
+2. **3 件以上の (B) は Iron Law 2 に従い AskUserQuestion で全件確認** (1 件 sample 提示 + 「全件 OK / 個別調整 / やめる」3 択)。3 件以上の (B) が一度に出るのは **設計疑い** のシグナルであり、user に「PR スコープが大きすぎる可能性」を提示
 3. 2 件以下はそのまま `create-task` で起票
 4. 起票後の issue 番号を `handoff_state` に追加
 5. PR body の deferred block を更新:
@@ -371,7 +371,7 @@ Iron Law 3 と AGENTS.md plugin override 規約は「user の明示判断が最�
 - `gh pr checks <PR番号> --watch` で CI 状態確定 (success / failure) を 15 分まで待機
 - **CI green (success)**: 次 round へ進める
 - **CI red (failure)**: 本 step では abort しない。次 round の `review-pr` Step 4 が CI 失敗を findings に拾う前提 (`review-pr` Step 4 「失敗あり: 失敗ジョブ名と概要を user に報告」を踏襲)。CI red が複数 round 連続で再発生する場合は §2.6 divergence 検知で打切り判定
-- **timeout (15 分超)**: ユーザー確認 3 択 (待ち続ける (timeout 30 分に延長して poll 継続) / CI 無視で次 round / abort)
+- **timeout (15 分超)**: AskUserQuestion 3 択 (待ち続ける (timeout 30 分に延長して poll 継続) / CI 無視で次 round / abort)
 
 実装ノート: `gh pr checks --watch` の timeout は CLI 側で直接制御できないため、以下のいずれかで wrap する:
 
@@ -428,7 +428,7 @@ Round == 5 + 未収束 → user gate 2 択。
 
 > Round 1 で 0 findings (即収束) でも summary 投稿は実施推奨。skip 選択肢 (iii) は loop 終了のみで、コメント未投稿の場合 PR の review-fix 履歴が残らない。受け入れ条件実証記録としての価値があるため (i) が Recommended。
 
-ユーザー確認 3 択:
+AskUserQuestion 3 択:
 
 - (i) 投稿する (Recommended)
 - (ii) 微調整して投稿 (markdown を user に提示 → 修正 → 再承認)

@@ -6,7 +6,7 @@ description: PR マージ後の issue クローズを担う skill。受け入れ
 
 指定された issue を「マージ後の受け入れ条件実測再検証」を経てクローズする。
 
-> Iron Law 4 (`AGENTS.md`) 担保ルート。詳細な条文は hook を参照。
+> Iron Law 4 (`AGENTS.md`) 担保ルート。詳細な条文は `AGENTS.md` §Iron Law を参照。
 
 ## 制約
 
@@ -29,7 +29,7 @@ gh issue view "<issue番号>" --repo Idios/kobutachan-allaganeye \
   --json title,body,state,assignees,labels,closedByPullRequestsReferences --comments
 ```
 
-- `state == OPEN` を確認 (`CLOSED` の場合は本 skill 対象外、`ユーザー確認` で再オープン or 別対応を確認)
+- `state == OPEN` を確認 (`CLOSED` の場合は本 skill 対象外、`AskUserQuestion` で再オープン or 別対応を確認)
 - `closedByPullRequestsReferences` で紐づく PR 一覧を取得
 - 本文末尾の `作成: <session-id>` で起票元セッション ID を確認 (close コメント記載に使用)。記載なし / 空欄の場合は close コメント本文での「起票元 session-id」言及は省略可
 - **本 skill 実行 session-id の取得**: `pwd` で現在のディレクトリパス (例: `.../.claude/worktrees/hopeful-darwin-616414`) を取得し、最終ディレクトリ名を session-id とする (例: `hopeful-darwin-616414`)。Step 7 の close コメントには**実行 session-id を必ず含める** (起票 session-id の有無に関わらず)
@@ -143,12 +143,12 @@ git log origin/<baseRefName> --oneline -20  # マージ済 PR の commit が含�
 - **動的検証 vs 実測必要 の判定基準** (境界明示):
   - **動的検証可能** (skill 内で実行): unit/integration テストで `slow` マーカーなし + CI で実行されている範囲 + 30 秒以内目安。GPU/audio を伴わない CPU-only テスト。`ruff check` / `pyright` 等の静的解析。`pytest tests/test_x.py::test_y` で 1-2 件のみ単体実行
   - **実測必要** (skill 範囲外、`test-pr` 既実施確認のみ): `pytest -m slow`、動画処理 (1 分超)、GPU mode (`--gpu`)、audio 統合 (`audio/scan` フル走査)、UI 動作確認 (Tauri GUI 起動)、リリース動作検証
-  - 判断に迷う場合は `ユーザー確認` でユーザー (Idios) に分類確認
+  - 判断に迷う場合は `AskUserQuestion` でユーザー (Idios) に分類確認
 - **`test-pr` 既実施記録の取得とアクセス不可時の対応**:
   - PR コメント取得: `gh pr view <PR#> --comments` で `test-pr` 実施記録の有無を確認
   - issue コメント取得: `gh issue view <番号> --comments` で同様に確認 (PR コメントに見つからない場合の fallback)
   - **コメント取得に成功して実施記録が見つかる**: 「実測必要」項目を ○ と判定し、記録のコメント URL / コマンド / 結果サマリを close コメントに引用する
-  - **コメント取得に失敗 or 実施記録が見つからない**: `ユーザー確認` でユーザー (Idios) に「`test-pr` 既実施か」を確認。記録不在の場合は close を保留し、`test-pr` 実施依頼を提示する (skill 内で `test-pr` を実行しない)
+  - **コメント取得に失敗 or 実施記録が見つからない**: `AskUserQuestion` でユーザー (Idios) に「`test-pr` 既実施か」を確認。記録不在の場合は close を保留し、`test-pr` 実施依頼を提示する (skill 内で `test-pr` を実行しない)
   - 「PR 本文に実施したと書いてあるから OK」と独断して ○ にしない (実施記録の所在まで確認するのが必須)
 
 各項目に判定を付ける: ○ (満たす) / × (満たさない) / 部分的 / 実測必要。
@@ -193,9 +193,9 @@ issue 本文中の `## 受け入れ条件` 以外の `- [ ]` (例: `## 確認項
 
 ### 7. ユーザー承認後の close
 
-**重要 (close 実行前の絶対条件)**: Step 7 のユーザー承認は `ユーザー確認` ツールを使い、ユーザー (Idios) の明示的な「はい」回答を得るまで `gh issue close` を実行しない。回答が得られていない / 「いいえ」 / 曖昧な回答の場合は close せず、ユーザーに残作業を返す。subagent や自動実行で `ユーザー確認` を skip するのは Iron Law 4 + Iron Law 5 違反 (本 skill が Iron Law 4 の唯一の担保ルートであるため、ユーザー承認 gate を skip すると担保自体が失われる)。
+**重要 (close 実行前の絶対条件)**: Step 7 のユーザー承認は `AskUserQuestion` ツールを使い、ユーザー (Idios) の明示的な「はい」回答を得るまで `gh issue close` を実行しない。回答が得られていない / 「いいえ」 / 曖昧な回答の場合は close せず、ユーザーに残作業を返す。subagent や自動実行で `AskUserQuestion` を skip するのは Iron Law 4 + Iron Law 5 違反 (本 skill が Iron Law 4 の唯一の担保ルートであるため、ユーザー承認 gate を skip すると担保自体が失われる)。
 
-`ユーザー確認` で以下を提示し、ユーザー (Idios) の承認を得る:
+`AskUserQuestion` で以下を提示し、ユーザー (Idios) の承認を得る:
 
 - 受け入れ条件全項目 ○ + 未チェック `- [ ]` 全消化 + 残タスク (B)/(C) 処置完了 → close 実行
 - 上記未達 → close せず、ユーザーに残作業を返す
@@ -251,7 +251,7 @@ issue 本文に `## 受け入れ条件` 節がない、または整っていな�
 **適用手順**:
 
 1. issue 本文の代替記述 (`## 確認項目`、`## 完了条件`、`## 完了イメージ` 等) を受け入れ条件相当として扱う
-2. 該当節が皆無の場合、「PR で何を達成すれば close 可とみなせるか」を `ユーザー確認` でユーザー (Idios) に確認
+2. 該当節が皆無の場合、「PR で何を達成すれば close 可とみなせるか」を `AskUserQuestion` でユーザー (Idios) に確認
 3. ユーザー判断後、Step 4-5 を実施
 4. 「曖昧だから飛ばしてよい」は Iron Law 5 違反。必ずユーザー確認を経由する
 
@@ -262,7 +262,7 @@ Step 3 で全 PR が `MERGED` でないケース。
 **適用手順**:
 
 1. 状況をユーザーに報告 (`gh pr view` 出力を提示)
-2. 取りうる選択肢を `ユーザー確認` で提示:
+2. 取りうる選択肢を `AskUserQuestion` で提示:
    - (i) 未マージ PR のマージ完了を待つ (本 skill を一旦 terminate)
    - (ii) 該当 PR が放棄されている → 残タスクを (B) 新 issue 起票して issue 自体を `not planned` クローズ (ユーザー承認必須)
    - (iii) その他: ユーザー判断
@@ -297,7 +297,7 @@ close 後に追加情報 (関連 PR 番号 / 検証ログ / 残タスク子 issu
 | 「Phase 1 マージ済みだから Phase 2 を待たずに close できる」 | ケース C 違反。最終 PR マージ後にのみ close 可能 |
 | 「実測必要項目を skill 内で全部検証しよう」 | long-running / GPU / audio は本 skill 範囲外。`test-pr` 既実施を確認するに留める |
 | 「× 項目があるが軽微だから close してよい」 | Iron Law 3 違反。残タスクは (B)/(C) にトリアージ、握り潰し禁止 |
-| 「受け入れ条件節が無いから自分の判断で close 基準を決めよう」 | Iron Law 5 違反。`ユーザー確認` でユーザー確認 (環境制約 §A) |
+| 「受け入れ条件節が無いから自分の判断で close 基準を決めよう」 | Iron Law 5 違反。`AskUserQuestion` でユーザー確認 (環境制約 §A) |
 | 「ユーザー承認なしで close したほうが速い」 | Iron Law 4 + Iron Law 5 違反。close は必ず Step 7 のユーザー承認を経由 |
 | 「`closedByPullRequestsReferences` 空 = 紐づく PR なし」と即断してよい | Iron Law 4 で `Closes` 禁止のため当該フィールドは通常空。Step 1 fallback ルート (`gh api .../timeline` cross-referenced-event + `gh search prs '"Refs #N"'`) で再列挙する (`Refs #N` fallback サブセクション) |
 
@@ -317,7 +317,7 @@ close 後に追加情報 (関連 PR 番号 / 検証ログ / 残タスク子 issu
 close-issue 594
 ```
 
-ユーザーが issue 番号を指定して呼び出す。Claude は自動的に段階を進め、要所で `ユーザー確認` により判断を仰ぐ (特に Step 6 のトリアージ確定 / Step 7 の close 承認)。
+ユーザーが issue 番号を指定して呼び出す。Claude は自動的に段階を進め、要所で `AskUserQuestion` により判断を仰ぐ (特に Step 6 のトリアージ確定 / Step 7 の close 承認)。
 
 ## 参考
 

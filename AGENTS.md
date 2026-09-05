@@ -3,7 +3,7 @@
 ## Iron Law（絶対禁止事項）
 
 このプロジェクト (kobutachan-allaganeye) には以下の Iron Law がある。
-違反が「1% でも」疑われる状況では STOP してユーザー確認すること。
+違反が「1% でも」疑われる状況では STOP して AskUserQuestion でユーザー確認すること。
 合理化 ("軽微だから", "後で直す", "ついでに") は Red Flag として自覚し、必ず止まる。
 
 1. **NO PR MERGE WITHOUT ALL ACCEPTANCE CRITERIA CHECKED**
@@ -23,12 +23,12 @@
    - マージ後に受け入れ条件を実測検証してから手動 `gh issue close`
 
 5. **NO INDEPENDENT JUDGMENT ON AMBIGUOUS POINTS**
-   - 曖昧と認識している判断点は独断で prescribe せずユーザー確認で多肢選択
+   - 曖昧と認識している判断点は独断で prescribe せず AskUserQuestion で多肢選択
    - 「Recommended 付き 2-4 択」が標準
 
 6. **NO PR CREATION WITHOUT VERIFIED CHECKS**
    - PR 作成前に変更ファイル path に応じた自動チェック (Python: `ruff check .` / `ruff format --check .` / `pyright --pythonpath <venv python>` / `pytest`、GUI: `npm run lint` / `typecheck` / `test` / `build` / `cargo check`) を全 pass させる。「軽微だから skip」「Python のみだから GUI 側不要」は Red Flag (失敗パターン A 再発)
-   - ロジック変更 (`gpu_detector.py` / `audio/*.py` / `video/detector.py` / `gui/src-tauri/**` 等) を含む場合は、ユーザー (Idios) に実機検証 (GPU / audio / 長時間動画 / GUI Tauri 起動) をユーザー確認で依頼する。「mock テスト pass = 実機検証不要」は Red Flag (失敗パターン B 再発)
+   - ロジック変更 (`gpu_detector.py` / `audio/*.py` / `video/detector.py` / `gui/src-tauri/**` 等) を含む場合は、ユーザー (Idios) に実機検証 (GPU / audio / 長時間動画 / GUI Tauri 起動) を `AskUserQuestion` で依頼する。「mock テスト pass = 実機検証不要」は Red Flag (失敗パターン B 再発)
    - **PR 作成 Pre-flight (#659 で運用化、#722 で Step 0 ハードゲート追加、L-β β-4 で Step 5 Codex adversarial-review 追加)**: Step 0 = `gh pr list --search "<元issue#>" --state open` でハードゲート (<1s、build/verify の前) → Step 1 base 同期 (`git fetch origin <base>`) → Step 2 取り込み未済 commit (`git log HEAD..origin/<base>`) → Step 3 touched files 交差判定 → Step 4 並行 PR 重複再確認 (`gh pr list --search "<元issue#>" --state all`) → Step 5 Codex adversarial-review (focus は固定の例示から選ばず本 PR の diff から導出する — 新設・変更した外部入力境界と不可逆操作の対応ペアを列挙して必ず含める。ペアがゼロならゼロと focus に明記する)。Step 0 と Step 4 は検出 window が異なるため両方実施。「コンフリクト出ないから OK」「Step 0 で 0 件だったから Step 4 skip」は Red Flag (失敗パターン C 再発、`docs/l2-workflow.md` §「PR 作成 Pre-flight」 参照)
    - **resume-plan handoff (#722 で運用化)**: resume task prompt を user に提示する際は 1 行目に `EXECUTOR: self|dispatch (origin=..., generated=...)` を明記。生成側 origin が継続実行 (self) か abort (dispatch) かを prompt 自身で自記する。詳細は `docs/l2-workflow.md` §「resume-plan handoff protocol」 参照
    - PR 本文には machine-verified を `[x]` で、machine-unverifiable を plain bullet `-` で書き分ける (`docs/l2-workflow.md` §「Self-Test Report 規約」)。詳細手順は `docs/l2-workflow.md` §「PR 作成 path 別自動チェック」 / §「実機検証 trigger 表」 参照
@@ -44,7 +44,7 @@
 | 「Closes を付ければ自動で閉じて便利」 | Iron Law 4 違反。手動クローズ厳守 |
 | 「観察 (修正不要) とコメントしておこう」 | #399 B 違反。別 issue 起票 or escalate |
 | 「ローカル lint 通ったから PR 出して大丈夫」 | Iron Law 6 違反。変更 path から必要 job を判定 (Python / GUI / installer / docs)。GUI 変更を含むなら `npm run lint` / `typecheck` / `test` / `build` / `cargo check` も実行 |
-| 「mock テスト pass = 実機検証不要」 | Iron Law 6 違反。GPU / audio / 長時間動画 / GUI Tauri は mock 不可。該当 path 変更時はユーザー確認で依頼 |
+| 「mock テスト pass = 実機検証不要」 | Iron Law 6 違反。GPU / audio / 長時間動画 / GUI Tauri は mock 不可。該当 path 変更時は `AskUserQuestion` で依頼 |
 | 「コンフリクト出ないから base 取り込み確認は不要」 | Iron Law 6 Pre-flight 違反。merge 可否と機能 regression は別軸。PR #627 Round 4 の失敗パターン C 再発 |
 | 「並行 worktree PR は計画段階で確認したから PR 作成時は skip」 | Iron Law 6 Pre-flight 違反。計画後に別 worktree が PR 提出するケースあり (#646 / #647)。PR 作成時にも実施 |
 | 「(A) PR 内修正は PR が大きくなるから別 issue にしよう」 | レビュー摘出問題は原則 (A) PR 内追加修正 (`docs/l2-workflow.md` §「(A) PR 内修正優先 規約」)。サイズだけで (B) を選ばない |
@@ -326,7 +326,7 @@ PR 作成後は `iterate-review` skill (<PR#>) で review-fix ループを自走
 
 ### Iron Law と強制メカニズム
 
-プロジェクト基本ルールは本ファイル (AGENTS.md) §Iron Law (6 条 + Red Flags 表) に記される。条文と Red Flags の正は同節。違反が 1% でも疑われる状況では STOP しユーザー確認する。
+プロジェクト基本ルールは本ファイル (AGENTS.md) §Iron Law (6 条 + Red Flags 表) に記される。条文と Red Flags の正は同節。違反が 1% でも疑われる状況では STOP し `AskUserQuestion` でユーザー確認する。
 
 強制メカニズム (7 層) の詳細は [docs/l2-workflow.md](docs/l2-workflow.md) §強制メカニズム を参照。
 

@@ -27,7 +27,7 @@ description: deferred issue レビュー → バージョンバンプ → リリ
    - **patch release には対応するレイヤー固有ブロックが存在しない**（固有項目は minor の `v0.x.0` 単位でしか定義されない）。その場合は §共通項目 のみを提示し、「レイヤー固有項目は該当なし（patch release のため）」と**明示**する。黙って 1 ブロックだけ出して済ませない
    - §共通項目 は minor / patch の**両方**に適用される（裁定 D5）。patch だからと本ゲートごと省略しない
 2. 各項目について「達成 / 未達成 / 該当なし」を 1 件ずつ確認する。3 件以上の bulk 確認になる場合は **Step 0c の [§bulk 件数の運用](#bulk-件数の運用-iron-law-2-整合) と同じ規約**に従う (サンプル 1 件提示 + 3 択)。本 step 固有の差分は選択肢の意味だけで、件数の閾値・サンプルの選び方・「個別調整」選択時の挙動は同じ:
-   - 件数 ≤2: 1 件ずつ ユーザー確認 で個別確認
+   - 件数 ≤2: 1 件ずつ AskUserQuestion で個別確認
    - 件数 ≥3: サンプル **1 件** (下記 §Track 構造の除外を適用した**後の母集団**の先頭)。本 step での「並び順」は [`docs/release-process.md` §レイヤーリリース受け入れゲート §共通項目](../../../docs/release-process.md) の記載順 — 4 点セットのうち**並び順だけが対象集合ごとに違う**ので、ここで上書きする + 「全件 OK (= 全件 達成) / 個別調整 / 中止」の 3 択
    - **「個別調整」選択時は 1 件ずつの確認に進む** (Step 0c と同じ挙動)。「全件 OK」で通した場合、全項目を「達成」として記録する
 3. 1 件でも未達成があれば本スキルは中断し、ユーザーに残タスクの優先処理を依頼 (ただし下記 **Track 構造の patch release** の例外を先に読むこと)
@@ -113,7 +113,7 @@ gh issue list --repo Idios/kobutachan-allaganeye --state open --label "deferred"
 
 ### Step 0c: deferred 1 件ずつ 3 択分類 (M9 再設計版)
 
-Step 0b で取得した各 deferred issue について、ユーザー確認 で以下 3 択を user に提示:
+Step 0b で取得した各 deferred issue について、AskUserQuestion で以下 3 択を user に提示:
 
 - **(a) 次 release で吸収**: 本 release / 次 patch の **Track B 吸収候補** とする。spec PR (Track 0) の table に記録
 - **(b) deferred 継続**: ラベル変更なし。本 release では取り込まない (次 cycle に再評価)
@@ -123,7 +123,7 @@ Step 0b で取得した各 deferred issue について、ユーザー確認 で�
 
 **本節が bulk 確認規約の定義側**で、以下の **4 点セット (件数閾値 / サンプル数 / 並び順 / 「個別調整」時の挙動)** を持つ。借用側 (Step 0a) は「本節と同じ規約」とだけ書く — 4 点のどれかを借用側にしか書かないと、定義側を直接読んだ実行者に届かない。
 
-- 件数 ≤2: 1 件ずつ ユーザー確認 で個別確認
+- 件数 ≤2: 1 件ずつ AskUserQuestion で個別確認
 - 件数 ≥3: **先に Iron Law 2 bulk pre-check** (サンプル **1 件**提示 + 「全件 OK (= 全件 (b) deferred 継続) / 個別調整 / やめる」3 択)
 - **並び順**: サンプルの「先頭」は **Step 0b の `gh issue list` の出力順** (= 既定の作成日時降順) の先頭を指す。取得コマンドに `--sort` を足さない限りこの順が正
 - 「全件 OK」選択時の挙動 (B-2/B-3 fix): **全件を (b) deferred 継続として処置**し、Step 0c table の分類列を全件 `(b) deferred 継続` で埋める。「全件 (a) 次 release 吸収」と読み違えやすいため pre-check の選択肢 description で「(b) 継続」を明示する規約とする。「全件 (a) 次 release 吸収」を意図する場合は user が `Other` で明示する
@@ -174,7 +174,7 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
   gh issue view <N> --json state,stateReason --jq '"\(.state) \(.stateReason)"'
   ```
 
-  **確認は ユーザー確認 で行う (#962 項目 5)。** 「確認する」を動詞句のまま残すと、実行者ごとに
+  **確認は AskUserQuestion で行う (#962 項目 5)。** 「確認する」を動詞句のまま残すと、実行者ごとに
   自由記述の問い合わせになったり独断で行き先を決めたりして記録が残らない。検出した
   not_planned issue **1 件につき**、次の 3 択を提示する:
 

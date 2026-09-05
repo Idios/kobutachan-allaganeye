@@ -4,7 +4,7 @@ description: 実装中の「ついでに直した」スコープ逸脱を検知�
 
 ---
 
-> Iron Law 3 (`AGENTS.md`) の手順実装。詳細な背景・条文は hook を参照。
+> Iron Law 3 (`AGENTS.md`) の手順実装。詳細な背景・条文は `AGENTS.md` §Iron Law を参照。
 
 ## 呼び出しタイミング
 
@@ -26,7 +26,7 @@ gh issue view <ISSUE番号> --json title,body | python -c "import json,sys;d=jso
 もし着手 issue が不明 (作業ブランチ名に番号が無い等) なら、ユーザーに確認:
 
 ```text
-ユーザー確認: 現在の作業ブランチはどの issue に対応しますか？
+AskUserQuestion: 現在の作業ブランチはどの issue に対応しますか？
 ```
 
 ### Step 2: 変更範囲の確認
@@ -43,7 +43,7 @@ git diff --stat "$DEVELOP_BRANCH"...HEAD
 git diff "$DEVELOP_BRANCH"...HEAD --name-only
 ```
 
-ブランチ特定が不明瞭な場合は `ユーザー確認` でユーザー確認。
+ブランチ特定が不明瞭な場合は `AskUserQuestion` でユーザー確認。
 
 変更ファイル一覧を issue スコープと照合:
 
@@ -56,7 +56,7 @@ git diff "$DEVELOP_BRANCH"...HEAD --name-only
 
 **スコープ外変更が 1 件でもあれば、以下を実行**:
 
-1. `ユーザー確認` でユーザーに方針確認:
+1. `AskUserQuestion` でユーザーに方針確認:
    - **(a) 別 issue として起票**: 変更を revert せず、同 commit 内で但し書き、新 issue を起票して親 issue にリンク
    - **(b) 今すぐ revert**: `git reset <sha> -- <逸脱ファイル>` で変更を退避し、別ブランチで後日対応
    - **(c) スコープ拡大を認める**: 元 issue の scope を編集し、変更を正当化 (ユーザー判断必須)
@@ -105,7 +105,7 @@ PR 作成直前に以下を PR 本文に明記:
 
 - **(A) 同 PR 修正可の目安**: CI YAML 1-2 箇所の path 書換え / テスト追加 1-2 ファイル / doc 追従 1-2 箇所
 - **(B) 別 issue 起票の目安**: 別レイヤー実装変更を伴う (検知パイプライン / GUI / CLI への連鎖修正) / 既存テスト再実行工数が長時間 (GPU / 音声統合で 30 分超) / 別担当領域
-- 判断に迷う場合は `ユーザー確認` でユーザー (Idios) 判断に回す
+- 判断に迷う場合は `AskUserQuestion` でユーザー (Idios) 判断に回す
 
 それ以外のドキュメント更新 (typo, 説明追加) は別 PR で。
 

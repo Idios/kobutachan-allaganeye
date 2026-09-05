@@ -4,7 +4,7 @@ description: PR レビュー時に元 issue の受け入れ条件を逐条検証
 
 ---
 
-> Iron Law 1 (`AGENTS.md`) の手順実装。詳細な背景・条文は hook を参照。
+> Iron Law 1 (`AGENTS.md`) の手順実装。詳細な背景・条文は `AGENTS.md` §Iron Law を参照。
 
 ## 呼び出しタイミング
 
