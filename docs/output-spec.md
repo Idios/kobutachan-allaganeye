@@ -245,7 +245,7 @@ Metadata: <metadata.json path>
 
 | | 実体 |
 | --- | --- |
-| ①発火点 | [`/review-pr`](../.claude/skills/review-pr/SKILL.md) Step 5「パス生成点・表示点を触る PR の場合」 |
+| ①発火点 | [`review-pr`](../.agents/skills/review-pr/SKILL.md) Step 5「パス生成点・表示点を触る PR の場合」 |
 | ②非実施記録 | 同 step。非該当なら `パス契約: 非該当 (理由: パスの生成点・表示点に変更なし)` を Step 6 に 1 行 |
 | ③red 実証 | `tests/test_export_schema.py::test_progress_event_result_reports_absolute_path` (相対 `-o` を渡して絶対パスが返ることを assert。`os.path.abspath` を外すと red になることを PR #930 が実測済み) |
 

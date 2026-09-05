@@ -217,7 +217,7 @@ def resolve_video_path(source_relative: str) -> Path:
     if not base:
         raise OSError(
             "ALLAGANEYE_SAMPLE_VIDEO_DIR is not set. Point it to the directory "
-            "containing the recording subdirs (see CLAUDE.md §動画サンプルデータ)."
+            "containing the recording subdirs (see AGENTS.md §動画サンプルデータ)."
         )
     candidate = Path(base) / source_relative
     if not candidate.exists():

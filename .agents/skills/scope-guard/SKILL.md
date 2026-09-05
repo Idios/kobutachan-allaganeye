@@ -1,16 +1,16 @@
 ---
 name: scope-guard
 description: 実装中の「ついでに直した」スコープ逸脱を検知し、(a) 別 issue 起票 / (b) revert / (c) スコープ拡大 の 3 択をユーザー判断で強制する。Iron Law 3 の執行機構。
-user-invocable: true
+
 ---
 
-> Iron Law 3 (`.claude/hooks/session-start.sh`) の手順実装。詳細な背景・条文は hook を参照。
+> Iron Law 3 (`AGENTS.md`) の手順実装。詳細な背景・条文は `AGENTS.md` §Iron Law を参照。
 
 ## 呼び出しタイミング
 
 - **実装中**: 着手 issue の範囲外変更を必要と判断した瞬間
 - **PR 作成直前**: `git diff --stat` で変更範囲を確認する際に必ず実行
-- **単独呼び出し**: `/scope-guard` で任意のタイミングでチェック
+- **単独呼び出し**: `scope-guard` で任意のタイミングでチェック
 
 ## 手順 (Gate Function)
 
@@ -66,15 +66,15 @@ git diff "$DEVELOP_BRANCH"...HEAD --name-only
 
 **フロー**: (b) revert を選択した場合は本スキル終了（作業ブランチから逸脱変更が消えたため Step 4 不要）。(a)/(c)/(d) を選択した場合は Step 4 に進み PR 本文への記載事項を確認する。
 
-### Codex commit 検査範囲 (C4、`/codex:rescue` 経由の commit を含める)
+### Codex commit 検査範囲 (C4、`codex rescue` 経由の commit を含める)
 
-`/codex:rescue` が `--write` で commit を作った場合、scope 外の独断 fix がないか本 skill が検査する:
+`codex rescue` が `--write` で commit を作った場合、scope 外の独断 fix がないか本 skill が検査する:
 
 ```bash
 git log --author='codex\|Codex' --oneline -10
 ```
 
-該当 commit があれば Step 2 の変更範囲確認に含める。Codex の独断 fix も Iron Law 3 の対象であり、本 skill の (a)/(b)/(c)/(d) 3 択を経由させる。詳細は `CLAUDE.md` §Codex 運用 §rescue を参照。
+該当 commit があれば Step 2 の変更範囲確認に含める。Codex の独断 fix も Iron Law 3 の対象であり、本 skill の (a)/(b)/(c)/(d) 3 択を経由させる。詳細は `AGENTS.md` §Codex 運用 §rescue を参照。
 
 ### Step 4: PR 作成前の最終確認
 

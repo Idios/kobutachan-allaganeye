@@ -96,7 +96,7 @@ ${selfTestItems}
 #### 関連ドキュメント / マトリクス更新
 
 - [ ] 関連ドキュメント更新 — 該当なしなら \`[x]\` + 理由付記
-- [ ] CLAUDE.md / \`docs/l2-workflow.md\` の更新要否確認
+- [ ] AGENTS.md / \`docs/l2-workflow.md\` の更新要否確認
 
 #### 実機検証 (machine-unverifiable — plain bullet で書く)
 

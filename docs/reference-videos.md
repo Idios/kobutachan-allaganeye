@@ -100,4 +100,4 @@ yt-dlp --download-sections "*0:00-5:00" -o "sample_%(id)s.%(ext)s" "<URL>"
 ```
 
 > 著作権に注意: テスト用の短いサンプルに留め、リポジトリにはコミットしないこと。
-> プロジェクトのサンプルデータは環境変数 `ALLAGANEYE_SAMPLE_VIDEO_DIR` で指定したディレクトリの自前の録画を使用する（詳細は `CLAUDE.md` 参照）。
+> プロジェクトのサンプルデータは環境変数 `ALLAGANEYE_SAMPLE_VIDEO_DIR` で指定したディレクトリの自前の録画を使用する（詳細は `AGENTS.md` 参照）。

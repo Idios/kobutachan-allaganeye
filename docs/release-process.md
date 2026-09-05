@@ -44,7 +44,7 @@ main (リリースタグ時のみ更新、L1: v0.1.0-preview / v0.1.1 / L2: v0.2
  └── develop-0.3.0 (L3 開発の統合先)
       ├── claude/l3-minimap-*        ← minimap 切抜き (#481, parent #753)
       ├── claude/l3-perf-*           ← export 並列 (#761 #762) / detect 高速化 (#576)
-      ├── claude/l3-vtuber-*         ← VTuber 動画対応 (2026-07-17 再開 #895 timeline 再設計。release 割当は /release Step 0c 判断)
+      ├── claude/l3-vtuber-*         ← VTuber 動画対応 (2026-07-17 再開 #895 timeline 再設計。release 割当は release Step 0c 判断)
       └── claude/<issue-N>-<slug>    ← 個別 issue 消化
 ```
 
@@ -59,20 +59,20 @@ main (リリースタグ時のみ更新、L1: v0.1.0-preview / v0.1.1 / L2: v0.2
 ### PR フロー
 
 ```text
-claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チェック) → develop-x.x.x へマージ
+claude/<scope>-* → 実機検証 → PR → review-pr (受け入れ条件チェック) → develop-x.x.x へマージ
 ```
 
 レビュー・マージは**単一セッション内で skill を呼び分けて**実施する。実機検証は PR 作成前に行う。セッション間ハンドオフは不要 (詳細は `docs/l2-workflow.md`)。
 
 ## タグ運用
 
-- リリース判断後、`/release` skill が `develop-x.x.0` から `release/v<新バージョン>` を切り、`release/v<新バージョン> → main` の PR を作成・マージする (実例: v0.3.0 = PR [#924](https://github.com/Idios/kobutachan-allaganeye/pull/924))
+- リリース判断後、`release` skill が `develop-x.x.0` から `release/v<新バージョン>` を切り、`release/v<新バージョン> → main` の PR を作成・マージする (実例: v0.3.0 = PR [#924](https://github.com/Idios/kobutachan-allaganeye/pull/924))
 - `main` の HEAD にタグを打つ
 - タグ形式: `v<major>.<minor>.<patch>`
 - **CHANGELOG 見出し日付 = タグを打つ日 (JST)** — `CHANGELOG.md` の `## [x.y.z] - YYYY-MM-DD` の日付は、そのバージョンの**タグを打つ日**を `Asia/Tokyo` で表した値とする (裁定 D6、#948)
   - 基準タイムゾーンは `Asia/Tokyo` に**ハードコードする**。GitHub Actions runner は既定 UTC なので、明示変換しない実装は JST 深夜のタグ打ちで 1 日ずれた日付を「正」として比較してしまう。過去 4 タグ中 2 件が該当する (v0.1.1 = 2026-04-20 02:55 JST / v0.2.1 = 2026-05-17 08:43 JST の 2 件は UTC 日付が前日になる)
   - **00:00-09:00 JST のタグ打ちは許容する** (spec §8.2 O-5 の決着)。運用側で時間帯を縛らず、検査側の `Asia/Tokyo` 変換で吸収する
-  - タグを打つ直前に見出し日付を当日へ更新し、**リリース PR の head (`release/vX.Y.Z`) へ commit する** (`main` は保護ブランチなのでマージ後には直せない)。手順は [`.claude/skills/release/SKILL.md`](../.claude/skills/release/SKILL.md) §Step 4
+  - タグを打つ直前に見出し日付を当日へ更新し、**リリース PR の head (`release/vX.Y.Z`) へ commit する** (`main` は保護ブランチなのでマージ後には直せない)。手順は [`.agents/skills/release/SKILL.md`](../.agents/skills/release/SKILL.md) §Step 4
   - 機械検査は [`scripts/check_version_consistency.py`](../scripts/check_version_consistency.py) の `--tag` 指定時のみ発火する。基準日は **annotated tag の `taggerdate` のみ**を `--changelog-date-from` で渡す。`head_commit.timestamp` へ fallback しない — あれは「タグが指す commit の日時」であってタグを打った日時ではなく、commit とタグ push が日を跨ぐと規約とズレた値を「正」として通してしまうため。`taggerdate` が取れない場合 (lightweight tag) は fail させ、`git tag -a` で打ち直す
   - **検査対象外の集合**は同スクリプトの `check_changelog_heading()` docstring に列挙してある
 - コマンド: `git tag -a v0.x.0 -m "Release v0.x.0: <レイヤー名>"` (**annotated tag**。`taggerdate` が日付検査の**唯一の基準**になるため lightweight tag は使わない (取れなければ fail し、commit 日時へは fallback しない))
@@ -91,8 +91,8 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
     1. **ローカルで作る** — §手動リリース手順 (CI 迂回) の [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) を直接実行する
     2. **リリース PR の CI から取る** — `release.yml` の `pull_request` trigger は base…head の全 diff で評価されるため、リリース PR では起動し `upload-artifact` の `pull_request` 分岐が成立する (実測: PR #924 の `build-windows (pwsh)` job)。取るのは `allaganeye-windows-v<version>` の方 (同時に上がる `allaganeye-baseline-v<version>` は `baseline.json` のみ)。**ただしこの artifact は展開済み payload で、1 / 3 の ZIP が持つ最上位 `allaganeye-v<version>/` ディレクトリを含まない** — 「展開 = インストール」の確認に使うときは形が違う点に注意 (`release` job が再 zip して wrapper を復元している)
     3. **タグ push 後の Release 添付から取る** — `refs/tags/v*` の push で自動作成される GitHub Release に添付される
-- **タグ push 後に `version-check` が落ちた場合の打ち直し手順**は [`.claude/skills/release/SKILL.md`](../.claude/skills/release/SKILL.md) §タグ push 後に `version-check` が落ちた場合の打ち直し にある (旧タグ削除 / ルール 5 経由の main PR / 日付再更新の再帰)
-- `/release` スキルは develop → main PR 作成・CHANGELOG 更新の支援に使う (Release 作成自体は上記 workflow が担う)
+- **タグ push 後に `version-check` が落ちた場合の打ち直し手順**は [`.agents/skills/release/SKILL.md`](../.agents/skills/release/SKILL.md) §タグ push 後に `version-check` が落ちた場合の打ち直し にある (旧タグ削除 / ルール 5 経由の main PR / 日付再更新の再帰)
+- `release` スキルは develop → main PR 作成・CHANGELOG 更新の支援に使う (Release 作成自体は上記 workflow が担う)
 
 ## CHANGELOG entry の記述規約 (#952)
 
@@ -109,7 +109,7 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 **書かない (entry 不要、裁定 R7 / 2026-08-11)**: 利用者から見た振る舞いが変わらないもの。
 
 - CI job / ガード / チェックスクリプトの新設・変更
-- 開発者向け doc (`docs/developer-setup.md` / `docs/l2-workflow.md` 等)、skill (`.claude/skills/**`)、hook
+- 開発者向け doc (`docs/developer-setup.md` / `docs/l2-workflow.md` 等)、skill (`.agents/skills/**`)、hook
 - テスト、lint / 型チェックの版 pin、内部 refactor
 
 これらの記録は **PR 本文と issue** に残る。CHANGELOG に重複させない。`### Internal` 節は過去バージョン (0.1.1 / 0.2.0 / 0.3.0) の歴史記録として残すが、**新規バージョンでは使わない** — 上記のとおり Release 本文に丸ごと出てしまい、読者には意味を持たないため。
@@ -145,7 +145,7 @@ claude/<scope>-* → 実機検証 → PR → /review-pr (受け入れ条件チ�
 
 本規約は宣言だけでは発火しないので、以下の 3 箇所に紐づける。
 
-1. **[`.claude/skills/release/SKILL.md`](../.claude/skills/release/SKILL.md) §Step 3 項目 2** — `## [Unreleased]` を `## [<新バージョン>] - YYYY-MM-DD` へ改名する手順に、本節への参照と `check_changelog_style.py` の実行を含める。**改名を飛ばすと `check_version_consistency.py --tag` が「該当版の節がありません」で落ちる**ので、この手順は避けて通れない
+1. **[`.agents/skills/release/SKILL.md`](../.agents/skills/release/SKILL.md) §Step 3 項目 2** — `## [Unreleased]` を `## [<新バージョン>] - YYYY-MM-DD` へ改名する手順に、本節への参照と `check_changelog_style.py` の実行を含める。**改名を飛ばすと `check_version_consistency.py --tag` が「該当版の節がありません」で落ちる**ので、この手順は避けて通れない
 2. **[`.github/pull_request_template.md`](../.github/pull_request_template.md) §関連ドキュメント / マトリクス更新** — PR 作成時に「CHANGELOG entry の要否を判断した」ことを記録する。**この box は CI の counting 対象外である** (#936 / #967 で確定した blast radius は `## 受け入れ条件` と `#### Self-Test Report` の 2 群のみ)。したがってこれは**人手ゲート**であり、未記入でも `validate-checklist` は赤にならない
 3. **機械検査**: [`scripts/check_changelog_style.py`](../scripts/check_changelog_style.py) — CI (`ci.yml` の `changelog-style` job) が走査対象セクションを検査する。**3 点セットの ③ (発火側の red 実証) を担うのはこれだけ**で、1 と 2 は読まれる場所の確保にすぎない
 
@@ -211,7 +211,7 @@ required に指定する check は以下の 8 件。
 | 同上 | `true` | 通る (exit 0) |
 | 既存ブランチへの追加 push | `true` | **reject** (同じ `GH013`)。`do_not_enforce_on_create` は**作成時しか免除しない** |
 
-**この 3 行目が効く箇所が [`/release` SKILL.md](../.claude/skills/release/SKILL.md) §Step 4 (CHANGELOG 見出し日付の commit) である。** 初版 (2026-08-20) では対象を `main` のみに絞ってこれを回避していたが、**Step 4 を PR 経由へ改めたうえで `release/*` を保護対象へ加えた** (Idios 判断 2026-08-20)。`do_not_enforce_on_create: true` はブランチ作成 (`git push -u origin release/vX.Y.Z`) を通すために必須。
+**この 3 行目が効く箇所が [`release` SKILL.md](../.agents/skills/release/SKILL.md) §Step 4 (CHANGELOG 見出し日付の commit) である。** 初版 (2026-08-20) では対象を `main` のみに絞ってこれを回避していたが、**Step 4 を PR 経由へ改めたうえで `release/*` を保護対象へ加えた** (Idios 判断 2026-08-20)。`do_not_enforce_on_create: true` はブランチ作成 (`git push -u origin release/vX.Y.Z`) を通すために必須。
 
 `develop-*` は**まだ保護していない**。裁定 D4 により patch release のリリース PR head は `develop-<version>` であり、そこへの Step 4 の直接 commit が現行手順として残っているため。`develop-*` も保護する場合は、**Step 4 を patch release でも PR 経由に統一するのが前提**になる。
 
@@ -236,11 +236,11 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 - **required の 8 件を report できるのは、head 側が現行の workflow を持つ PR だけ。** `pull_request` の workflow は merge ref (base + head) から読まれるため、`develop-*` / `release/*` から出す通常のリリース PR は問題ない。一方 **`main` から直接切った branch を head にする PR (hotfix 等) は、`main` 上の workflow にまだ無い job が never-reported になり恒久的にマージ不能になる**。実例: 2026-08-20 時点の `main` の `ci.yml` には `doc-code-refs` / `feature-announcement` / `screenshot-freshness` が無く、`markdownlint.yml` も paths filter を持ったままである (v0.3.1 のリリース PR で解消する)
 - **required の 8 件以外は red でもマージを止めない。** `hook-test` / `doc-tauri-commands-drift` / `doc-error-hint-drift` / `doc-code-refs` / `shellcheck` / `version-check` / `cargo audit` / `npm audit` / `dependency review` は informational
 - **対象 ref に列挙しないブランチは無保護。** 将来 `hotfix/*` 等を切る場合は本節と workflow の両方を更新しないと素通りする
-- **ruleset は repo 外設定なので、GitHub 側で誰かが無効化しても diff に現れない。** 上記の確認コマンドを `/release` Step 0 で実行することが唯一の検知経路
+- **ruleset は repo 外設定なので、GitHub 側で誰かが無効化しても diff に現れない。** 上記の確認コマンドを `release` Step 0 で実行することが唯一の検知経路
 
 ## レイヤーリリース受け入れゲート
 
-各リリース (minor / patch) (`release/vX.Y.Z → main`) の実行前に、本節のチェックリストを全件達成する。共通項目はすべてのリリース (minor / patch) に適用、レイヤー固有項目は対応するバージョンで適用する。`/release` skill の Step 0 で本節を参照する (`.claude/skills/release/SKILL.md`)。
+各リリース (minor / patch) (`release/vX.Y.Z → main`) の実行前に、本節のチェックリストを全件達成する。共通項目はすべてのリリース (minor / patch) に適用、レイヤー固有項目は対応するバージョンで適用する。`release` skill の Step 0 で本節を参照する (`.agents/skills/release/SKILL.md`)。
 
 > **patch release にも適用する** (裁定 D5)。本節は当初「minor リリース」限定の文面だったため、patch release (v0.M.N → v0.M.(N+1)) では §共通項目 が 1 度も読まれない状態だった。§Patch release の Track 構造 で patch を正式運用に組み込んだ以上、共通項目は minor / patch の双方で達成する。
 
@@ -248,7 +248,7 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 
 - [ ] `develop-x.x.0` 上で対象スコープの全 PR がマージ済み
 - [ ] CI 全ジョブ (Python / GUI frontend / GUI Rust / Pester) が**リリース PR の HEAD** (`release/vX.Y.Z` tip) で緑 — develop tip は release ブランチに載せた出荷直前 commit を含まないため基準にしない
-- [ ] **タグ打ち直前の security 再チェックを実施した** ([`/release` SKILL.md](../.claude/skills/release/SKILL.md) §Step 5) — `security-audit.yml` の 3 job (`cargo audit` / `pip audit` / `npm audit`) が**リリース PR の HEAD** で緑、かつ Dependabot の open alert がゼロまたは Idios が既知として了承済み。実施しなかった場合はリリース PR 本文に `security 再チェック: 非実施 (理由: …)` を 1 行残す。**この工程が見ていない集合**は同 §Step 5 に列挙してある (再チェックからタグまでの窓は 0 にできない / alert は既定ブランチしか scan しない / cron は最悪 24h 遅延) (#950)
+- [ ] **タグ打ち直前の security 再チェックを実施した** ([`release` SKILL.md](../.agents/skills/release/SKILL.md) §Step 5) — `security-audit.yml` の 3 job (`cargo audit` / `pip audit` / `npm audit`) が**リリース PR の HEAD** で緑、かつ Dependabot の open alert がゼロまたは Idios が既知として了承済み。実施しなかった場合はリリース PR 本文に `security 再チェック: 非実施 (理由: …)` を 1 行残す。**この工程が見ていない集合**は同 §Step 5 に列挙してある (再チェックからタグまでの窓は 0 にできない / alert は既定ブランチしか scan しない / cron は最悪 24h 遅延) (#950)
 - [ ] required status checks の ruleset が生きている (`gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'` が非空で、[§ブランチ保護と required status checks](#ブランチ保護と-required-status-checks-947) の 8 件を含む) — ruleset は repo 外設定で diff に現れないため、無効化を検知できるのはこの確認だけ (#947)
 - [ ] [バージョン保持箇所](versioning.md#バージョン管理場所)が**全箇所**`x.y.0` に更新されている (`python scripts/check_version_consistency.py` が exit 0)
 - [ ] `CHANGELOG.md` に対象バージョンセクションが存在 (**日付 = タグ打ち日 JST** (§タグ運用) / 主要変更点 / breaking changes)
@@ -276,7 +276,7 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 
 - [ ] **G1: OBS baseline bit-exact 回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_v030_baseline_regression.py`。5 本の OBS 録画 (obs-20260116 / 118 / 119 / 127 / 209) の検知結果が pin 済み baseline と一致すること。**本ゲートに masked / VTuber の動画は含まれない** (`_CLASS_A_BASELINES` は OBS のみ)。§v0.3.0 以降のレイヤー固有ゲート枠組み の表にある「masked baseline 検知 ground truth 一致」という当初想定の表現は実態と異なるため、masked の根拠は下記の注記を参照
 - [ ] **G2: minimap 領域提案の回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_areamap_slow.py`。エリアマップ window の seed 検出と per-match consensus の提案精度を検証する。**crop / encode 経路は対象外**で、切り抜き映像そのものの妥当性は M3 で目視確認する。**9 件が collect され、SKIP ゼロで PASS することを確認する** (marker を省くと `pyproject.toml` の `addopts = "-m 'not slow and not baseline_regen'"` により全件 deselect され、無検証のままゲートが通る)。GT 動画が実機から欠けている場合、該当ケースは hard fail ではなく SKIP になる ([#992](https://github.com/Idios/kobutachan-allaganeye/issues/992))。SKIP が出たときは検証されていない GT があるということなので、`tests/baselines/source-videos.sha256.json` の台帳から動画を復元して再実行する (§サンプル動画/GT データの保全 は [`docs/testing-guide.md`](testing-guide.md) 参照)。欠落を許容する判断をした場合のみ `tests/test_areamap_slow.py` の `_KNOWN_MISSING_GT_IDS` に理由付きで記録し、その旨をリリース PR 本文に残す
-- [ ] **G3: VTuber timeline GT 回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_vtuber_gt_regression.py`。6 配信者 / GT 67 試合に対する recall と spurious を検証する。`--vtuber` を当該リリースで公開扱いにする場合は必須 (`/release` Step 0c で判断)。**検出ロジック / GT データ / ハーネスのいずれかを触った commit の後は再実行する**。`allaganeye/commands/split_matches.py` の `_VTUBER_ALGO_VERSION` の bump が再実行要否の目印になる
+- [ ] **G3: VTuber timeline GT 回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_vtuber_gt_regression.py`。6 配信者 / GT 67 試合に対する recall と spurious を検証する。`--vtuber` を当該リリースで公開扱いにする場合は必須 (`release` Step 0c で判断)。**検出ロジック / GT データ / ハーネスのいずれかを触った commit の後は再実行する**。`allaganeye/commands/split_matches.py` の `_VTUBER_ALGO_VERSION` の bump が再実行要否の目印になる
 
 > **masked 検出の根拠**: v0.3.2 (#925) で **pin 済み baseline 回帰ゲートを追加** —
 > `pytest -m "slow_detect and not baseline_regen" tests/test_masked_baseline_regression.py`
@@ -385,7 +385,7 @@ v0.M.N → v0.M.(N+1) の patch release を **Track A-D 構造**で並列化す�
 ### 適用条件
 
 - security alert / Dependabot patch
-- deferred UX 吸収 (`/release` skill Step 0c (M9) で「次 patch 吸収」と判定された issue 群)
+- deferred UX 吸収 (`release` skill Step 0c (M9) で「次 patch 吸収」と判定された issue 群)
 - CI / build gate 追加
 - 緊急 bug fix の集約
 
@@ -403,11 +403,11 @@ minor release (v0.M.0 → v0.(M+1).0) や major refactor は本 Track 構造の�
 
 Track A / B / C は worktree 別 / 並列着手可能。Track D は他全 Track のマージ後に直列実行する (version bump が他 PR と base 衝突しないようにするため)。
 
-### `/release` skill との連携
+### `release` skill との連携
 
 Step 0a 受け入れゲート → Step 0b deferred 全件取得 → Step 0c 1 件ずつ (a) 次release吸収 / (b) deferred 継続 / (c) close 分類。Step 0c で (a) と分類された issue 群が **Track B 吸収候補** となり、spec PR (Track 0) の table に記録される。
 
-詳細な Step 0c 運用は [`.claude/skills/release/SKILL.md`](../.claude/skills/release/SKILL.md) を参照。
+詳細な Step 0c 運用は [`.agents/skills/release/SKILL.md`](../.agents/skills/release/SKILL.md) を参照。
 
 ### 参考: v0.2.1 patch release (2026-05-16)
 
