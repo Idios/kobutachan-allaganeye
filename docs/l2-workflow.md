@@ -1370,7 +1370,7 @@ Python 依存側でも同型が起きた (#916)。`opencv-python-headless>=4.8` 
 | ソース | 形式 | 例 |
 | --- | --- | --- |
 | PyPA versioned tag | `https://github.com/pypa/<repo>/raw/<tag>/...` | get-pip.py |
-| BtbN monthly snapshot | `https://github.com/BtbN/FFmpeg-Buildsreleases/download/autobuild-YYYY-MM-{28,29,30,31}-*/...` | FFmpeg n8.1 |
+| BtbN monthly snapshot | `https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-YYYY-MM-{28,29,30,31}-*/...` | FFmpeg n8.1 |
 | npm registry version pin | `package.json` の `dependencies` で `"^X.Y.Z"` (transitive は package-lock.json で fix) | tauri / vite |
 | cargo registry version pin | `Cargo.toml` の `tauri = "2.11"` (transitive は Cargo.lock で fix) | tauri-utils |
 | SHA-pinned download | `https://.../...-<commit-hash>.tar.gz` + SHA256 checksum | FFmpeg checksum |
