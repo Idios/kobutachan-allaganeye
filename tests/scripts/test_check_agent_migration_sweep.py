@@ -41,7 +41,7 @@ _spec.loader.exec_module(guard)
 # (label, text) -- いずれも「slash command を検出する」べき。
 _SLASH_POSITIVE: list[tuple[str, str]] = [
     ("backtick", "実行時は `/review-pr` を呼ぶ"),
-    ("space-wrapped", "→ /release [patch|minor|major] で bump"),
+    ("space-wrapped", "-> /release [patch|minor|major] で bump"),
     ("leading", "/iterate-review <PR#> で処理"),
     ("paren", "(/scope-guard を呼ぶ)"),
 ]
@@ -130,7 +130,7 @@ def test_hook_file_is_scanned(tmp_path: Path) -> None:
     _make_repo(tmp_path)
     (tmp_path / ".claude" / "hooks").mkdir(parents=True)
     (tmp_path / ".claude" / "hooks" / "session-start.sh").write_text(
-        "cat <<'EOF'\n- `/review-pr` 実行時は…\nEOF\n", encoding="utf-8"
+        "cat <<'EOF'\n- `/review-pr` 実行時は...\nEOF\n", encoding="utf-8"
     )
     assert _run_repo(tmp_path) == 1
 
