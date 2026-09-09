@@ -10,7 +10,7 @@
    - 元 issue の `## 受け入れ条件` 各項目を逐条引用し、対応する diff / test を逐条引用してからでないと LGTM 出さない (#367 対策)
    - `review-pr` skill 実行時は `enforce-acceptance-criteria` skill を必ず呼ぶ
 
-2. **NO BULK OPERATION WITHOUT CONFIRMATION**
+2. **NO BULK OPERATION WITHOUT AskUserQuestion CONFIRMATION**
    - 3 件以上の issue 編集・ラベル付替・ブランチ削除・マージ・クローズ等は必ず事前確認 (#399 C, #400)
    - サンプル 1 件提示 + 「全件 OK / 個別調整 / やめる」の 3 択で聞く
 
