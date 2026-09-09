@@ -363,6 +363,14 @@ subprocess / IPC / OS API を介した encoding fix を行うときは、**以�
 
 単一 PR で touched files > 30 file or diff > 1000 line を超えそうな refactor は [`docs/refactor-pattern.md`](docs/refactor-pattern.md) §1 適用条件を確認し、Phase 分割を検討する。AppError migration (#663→#689→#714/716/725/730/733→#745→#746) が reference 実例。
 
+## 用語 sweep 完全性 checklist (#1041/#1042 教訓)
+
+repo 全域の用語 sweep (slash command の skill 名化、旧 path / 旧 filename の置換) を含む PR は、**「まとめて置換」だけでは漏れる** (PR #1051 は Round 4/5 まで session-start.sh / versioning.md の残存を個別に拾った)。
+
+sweep の完全性は [`scripts/check_agent_migration_sweep.py`](scripts/check_agent_migration_sweep.py) が living doc (`.md` / `.sh` の doc / skill / hook) の旧用語残存を検出し、CI job `doc-agent-migration-sweep` が gate する。将来の sweep では、**先に check の旧用語リストを更新してから sweep を実行**し、CI green で完全性を実証すること。
+
+コードファイル / CHANGELOG / eval レポート / dated plans・specs の旧参照は歴史記録 (棚卸 #1044) として対象外。
+
 ## destructive write boundary audit checklist (#930 教訓)
 
 **発火条件**: 本 PR が**新設・変更した外部入力境界** (CLI option / metadata field / GUI 自由入力 / 環境変数) と、そこから**到達する不可逆操作** (上書き / 削除 / truncate) がある場合。**既存境界の入力の扱いを変えただけでも発火する** (本節の 4 問は「新しい書込経路を足す / 既存の書込経路の入力を変えるとき」を対象とするため)。[`docs/l2-workflow.md` §Step 5 の focus 導出手順](docs/l2-workflow.md) と**同じトリガー語で発火する対の規約**であり、片方を実施したら他方も実施する。
