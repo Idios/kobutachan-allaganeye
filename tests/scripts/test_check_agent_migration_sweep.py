@@ -75,6 +75,17 @@ def test_literal_terms_list_is_non_empty() -> None:
     assert guard._LITERAL_TERMS, "_LITERAL_TERMS が空"
 
 
+def test_codex_old_terms_list_is_non_empty() -> None:
+    assert guard._CODEX_OLD_TERMS, "_CODEX_OLD_TERMS が空 (#1043)"
+
+
+def test_codex_old_terms_cover_invocation_contract() -> None:
+    """Codex 呼び出し契約の旧表記 (companion script / plugin path / env var) を覆う。"""
+    assert "codex-companion.mjs" in guard._CODEX_OLD_TERMS
+    assert "CLAUDE_PLUGIN_ROOT" in guard._CODEX_OLD_TERMS
+    assert ".claude/plugins" in guard._CODEX_OLD_TERMS
+
+
 # --------------------------------------------------------------------------
 # scope: 検査対象 (living doc) vs 除外 (historical / deferred)
 # --------------------------------------------------------------------------
@@ -121,6 +132,16 @@ def test_living_doc_old_path_is_exit_1(tmp_path: Path) -> None:
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "guide.md").write_text(
         "# Guide\n\n`.claude/skills/` を参照。\n", encoding="utf-8"
+    )
+    assert _run_repo(tmp_path) == 1
+
+
+def test_living_doc_codex_companion_is_exit_1(tmp_path: Path) -> None:
+    """Codex 呼び出し契約の旧表記 (codex-companion.mjs) 残存は exit 1 (#1043)。"""
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\n`codex-companion.mjs` を実行。\n", encoding="utf-8"
     )
     assert _run_repo(tmp_path) == 1
 
