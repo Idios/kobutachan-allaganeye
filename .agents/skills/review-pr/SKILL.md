@@ -481,23 +481,23 @@ Codex review が exit 0 で完了したら、**finding を stdout から拾う**
    > worktree から main repo へドリフトする事象が観測されている。`--base` で指定した base に
    > 対する diff を取れるのは review を実行した worktree のみ
 
-2. exit 0 なら、stdout を finding の入力とする。**exit 0 でも stdout が空 / parse 不能なら「応答異常」** (§Codex fallback の検出条件を参照)
+2. exit 0 なら、stdout を finding の入力とする。**exit 0 でも stdout が空 / parse 不能なら「応答異常」** (§Codex fallback の検出条件を参照)。空 stdout と部分 parse 不能は区別する: **空 = Codex 由来 row ゼロ**、**部分 = parse できた分のみ**。
 
 3. **成否にかかわらず、Step 6 レビュー報告に次のいずれか 1 行を必ず書く** (3 状態すべてに定型がある。`成功` 以外は理由が必須):
 
    > `Codex 出力読み取り: 成功 (stdout の finding を入力にした)`
    >
-   > `Codex 出力読み取り: 失敗 (理由: <stderr の先頭 1 行>)。stdout に見えた範囲のみで triage した`
+   > `Codex 出力読み取り: 失敗 (理由: <stderr の先頭 1 行。stderr が空/無益なら「stdout 空 / parse 不能」と記す>)。stdout に見えた範囲のみで triage した`
    >
    > `Codex 出力読み取り: 非起動 (理由: <上記「起動記録」の非対象行と同じ理由>)`
 
-   `失敗` は **fallback ではない**ので Codex fallback notice とは別物。この 1 行が無いと「全文を読んだ」「読めなかった」「そもそも起動していない」が事後に区別できない ([`docs/l2-workflow.md` §「規約・ガード導入の 3 点セット」](../../../docs/l2-workflow.md) ②)
+   `失敗` は **fallback ではない**ので Codex fallback notice とは別物。exit 0 でも stdout 空/parse 不能は「応答異常」として `失敗 (理由: stdout 空 / parse 不能)` に**落とし込む**。「応答異常」は §Codex fallback の検出ラベルであり、記録行としては `失敗` の 1 状態に集約する (別状態を新設しない)。この 1 行が無いと「全文を読んだ」「読めなかった」「そもそも起動していない」が事後に区別できない ([`docs/l2-workflow.md` §「規約・ガード導入の 3 点セット」](../../../docs/l2-workflow.md) ②)
 
    **読み取りが失敗したときの再試行・原因診断は任意**。1 行記録して先へ進んでよい (原因診断は本 step の責務ではない)。ただし cwd が review 実行時の worktree と違っていた場合だけは、cwd を直して 1 度だけやり直す — これは診断ではなく手順ミスの訂正である
 
    > **`iterate-review` の subagent mode で実行している場合**、この 1 行は Step 6 レビュー報告ではなく final message の `## meta` に同名で書く (controller が Step 4 Final summary へ転記する)。`非起動` を選んだときは、上記「起動記録」の非対象行を**この行の理由として畳んでよい** (固定 5 セクションに専用スロットを増やさない)
 
-長時間 review を非同期化したい場合は Bash tool の `run_in_background: true` を使う。
+長時間 review を非同期化したい場合は、tool が背景実行 (Bash の `run_in_background: true` / Zed の terminal 等) を提供していればそれを使う。
 
 Codex の finding は Step 5b トリアージ表に「出所 = codex review」と記載して統合する。Codex に直接 commit させない (M3 整合)。
 
@@ -706,7 +706,7 @@ Step 5b のトリアージ表を前提に、以下のテンプレート構造で
 - 外部依存規約: <該当 (...) / 非該当 (理由: 本 PR に外部依存の DL / 取得なし)>
 - パス契約: <該当 (...) / 非該当 (理由: パスの生成点・表示点に変更なし)>
 - Codex review 起動: <対象 (理由: ...) / 非対象 (理由: ...)>
-- Codex 出力読み取り: <成功 (job <job-id> ...) / 失敗 (理由: ...) / 非起動 (理由: ...)>
+- Codex 出力読み取り: <成功 (stdout の finding を入力にした) / 失敗 (理由: ...) / 非起動 (理由: ...)>
 - Codex fallback notice: <なし / 本文は docs/l2-workflow.md §Codex fallback の template>
 
 ## 検証推奨
