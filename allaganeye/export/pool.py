@@ -205,7 +205,7 @@ def _identity_key(resolved: Path) -> Path:
 
     #937 (c): macOS case-insensitive volumes (default APFS / HFS+) are *also*
     left alone. macOS is not a supported platform for this tool (Windows only,
-    per CLAUDE.md), and catching that case would need a per-volume
+    per AGENTS.md), and catching that case would need a per-volume
     case-sensitivity probe on Darwin plus a case-folding key -- a design that
     only pays off once macOS is on the supported list. Reached only on an
     unsupported platform, so it is recorded here rather than implemented.

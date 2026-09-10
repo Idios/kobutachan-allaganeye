@@ -32,7 +32,7 @@ cat <<'EOF'
 
 1. **NO PR MERGE WITHOUT ALL ACCEPTANCE CRITERIA CHECKED**
    - 元 issue の `## 受け入れ条件` 各項目を逐条引用し、対応する diff / test を逐条引用してからでないと LGTM 出さない (#367 対策)
-   - `/review-pr` 実行時は `enforce-acceptance-criteria` skill を必ず呼ぶ
+   - `review-pr` 実行時は `enforce-acceptance-criteria` skill を必ず呼ぶ
 
 2. **NO BULK OPERATION WITHOUT AskUserQuestion CONFIRMATION**
    - 3 件以上の issue 編集・ラベル付替・ブランチ削除・マージ・クローズ等は必ず事前確認 (#399 C, #400)
@@ -53,7 +53,7 @@ cat <<'EOF'
 6. **NO PR CREATION WITHOUT VERIFIED CHECKS**
    - PR 作成前に変更ファイル path に応じた自動チェック (Python: `ruff check .` / `ruff format --check .` / `pyright --pythonpath <venv python>` / `pytest`、GUI: `npm run lint` / `typecheck` / `test` / `build` / `cargo check`) を全 pass させる。「軽微だから skip」「Python のみだから GUI 側不要」は Red Flag (失敗パターン A 再発)
    - ロジック変更 (`gpu_detector.py` / `audio/*.py` / `video/detector.py` / `gui/src-tauri/**` 等) を含む場合は、ユーザー (Idios) に実機検証 (GPU / audio / 長時間動画 / GUI Tauri 起動) を `AskUserQuestion` で依頼する。「mock テスト pass = 実機検証不要」は Red Flag (失敗パターン B 再発)
-   - **PR 作成 Pre-flight (#659 で運用化、#722 で Step 0 ハードゲート追加、L-β β-4 で Step 5 Codex adversarial-review 追加)**: Step 0 = `gh pr list --search "<元issue#>" --state open` でハードゲート (<1s、build/verify の前) → Step 1 base 同期 (`git fetch origin <base>`) → Step 2 取り込み未済 commit (`git log HEAD..origin/<base>`) → Step 3 touched files 交差判定 → Step 4 並行 PR 重複再確認 (`gh pr list --search "<元issue#>" --state all`) → Step 5 Codex adversarial-review (agent は tier 1 = companion script `codex-companion.mjs adversarial-review` を直接呼び出し。slash `/codex:adversarial-review` は Idios 専用 tier 3。invocation path は `docs/l2-workflow.md` §「Step 5 の invocation path (3-tier、#795)」参照。focus は固定の例示から選ばず**本 PR の diff から導出する** — 新設・変更した外部入力境界 (CLI option / metadata field / GUI 自由入力 / 環境変数) と、そこから到達する不可逆操作 (上書き / 削除 / truncate) の対応ペアを列挙して必ず含める。ペアがゼロならゼロと focus に明記する。導出手順 (grep 込み) は `docs/l2-workflow.md` §「Step 5 の focus 導出手順」、C2)。Step 0 と Step 4 は検出 window が異なるため両方実施。「コンフリクト出ないから OK」「Step 0 で 0 件だったから Step 4 skip」は Red Flag (失敗パターン C 再発、`docs/l2-workflow.md` §「PR 作成 Pre-flight」 参照)
+   - **PR 作成 Pre-flight (#659 で運用化、#722 で Step 0 ハードゲート追加、L-β β-4 で Step 5 Codex adversarial-review 追加)**: Step 0 = `gh pr list --search "<元issue#>" --state open` でハードゲート (<1s、build/verify の前) → Step 1 base 同期 (`git fetch origin <base>`) → Step 2 取り込み未済 commit (`git log HEAD..origin/<base>`) → Step 3 touched files 交差判定 → Step 4 並行 PR 重複再確認 (`gh pr list --search "<元issue#>" --state all`) → Step 5 Codex adversarial-review (focus は固定の例示から選ばず本 PR の diff から導出する — 新設・変更した外部入力境界と不可逆操作の対応ペアを列挙して必ず含める。ペアがゼロならゼロと focus に明記する)。Step 0 と Step 4 は検出 window が異なるため両方実施。「コンフリクト出ないから OK」「Step 0 で 0 件だったから Step 4 skip」は Red Flag (失敗パターン C 再発、`docs/l2-workflow.md` §「PR 作成 Pre-flight」 参照)
    - **resume-plan handoff (#722 で運用化)**: resume task prompt を user に提示する際は 1 行目に `EXECUTOR: self|dispatch (origin=..., generated=...)` を明記。生成側 origin が継続実行 (self) か abort (dispatch) かを prompt 自身で自記する。詳細は `docs/l2-workflow.md` §「resume-plan handoff protocol」 参照
    - PR 本文には machine-verified を `[x]` で、machine-unverifiable を plain bullet `-` で書き分ける (`docs/l2-workflow.md` §「Self-Test Report 規約」)。詳細手順は `docs/l2-workflow.md` §「PR 作成 path 別自動チェック」 / §「実機検証 trigger 表」 参照
 
@@ -105,9 +105,9 @@ $matched
 
 このセッションを開始した目的を確認してください。AskUserQuestion で以下 3 択を提示すること:
 
-- (A) 当該 PR を review / iterate (\`/iterate-review <PR#>\`) で処理する [Recommended]
+- (A) 当該 PR を review / iterate (\`iterate-review <PR#>\`) で処理する [Recommended]
 - (B) 別 branch / 別 worktree で作業する想定だった (現 session を abort、user が別 worktree を立ち上げる)
-- (C) 当該 PR を更新する追加 commit を作る (= 同一 PR の継続作業、push 後に \`/iterate-review\` 起動)
+- (C) 当該 PR を更新する追加 commit を作る (= 同一 PR の継続作業、push 後に \`iterate-review\` 起動)
 
 判定根拠: \`gh pr list --head $current_branch --state open\` (Iron Law 6 / docs/l2-workflow.md §「PR 作成 Pre-flight」 §「resume-plan handoff protocol」)。
 </EXTREMELY_IMPORTANT>

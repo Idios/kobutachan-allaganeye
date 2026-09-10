@@ -22,7 +22,7 @@ Usage::
     python scripts/generate-v030-baselines.py --label obs-20260209  # one only
 
 ``ALLAGANEYE_SAMPLE_VIDEO_DIR`` must point at the source video tree (see
-``CLAUDE.md §動画サンプルデータ``).
+``AGENTS.md §動画サンプルデータ``).
 
 The ``validate_split_baseline`` / ``load_and_validate`` helpers are also
 imported by ``tests/scripts/test_generate_v030_baselines.py``.

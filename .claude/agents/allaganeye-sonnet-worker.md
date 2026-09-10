@@ -24,4 +24,4 @@ model: sonnet
 
 ## モデル非依存のロール仕様（fallback 用）
 
-本文（対象・制約）はモデル非依存のロール定義であり、Claude 利用不可時の fallback では **DeepSeek V4 Flash** が本ファイルを読んで同じロールを代行する。`model:` frontmatter は Claude Code 用であり、fallback では無視される。対応表・実行メカニズムは CLAUDE.md §モデルルーティング および `docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md` を参照。
+本文（対象・制約）はモデル非依存のロール定義であり、Claude 利用不可時の fallback では **DeepSeek V4 Flash** が本ファイルを読んで同じロールを代行する。`model:` frontmatter は Claude Code 用であり、fallback では無視される。対応表・実行メカニズムは AGENTS.md §モデルルーティング および `docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md` を参照。

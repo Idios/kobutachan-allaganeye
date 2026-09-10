@@ -9,7 +9,7 @@ description: deferred issue レビュー → バージョンバンプ → リリ
 
 ## 引数
 
-`$ARGUMENTS` にバージョン種別を指定（省略時は自動判定）:
+`バージョン種別` にバージョン種別を指定（省略時は自動判定）:
 
 - `patch`: バグ修正のみ
 - `minor`: 新機能追加
@@ -53,8 +53,7 @@ description: deferred issue レビュー → バージョンバンプ → リリ
 
 ### Step 0a-2: リリース俯瞰レビュー (allaganeye-fable-consult、必須) (#945)
 
-Step 0a の全件達成 (Track 構造の patch release では Step 0a 項目 4 の読み替え後の意味) を確認したら、**`Agent(subagent_type=allaganeye-fable-consult)` を起動して
-リリース記述を俯瞰レビューさせる**。本ステップはスキップできない。
+Step 0a の全件達成 (Track 構造の patch release では Step 0a 項目 4 の読み替え後の意味) を確認したら、**別途 Claude Code セッションで Fable（allaganeye-fable-consult ロール）にリリース記述の俯瞰レビューを依頼する**。本ステップはスキップできない。
 
 **対象** (2 点をまとめて渡す。**本 step の時点で実在するものだけを挙げてある**):
 
@@ -66,7 +65,7 @@ Step 0a の全件達成 (Track 構造の patch release では Step 0a 項目 4 �
 > **この時点で存在しないものを対象に挙げない。** 見出しの `## [Unreleased]` → `## [<版>] - YYYY-MM-DD` へのリネームも、リリース PR 本文も **Step 3** で作られる。本 step は Step 0a 直後 (Step 0b より前) に置かれているため、それらはまだ無い。無いものを対象に書くと、実行者が代替物を発明して渡すことになる (#945 Phase 2 の EPT で実際に発生した)。
 
 **観点**: 利用者から見た振る舞いの記述漏れ / 内部語彙の混入 / 既存 doc との矛盾 / スコープ過大。
-コードの技術的欠陥は対象外 (それは Codex、`CLAUDE.md` §「Fable と Codex の棲み分け」)。
+コードの技術的欠陥は対象外 (それは Codex、`AGENTS.md` §「Fable と Codex の棲み分け」)。
 
 #### 起動記録 (実施 / 非実施とも必須、数値記入 required)
 
@@ -98,7 +97,7 @@ Step 0a の判定は「達成 / 未達成 / **該当なし**」の 3 択で、**
 
 > **記録義務は分岐を網羅する**: 実施 / 非実施の両方に定型を置いてある。異常系・非該当だけに
 > 定型を用意すると、正常系のたびに実行者が文言を発明して表記が揺れる
-> (`/review-pr` §「起動記録」と同じ原則)。
+> (`review-pr` §「起動記録」と同じ原則)。
 
 ### Step 0b: deferred 全件取得 (M9、F8 教訓)
 
@@ -135,7 +134,7 @@ Step 0b で取得した各 deferred issue について、AskUserQuestion で以�
 (a) / (b) / (c) 各分類結果を spec PR (Track 0、`docs/superpowers/specs/<date>-v0.M.N+1-patch-design.md`) の §deferred 全件検証結果 table に保存:
 
 ```markdown
-### §deferred 全件検証結果 (`/release` Step 0c)
+### §deferred 全件検証結果 (`release` Step 0c)
 
 | issue # | title | 分類 | 判断理由 |
 | --- | --- | --- | --- |
@@ -149,7 +148,7 @@ Step 0b で取得した各 deferred issue について、AskUserQuestion で以�
 #### Step 0c で block する条件 (release PR 作成前 gate)
 
 - deferred 件数 > 0 かつ Step 0c の確認が完了していない → release PR 作成を block (本 skill が abort)
-- (a) 分類 issue 群が次 release scope に取り込まれる commit / PR plan を持たない → block (`/iterate-review` / `/create-task` で Track B PR の plan を先に作る)
+- (a) 分類 issue 群が次 release scope に取り込まれる commit / PR plan を持たない → block (`iterate-review` / `create-task` で Track B PR の plan を先に作る)
 
 F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏れた事例) の根本対策。
 
@@ -179,7 +178,7 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
   自由記述の問い合わせになったり独断で行き先を決めたりして記録が残らない。検出した
   not_planned issue **1 件につき**、次の 3 択を提示する:
 
-  - **(a) `/create-task` で残タスクを再起票**: 行き先が無く、まだ必要な作業が残っている
+  - **(a) `create-task` で残タスクを再起票**: 行き先が無く、まだ必要な作業が残っている
   - **(b) 対応不要 (マーカーが陳腐化)**: 実装済み / 方針変更でマーカー側が古い
   - **(c) 既存 issue に集約済み**: 行き先の issue 番号を user が指定する
 
@@ -398,7 +397,7 @@ F8 (deferred 持ち越し: #374 / #458 / #743 / #749 / #756 が v0.2.1 まで漏
     - [ ] バージョン保持フィールドが全て一致 (\`python scripts/check_version_consistency.py --tag v<新バージョン>\` が exit 0)
     - [ ] 全テスト通過 (\`pytest\`, \`ruff check .\`, \`ruff format --check .\`, \`pyright --pythonpath <repo root の .venv の python>\`)
     - [ ] deferred issue を全件レビュー済み
-    - [ ] CLAUDE.md の更新が必要な変更はない
+    - [ ] AGENTS.md の更新が必要な変更はない
 
     作成: <session-id>" | gh pr create \
       --title "Release v<新バージョン>" \
@@ -523,7 +522,7 @@ v0.3.0 では advisory 公開からタグ打ちまで **約 7 時間**の窓が�
 
 3. 未対応の open alert が残る場合は、タグを打つ前に Idios へ提示して「修正してから出す / 既知として出す」を判断してもらう。
 
-**実施しなかった場合の記録義務**: 本 Step を実行しなかったときは、リリース PR 本文へ 1 行だけ理由を残す（[`.claude/skills/review-pr/SKILL.md`](../review-pr/SKILL.md) の `Codex review 起動: 非対象 (理由: …)` パターンの踏襲）。
+**実施しなかった場合の記録義務**: 本 Step を実行しなかったときは、リリース PR 本文へ 1 行だけ理由を残す（[`.agents/skills/review-pr/SKILL.md`](../review-pr/SKILL.md) の `Codex review 起動: 非対象 (理由: …)` パターンの踏襲）。
 
 ```text
 security 再チェック: 非実施 (理由: …)

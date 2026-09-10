@@ -346,6 +346,20 @@ jobs:
         shell: bash
         run: python scripts/check_doc_code_refs.py
 
+  doc-agent-migration-sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # agent migration (#1041/#1042) の用語 sweep 完全性 gate。
+      # 旧用語 (slash command / `.claude/skills` / `CLAUDE.md`) が living doc に
+      # 残ると fail する (Round 4/5 で session-start.sh / versioning.md の残存を
+      # 個別に拾った事象の再発防止)。標準ライブラリのみで動く。
+      # exit 1 = 旧用語残存 / exit 2 = 検査自体が壊れている。
+      - name: Check agent migration sweep completeness
+        shell: bash
+        run: python scripts/check_agent_migration_sweep.py
+
   feature-announcement:
     runs-on: ubuntu-latest
     steps:

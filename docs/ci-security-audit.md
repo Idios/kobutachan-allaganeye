@@ -81,7 +81,7 @@ character maps to <undefined>
 
 (2026-08-20 に実 runner で観測。matrix 導入前は ubuntu でしか走っていなかったため表面化していなかった。)
 
-UTF-8 mode (PEP 540) にすると `locale.getpreferredencoding(False)` が UTF-8 を返すので解決する。**出荷物のビルド入力である requirements ファイル自体は書き換えない** — pip / PyInstaller 側の読み取り挙動に影響を与えないため。ローカルの Windows で `pip-audit -r` を叩く場合も同じ env が要る。これは [`CLAUDE.md` §encoding boundary audit checklist](../CLAUDE.md) の 3 層目 (OS code page) に該当する。
+UTF-8 mode (PEP 540) にすると `locale.getpreferredencoding(False)` が UTF-8 を返すので解決する。**出荷物のビルド入力である requirements ファイル自体は書き換えない** — pip / PyInstaller 側の読み取り挙動に影響を与えないため。ローカルの Windows で `pip-audit -r` を叩く場合も同じ env が要る。これは [`AGENTS.md` §encoding boundary audit checklist](../AGENTS.md) の 3 層目 (OS code page) に該当する。
 
 #### この job が見ていない集合
 
@@ -245,7 +245,7 @@ gh api repos/Idios/kobutachan-allaganeye/dependabot/alerts --paginate \
 release ブランチ上で lockfile を修正しても、`main` に merge されるまで alert は open のまま残る
 (v0.3.0 では npm 18 件がこの状態だった)。
 
-この確認は [`/release` SKILL.md](../.claude/skills/release/SKILL.md) §Step 5 が
+この確認は [`release` SKILL.md](../.agents/skills/release/SKILL.md) §Step 5 が
 タグ打ちの直前に実行する工程として規定している (#950)。
 
 #### `?state=all` を付けてはいけない (実測 2026-08-20、#950 O-1 の決着)

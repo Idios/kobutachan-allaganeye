@@ -41,10 +41,10 @@ def test_classify_path_known_scopes() -> None:
         preuse._classify_path(".github/ISSUE_TEMPLATE/bug_report.yml") == "l2-workflow"
     )
     assert preuse._classify_path(".claude/hooks/stop.sh") == "l2-workflow"
-    assert preuse._classify_path(".claude/skills/review-pr/SKILL.md") == "l2-workflow"
+    assert preuse._classify_path(".agents/skills/review-pr/SKILL.md") == "l2-workflow"
     assert preuse._classify_path("docs/refactor-pattern.md") == "l2-docs"
     assert preuse._classify_path("docs/l2-workflow.md") == "l2-docs"
-    assert preuse._classify_path("CLAUDE.md") == "l2-docs"
+    assert preuse._classify_path("AGENTS.md") == "l2-docs"
     assert preuse._classify_path("README.md") == "l2-docs"
     assert preuse._classify_path("pyproject.toml") == "l1-cli"
     assert preuse._classify_path(".markdownlint-cli2.yaml") == "l2-ci"
@@ -112,8 +112,8 @@ def test_check_scope_creep_empty_paths_allow() -> None:
 
 
 def test_check_scope_creep_docs_only_single_scope() -> None:
-    """docs/ + CLAUDE.md (both l2-docs) is single scope, allow."""
-    paths = ["docs/refactor-pattern.md", "CLAUDE.md", "docs/l2-workflow.md"]
+    """docs/ + AGENTS.md (both l2-docs) is single scope, allow."""
+    paths = ["docs/refactor-pattern.md", "AGENTS.md", "docs/l2-workflow.md"]
     should_ask, _ = preuse._check_scope_creep(paths)
     assert should_ask is False
 

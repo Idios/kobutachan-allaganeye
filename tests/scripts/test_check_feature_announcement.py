@@ -130,7 +130,7 @@ _ANNOUNCED: list[tuple[str, str, str]] = [
         '    allaganeye.bat detect "C:\\Users\\あなた\\Videos\\動画.mkv"',
     ),
     (
-        # CLAUDE.md のコマンド節に実在する形 (開発者向け doc の標準形)
+        # AGENTS.md のコマンド節に実在する形 (開発者向け doc の標準形)
         "bare-entrypoint-form",
         "minimap",
         "allaganeye minimap <metadata.json> --region X,Y,W,H",
