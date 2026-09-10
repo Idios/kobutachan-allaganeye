@@ -342,7 +342,7 @@ PR のみ、**file list 取得より手前**で return する (Dependabot 等の
 
 **optional Codex review (Codex 統合、C3)**
 
-以下のいずれかを満たす PR で Codex review を併走させる (人手 trigger or skill 内 auto)。agent 実行は tier 1 = companion script `codex CLI review --base develop-X.Y.Z` の Bash 実行 (slash `codex review` は `disable-model-invocation: true` のため agent から invoke 不可 = Idios 専用 tier 3。`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照):
+以下のいずれかを満たす PR で Codex review を併走させる (人手 trigger or skill 内 auto)。agent 実行は tier 1 = `codex` CLI 直接呼び出し `codex review --base develop-X.Y.Z` の Bash 実行 (§Codex 運用、`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照):
 
 - **条件 1 (大規模)**: PR diff が大きい (touched > 15 file or > 500 lines)、または
 - **条件 2 (再発)**: **再発 root cause** が複数 (Step 1.1 M5 警告 ≥2 件)、または
@@ -465,42 +465,29 @@ Codex review 起動: 判定不能 (理由: 変更ファイル一覧の取得が�
 > 読み取り = 成功 / 失敗 / 非起動)。新しい記録義務を足すときも同じ原則に従うこと。
 > 異常系だけに定型を置くと、正常系のたびに実行者が文言を発明する
 
-#### Codex 出力の読み取り (#949、openai-codex 1.0.4 時点)
+#### Codex 出力の読み取り (#949→#1043 で `codex` CLI に統合)
 
-Codex review が exit 0 で完了したら、**finding を stdout から拾う前に保存済み全文を読む**。契約の正は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md) で、本 step はその適用にあたる。
+Codex review が exit 0 で完了したら、**finding を stdout から拾う**。`codex` CLI は非対話で stdout に直接結果を出して終了する (旧 companion script の job 追跡機構 `status` / `result` / job id は廃止済)。契約の正は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md) で、本 step はその適用にあたる。
 
-1. review を実行した worktree の cwd のまま、**`CLAUDE_PLUGIN_ROOT` を張り直してから**直前の review job の **id を特定する**。以下は**同じ Bash 呼び出しの中で**実行する — Bash tool は呼び出し間で env var を保持しないため、review 実行時の `export` はこの時点で消えており、空のまま使うと `node "/scripts/codex-companion.mjs"` に展開されて `MODULE_NOT_FOUND` になる (実測):
+1. review を実行した worktree の cwd で `codex review --base <base> "<focus>"` を実行し、**stdout をそのまま finding の入力にする**:
 
    ```bash
    cd "<review を実行した worktree の絶対パス>"   # cwd は turn 境界で main repo へドリフトしうる。明示する
-   ls "$HOME/.claude/plugins/cache/openai-codex/codex/"
-   export CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<解決した version>"
-   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" status --json
+   codex review --base <base> "<focus>"
+   #   → finding は stdout に出る。exit code 0 = 成功 / 非ゼロ = 失敗 (§Codex fallback)
    ```
 
-   > **`cd` を省略しない。** 呼び出し間で消えるのは env var だけではない — 本 repo では
-   > turn 境界や background task の後に Bash の cwd が worktree から main repo へ
-   > ドリフトする事象が観測されている。cwd が違うと state dir も変わり、
-   > 「job が見つからない」形で静かに外れる
+   > **`cd` を省略しない。** 本 repo では turn 境界や background task の後に Bash の cwd が
+   > worktree から main repo へドリフトする事象が観測されている。`--base` で指定した base に
+   > 対する diff を取れるのは review を実行した worktree のみ
 
-   **まず `running[]` を見る。** `jobClass == "review"` の entry が居るなら**それが今回の review でまだ終わっていない**ので、空になるまで待つ。この状態で `latestFinished` を読むと **1 つ前の review の出力を今回の結果として取り込む** (実測)。
+2. exit 0 なら、stdout を finding の入力とする。**exit 0 でも stdout が空 / parse 不能なら「応答異常」** (§Codex fallback の検出条件を参照)
 
-   `running[]` が空になったら、`latestFinished` を先に見て **`jobClass` が `"review"`** ならその `.id`、違えば `recent[]` を先頭から走査して最初に `jobClass == "review"` になった entry の `.id` を採る。採った id が**今回起動した review のものか**を `updatedAt` / target base で 1 度確認する (詳細は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md))
+3. **成否にかかわらず、Step 6 レビュー報告に次のいずれか 1 行を必ず書く** (3 状態すべてに定型がある。`成功` 以外は理由が必須):
 
-2. その id を**明示して** `result` を実行する (`--json` は不要。プレーン出力が rendered 全文。`CLAUDE_PLUGIN_ROOT` は step 1 と同じ Bash 呼び出しなら張り直し不要):
-
-   ```bash
-   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result <job-id>
-   ```
-
-   **id を省略しない。** 省略時の選択は `jobClass` を見ずに「現 session の最新完了 job」を返すだけなので、同じ session で `codex rescue` や `task` を走らせていると **review ではない job の出力を review の finding として取り込む**
-
-3. exit 0 なら、その出力を finding の入力とする。**stdout に見えていた分だけで triage しない**
-4. **成否にかかわらず、Step 6 レビュー報告に次のいずれか 1 行を必ず書く** (3 状態すべてに定型がある。`成功` 以外は理由が必須):
-
-   > `Codex 出力読み取り: 成功 (job <job-id> の result 全文を finding の入力にした)`
+   > `Codex 出力読み取り: 成功 (stdout の finding を入力にした)`
    >
-   > `Codex 出力読み取り: 失敗 (理由: <result の stderr 先頭 1 行>)。stdout に見えた範囲のみで triage した`
+   > `Codex 出力読み取り: 失敗 (理由: <stderr の先頭 1 行>)。stdout に見えた範囲のみで triage した`
    >
    > `Codex 出力読み取り: 非起動 (理由: <上記「起動記録」の非対象行と同じ理由>)`
 
@@ -510,9 +497,9 @@ Codex review が exit 0 で完了したら、**finding を stdout から拾う�
 
    > **`iterate-review` の subagent mode で実行している場合**、この 1 行は Step 6 レビュー報告ではなく final message の `## meta` に同名で書く (controller が Step 4 Final summary へ転記する)。`非起動` を選んだときは、上記「起動記録」の非対象行を**この行の理由として畳んでよい** (固定 5 セクションに専用スロットを増やさない)
 
-`--background` / `--wait` は付けない。`review` / `adversarial-review` では受理されるだけで無視され、常に foreground blocking になる (openai-codex 1.0.4 時点)。長時間 review を非同期化したい場合は Bash tool の `run_in_background: true` を使う。
+長時間 review を非同期化したい場合は Bash tool の `run_in_background: true` を使う。
 
-Codex の finding は Step 5b トリアージ表に「出所 = codex:review」と記載して統合する。Codex に直接 commit させない (M3 整合)。
+Codex の finding は Step 5b トリアージ表に「出所 = codex review」と記載して統合する。Codex に直接 commit させない (M3 整合)。
 
 #### Codex fail 時の fallback 手順 (C6、L-β β-5 で追加)
 

@@ -1,5 +1,7 @@
 # Claude 利用不可時の DeepSeek fallback ルーティング 設計
 
+> **⚠️ Superseded (2026-09-10 / #1043)**: 本 spec の寄扱い（Claude 主・DeepSeek fallback）は反転しました。現在は **DeepSeek (Zed) が主エージェントで、Claude Code / Codex / Fable / Kimi Code はレビュー専用（別途セッション起動）**。モデルルーティングの正は [`AGENTS.md`](../../../AGENTS.md) §モデルルーティング（および §Codex 運用）。fallback notice の主従（Claude fallback notice → Codex fallback notice）も同節を参照。本ファイルは historical record として保存し、遡及書き換えしない。
+
 - **日付**: 2026-08-28
 - **状態**: Design
 - **対象**: allaganeye プロジェクトの開発ワークフロー設定（本ツールの実行時依存ではない。開発時のエージェント運用のみ）

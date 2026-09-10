@@ -171,26 +171,18 @@ gh pr list --search "<元issue#>" --state all \
 # 5. Codex adversarial-review (Codex 統合、C2、L-β β-4 で追加)
 # Step 0-4 通過後、PR 作成直前に Codex GPT-5.4 で adversarial pass。
 # invocation path は 3-tier (#795、下記 §Step 5 の invocation path 参照)。
-# default (tier 1) は companion script 直接呼び出し:
-#   # <version> は placeholder。実行直前に ls で実パスを解決してから代入する (#856)
-#   ls "$HOME/.claude/plugins/cache/openai-codex/codex/"
-#   # 代入は必ず「独立した文」で行う。`VAR=... node "$VAR/..."` の 1 行結合形は
-#   # $VAR が代入前に展開されて空になり、MSYS が裸の /scripts/... を
-#   # C:\Program Files\Git\scripts\... へ書き換えて MODULE_NOT_FOUND になる (実測)
-#   export CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<解決した version>"
-#   node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review \
-#     --base <base> "<focus 文字列 (ASCII)>"
+# default (tier 1) は `codex` CLI 直接呼び出し (#1043 で companion script → CLI に統合):
+#   codex review --base <base> "<focus 文字列 (ASCII)>"
+#   # `codex review` は非対話で stdout に finding を直接出す。
+#   # 旧 companion script の job 追跡機構 (`status` / `result` / job id) は
+#   # 廃止済み。出力は stdout を直接読む (§「Codex 出力の読み取り」参照)。
 #   # 注意: `... | tee log` で受けると tee の exit code が返るため Codex の失敗を
 #   #       見逃す。rc は ${PIPESTATUS[0]} で確認する (本 PR で実際に見逃した)
-#   # 注意: --background / --wait を付けてはいけない。review / adversarial-review は
-#   #       常に foreground blocking で、両フラグは受理されるだけで無視される
-#   #       (openai-codex 1.0.4 時点。下記 §「Codex 出力の読み取り」 参照)。
-#   #       非同期化が要る場合は Bash tool 側の run_in_background: true を使う
+#   # 注意: 非同期化が要る場合は Bash tool 側の run_in_background: true を使う
 # focus 文字列は固定の例示から選ぶのではなく本 PR の diff から導出する。
 # 手順は下記 §「Step 5 の focus 導出手順」 に従う (省略不可)。
-# 出力の finding は Claude が triage し (A) PR 内修正 / (B)(C) handoff のいずれかへ振り分け。
-# finding の取り込み元は stdout ではなく保存済み全文 (`result` subcommand)。
-# 手順は下記 §「Codex 出力の読み取り」 に従う (省略不可)。
+# 出力の finding は DeepSeek (主エージェント) が triage し (A) PR 内修正 / (B)(C) handoff のいずれかへ振り分け。
+# finding の取り込み元は stdout (§「Codex 出力の読み取り」)。
 # Codex 自身に commit させない (M3 整合)。Codex CLI が fail した場合は
 # `docs/l2-workflow.md` §Codex fallback (L-β β-5 で追加) に従う (tier 2)。
 ```
@@ -239,81 +231,45 @@ CODE="allaganeye/** gui/src/** gui/src-tauri/** scripts/** .github/scripts/**"
 
 #### Step 5 の invocation path (3-tier、#795)
 
-openai-codex plugin の `commands/adversarial-review.md` frontmatter には **`disable-model-invocation: true`** が明示されており、agent (Claude) が slash command `/codex:adversarial-review` を autonomous に invoke することは plugin spec レベルで禁止されている (出典: `~/.claude/plugins/cache/openai-codex/codex/<version>/commands/adversarial-review.md`、公式仕様は <https://code.claude.com/docs/en/agent-sdk/slash-commands> / <https://code.claude.com/docs/en/agent-sdk/plugins>、PR #792 で発覚)。この制約は **slash command の model-invocation のみ**を縛るため、Step 5 は以下の 3-tier で運用する:
+Codex は **standalone CLI (`codex`) 直呼び** (terminal 権限依存)。旧 companion script (Claude Code の openai-codex plugin 配下) とその slash command 機構は **廃止済み** (#1041/#1042 で `.claude/` 廃止、#1043 で `codex` CLI に一本化)。Step 5 は以下の 3-tier で運用する:
 
 | tier | path | trigger | 実行者 |
 | --- | --- | --- | --- |
-| 1 (default) | **companion script 直接呼び出し**: `node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review --base <base> "<focus>"` を Bash 経由で実行。本物の Codex GPT-5.4 review が agent 一気通貫で回る (PR #823 / #850 / #851 / #852 実績。focus は ASCII 推奨)。**`review` / `adversarial-review` は常に foreground blocking で、`--background` / `--wait` は受理されるが無視される** (openai-codex 1.0.4 時点、#949 で実測)。長時間 review を非同期化したい場合は Bash tool の `run_in_background: true` を使う (実際に効いているのはこちら)。finding は stdout ではなく §「Codex 出力の読み取り」 の手順で保存済み全文から取り込む | 常時 (Pre-flight Step 5 必須実行) | agent |
-| 2 (fallback) | superpowers `requesting-code-review` subagent。**Codex CLI が rate-limit / quota / network / auth 等で fail した場合のみ** (検出条件・重要 PR 判定・「Codex fallback notice」必須記載は §Codex fallback (C6) に従う) | tier 1 の Codex CLI fail | agent |
-| 3 (escalation) | Idios 自身が `/codex:adversarial-review` を直接 invoke し、結果を agent に share して PR 本文に追記 | Idios が tier 1/2 の review 内容・結果に不足ありと判断した場合 | Idios |
+| 1 (default) | **`codex` CLI 直接呼び出し**: `codex review --base <base> "<focus>"` を Bash 経由で実行 (§Codex 運用、AGENTS.md)。本物の Codex review が agent 一気通貫で回る (focus は ASCII 推奨)。`--base` は未マージ変更の diff 対象 base を指定 (help 参照)。finding は stdout に直接出るので、そのまま §「Codex 出力の読み取り」の手順で取り込む | 常時 (Pre-flight Step 5 必須実行) | agent (DeepSeek) |
+| 2 (fallback) | Codex CLI が rate-limit / quota / network / auth 等で fail した場合のみ、主エージェント (DeepSeek) が直接レビュー (検出条件・重要 PR 判定・「Codex fallback notice」必須記載は §Codex fallback (C6) に従う) | tier 1 の Codex CLI fail | agent (DeepSeek) |
+| 3 (escalation) | Idios 自身が `codex review` を直接 invoke し、結果を agent に share して PR 本文に追記 | Idios が tier 1/2 の review 内容・結果に不足ありと判断した場合 | Idios |
 
 tier 1 が成功している限り「Codex review 実施済」の記載は正当 (Iron Law 5 整合)。tier 2 で代替した場合は Codex fallback notice を必ず記載し、Codex review 済と誤認させない。
 
 > **歴史記録の扱い (#854 R2 確定)**: 実行済み dated plans/specs (`docs/superpowers/plans/` / `docs/superpowers/specs/`) 内の slash 表記 (`/codex:review` 等) は当時の実行記録 (historical record) であり、本 3-tier への遡及書き換えは行わない。sweep で検出しても対応不要 (living doc = AGENTS.md / 本 doc / skill / hook / 現行 roadmap (現時点は `docs/superpowers/plans/2026-09-04-v040-roadmap.md`。roadmap 交代時は本注記も更新する) のみが整合対象)。
 
-#### Codex 出力の読み取り (#949、openai-codex 1.0.4 時点)
+#### Codex 出力の読み取り (#949→#1043 で `codex` CLI に統合)
 
-Codex review の finding は **stdout ではなく保存済み全文から取り込む**。`review` / `adversarial-review` は foreground 実行でも job log と state に全文を保存しており (`lib/tracked-jobs.mjs` が完了時に rendered 全文を `"Final output"` ブロックとして append、`<jobId>.json` に `rendered` を保存)、`createJobLogFile` は background 限定ではない。**新しい保存機構は作らない。既にあるものを読む。**
-
-読み取りは公開 subcommand `status` / `result` を使う (state dir の path を skill 側で再構築しない)。**2 段階で、job id を明示して読む**:
+Codex review (`codex review --base <base> "<focus>"`) の finding は **stdout に直接出る**。旧 companion script が持っていた job 追跡機構 (`status` / `result` / job id / `storedJob.rendered`) は **廃止済み** — `codex` CLI は非対話で実行し、完了時に結果を stdout に出力して終了する。**新しい保存機構は作らない。stdout を直接読む。**
 
 ```bash
-# 0. cwd と CLAUDE_PLUGIN_ROOT を張り直す。Bash tool は呼び出し間で env var を保持せず、
-#    cwd も turn 境界 / background task の後に main repo へドリフトしうる (本 repo で観測済み)。
-#    review 実行時に export した値はこの時点で消えており、空のまま使うと
-#    node "/scripts/codex-companion.mjs" に展開されて MODULE_NOT_FOUND になる (実測)。
-#    以降の 1 / 2 は「この export と同じ Bash 呼び出しの中で」実行する
+# review を実行した worktree の cwd で、`codex` CLI を直接呼ぶ
 cd "<review を実行した worktree の絶対パス>"
-ls "$HOME/.claude/plugins/cache/openai-codex/codex/"
-export CLAUDE_PLUGIN_ROOT="$HOME/.claude/plugins/cache/openai-codex/codex/<解決した version>"
-
-# 1. 直前の review job の id を特定する (review を実行したのと同じ cwd で)
-node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" status --json
-
-# 2. その id を明示して全文を読む
-node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result <job-id>
+codex review --base <base> "<focus 文字列 (ASCII)>"
+#   → finding は stdout に出る。exit code 0 = 成功 / 非ゼロ = 失敗 (§Codex fallback)
 ```
 
-- **先に `running[]` を見る。** `status --json` の `running[]` に `jobClass == "review"` の entry が
-  居るなら、**それが今回起動した review であり、まだ終わっていない**。この状態で
-  `latestFinished` を読むと **1 つ前の review の出力を今回の結果として取り込む** (実測: 本規約を
-  作った PR 自身の Pre-flight で踏んだ)。`running[]` が空になるまで待ってから id を採ること。
-  `latestFinished` / `recent[]` は**完了 job しか含まない**ので、running の存在は
-  ここでしか判らない
-- **id の採り方は一意に決まる**: `latestFinished` を先に見て `jobClass == "review"` ならその `.id`、
-  違えば `recent[]` を先頭から走査して最初に `jobClass == "review"` になった entry の `.id`。
-  採った id が**今回起動した review のものか** (`updatedAt` が起動時刻より後か、target が今回の base か)
-  を 1 度確認する。「最新の完了 review」は「今 self が起動した review」と**同義ではない**。
-  `status` は job を新しい順に並べ、`latestFinished` は最新の完了 job、`recent[]` はそれを除いた
-  残りを新しい順に持つので、この順で見れば「最新の review job」が一意に定まる。
-  jq を使うなら `(.latestFinished, .recent[]) | select(.jobClass=="review") | .id` の先頭 1 件
-  (`kind` は `"review"` / `"adversarial-review"` のどちらかになる)
-
-- **job id を省略してはいけない。** 省略時の選択は `lib/job-control.mjs` の `matchJobReference` が
-  「現 session の完了 job のうち最新の 1 件」を返すだけで、**`jobClass` を見ない**。同じ session で
-  `/codex:rescue` や `task` を走らせていると、そちらが review より後に完了した時点で
-  **review ではない job の出力を review の finding として取り込む**。選択は「最新」ではなく
-  **job id という一意識別子**に基づかせる (同型の規律: `AGENTS.md` §「destructive write boundary
-  audit checklist」 問 2「述語は『解決後の同一性』か、それとも『名前・文字列』か」。
-  read 側にも同じ問いが立つ)
-- `status` / job id 省略時の `result` はいずれも `CODEX_COMPANION_SESSION_ID` (Bash tool の環境に
-  現 Claude session id が入っている) で絞られるため、**他セッションの job が混ざることはない**。
-  絞り切れないのは同一 session 内の別種 job だけであり、それを潰すのが上記の `jobClass` 選択
-- `result <job-id>` は session filter が外れるため、過去 session の job も明示指定で読める
-- `--json` を付けると `{job, storedJob}` が返り全文は `storedJob.rendered`。**agent が読むだけなら
-  `result` は `--json` なしのプレーン出力で足りる** (rendered 全文 + Codex session ID + resume コマンドが print される)。
-  `status` は id を機械的に選ぶので `--json` を付ける
-- **cwd は review を実行した worktree に合わせる。** state dir は git worktree root ごとに分かれる
-  (`lib/state.mjs` が slug = worktree basename + realpath の sha256 先頭 16 桁で分ける) ため、
-  別ディレクトリから実行すると同じ job に到達しない
-
-読めなかった場合 (job が見つからない / plugin の内部構造が変わった等) は **exit code 非ゼロ + `No finished Codex jobs found for this repository yet.` 等のメッセージ**が返る (実測)。この場合は §「規約・ガード導入の 3 点セット」② に従い、**stdout に見えていた範囲だけで triage した旨と読み取り失敗の理由を PR 本文 / skill report に 1 行記録する**。無言で stdout だけ使うのは禁止 (「読んだ」と「読めなかった」が事後に区別できなくなる)。
+- **cwd は review を実行した worktree に合わせる。** `--base` で指定した base に対する diff を
+  取れるのはその worktree のみ
+- **stdout をそのまま finding の入力にする。** `codex` CLI は `status` / `result` のような
+  二段階読み出しを持たない (§Codex 運用 参照)。Bash tool 側で `run_in_background` を使う場合も
+  完了後の stdout を読む
+- **`codex review` のオプションは `codex review --help` が正** (`--base` / `--commit` /
+  `--uncommitted` / `--title` / config override 等)。本 doc に subcommand 一覧を固定で焼き込まない
+- **stdout が空 / parse 不能の場合は「応答異常」**として扱い、§Codex fallback の検出条件に従う
+  (「読んだ」と「読めなかった」が事後に区別できなくなる)。無言で stdout を信じるのは禁止
 
 > **この手順が見ていない集合 / 耐久性**:
 >
-> - 依存先は plugin 内部実装 (`result` subcommand の存在、`storedJob.rendered`、`state.mjs` の path 規約)。**openai-codex の version up で silent に壊れる** — log が読めなくても review 自体は成功するため気付かない。version 併記 (1.0.4 時点) 以上の防御は無い
-> - `lib/state.mjs` の `MAX_JOBS = 50` 超過分は log ごと実削除される。**長期監査には使えない** (直後に読むことが前提)
-> - 本手順が担保するのは「保存済み出力を読むこと」だけ。**Codex が finding を出さなかった場合や、出力自体が不完全だった場合は検査しない**
+> - 依存先は `codex` CLI のバージョンに従う出力形式。`codex` 自体の version up で出力表記が
+>   変わりうるため、subcommand フラグ (`--base` 等) は help を参照すること。フラグ一覧の固定焼き込みはしない
+> - 本手順が担保するのは「stdout を finding として読むこと」だけ。**Codex が finding を出さなかった
+>   場合や、出力自体が不完全だった場合は検査しない**
 
 ### 判定
 
@@ -1159,7 +1115,7 @@ typo fix / リンク更新では過剰。`iterate-review` のような中核 ski
 
 ## Codex fallback (C6、Codex token 枯渇 / failure 時)
 
-Codex CLI (`codex-companion.mjs` runtime) が以下のいずれかで fail した場合、Claude Code 側で同等処理を fallback 実行する。Iron Law 1 / 6 違反 (受け入れ条件検証 / Pre-flight ゲート不通過のまま進行) を防ぐ。
+`codex` CLI (`codex review` 等) が以下のいずれかで fail した場合、主エージェント (DeepSeek) が直接レビューを fallback 実行する。Iron Law 1 / 6 違反 (受け入れ条件検証 / Pre-flight ゲート不通過のまま進行) を防ぐ。
 
 ### 検出条件
 
@@ -1168,50 +1124,37 @@ Codex CLI (`codex-companion.mjs` runtime) が以下のいずれかで fail し�
 | exit code 非ゼロ + stderr に `rate.?limit`, `quota`, `429`, `usage_limit` のいずれか | **token 枯渇 (明確)** → 自動 fallback |
 | exit code 非ゼロ + stderr に `auth`, `unauthorized`, `401`, `403`, `api.?key` | **認証失敗 (明確)** → 自動 fallback + user notify |
 | exit code 非ゼロ + stderr に `timeout`, `EHOSTUNREACH`, `ENETUNREACH`, `ECONNRESET` | **network failure (明確)** → 自動 fallback |
-| exit code 非ゼロ + 上記いずれにも該当しない stderr | **曖昧** → user に AskUserQuestion (再試行 / Claude fallback / abort) |
-| exit code 0 + **保存済み出力** (§「Codex 出力の読み取り」) が空 / parse 不能 | **応答異常** → user に AskUserQuestion |
-| exit code 0 + 保存済み出力を読めない (`result` が非ゼロ / plugin 構造変化) | **読み取り失敗** → fallback ではない。stdout の範囲で triage し、読めなかった理由を 1 行記録 (§「Codex 出力の読み取り」) |
+| exit code 非ゼロ + 上記いずれにも該当しない stderr | **曖昧** → user に AskUserQuestion (再試行 / DeepSeek 直接レビュー / abort) |
+| exit code 0 + stdout (§「Codex 出力の読み取り」) が空 / parse 不能 | **応答異常** → user に AskUserQuestion |
 
 ### 検出 + fallback の擬似コード (skill 内実装イメージ)
 
-`review-pr` Step 5a / `iterate-review` Round 2.1 等で Codex を invoke した後の処理イメージ。agent からの通常実行は companion script 直接呼び出し (§Step 5 の invocation path (3-tier、#795) の tier 1。`review` / `adversarial-review` とも slash command は `disable-model-invocation: true` のため agent invoke 不可、slash 形式は tier 3 = Idios 専用)。**subcommand と focus の対応に注意**: `review` は focus positional を受けず非空 focus を reject する。project 固有 focus を渡す場合は `adversarial-review` を使う:
+`review-pr` Step 5a / `iterate-review` Round 2.1 等で Codex を invoke した後の処理イメージ。agent からの通常実行は `codex` CLI 直接呼び出し (§Step 5 の invocation path (3-tier、#795) の tier 1)。`codex review` は `[PROMPT]` (positional) に focus を渡す (§Codex 運用)。
 
 ```text
-# --background / --wait は付けない (受理されるが無視される。openai-codex 1.0.4 時点)
-run = run_bash('node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" adversarial-review --base develop-0.3.1 "<focus>"')
+run = run_bash('codex review --base develop-0.3.1 "<focus>"')
 
 if run.exit_code != 0:
     stderr_lower = run.stderr.lower()
     if matches_any(stderr_lower, ["rate", "quota", "429", "usage_limit"]):
         fallback_reason = "token 枯渇"
-        invoke_fallback("superpowers:requesting-code-review")
+        invoke_fallback("DeepSeek 直接レビュー")
     elif matches_any(stderr_lower, ["auth", "unauthorized", "401", "403", "api"]):
         fallback_reason = "認証失敗"
-        invoke_fallback("superpowers:requesting-code-review")
+        invoke_fallback("DeepSeek 直接レビュー")
         notify_user("Codex auth failed; check token / api key")
     elif matches_any(stderr_lower, ["timeout", "ehostunreach", "enetunreach", "econnreset"]):
         fallback_reason = "network failure"
-        invoke_fallback("superpowers:requesting-code-review")
+        invoke_fallback("DeepSeek 直接レビュー")
     else:
         # 曖昧 → user 判断
-        ask_user_question(["再試行", "Claude fallback", "abort"])
+        ask_user_question(["再試行", "DeepSeek 直接レビュー", "abort"])
 else:
-    # 成功時は stdout ではなく保存済み全文を読む (§「Codex 出力の読み取り」)
-    # cwd は review を実行した worktree のまま。job id は省略せず jobClass == "review" で選ぶ
-    snapshot = run_bash('node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" status --json')
-    job_id = newest_id_with_job_class(snapshot.stdout, "review")   # 省略すると rescue / task job を掴む
-    stored = run_bash(f'node "$CLAUDE_PLUGIN_ROOT/scripts/codex-companion.mjs" result {job_id}')
-
-    if stored.exit_code != 0:
-        # 読み取り失敗。fallback ではない — stdout の範囲で triage し理由を 1 行記録する
-        report.append(format_read_failure_notice(stored.stderr[:200]))
-        findings_text = run.stdout
-    else:
-        findings_text = stored.stdout
-
+    # 成功時は stdout を finding として読む (§「Codex 出力の読み取り」)
+    findings_text = run.stdout
     if findings_text.empty() or not parseable(findings_text):
         fallback_reason = "応答異常"
-        ask_user_question(["再試行", "Claude fallback", "abort"])
+        ask_user_question(["再試行", "DeepSeek 直接レビュー", "abort"])
     else:
         integrate_findings(findings_text)
 
@@ -1219,15 +1162,14 @@ if fallback_invoked:
     report.append(format_fallback_notice(fallback_reason, run.stderr[:200]))
 ```
 
-実装は skill prompt 側 (`review-pr` SKILL.md Step 5a / `iterate-review` SKILL.md Step 2.1) で行う。Codex CLI のラッパー (`codex-companion.mjs`) との連携詳細は openai-codex plugin doc を参照。
+実装は skill prompt 側 (`review-pr` SKILL.md Step 5a / `iterate-review` SKILL.md Step 2.1) で行う。fallback は主エージェント (DeepSeek) が直接レビュー (superpowers `requesting-code-review` 相当を Zed で代替)、「Codex fallback notice」記載は必須 (§Codex 運用 C6)。
 
 ### Fallback 戦略
 
 | Codex 実行 (agent の通常 path) | 通常用途 | Fallback 内容 |
 | --- | --- | --- |
-| `codex-companion.mjs review` (C3 で `review-pr` Step 5a に Bash 実行。focus positional 不可 — project 固有 focus を渡す場合は `adversarial-review` subcommand を使う。slash `/codex:review` は tier 3 = Idios 専用) | code quality adversarial pass | superpowers `requesting-code-review` subagent を起動して同等の adversarial review。focus 文字列は Codex に渡した (渡す予定だった) ものと同じ |
-| `codex-companion.mjs adversarial-review` (C2 で Iron Law 6 Step 5 に Bash 実行 = tier 1。slash `/codex:adversarial-review` は tier 3 = Idios 専用) | Pre-flight 第 5 ゲート | superpowers `requesting-code-review` subagent + project 固有 focus を起動。`<grounding_rules>` 相当で「adversarial / approve させない姿勢」を明示 |
-| `/codex:rescue` (C4 で root-cause 調査時に invoke。`disable-model-invocation` なし = agent invoke 可、`codex:codex-rescue` subagent 経由) | bug 根本原因 + 類似バグ探索 | Claude main + superpowers `systematic-debugging` skill で自力調査。`scope-guard` 規約は維持 (独断 fix 禁止) |
+| `codex review --base <base> "<focus>"` (C3 / C2 で Bash 実行 = tier 1) | code quality adversarial pass / Pre-flight 第 5 ゲート | 主エージェント (DeepSeek) が直接レビュー。focus 文字列は Codex に渡した (渡す予定だった) ものと同じ。「adversarial / approve させない姿勢」を明示 |
+| `codex exec` (C4 で root-cause 調査時に invoke) | bug 根本原因 + 類似バグ探索 | 主エージェント (DeepSeek) + `systematic-debugging` 相当で自力調査。`scope-guard` 規約は維持 (独断 fix 禁止) |
 
 ### Fallback 実行時の必須記載 (Iron Law 5 整合)
 
@@ -1235,7 +1177,7 @@ skill report (`review-pr` Step 6 レビュー報告 / `iterate-review` **Final s
 
 ```text
 > **Codex fallback notice**: 本 review は Codex CLI が <検出条件> で fail したため、
-> Claude Code (superpowers:<skill-name>) で代替実行しました。
+> DeepSeek (主エージェント) の直接レビューで代替実行しました。
 > Codex 側の review は次セッションで再試行を推奨します。
 > stderr 要約: <stderr の先頭 200 字>
 ```
@@ -1268,7 +1210,7 @@ Claude Code が rate-limit / quota / usage limit 等で主エージェント・s
 | `AskUserQuestion` | 散文での確認依頼 |
 | `superpowers:requesting-code-review` | DeepSeek 自身が code review を直接実施 |
 | `review-pr` 等のスラッシュコマンド | SKILL.md を read して手動追従 |
-| `codex-companion.mjs` | `codex` CLI 直呼び（terminal 権限依存） |
+| `codex` CLI | `codex` CLI 直呼び（terminal 権限依存。§Codex 運用） |
 
 ### Fable fallback（並列独立 + 主エージェント突合）
 
@@ -1298,7 +1240,7 @@ Claude fallback で作成した成果物（PR 本文 / spec / doc / 実装）に
 
 ## subagent + Codex 直列構成 (C5)
 
-大規模実装 / 重要 PR では superpowers `subagent-driven-development` (Claude 内 fresh subagent) と Codex review (GPT-5.4) を **直列**で組み合わせる。並列ではなく直列にする理由: Codex 自身に fix させない (Iron Law 3 / 5 整合)。agent からの Codex 実行は §Step 5 の invocation path (3-tier、#795) と同じく companion script 直接呼び出し (`codex-companion.mjs review`)。slash `/codex:review` は `disable-model-invocation: true` のため Idios 専用 (本 § の Flow 図・表では `codex:review` を出所 label / subcommand 名として用いる)。
+大規模実装 / 重要 PR では fresh subagent (Zed `spawn_agent`) が実装し、Codex review (§Codex 運用) を **直列**で組み合わせる。並列ではなく直列にする理由: Codex 自身に fix させない (Iron Law 3 / 5 整合)。agent からの Codex 実行は §Step 5 の invocation path (3-tier、#795) と同じく **`codex` CLI 直接呼び出し (`codex review`)**。
 
 ### Flow
 
@@ -1337,7 +1279,7 @@ Claude fallback で作成した成果物（PR 本文 / spec / doc / 実装）に
 | 軸 | Iron Law 6 Pre-flight Step 5 (C2) | subagent + Codex 直列構成 (C5、本節) |
 | --- | --- | --- |
 | 起動タイミング | PR 作成**直前** (Step 0-4 通過後) | `review-pr` 段階の **deep-dive** (Step 5a) |
-| Codex command | `adversarial-review` subcommand (approve させない姿勢、tier 1 = companion script) | `review` subcommand (code quality 一般、同) |
+| Codex command | `codex review --base <base> "<focus>"` (approve させない姿勢、tier 1 = `codex` CLI) | `codex review --base <base> "<focus>"` (code quality 一般、同) |
 | 必須 / オプション | **必須** (Pre-flight ゲート) | optional (起動条件 3 件: 条件 1 大規模 PR / 条件 2 **再発 root cause** 複数 / 条件 3 **core 変更対象ファイル**。定義の正は [`.agents/skills/review-pr/SKILL.md`](../.agents/skills/review-pr/SKILL.md) §「core 変更対象ファイル」 と §「root cause の 2 用法」) |
 | 直前 stage | Step 4 並行 PR 重複再確認 | superpowers subagent 実装 + reachability 確認 |
 
@@ -1349,7 +1291,7 @@ Claude fallback で作成した成果物（PR 本文 / spec / doc / 実装）に
 
 ### Fallback (Codex fail 時)
 
-Stage 3 で Codex CLI が token 枯渇 / network failure 等で fail した場合は §Codex fallback (C6、本 doc 内) に従い、superpowers `requesting-code-review` subagent を Stage 3 の代替として起動する。Stage 4 triage は同様に実施し、fallback notice を report に必須記載する。
+Stage 3 で Codex CLI が token 枯渇 / network failure 等で fail した場合は §Codex fallback (C6、本 doc 内) に従い、主エージェント (DeepSeek) の直接レビューを Stage 3 の代替として起動する。Stage 4 triage は同様に実施し、fallback notice を report に必須記載する。
 
 ## 外部依存規約 (#649/#651/#703/#721 教訓)
 

@@ -62,6 +62,16 @@ _LITERAL_TERMS = [
     "CLAUDE.md",
 ]
 
+# Codex 呼び出し契約の旧表記 (#1043 で追加)。Claude Code の companion script
+# (`codex-companion.mjs`) / plugin path (`.claude/plugins`) / env var
+# (`CLAUDE_PLUGIN_ROOT`) は `.claude/` 廃止 (#1041/#1042) により dead 化。
+# living doc では `codex` CLI 直呼び (§Codex 運用、AGENTS.md) が正。
+_CODEX_OLD_TERMS = [
+    "codex-companion.mjs",
+    "CLAUDE_PLUGIN_ROOT",
+    ".claude/plugins",
+]
+
 # --------------------------------------------------------------------------
 # 検査対象と除外
 # --------------------------------------------------------------------------
@@ -86,6 +96,7 @@ _SKIP_DIRS = {
 # historical record / deferred: 遡及書き換えしない (棚卸 #1044 / 歴史記録 #854 R2)
 _EXCLUDED_GLOBS = [
     "CHANGELOG.md",
+    ".claude/agents/**",
     ".agents/skills/**/eval/**",
     "docs/superpowers/**",
     "docs/archive/**",
@@ -130,6 +141,12 @@ def check_sweep(repo_root: Path) -> list[str]:
                     violations.append(
                         f"{rel}:{lineno}: 旧表記残存 ({term}): {line.strip()}"
                     )
+            for term in _CODEX_OLD_TERMS:
+                if term in line:
+                    violations.append(
+                        f"{rel}:{lineno}: Codex 呼び出し契約の旧表記残存 ({term}): "
+                        f"{line.strip()}"
+                    )
     return violations
 
 
@@ -172,6 +189,8 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "\nslash command は skill 名へ、`.claude/skills` は `.agents/skills` へ、"
             "`CLAUDE.md` は `AGENTS.md` へ置換すること。\n"
+            "`codex-companion.mjs` / `CLAUDE_PLUGIN_ROOT` / `.claude/plugins` は "
+            "`codex` CLI 直呼び (§Codex 運用) へ置換すること (#1043)。\n"
             "コードファイル / CHANGELOG / eval / dated plans・specs は対象外 (#1044)。",
             file=sys.stderr,
         )

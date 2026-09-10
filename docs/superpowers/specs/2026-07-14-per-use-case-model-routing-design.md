@@ -1,5 +1,7 @@
 # 用途別モデルルーティング 設計 (per-use-case model routing)
 
+> **⚠️ Superseded (2026-09-10 / #1043)**: 本 spec は Claude Code を主エージェントにする前提（`.claude/agents/*.md` の `model:` frontmatter）で書かれた履歴設計です。主エージェントは Zed + DeepSeek V4 Pro に移行済みで、モデルルーティングの正は [`AGENTS.md`](../../../AGENTS.md) §モデルルーティング（and §Codex 運用）。Claude Code / Codex / Fable / Kimi Code はレビュー・相談専用（別途セッション起動）。本ファイルは historical record として保存し、遡及書き換えしない。
+
 - **日付**: 2026-07-14
 - **状態**: Design (承認済み方向性、spec レビュー段階)
 - **対象**: allaganeye プロジェクトの開発ワークフロー設定（本ツールの実行時依存ではない。開発時のエージェント運用のみ）
