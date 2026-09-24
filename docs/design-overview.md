@@ -197,7 +197,7 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 
 ## セキュリティ検査（allaganeye-guard 運用連携）
 
-外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `kobutachan-allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、エージェント (Claude + 人間メンテナ Idios) が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。
+外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `kobutachan-allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、エージェント (Zed + DeepSeek + 人間メンテナ Idios) が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。
 
 - **リポジトリ**: `Idios/kobutachan-allaganeye-guard` (独立パッケージ)
 - **依存方向**: 運用上のみ一方向 (guard verify 先行 → allaganeye split 後続)。パッケージ依存関係としては**完全独立** (import / optional-deps / 統合 exit code を持たない)
