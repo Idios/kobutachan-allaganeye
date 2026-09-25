@@ -70,6 +70,12 @@ _CLAUDE_AGENT_POSITIVE: list[tuple[str, str]] = [
     ("code-fallback", "Claude Code fallback は同一 model の self-review に近い"),
     ("fallback-de", "(B) Claude fallback で push する"),
     ("fallback-slash", "(再試行 / Claude fallback / abort) 3 択"),
+    ("paren-eq-plus", "エージェント (= Claude + 人間メンテナ Idios) が手動で実行する"),
+    (
+        "code-session-ugoku",
+        "メンテナ (= Claude Code セッションで動くアシスタント) が受領する",
+    ),
+    ("code-no-plan", "Claude Code の plan モード (ExitPlanMode ツール) を活用し"),
 ]
 
 # (label, text) -- いずれも「誤検出してはならない」維持対象 (レビュー専用ツール / 製品名)。
@@ -101,6 +107,8 @@ _CLAUDE_AGENT_NEGATIVE: list[tuple[str, str]] = [
     ),
     ("claude-code-slash", "Claude Code のスラッシュコマンドは invoke 不可"),
     ("claude-code-subagent", "DeepSeek は Claude Code の subagent になれない"),
+    ("claude-code-session-review", "別途 Claude Code セッションで review 依頼"),
+    ("claude-ni-review", "Claude に再レビューを依頼する"),
 ]
 
 

@@ -2,7 +2,7 @@
 
 GUI プロトタイプ 5 画面 (drop / detecting / complete / preview / export) のスクリーンショット。
 
-> **実装は 6 画面**である (`minimap` が [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) で追加)。本ディレクトリは **handoff bundle 由来のプロトタイプ**を保持する場所で、`minimap` はプロトタイプが存在しない (bundle より後に設計された) ため 5 枚のままである。**実装された 6 画面のスクリーンショットは `image/` 配下** (`01-drop.png` 〜 `06-minimap.png`) を参照。
+> **実装は 6 画面**である (`minimap` が [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) で追加)。本ディレクトリは **handoff bundle 由来のプロトタイプ**を保持する場所で、`minimap` はプロトタイプが存在しない (bundle より後に設計された) ため 5 枚のままである。**実装された 6 画面のスクリーンショットはリポジトリ直下の `image/` 配下** (`01-drop.png` 〜 `06-minimap.png`) を参照。
 
 ## ファイル一覧
 

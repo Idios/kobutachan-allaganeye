@@ -83,7 +83,17 @@ _CLAUDE_AGENT_RE = re.compile(
     r"|Claude\s+Code\s+fallback"  # C6 fallback 実行者を Claude Code とする旧表記
     r"|Claude\s+fallback\s+(?:で|は)"  # C6 fallback 実行者を Claude とする旧表記
     r"|/\s*Claude\s+fallback"  # 選択肢 "… / Claude fallback / …"
+    r"|=\s*Claude\s*\+"  # "エージェント (= Claude + 人間メンテナ Idios)"
+    r"|Claude\s+Code\s+セッションで動く"  # "Claude Code セッションで動くアシスタント"
+    r"|Claude\s+Code\s+の\s*plan"  # "Claude Code の plan モード"
 )
+
+# 検出網の制約 (意図的): 上記 regex は **分離可能な旧 idiom のみ** を対象とする。
+# "Claude Code の X" のように文脈依存で維持対象と衝突する形 (X = レビュー専用ツールの
+# 機能か主エージェントの行為か) は regex では判別できないため CI では担保せず、
+# **人手 sweep + Fable 俯瞰レビューに委ねる**。例: リスト "Claude Code / Codex / ..." に
+# 主エージェントが欠ける形 / "Claude に再レビューを依頼する" のような維持対象文。
+# これらは #1066 PR で人手 sweep により 0 件を確認済。
 
 # --------------------------------------------------------------------------
 # 検査対象と除外
