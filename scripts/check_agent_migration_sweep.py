@@ -2,9 +2,9 @@
 """Check the Claude Code → Zed+DeepSeek agent migration sweep is complete (#1041/#1042).
 
 Detects "old terminology" (skill slash commands / old path `.claude/skills` /
-old filename `CLAUDE.md`) that remains in **living docs**, to prevent the
-incomplete-sweep recurrence seen in PR #1051 Round 4/5 (session-start.sh /
-docs/versioning.md に slash 残存を個別に拾う事象)。
+old filename `CLAUDE.md` / 主エージェント=Claude の旧表記) that remains in
+**living docs**, to prevent the incomplete-sweep recurrence seen in PR #1051
+Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を個別に拾う事象)。
 
 再発防止の設計意図:
 - 用語 sweep は「まとめて置換」だけでは漏れる (対象ファイルの取りこぼし)。
@@ -72,6 +72,19 @@ _CODEX_OLD_TERMS = [
     ".claude/plugins",
 ]
 
+# 主エージェント=Claude の旧表記 (#1066)。運用は Zed + DeepSeek が主エージェントへ
+# 反転済 (#1043) なので、living doc に「Claude を主エージェントとして扱う」表記が
+# 残っていれば fail させる。維持対象 ("Claude Code" / "Claude Fable/Sonnet/Opus" /
+# "Claude Design" / "Claude fallback notice" / 節見出し "Claude fallback（...）") を
+# 誤検出しないよう、「Claude の直後が主エージェントを意味する語」に限定した狭い
+# パターンにする (positive/negative 両 fixture で緑を確認済)。
+_CLAUDE_AGENT_RE = re.compile(
+    r"Claude\s*(?:は|が|の|内|main|思考体)"  # 主語 / 所有 / ホスト
+    r"|Claude\s+Code\s+fallback"  # C6 fallback 実行者を Claude Code とする旧表記
+    r"|Claude\s+fallback\s+(?:で|は)"  # C6 fallback 実行者を Claude とする旧表記
+    r"|/\s*Claude\s+fallback"  # 選択肢 "… / Claude fallback / …"
+)
+
 # --------------------------------------------------------------------------
 # 検査対象と除外
 # --------------------------------------------------------------------------
@@ -136,6 +149,11 @@ def check_sweep(repo_root: Path) -> list[str]:
         for lineno, line in enumerate(text.splitlines(), 1):
             if _SLASH_RE.search(line):
                 violations.append(f"{rel}:{lineno}: slash command 残存: {line.strip()}")
+            if _CLAUDE_AGENT_RE.search(line):
+                violations.append(
+                    f"{rel}:{lineno}: 主エージェント=Claude の旧表記残存: "
+                    f"{line.strip()}"
+                )
             for term in _LITERAL_TERMS:
                 if term in line:
                     violations.append(
@@ -191,6 +209,8 @@ def main(argv: list[str] | None = None) -> int:
             "`CLAUDE.md` は `AGENTS.md` へ置換すること。\n"
             "`codex-companion.mjs` / `CLAUDE_PLUGIN_ROOT` / `.claude/plugins` は "
             "`codex` CLI 直呼び (§Codex 運用) へ置換すること (#1043)。\n"
+            "主エージェント=Claude の旧表記は `Zed + DeepSeek` (または `主エージェント`) "
+            "へ置換すること (#1066)。\n"
             "コードファイル / CHANGELOG / eval / dated plans・specs は対象外 (#1044)。",
             file=sys.stderr,
         )

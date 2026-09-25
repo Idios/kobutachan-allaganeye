@@ -195,7 +195,7 @@ Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計�
 
 ## スクリーンショット
 
-`screens/` ディレクトリは空 (本 handoff 時点では未収録)。Idios が手動で 6 枚 (drop / detecting / complete / preview / export / minimap) のスクリーンショットを取得して追加予定。主エージェントはブラウザ描画・スクショ取得を行わない (handoff bundle README の指示による)。
+`screens/` には handoff bundle 由来のプロトタイプ 5 枚 (drop / detecting / complete / preview / export) が commit 済み。`minimap` は bundle より後に設計されたためプロトタイプが存在せず 5 枚のままで、実装済み 6 画面のスクリーンショットは `image/` 配下を参照 (詳細は [`screens/README.md`](screens/README.md))。エージェント（主エージェント・subagent を問わず）はブラウザ描画・スクショ取得を行わない (handoff bundle README の指示による)。
 
 ## ファイル構成
 

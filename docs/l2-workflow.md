@@ -800,6 +800,8 @@ grep -rnE '(別 ?issue|別途 ?issue|後続 ?issue|follow-?up issue)[^#]*(で|�
 | --- | --- | --- | --- |
 | L1 | `AGENTS.md`, `MEMORY.md` | 恒久 | プロジェクト規約、skill 索引、ワークフロー要約 |
 | L2 | `~/.claude/projects/<project>/memory/feedback_*.md` | 中期 | ユーザー指摘の蓄積、判断基準のチューニング |
+
+**L2 の適用範囲**: `~/.claude/projects/<project>/memory/` は Claude Code の auto-memory。Zed + DeepSeek では本 path が自動注入されないため、蓄積した `feedback_*.md` は必要時に直接 read して参照する。
 | L3 | `docs/knowledge/*.md` | 恒久 (プロジェクト共有) | セッション横断の調査結果、トラブルシュート |
 
 **L2 → L3 昇格**: feedback が複数セッションで再利用される汎用知見に育ったら `docs/knowledge/` へ移動し、memory からは削除。
@@ -897,7 +899,7 @@ node .github/scripts/<gate>.js <fixture>; echo "exit=$?"   # 非ゼロを期待
 | 6 | PR テンプレート (`.github/pull_request_template.md`) | Iron Law 1/3/4 の逐条チェックリスト |
 | 7 | ユーザー最終承認 | マージは全て Idios が実行、未達 PR は差し戻し |
 
-**ハードゲートの実装**: `.claude/hooks/preuse.py` が `PreToolUse` で `gh` bulk 操作・PR マージ等をインターセプトし、#559 以降は `permissionDecision=ask` を返して Claude Code の permission prompt を出す (旧: #401 の exit 2 block + bypass prefix 運用)。GitHub Action でのマージブロックは将来候補。
+**ハードゲートの実装**: `.claude/hooks/preuse.py` が `PreToolUse` で `gh` bulk 操作・PR マージ等をインターセプトし、#559 以降は `permissionDecision=ask` を返して Claude Code の permission prompt を出す (旧: #401 の exit 2 block + bypass prefix 運用)。**本 hook は Claude Code セッションでのみ発火する** (Zed + DeepSeek の主エージェントには発火しない。Zed では Iron Law 2 の bulk 操作確認を主エージェントが散文で行う)。GitHub Action でのマージブロックは将来候補。
 
 #### PreToolUse hook の gate 運用 (#485 / #513 / #559)
 
@@ -1186,45 +1188,34 @@ skill report (`review-pr` Step 6 レビュー報告 / `iterate-review` **Final s
 
 ### Fallback の限界 (明示)
 
-- Codex は GPT-5.4 (独立 model) の second opinion。Claude Code fallback は同一 model の self-review に近く、bias 構造が同じになる
-- 重要 PR (release 直前 / 大規模 refactor) で Codex fallback が trigger した場合、user に AskUserQuestion で「Codex 復旧待ち / Claude fallback で push」の 3 択を提示
+- Codex は GPT-5.4 (独立 model) の second opinion。DeepSeek fallback（主エージェント）は同一 model の self-review に近く、bias 構造が同じになる
+- 重要 PR (release 直前 / 大規模 refactor) で Codex fallback が trigger した場合、user に AskUserQuestion で「Codex 復旧待ち / DeepSeek fallback / abort」の 3 択を提示
 - fallback report には「fallback で実行済」を明示することで、後日 Codex 復旧時に再 review が要否を判断可能にする
 
-## Claude fallback（DeepSeek、Claude usage limit 発動時、Superseded）
+## Claude fallback（Claude レビュー不可時）
 
-> **Superseded（#1043、2026-09）**: 主従が反転した。主エージェントは Zed + DeepSeek、Claude Code はレビュー専用（別途セッション）。下記の「DeepSeek を fallback とする」旧記述は参照しないこと。正は AGENTS.md §モデルルーティング。
-
-Claude Code 本体が usage limit / 障害等で使えない間は、Idios が手動で DeepSeek（Zed）に切り替えて開発を継続する。用途別モデルルーティングの fallback 層。対応表と実行メカニズムは [`docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md`](superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md) が正。AGENTS.md §モデルルーティング に要約あり。
+主エージェントは **Zed + DeepSeek**（正は `AGENTS.md` §モデルルーティング）。Claude Code / Fable / Opus は**レビュー専用**（別途 Claude Code セッション起動）であり、これらが usage limit / 障害等で使えない場合の fallback を本節で定める。
 
 ### 発動条件
 
-Claude Code が rate-limit / quota / usage limit 等で主エージェント・subagent のいずれも起動できない状態（Codex は独立ツールのため影響を受けない）。
+Claude レビュー経路（Claude Code セッションでの Fable 俯瞰レビュー / Opus 再レビュー）が rate-limit / quota / usage limit 等で起動できない状態（Codex は独立ツールのため影響を受けない）。
 
 ### 実行メカニズム（正直な制約）
 
-- DeepSeek は Claude Code の subagent になれないため、fallback は **Idios の手動切替**で運用する（hook 強制不可）。
-- fallback 時の skill 実行は **DeepSeek が `.agents/skills/*/SKILL.md` を read して手順を手動追従**する形。Claude Code のスラッシュコマンド（`review-pr` 等）は invoke 不可。
-- Claude Code 固有機構の置換:
-
-| Claude Code 固有機構 | fallback（Zed + DeepSeek）での置換 |
-| --- | --- |
-| `Agent` tool（subagent dispatch） | Zed の `spawn_agent`（**model 指定不可** → 委譲先モデルは Idios が手動で選ぶ） |
-| `AskUserQuestion` | 散文での確認依頼 |
-| `superpowers:requesting-code-review` | DeepSeek 自身が code review を直接実施 |
-| `review-pr` 等のスラッシュコマンド | SKILL.md を read して手動追従 |
-| `codex` CLI | `codex` CLI 直呼び（terminal 権限依存。§Codex 運用） |
+- Claude レビューが使えない間、俯瞰レビューは **主エージェント（= DeepSeek V4 Pro）が代行**する（Idios の判断で発動。hook 強制は不可）。
+- Zed + DeepSeek 環境での Claude Code 固有機構の対応（`Agent` tool → `spawn_agent` / `AskUserQuestion` → 散文での確認依頼 / `superpowers:requesting-code-review` → 主エージェントの直接レビュー / スラッシュコマンド → SKILL.md を read して手動追従 / `codex` CLI → 直呼び）は `AGENTS.md` §レビュー実行経路 を参照。
 
 ### Fable fallback（並列独立 + 主エージェント突合）
 
-全体レビュー（Fable 役）は fallback 時、**Codex（技術/adversarial。レビュアは不変だが、invocation は companion script ではなく `codex` CLI 直呼び）と DeepSeek V4 Pro（俯瞰役を代行）を並列独立に実行**し、主エージェント（= DeepSeek V4 Pro）が両者の指摘を突合・トリアージする。Codex は DeepSeek から `codex` CLI を直接呼べる場合のみ agent 実行でき、呼べない場合は既存 tier 3（Idios 手動 invoke）に落ちる。Codex 自身が usage limit の場合は、Claude 稼働時は既存 C6、Claude も不可時は DeepSeek V4 Pro が技術レビューを直接代行する。
+全体レビュー（Fable 役）は Claude 不可時、**Codex（技術 / adversarial。`codex` CLI 直呼び）と主エージェント（= DeepSeek V4 Pro、俯瞰役を代行）を並列独立に実行**し、主エージェントが両者の指摘を突合・トリアージする。Codex を実行できない場合は既存 tier 3（Idios 手動 invoke）に落ちる。Codex 自身が usage limit の場合も、主エージェント（= DeepSeek V4 Pro）が技術レビューを直接代行する。
 
 ### Fallback 実行時の必須記載（Iron Law 5 整合、C6 と同型）
 
-Claude fallback で作成した成果物（PR 本文 / spec / doc / 実装）には以下を**必ず明示**し、Claude/Opus/Fable レビュー済との誤認を防ぐ:
+Claude レビュー不可時の fallback で成果物（PR 本文 / spec / doc / 実装）を作成した場合、Claude/Opus/Fable レビュー済との誤認を防ぐため以下を**必ず明示**する:
 
 ```text
-> **Claude fallback notice**: 本成果物は Claude usage limit のため
-> DeepSeek <V4 Pro | V4 Flash> で作成しました。
+> **Claude fallback notice**: 本成果物のレビューは Claude 不可（usage limit 等）のため
+> DeepSeek <V4 Pro | V4 Flash> が代行しました。
 > Claude 復旧後の再レビューを推奨します。
 ```
 
@@ -1235,10 +1226,10 @@ Claude fallback で作成した成果物（PR 本文 / spec / doc / 実装）に
 
 ### Fallback の限界（明示）
 
-- DeepSeek 俯瞰レビューと主エージェントは同モデル（V4 Pro）のため、自己レビューに近く bias 構造が同じになる。異モデル視点は Codex 側のみが提供する。
+- DeepSeek 俯瞰レビューは自己レビューに近く、bias 構造が同じになる。異モデル視点は Codex 側のみが提供する。
 - 重要 PR / 不可逆操作に関わる成果物は、Claude 復旧後に Opus / Fable で再レビューするまで merge しない。
 - fallback notice に使用モデル（V4 Pro / V4 Flash）を残すことで、後日 Claude 復旧時の再レビュー要否を判断可能にする。
-- Codex 自身も usage limit になりうる。その場合、Claude 稼働時は既存 C6 が Codex を代替し、Claude も不可時はクロスレビューが DeepSeek 単独に縮退する（2026-08-28 実測）。
+- Codex 自身も usage limit になりうる。その場合、クロスレビューは主エージェント（= DeepSeek V4 Pro）単独に縮退する（2026-08-28 実測）。
 
 ## subagent + Codex 直列構成 (C5)
 
@@ -1288,7 +1279,7 @@ Claude fallback で作成した成果物（PR 本文 / spec / doc / 実装）に
 ### 並列ではなく直列にする理由
 
 - Codex に fix させると Iron Law 3 (scope creep) / Iron Law 5 (independent judgment) の衝突リスク
-- superpowers subagent と Codex (GPT-5.4) を並列起動しても finding が重複するだけで bias は減らない
+- superpowers subagent（主エージェントと同一モデル）と Codex (GPT-5.4) を並列起動しても finding が重複するだけで bias は減らない
 - 直列で「実装 → reachability → adversarial review → triage」と段階化すると、各 stage で人 (Idios) が介入できる checkpoint が確保される
 
 ### Fallback (Codex fail 時)
