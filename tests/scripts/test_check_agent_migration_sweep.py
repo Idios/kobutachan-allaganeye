@@ -113,6 +113,10 @@ _CLAUDE_AGENT_NEGATIVE: list[tuple[str, str]] = [
     ("claude-no-review", "Claude のレビュー結果を突合する"),
     ("claude-no-rereview", "Claude の再レビューを推奨する"),
     ("claude-no-usage", "Claude の usage limit 時"),
+    ("claude-no-permission", "Claude の permission prompt を表示する"),
+    ("claude-no-session", "Claude のセッション起動"),
+    ("claude-no-memory", "Claude の auto-memory"),
+    ("claude-no-slash", "Claude のスラッシュコマンド"),
 ]
 
 

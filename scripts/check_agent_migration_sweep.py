@@ -80,9 +80,11 @@ _CODEX_OLD_TERMS = [
 # パターンにする (positive/negative 両 fixture で緑を確認済)。
 _CLAUDE_AGENT_RE = re.compile(
     r"Claude\s*(?:は|が|内|main|思考体)"  # 主語 / ホスト
-    # 所有 "の" は維持対象 (Claude のレビュー / 再レビュー / usage / 復旧 等) を
-    # negative lookahead で除外し、主エージェント所有 (Claude の判断 / 責務 等) のみ拾う
-    r"|Claude\s*の(?!\s*(?:レビュー|再レビュー|usage|復旧|不可|Code|Fable|Sonnet|Opus|Design))"
+    # 所有 "の" は維持対象 (Claude のレビュー / permission prompt 等) を negative lookahead で
+    # 除外し、主エージェント所有 (Claude の判断 / 責務 等) のみ拾う。whitelist 方式のため、
+    # 維持対象の「の + 名詞」を新たに living doc に書く場合は本リストへ追加する
+    # (未追加だと FP で CI red になる)。
+    r"|Claude\s*の(?!\s*(?:レビュー|再レビュー|usage|復旧|不可|Code|Fable|Sonnet|Opus|Design|permission|セッション|auto-memory|スラッシュコマンド))"
     r"|Claude\s+Code\s+fallback"  # C6 fallback 実行者を Claude Code とする旧表記
     r"|Claude\s+fallback\s+(?:で|は)"  # C6 fallback 実行者を Claude とする旧表記
     r"|/\s*Claude\s+fallback"  # 選択肢 "… / Claude fallback / …"
@@ -121,10 +123,13 @@ _SKIP_DIRS = {
 
 # historical record / deferred: 遡及書き換えしない (棚卸 #1044 / 歴史記録 #854 R2)
 #
-# NOTE: `.agents/skills/**/eval/**` は eval **fixture 全体**を除外する (dated
-# `reports/` だけでなく `requirements.md` / `scenario_*.md` も含む)。これらは特定時点の
-# 評価基準 / シナリオを固定する記録で、skill 本体の用語更新に追従させると eval の
-# 再現性が壊れる。fixture 内に残る旧 Codex 契約等の残置は #1068 / #1069 で別途追跡する。
+# NOTE: `.agents/skills/**/eval/**` は eval **fixture 全体**を除外する (dated `reports/`
+# だけでなく `requirements.md` / `scenario_*.md` も含む)。これらは特定時点の評価基準 /
+# シナリオを固定する記録で、**用語 sweep の対象外** (旧用語が当時の文脈で意味を持つため
+# 遡及置換しない)。ただし **skill の契約自体が変わった場合は eval の妥当性を保つため
+# fixture の期待値を更新する** (例: 本 PR で `review-pr/eval/requirements.md` の I-5 を
+# 「Claude fallback」→「DeepSeek fallback / abort」へ更新)。fixture 内に残る旧 Codex 契約
+# 等の残置は #1068 / #1069 で別途追跡する。
 _EXCLUDED_GLOBS = [
     "CHANGELOG.md",
     ".claude/agents/**",
