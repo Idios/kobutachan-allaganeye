@@ -69,6 +69,7 @@ _CLAUDE_AGENT_POSITIVE: list[tuple[str, str]] = [
     ("thinking-body", "superpowers subagent (Claude 思考体) と Codex"),
     ("code-fallback", "Claude Code fallback は同一 model の self-review に近い"),
     ("fallback-de", "(B) Claude fallback で push する"),
+    ("fallback-ha", "Claude fallback は同一 model の self-review に近い"),
     ("fallback-slash", "(再試行 / Claude fallback / abort) 3 択"),
     ("paren-eq-plus", "エージェント (= Claude + 人間メンテナ Idios) が手動で実行する"),
     (
@@ -109,6 +110,9 @@ _CLAUDE_AGENT_NEGATIVE: list[tuple[str, str]] = [
     ("claude-code-subagent", "DeepSeek は Claude Code の subagent になれない"),
     ("claude-code-session-review", "別途 Claude Code セッションで review 依頼"),
     ("claude-ni-review", "Claude に再レビューを依頼する"),
+    ("claude-no-review", "Claude のレビュー結果を突合する"),
+    ("claude-no-rereview", "Claude の再レビューを推奨する"),
+    ("claude-no-usage", "Claude の usage limit 時"),
 ]
 
 
