@@ -1126,7 +1126,7 @@ typo fix / リンク更新では過剰。`iterate-review` のような中核 ski
 | exit code 非ゼロ + stderr に `rate.?limit`, `quota`, `429`, `usage_limit` のいずれか | **token 枯渇 (明確)** → 自動 fallback |
 | exit code 非ゼロ + stderr に `auth`, `unauthorized`, `401`, `403`, `api.?key` | **認証失敗 (明確)** → 自動 fallback + user notify |
 | exit code 非ゼロ + stderr に `timeout`, `EHOSTUNREACH`, `ENETUNREACH`, `ECONNRESET` | **network failure (明確)** → 自動 fallback |
-| exit code 非ゼロ + 上記いずれにも該当しない stderr | **曖昧** → user に AskUserQuestion (再試行 / DeepSeek 直接レビュー / abort) |
+| exit code 非ゼロ + 上記いずれにも該当しない stderr | **曖昧** → user に AskUserQuestion (再試行 / DeepSeek fallback / abort) |
 | exit code 0 + stdout (§「Codex 出力の読み取り」) が空 / parse 不能 | **応答異常** → user に AskUserQuestion |
 
 ### 検出 + fallback の擬似コード (skill 内実装イメージ)
@@ -1140,23 +1140,23 @@ if run.exit_code != 0:
     stderr_lower = run.stderr.lower()
     if matches_any(stderr_lower, ["rate", "quota", "429", "usage_limit"]):
         fallback_reason = "token 枯渇"
-        invoke_fallback("DeepSeek 直接レビュー")
+        invoke_fallback("DeepSeek fallback")
     elif matches_any(stderr_lower, ["auth", "unauthorized", "401", "403", "api"]):
         fallback_reason = "認証失敗"
-        invoke_fallback("DeepSeek 直接レビュー")
+        invoke_fallback("DeepSeek fallback")
         notify_user("Codex auth failed; check token / api key")
     elif matches_any(stderr_lower, ["timeout", "ehostunreach", "enetunreach", "econnreset"]):
         fallback_reason = "network failure"
-        invoke_fallback("DeepSeek 直接レビュー")
+        invoke_fallback("DeepSeek fallback")
     else:
         # 曖昧 → user 判断
-        ask_user_question(["再試行", "DeepSeek 直接レビュー", "abort"])
+        ask_user_question(["再試行", "DeepSeek fallback", "abort"])
 else:
     # 成功時は stdout を finding として読む (§「Codex 出力の読み取り」)
     findings_text = run.stdout
     if findings_text.empty() or not parseable(findings_text):
         fallback_reason = "応答異常"
-        ask_user_question(["再試行", "DeepSeek 直接レビュー", "abort"])
+        ask_user_question(["再試行", "DeepSeek fallback", "abort"])
     else:
         integrate_findings(findings_text)
 
@@ -1211,7 +1211,7 @@ Claude レビュー経路（Claude Code セッションでの Fable 俯瞰レビ
 
 ### Fallback 実行時の必須記載（Iron Law 5 整合、C6 と同型）
 
-Claude レビュー不可時の fallback で成果物（PR 本文 / spec / doc / 実装）を作成した場合、Claude/Opus/Fable レビュー済との誤認を防ぐため以下を**必ず明示**する:
+Claude レビュー不可時の fallback でレビューを代行した成果物（PR 本文 / spec / doc / 実装）には、Claude/Opus/Fable レビュー済との誤認を防ぐため以下を**必ず明示**する:
 
 ```text
 > **Claude fallback notice**: 本成果物のレビューは Claude 不可（usage limit 等）のため

@@ -167,8 +167,14 @@ def check_sweep(repo_root: Path) -> list[str]:
     for path, rel in _iter_living_docs(repo_root):
         try:
             text = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue  # binary / unreadable → not a text doc
+        except (UnicodeDecodeError, OSError) as exc:
+            # living doc (.md / .sh) が decode / 読取不能 = 検査不能。sweep 完全性 gate と
+            # して fail-open にしない (未検査 file を「違反なし」と混同しない)。
+            violations.append(
+                f"{rel}: 検査不能 (utf-8 decode / 読取失敗: {exc})。"
+                "sweep gate は fail-closed のため違反として扱う"
+            )
+            continue
         for lineno, line in enumerate(text.splitlines(), 1):
             if _SLASH_RE.search(line):
                 violations.append(f"{rel}:{lineno}: slash command 残存: {line.strip()}")

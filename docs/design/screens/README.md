@@ -26,4 +26,4 @@ GUI プロトタイプ 5 画面 (drop / detecting / complete / preview / export)
 
 - **FF14 ゲーム画面のスクリーンショットは含めない** (Square Enix 権利物、GitHub 登録不可)
 - 本ディレクトリ内は**プロトタイプ UI のスクリーンショットのみ**
-- プロトタイプに変更があった場合は、Idios が手動で再取得して差し替える (handoff bundle README の指示により エージェント（主エージェント・subagent を問わず）はブラウザ描画・スクショ取得を行わない)
+- プロトタイプに変更があった場合は、Idios が手動で再取得して差し替える (handoff bundle README の指示により、エージェント（主エージェント・subagent を問わず）はブラウザ描画・スクショ取得を行わない)

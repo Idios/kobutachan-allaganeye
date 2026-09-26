@@ -304,6 +304,24 @@ def test_eval_report_is_excluded(tmp_path: Path) -> None:
     assert _run_repo(tmp_path) == 0
 
 
+def test_eval_requirements_is_excluded(tmp_path: Path) -> None:
+    """`.agents/skills/**/eval/**` は fixture 全体 (requirements.md 含む) を除外する (#1066)。"""
+    _make_repo(tmp_path)
+    (tmp_path / ".agents" / "skills" / "review-pr" / "eval").mkdir(parents=True)
+    (
+        tmp_path / ".agents" / "skills" / "review-pr" / "eval" / "requirements.md"
+    ).write_text("# 要件\n\nClaude は自動的に段階を進める。\n", encoding="utf-8")
+    assert _run_repo(tmp_path) == 0
+
+
+def test_undecodable_living_doc_is_exit_1(tmp_path: Path) -> None:
+    """living doc (.md) が utf-8 decode 不能なら検査不能 = fail-closed (exit 1) (#1066)。"""
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "bad.md").write_bytes(b"\xff\xfe\x00 broken")
+    assert _run_repo(tmp_path) == 1
+
+
 # --------------------------------------------------------------------------
 # exit 2: 検査自体が壊れている
 # --------------------------------------------------------------------------
