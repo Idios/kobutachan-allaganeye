@@ -392,7 +392,7 @@ PR 作成前のローカル自動チェックは、変更ファイル path に�
 | `allaganeye/video/detector.py` Pass 1 / scorebar 関連 | `pytest -m slow_detect` または `pytest -m "slow or baseline_regen"` | 実動画 baseline 検証 |
 | `allaganeye/commands/split_matches.py` パイプライン変更 | `pytest -m slow_pipeline` | 全パイプライン統合動作 |
 | `gui/src-tauri/**` Tauri command 追加・変更 | `cd gui && npm run tauri dev` での手動 GUI 起動 + 該当 command の UI 操作確認 | ヘッドレスで Tauri 起動はできるが、ユーザーが GUI 操作で確認するのが本来の検証 |
-| `gui/src/screens/**` UI 変更 | `npm run tauri dev` + 画面 5 種 (drop / detecting / complete / preview / export) の目視確認 + スクリーンショット添付推奨 | `enforce-acceptance-criteria/SKILL.md` Step 3 と整合 |
+| `gui/src/screens/**` UI 変更 | `npm run tauri dev` + 画面 6 種 (drop / detecting / complete / preview / export / minimap) の目視確認 + スクリーンショット添付推奨 | `enforce-acceptance-criteria/SKILL.md` Step 3 と整合 |
 | `gui/src-tauri/src/commands/export*.rs` H.264 エンコーダ選択 | 実機 export (NVENC / QSV / AMF / libx264) | GPU encoder fallback は実機 stderr 依存 |
 | `.github/workflows/**` 変更 | (任意) act / 該当 job のドライラン | CI 動作の事前検証、必須ではないが推奨 |
 | `scripts/**/*.ps1` インストーラ変更 | Windows 上で `Invoke-Pester -Path scripts/tests/` 実行 | Linux runner 上では PowerShell 挙動が一部違う |
@@ -1126,7 +1126,7 @@ typo fix / リンク更新では過剰。`iterate-review` のような中核 ski
 | exit code 非ゼロ + stderr に `rate.?limit`, `quota`, `429`, `usage_limit` のいずれか | **token 枯渇 (明確)** → 自動 fallback |
 | exit code 非ゼロ + stderr に `auth`, `unauthorized`, `401`, `403`, `api.?key` | **認証失敗 (明確)** → 自動 fallback + user notify |
 | exit code 非ゼロ + stderr に `timeout`, `EHOSTUNREACH`, `ENETUNREACH`, `ECONNRESET` | **network failure (明確)** → 自動 fallback |
-| exit code 非ゼロ + 上記いずれにも該当しない stderr | **曖昧** → user に AskUserQuestion (再試行 / DeepSeek fallback / abort) |
+| exit code 非ゼロ + 上記いずれにも該当しない stderr | **曖昧** → user に AskUserQuestion (再試行 / DeepSeek 直接レビュー / abort) |
 | exit code 0 + stdout (§「Codex 出力の読み取り」) が空 / parse 不能 | **応答異常** → user に AskUserQuestion |
 
 ### 検出 + fallback の擬似コード (skill 内実装イメージ)
@@ -1140,23 +1140,23 @@ if run.exit_code != 0:
     stderr_lower = run.stderr.lower()
     if matches_any(stderr_lower, ["rate", "quota", "429", "usage_limit"]):
         fallback_reason = "token 枯渇"
-        invoke_fallback("DeepSeek fallback")
+        invoke_fallback("DeepSeek 直接レビュー")
     elif matches_any(stderr_lower, ["auth", "unauthorized", "401", "403", "api"]):
         fallback_reason = "認証失敗"
-        invoke_fallback("DeepSeek fallback")
+        invoke_fallback("DeepSeek 直接レビュー")
         notify_user("Codex auth failed; check token / api key")
     elif matches_any(stderr_lower, ["timeout", "ehostunreach", "enetunreach", "econnreset"]):
         fallback_reason = "network failure"
-        invoke_fallback("DeepSeek fallback")
+        invoke_fallback("DeepSeek 直接レビュー")
     else:
         # 曖昧 → user 判断
-        ask_user_question(["再試行", "DeepSeek fallback", "abort"])
+        ask_user_question(["再試行", "DeepSeek 直接レビュー", "abort"])
 else:
     # 成功時は stdout を finding として読む (§「Codex 出力の読み取り」)
     findings_text = run.stdout
     if findings_text.empty() or not parseable(findings_text):
         fallback_reason = "応答異常"
-        ask_user_question(["再試行", "DeepSeek fallback", "abort"])
+        ask_user_question(["再試行", "DeepSeek 直接レビュー", "abort"])
     else:
         integrate_findings(findings_text)
 
