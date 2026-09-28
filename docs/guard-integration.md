@@ -6,7 +6,7 @@
 
 ### 運用原則 (2026-04-21 確定)
 
-allaganeye と allaganeye-guard は**プログラムレベルでの結合を行わない**。両ツールは独立した CLI として存在し、エージェント (= Claude Code セッションで動くこのアシスタント + 人間メンテナ Idios の両方) が外部から受け取った動画データを扱う際に、allaganeye で処理する前に `allaganeye-guard verify` を**手動で実行する**運用に一本化する。
+allaganeye と allaganeye-guard は**プログラムレベルでの結合を行わない**。両ツールは独立した CLI として存在し、エージェント (= Zed + DeepSeek で動くこのアシスタント + 人間メンテナ Idios の両方) が外部から受け取った動画データを扱う際に、allaganeye で処理する前に `allaganeye-guard verify` を**手動で実行する**運用に一本化する。
 
 ### なぜ結合しないか
 
@@ -87,7 +87,7 @@ allaganeye (動画処理 CLI)
 
 ## 4. 使用方法
 
-外部から受領したファイルを処理する前に、エージェント (Claude + 人間メンテナ Idios の両方) が手動で検査する。
+外部から受領したファイルを処理する前に、主エージェント (Zed + DeepSeek) + 人間メンテナ Idios が手動で検査する。
 
 ```bash
 # 検査
@@ -176,7 +176,7 @@ GitHub の issue・PR に添付またはリンクされた動画ファイルに�
 
 1. Issue Template (`.github/ISSUE_TEMPLATE/bug_report.yml`) の同意チェックボックスが全てチェック済みであることを確認
 2. ファイルをダウンロードし、隔離ディレクトリに保存
-3. **エージェント (Claude + Idios) が `allaganeye-guard verify` を実行**。PASS するまで allaganeye で処理しない
+3. **主エージェント (Zed + DeepSeek) + Idios が `allaganeye-guard verify` を実行**。PASS するまで allaganeye で処理しない
 4. 調査完了後、ローカルデータを削除し Issue にコメントで報告
 
 ### プライバシー同意

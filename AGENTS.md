@@ -299,7 +299,7 @@ Python 依存は 2 層構成 (#916)。`pyproject.toml` = **外部への互換範
 
 ## セキュリティ検査（allaganeye-guard 運用連携）
 
-外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、エージェント (= Claude + 人間メンテナ Idios) が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。詳細は [`docs/guard-integration.md`](docs/guard-integration.md)、外部ユーザー向けバグ報告案内は [`docs/bug-report-guide.md`](docs/bug-report-guide.md) を参照。
+外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、主エージェント (Zed + DeepSeek) + 人間メンテナ Idios が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。詳細は [`docs/guard-integration.md`](docs/guard-integration.md)、外部ユーザー向けバグ報告案内は [`docs/bug-report-guide.md`](docs/bug-report-guide.md) を参照。
 
 - **リポジトリ**: [Idios/kobutachan-allaganeye-guard](https://github.com/Idios/kobutachan-allaganeye-guard) (独立パッケージ)
 - **運用**: `allaganeye-guard verify <file>` → PASS (exit 0 / 1) 後に `allaganeye split` で処理
@@ -332,7 +332,7 @@ PR 作成後は `iterate-review` skill (<PR#>) で review-fix ループを自走
 
 ### Memory 活用 (ユーザー訂正の蓄積)
 
-ユーザーが Claude の判断を訂正した場合、訂正内容を `feedback_*.md` 形式でメモリに蓄積する。蓄積対象の例:
+ユーザーが主エージェントの判断を訂正した場合、訂正内容を `feedback_*.md` 形式でメモリに蓄積する (蓄積先 `~/.claude/projects/<project>/memory/` は Claude Code の auto-memory。Zed + DeepSeek では自動注入されないため、必要時に直接 read して参照する — 詳細は [docs/l2-workflow.md](docs/l2-workflow.md) §Memory 階層化)。蓄積対象の例:
 
 - 優先度判定基準の訂正 (「この観点は P1」「このレベルの UX 品質は P3」等)
 - ラベル振り分け基準の訂正 (`deferred` / スコープラベル判定の根拠)
@@ -479,7 +479,7 @@ Claude Code / Fable / Kimi Code は **Zed セッション内からは起動不�
 
 **fallback notice（記録義務、C6 同型）**: Claude レビューが使えない状況で DeepSeek がレビューを代行した成果物には、Claude/Opus/Fable レビュー済との誤認を防ぐため以下を明示する。
 
-> **Claude fallback notice**: 本成果物は Claude usage limit のため DeepSeek <V4 Pro | V4 Flash> で作成しました。Claude 復旧後の再レビューを推奨します。
+> **Claude fallback notice**: 本成果物のレビューは Claude 不可（usage limit 等）のため DeepSeek <V4 Pro | V4 Flash> が代行しました。Claude 復旧後の再レビューを推奨します。
 
 ## AGENTS.md 継続改善
 

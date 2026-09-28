@@ -317,7 +317,7 @@ close 後に追加情報 (関連 PR 番号 / 検証ログ / 残タスク子 issu
 close-issue 594
 ```
 
-ユーザーが issue 番号を指定して呼び出す。Claude は自動的に段階を進め、要所で `AskUserQuestion` により判断を仰ぐ (特に Step 6 のトリアージ確定 / Step 7 の close 承認)。
+ユーザーが issue 番号を指定して呼び出す。主エージェントは自動的に段階を進め、要所で `AskUserQuestion` により判断を仰ぐ (特に Step 6 のトリアージ確定 / Step 7 の close 承認)。
 
 ## 参考
 
