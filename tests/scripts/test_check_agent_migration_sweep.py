@@ -55,6 +55,71 @@ _SLASH_NEGATIVE: list[tuple[str, str]] = [
 ]
 
 
+# --------------------------------------------------------------------------
+# regex: 主エージェント=Claude の旧表記 検出 vs 維持対象の誤検出 (#1066)
+# --------------------------------------------------------------------------
+
+# (label, text) -- いずれも「主エージェント=Claude の旧表記を検出する」べき。
+_CLAUDE_AGENT_POSITIVE: list[tuple[str, str]] = [
+    ("subject-ha", "Claude は自動的に段階を進め、要所で判断を仰ぐ"),
+    ("subject-ga", "Claude が `gh` コマンドを発行する"),
+    ("possessive-no", "ユーザーが Claude の判断を訂正した場合、蓄積する"),
+    ("host-uchi", "Stage 1: Claude 内 fresh subagent が実装"),
+    ("main", "Stage 2: controller (Claude main) が到達確認"),
+    ("thinking-body", "superpowers subagent (Claude 思考体) と Codex"),
+    ("code-fallback", "Claude Code fallback は同一 model の self-review に近い"),
+    ("fallback-de", "(B) Claude fallback で push する"),
+    ("fallback-ha", "Claude fallback は同一 model の self-review に近い"),
+    ("fallback-slash", "(再試行 / Claude fallback / abort) 3 択"),
+    ("paren-eq-plus", "エージェント (= Claude + 人間メンテナ Idios) が手動で実行する"),
+    (
+        "code-session-ugoku",
+        "メンテナ (= Claude Code セッションで動くアシスタント) が受領する",
+    ),
+    ("code-no-plan", "Claude Code の plan モード (ExitPlanMode ツール) を活用し"),
+]
+
+# (label, text) -- いずれも「誤検出してはならない」維持対象 (レビュー専用ツール / 製品名)。
+_CLAUDE_AGENT_NEGATIVE: list[tuple[str, str]] = [
+    (
+        "claude-code",
+        "Claude Code / Fable / Kimi Code は別途セッションを起動して利用する",
+    ),
+    ("claude-fable", "全体レビュー・相談は Claude Fable 最新に依頼する"),
+    ("claude-sonnet", "中難度定型は Claude Sonnet 最新 / DeepSeek V4 Flash"),
+    (
+        "claude-design",
+        "Claude Design (claude.ai/design) からエクスポートされた handoff bundle",
+    ),
+    (
+        "fallback-notice",
+        "> **Claude fallback notice**: 本成果物のレビューは Claude 不可のため DeepSeek が代行した",
+    ),
+    ("section-heading", "## Claude fallback（Claude レビュー不可時）"),
+    (
+        "claude-opus-fable",
+        "Claude（Opus / Fable）復旧後に再レビューしてから merge する",
+    ),
+    ("codex-independent", "Codex 本体は Claude と独立である"),
+    ("claude-kaifuku", "Claude 復旧後の再レビューを推奨する"),
+    (
+        "claude-review-noun",
+        "Claude レビューが使えない状況で DeepSeek がレビューを代行した",
+    ),
+    ("claude-code-slash", "Claude Code のスラッシュコマンドは invoke 不可"),
+    ("claude-code-subagent", "DeepSeek は Claude Code の subagent になれない"),
+    ("claude-code-session-review", "別途 Claude Code セッションで review 依頼"),
+    ("claude-ni-review", "Claude に再レビューを依頼する"),
+    ("claude-no-review", "Claude のレビュー結果を突合する"),
+    ("claude-no-rereview", "Claude の再レビューを推奨する"),
+    ("claude-no-usage", "Claude の usage limit 時"),
+    ("claude-no-permission", "Claude の permission prompt を表示する"),
+    ("claude-no-session", "Claude のセッション起動"),
+    ("claude-no-memory", "Claude の auto-memory"),
+    ("claude-no-slash", "Claude のスラッシュコマンド"),
+]
+
+
 @pytest.mark.parametrize(("label", "text"), _SLASH_POSITIVE, ids=lambda v: str(v)[:24])
 def test_slash_command_is_detected(label: str, text: str) -> None:
     assert guard._SLASH_RE.search(text), f"{label} が slash command と見なされなかった"
@@ -64,6 +129,25 @@ def test_slash_command_is_detected(label: str, text: str) -> None:
 def test_path_like_slash_is_not_detected(label: str, text: str) -> None:
     assert guard._SLASH_RE.search(text) is None, (
         f"{label} が slash command と誤検出された: {guard._SLASH_RE.search(text)}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "text"), _CLAUDE_AGENT_POSITIVE, ids=lambda v: str(v)[:24]
+)
+def test_claude_agent_old_term_is_detected(label: str, text: str) -> None:
+    assert guard._CLAUDE_AGENT_RE.search(text), (
+        f"{label} が主エージェント=Claude の旧表記と見なされなかった"
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "text"), _CLAUDE_AGENT_NEGATIVE, ids=lambda v: str(v)[:24]
+)
+def test_kept_claude_term_is_not_detected(label: str, text: str) -> None:
+    assert guard._CLAUDE_AGENT_RE.search(text) is None, (
+        f"{label} が主エージェント=Claude の旧表記と誤検出された: "
+        f"{guard._CLAUDE_AGENT_RE.search(text)}"
     )
 
 
@@ -146,6 +230,29 @@ def test_living_doc_codex_companion_is_exit_1(tmp_path: Path) -> None:
     assert _run_repo(tmp_path) == 1
 
 
+def test_living_doc_claude_agent_old_term_is_exit_1(tmp_path: Path) -> None:
+    """主エージェント=Claude の旧表記残存は exit 1 (#1066)。"""
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\nClaude は自動的に段階を進め、要所で判断を仰ぐ。\n",
+        encoding="utf-8",
+    )
+    assert _run_repo(tmp_path) == 1
+
+
+def test_living_doc_kept_claude_terms_pass(tmp_path: Path) -> None:
+    """維持対象 (Claude Code / Fable / Design / fallback notice) は exit 0 (#1066)。"""
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\nClaude Code / Claude Fable / Claude Design をレビュー専用とする。\n"
+        "> **Claude fallback notice**: 本成果物のレビューは Claude 不可のため代行した。\n",
+        encoding="utf-8",
+    )
+    assert _run_repo(tmp_path) == 0
+
+
 def test_hook_file_is_scanned(tmp_path: Path) -> None:
     """hook (session-start.sh) の slash 残存も検出する (Round 5 の再発事象)。"""
     _make_repo(tmp_path)
@@ -195,6 +302,24 @@ def test_eval_report_is_excluded(tmp_path: Path) -> None:
         tmp_path / ".agents" / "skills" / "review-pr" / "eval" / "reports" / "r.md"
     ).write_text("# 対象 `.claude/skills/review-pr/SKILL.md`\n", encoding="utf-8")
     assert _run_repo(tmp_path) == 0
+
+
+def test_eval_requirements_is_excluded(tmp_path: Path) -> None:
+    """`.agents/skills/**/eval/**` は fixture 全体 (requirements.md 含む) を除外する (#1066)。"""
+    _make_repo(tmp_path)
+    (tmp_path / ".agents" / "skills" / "review-pr" / "eval").mkdir(parents=True)
+    (
+        tmp_path / ".agents" / "skills" / "review-pr" / "eval" / "requirements.md"
+    ).write_text("# 要件\n\nClaude は自動的に段階を進める。\n", encoding="utf-8")
+    assert _run_repo(tmp_path) == 0
+
+
+def test_undecodable_living_doc_is_exit_1(tmp_path: Path) -> None:
+    """living doc (.md) が utf-8 decode 不能なら検査不能 = fail-closed (exit 1) (#1066)。"""
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "bad.md").write_bytes(b"\xff\xfe\x00 broken")
+    assert _run_repo(tmp_path) == 1
 
 
 # --------------------------------------------------------------------------
