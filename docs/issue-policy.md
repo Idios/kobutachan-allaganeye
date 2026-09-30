@@ -1,6 +1,6 @@
 # GitHub Issue 作成ポリシー
 
-> 対象: このリポジトリで作業する全エージェント（Zed + DeepSeek (主エージェント) / Claude Code (レビュー専用) / Codex / その他 LLM）および人間
+> 対象: このリポジトリで作業する全エージェント（Zed + DeepSeek (主エージェント) / Claude Code (レビュー・相談専用) / Codex / その他 LLM）および人間
 
 ---
 

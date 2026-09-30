@@ -1126,7 +1126,7 @@ typo fix / リンク更新では過剰。`iterate-review` のような中核 ski
 | exit code 非ゼロ + stderr に `rate.?limit`, `quota`, `429`, `usage_limit` のいずれか | **token 枯渇 (明確)** → 自動 fallback |
 | exit code 非ゼロ + stderr に `auth`, `unauthorized`, `401`, `403`, `api.?key` | **認証失敗 (明確)** → 自動 fallback + user notify |
 | exit code 非ゼロ + stderr に `timeout`, `EHOSTUNREACH`, `ENETUNREACH`, `ECONNRESET` | **network failure (明確)** → 自動 fallback |
-| exit code 非ゼロ + 上記いずれにも該当しない stderr | **曖昧** → user に AskUserQuestion (再試行 / DeepSeek fallback / abort) |
+| exit code 非ゼロ + 上記いずれにも該当しない stderr | **曖昧** → user に AskUserQuestion (再試行 / DeepSeek 直接レビュー / abort) |
 | exit code 0 + stdout (§「Codex 出力の読み取り」) が空 / parse 不能 | **応答異常** → user に AskUserQuestion |
 
 ### 検出 + fallback の擬似コード (skill 内実装イメージ)
@@ -1140,23 +1140,23 @@ if run.exit_code != 0:
     stderr_lower = run.stderr.lower()
     if matches_any(stderr_lower, ["rate", "quota", "429", "usage_limit"]):
         fallback_reason = "token 枯渇"
-        invoke_fallback("DeepSeek fallback")
+        invoke_fallback("DeepSeek 直接レビュー")
     elif matches_any(stderr_lower, ["auth", "unauthorized", "401", "403", "api"]):
         fallback_reason = "認証失敗"
-        invoke_fallback("DeepSeek fallback")
+        invoke_fallback("DeepSeek 直接レビュー")
         notify_user("Codex auth failed; check token / api key")
     elif matches_any(stderr_lower, ["timeout", "ehostunreach", "enetunreach", "econnreset"]):
         fallback_reason = "network failure"
-        invoke_fallback("DeepSeek fallback")
+        invoke_fallback("DeepSeek 直接レビュー")
     else:
         # 曖昧 → user 判断
-        ask_user_question(["再試行", "DeepSeek fallback", "abort"])
+        ask_user_question(["再試行", "DeepSeek 直接レビュー", "abort"])
 else:
     # 成功時は stdout を finding として読む (§「Codex 出力の読み取り」)
     findings_text = run.stdout
     if findings_text.empty() or not parseable(findings_text):
         fallback_reason = "応答異常"
-        ask_user_question(["再試行", "DeepSeek fallback", "abort"])
+        ask_user_question(["再試行", "DeepSeek 直接レビュー", "abort"])
     else:
         integrate_findings(findings_text)
 
@@ -1194,7 +1194,7 @@ skill report (`review-pr` Step 6 レビュー報告 / `iterate-review` **Final s
 
 ## Claude fallback（Claude レビュー不可時）
 
-主エージェントは **Zed + DeepSeek**（正は `AGENTS.md` §モデルルーティング）。Claude Code / Fable / Opus は**レビュー専用**（別途 Claude Code セッション起動）であり、これらが usage limit / 障害等で使えない場合の fallback を本節で定める。
+主エージェントは **Zed + DeepSeek**（正は `AGENTS.md` §モデルルーティング）。Claude Code / Fable / Opus は**レビュー・相談専用**（別途 Claude Code セッション起動。中難度定型の実装委譲も含む）であり、これらが usage limit / 障害等で使えない場合の fallback を本節で定める。
 
 ### 発動条件
 
