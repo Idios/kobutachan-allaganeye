@@ -433,7 +433,7 @@ Codex CLI が rate-limit / quota / network / auth 等で fail した場合、主
 
 ## モデルルーティング（用途別モデル使い分け）
 
-開発時のサブエージェント/レビューを用途別のモデルへ振り分ける。**本ツールの実行時依存ではなく開発運用のみ**（CLI/GUI の挙動・出力は変わらない）。**主エージェントは Zed + DeepSeek V4 Pro**。Claude Code / Codex / Fable / Kimi Code はレビュー・相談専用（別途セッション起動）。設計 spec は [`docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md`](docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md) を参照。
+開発時のサブエージェント/レビューを用途別のモデルへ振り分ける。**本ツールの実行時依存ではなく開発運用のみ**（CLI/GUI の挙動・出力は変わらない）。**主エージェントは Zed + DeepSeek V4 Pro**。Claude Code / Codex / Fable / Kimi Code はレビュー・相談専用（別途セッション起動）。設計 spec (Superseded / 履歴) は [`docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md`](docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md) を参照。
 
 ルーティングは**アドバイザリ**（hook 強制はしない）。担保は本節のガイダンスと主エージェントの規律。
 

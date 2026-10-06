@@ -180,11 +180,11 @@ gh pr checks <PR番号>
 
 ### 5. ロジック / ドキュメントレビュー
 
-PR の変更種別に応じて以下を確認する。**code quality (logic / architecture / security) 部分は plugin subagent に委譲し、project 固有の doc 整合性確認のみを本 skill で実施する**。
+PR の変更種別に応じて以下を確認する。**code quality (logic / architecture / security) 部分は `spawn_agent` subagent に委譲し、project 固有の doc 整合性確認のみを本 skill で実施する**。
 
 #### 5.0 subagent による code quality review
 
-spawn_agent による code quality レビュー に code quality 観点 (logic correctness / architecture / security / code smell / best practices) のレビューを委譲する。subagent は本 skill の責務外の項目 (受け入れ条件 / base sync / 並行 PR / project doc 整合 / マージ後 handoff) には介入しない。
+spawn_agent による subagent に code quality 観点 (logic correctness / architecture / security / code smell / best practices) のレビューを委譲する。subagent は本 skill の責務外の項目 (受け入れ条件 / base sync / 並行 PR / project doc 整合 / マージ後 handoff) には介入しない。
 
 **起動条件**: **原則すべての PR で起動する。非起動は 1 条件だけ** — 変更ファイルが **すべて** `docs/**` または `*.md` (= documentation のみ) の場合に限り起動しない。委譲先の観点 (logic / architecture / security / code smell) は code diff を前提としており、documentation しか無い PR では no-op review にしかならないため。
 

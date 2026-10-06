@@ -1194,7 +1194,7 @@ skill report (`review-pr` Step 6 レビュー報告 / `iterate-review` **Final s
 
 ## Claude fallback（Claude レビュー不可時）
 
-主エージェントは **Zed + DeepSeek**（正は `AGENTS.md` §モデルルーティング）。Claude Code / Fable / Opus は**レビュー・相談専用**（別途 Claude Code セッション起動。中難度定型の実装委譲も含む）であり、これらが usage limit / 障害等で使えない場合の fallback を本節で定める。
+主エージェントは **Zed + DeepSeek**（正は `AGENTS.md` §モデルルーティング）。Claude Code / Fable / Opus は**レビュー・相談専用**（別途 Claude Code セッション起動。中難度定型の実装委譲の扱いは `AGENTS.md` §モデルルーティング を参照）であり、これらが usage limit / 障害等で使えない場合の fallback を本節で定める。
 
 ### 発動条件
 
@@ -1240,7 +1240,7 @@ Claude レビュー不可時の fallback でレビューを代行した成果物
 ```text
 ┌─────────────────────────────────────────────────────────────┐
 │ Stage 1: 主エージェント内 fresh subagent が実装              │
-│         (superpowers:subagent-driven-development)            │
+│         (spawn_agent: subagent-driven-development)           │
 │         - per-task subagent dispatch                         │
 │         - 2-stage review (spec reviewer + code quality)      │
 │         - HARD-GATE: scope を超える発見 → BLOCKED 報告       │
@@ -1274,12 +1274,12 @@ Claude レビュー不可時の fallback でレビューを代行した成果物
 | 起動タイミング | PR 作成**直前** (Step 0-4 通過後) | `review-pr` 段階の **deep-dive** (Step 5a) |
 | Codex command | `codex review --base <base> "<focus>"` (approve させない姿勢、tier 1 = `codex` CLI) | `codex review --base <base> "<focus>"` (code quality 一般、同) |
 | 必須 / オプション | **必須** (Pre-flight ゲート) | optional (起動条件 3 件: 条件 1 大規模 PR / 条件 2 **再発 root cause** 複数 / 条件 3 **core 変更対象ファイル**。定義の正は [`.agents/skills/review-pr/SKILL.md`](../.agents/skills/review-pr/SKILL.md) §「core 変更対象ファイル」 と §「root cause の 2 用法」) |
-| 直前 stage | Step 4 並行 PR 重複再確認 | superpowers subagent 実装 + reachability 確認 |
+| 直前 stage | Step 4 並行 PR 重複再確認 | subagent (spawn_agent) 実装 + reachability 確認 |
 
 ### 並列ではなく直列にする理由
 
 - Codex に fix させると Iron Law 3 (scope creep) / Iron Law 5 (independent judgment) の衝突リスク
-- superpowers subagent（主エージェントと同一モデル）と Codex (GPT-5.4) を並列起動しても finding が重複するだけで bias は減らない
+- subagent (spawn_agent)（主エージェントと同一モデル）と Codex (GPT-5.4) を並列起動しても finding が重複するだけで bias は減らない
 - 直列で「実装 → reachability → adversarial review → triage」と段階化すると、各 stage で人 (Idios) が介入できる checkpoint が確保される
 
 ### Fallback (Codex fail 時)
