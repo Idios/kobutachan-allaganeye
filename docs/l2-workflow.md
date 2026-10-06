@@ -1189,7 +1189,7 @@ skill report (`review-pr` Step 6 レビュー報告 / `iterate-review` **Final s
 ### Fallback の限界 (明示)
 
 - Codex は GPT-5.4 (独立 model) の second opinion。DeepSeek fallback（主エージェント）は同一 model の self-review に近く、bias 構造が同じになる
-- 重要 PR (release 直前 / 大規模 refactor) で Codex fallback が trigger した場合、user に AskUserQuestion で「Codex 復旧待ち / DeepSeek fallback / abort」の 3 択を提示
+- 重要 PR (release 直前 / 大規模 refactor / [`.agents/skills/review-pr/SKILL.md`](../.agents/skills/review-pr/SKILL.md) §「core 変更対象ファイル」の表に該当する変更) で Codex fallback が trigger した場合、user に AskUserQuestion で「Codex 復旧待ち / DeepSeek fallback / abort」の 3 択を提示
 - fallback report には「fallback で実行済」を明示することで、後日 Codex 復旧時に再 review が要否を判断可能にする
 
 ## Claude fallback（Claude レビュー不可時）
