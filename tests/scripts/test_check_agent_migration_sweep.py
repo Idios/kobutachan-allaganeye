@@ -235,6 +235,22 @@ def test_runtime_messages_are_pinned(tmp_path: Path) -> None:
     assert "#1068" in result.stderr
 
 
+def test_declarations_name_the_detection_classes() -> None:
+    """宣言 (module docstring / `ci.yml` comment) が検出 class を名指ししていることを pin する。
+
+    発火側 (実行時文言) だけでなく宣言側の drift も止める (#1073 AC4)。
+    `AGENTS.md` 側の追補は Phase 2 (PR-B) で扱う。
+    """
+    assert "主エージェント=Claude" in (guard.__doc__ or "")
+    assert "Codex 旧表記" in (guard.__doc__ or "")
+
+    ci_yml = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "主エージェント=Claude" in ci_yml
+    assert "Codex 旧表記" in ci_yml
+
+
 def test_clean_repo_passes(tmp_path: Path) -> None:
     _make_repo(tmp_path)
     (tmp_path / "docs").mkdir()

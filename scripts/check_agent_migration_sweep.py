@@ -2,9 +2,10 @@
 """Check the Claude Code → Zed+DeepSeek agent migration sweep is complete (#1041/#1042).
 
 Detects "old terminology" (skill slash commands / old path `.claude/skills` /
-old filename `CLAUDE.md` / 主エージェント=Claude の旧表記) that remains in
-**living docs**, to prevent the incomplete-sweep recurrence seen in PR #1051
-Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を個別に拾う事象)。
+old filename `CLAUDE.md` / 主エージェント=Claude の旧表記 / #1043 の Codex 旧表記)
+that remains in **living docs**, to prevent the incomplete-sweep recurrence seen
+in PR #1051 Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を
+個別に拾う事象)。
 
 再発防止の設計意図:
 - 用語 sweep は「まとめて置換」だけでは漏れる (対象ファイルの取りこぼし)。
