@@ -233,6 +233,9 @@ def test_runtime_messages_are_pinned(tmp_path: Path) -> None:
     # per-violation label と `.claude/agents/**` の帰属行 (#1068) も pin する
     assert "主エージェント=Claude の旧表記残存" in result.stderr
     assert "#1068" in result.stderr
+    # hint の除外列挙も pin する (宣言側 drift を止める)
+    assert "archive / audits" in result.stderr
+    assert ".claude/agents/**" in result.stderr
 
 
 def test_declarations_name_the_detection_classes() -> None:
@@ -243,12 +246,14 @@ def test_declarations_name_the_detection_classes() -> None:
     """
     assert "主エージェント=Claude" in (guard.__doc__ or "")
     assert "Codex 旧表記" in (guard.__doc__ or "")
+    assert "検査不能 (fail-closed)" in (guard.__doc__ or "")
 
     ci_yml = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
     assert "主エージェント=Claude" in ci_yml
     assert "Codex 旧表記" in ci_yml
+    assert "検査不能 (fail-closed)" in ci_yml
 
 
 def test_clean_repo_passes(tmp_path: Path) -> None:
