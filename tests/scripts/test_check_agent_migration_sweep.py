@@ -7,7 +7,8 @@
 本 file が特に固定するのは **scope** である:
 - 検査対象 = living doc (`.md` / `.sh` の doc / skill / hook / AGENTS.md / README)。
 - コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml`)、CHANGELOG、
-  eval レポート、dated plans・specs、archive、audits、GUI ソースは対象外 (#1044)。
+  eval fixture (`.agents/skills/**/eval/**`)、dated plans・specs、archive、audits、GUI ソースは
+  対象外 (#1044)。
 - slash command の正規表現は path / branch 名の `/release` 等を誤検出しない
   (`(?<![a-z0-9._-])` + `(?![a-z0-9._-])` の前後境界)。
 """
@@ -288,6 +289,20 @@ def test_gui_source_is_excluded(tmp_path: Path) -> None:
     (tmp_path / "gui" / "src").mkdir(parents=True)
     (tmp_path / "gui" / "src" / "store.ts").write_text(
         "// Windows-only (see CLAUDE.md).\n", encoding="utf-8"
+    )
+    assert _run_repo(tmp_path) == 0
+
+
+def test_build_cache_dir_is_skipped(tmp_path: Path) -> None:
+    """`build-cache/` は .gitignore 済の展開先なので検査対象外 (#1066)。
+
+    red 実証 (`git archive <rev> | tar -x -C build-cache/`) の展開物を checker が
+    拾うと false red になるため、`_SKIP_DIRS` で除外する。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "build-cache" / "old").mkdir(parents=True)
+    (tmp_path / "build-cache" / "old" / "old.md").write_text(
+        "Claude は自動的に段階を進める。\n", encoding="utf-8"
     )
     assert _run_repo(tmp_path) == 0
 

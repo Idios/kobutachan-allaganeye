@@ -17,10 +17,11 @@ Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を個別に拾
   - コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml` 等) は対象外。
     コードコメントの旧参照 (GUI ソースの `CLAUDE.md` / `// … /iterate-review Round N`
     等の歴史記録) は棚卸 #1044 に回す。
-  - 履歴記録 (`CHANGELOG.md` / eval レポート / dated plans・specs / archive /
-    audits) も対象外。
+  - 履歴記録 (`CHANGELOG.md` / eval fixture (`.agents/skills/**/eval/**`) /
+    dated plans・specs / archive / audits) も対象外。
 
-exit code: 0 = clean / 1 = 旧用語残存 (sweep 未完了) / 2 = 検査自体が壊れている。
+exit code: 0 = clean / 1 = 旧用語残存 (sweep 未完了) または 検査不能 (fail-closed)
+         / 2 = 検査自体が壊れている。
 """
 
 from __future__ import annotations
@@ -115,6 +116,7 @@ _SKIP_DIRS = {
     ".ruff_cache",
     "__pycache__",
     "build",
+    "build-cache",
     "dist",
     "target",
     "output",
@@ -127,7 +129,7 @@ _SKIP_DIRS = {
 # だけでなく `requirements.md` / `scenario_*.md` も含む)。これらは特定時点の評価基準 /
 # シナリオを固定する記録で、**用語 sweep の対象外** (旧用語が当時の文脈で意味を持つため
 # 遡及置換しない)。ただし **skill の契約自体が変わった場合は eval の妥当性を保つため
-# fixture の期待値を更新する** (例: 本 PR で `review-pr/eval/requirements.md` の I-5 を
+# fixture の期待値を更新する** (例: #1071 で `review-pr/eval/requirements.md` の I-5 を
 # 「Claude fallback」→「DeepSeek fallback / abort」へ更新)。fixture 内に残る旧 Codex 契約
 # 等の残置は #1068 / #1069 で別途追跡する。
 _EXCLUDED_GLOBS = [
