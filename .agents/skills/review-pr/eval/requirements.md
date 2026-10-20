@@ -158,7 +158,7 @@ PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector m
 2. **[critical]** **I-2**: 自動 fallback として superpowers `requesting-code-review` subagent を起動する。**focus は「Codex へ渡した文字列の流用」ではない** — tier 1 の `codex-companion.mjs review` は focus positional を受け付けないため流用元の文字列は存在しない。`docs/l2-workflow.md` §「Step 5 の focus 導出手順」で**導出した** focus を fallback subagent へ渡すこと (#856 item4 で矛盾解消)
 3. **[critical]** **I-3**: Step 6 レビュー報告に「Codex fallback notice」(`> **Codex fallback notice**: ...` template) を必須記載 (Iron Law 5 整合)
 4. **[critical]** **I-4**: fallback 経路 (`docs/l2-workflow.md` §Codex fallback) を参照する
-5. **[critical]** **I-5**: 重要 PR (大規模 refactor) なので user に AskUserQuestion で「Codex 復旧待ち / Claude fallback で push」3 択を提示する
+5. **[critical]** **I-5**: 重要 PR (大規模 refactor) なので user に AskUserQuestion で「Codex 復旧待ち / DeepSeek fallback / abort」3 択を提示する
 6. **I-6** (#854 で追加、dispatch 時事前固定 non-critical): Codex review の実行手段を companion script (`codex-companion.mjs review --base ...` の Bash 実行) と正しく特定し、slash command `/codex:review` を agent 自身が invoke する前提にしない (evidence: `eval/reports/iter_854_3tier_revaluation.md` Iteration 1)
 
 ---
