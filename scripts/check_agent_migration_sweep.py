@@ -167,7 +167,11 @@ def _iter_living_docs(repo_root: Path):
 
 
 def check_sweep(repo_root: Path) -> list[str]:
-    """Return human-readable violations (each = "path:line: text")."""
+    """Return human-readable violations.
+
+    2 形式ある: 旧用語残存は "path:line: text"、fail-closed (decode / 読取不能) は
+    "path: 検査不能 (...)" (行番号を持たない)。
+    """
     violations: list[str] = []
     for path, rel in _iter_living_docs(repo_root):
         try:
@@ -246,8 +250,10 @@ def main(argv: list[str] | None = None) -> int:
             "`codex` CLI 直呼び (§Codex 運用) へ置換すること (#1043)。\n"
             "主エージェント=Claude の旧表記は `Zed + DeepSeek` (または `主エージェント`) "
             "へ置換すること (#1066)。\n"
-            "コードファイル / CHANGELOG / eval fixture / `.claude/agents/**` / "
-            "dated plans・specs は対象外 (#1044)。",
+            "コードファイル / CHANGELOG / eval fixture / dated plans・specs は "
+            "対象外 (#1044)。\n"
+            "`.claude/agents/**` は Claude Code 用ロール定義のため対象外 "
+            "(旧 invocation 契約は #1068)。",
             file=sys.stderr,
         )
         return EXIT_DRIFT

@@ -7,9 +7,10 @@
 本 file が特に固定するのは **scope** である:
 - 検査対象 = living doc (`.md` / `.sh` の doc / skill / hook / AGENTS.md / README)。
 - コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml`)、CHANGELOG、
-  eval fixture (`.agents/skills/**/eval/**`)、dated plans・specs、archive、audits、GUI ソース、
-  `.claude/agents/**` (Claude Code 用のロール定義。`model:` frontmatter が Claude
-  エイリアスのみ) は対象外 (#1044)。
+  eval fixture (`.agents/skills/**/eval/**`)、dated plans・specs、archive、audits、
+  GUI ソースは対象外 (#1044)。
+- `.claude/agents/**` は Claude Code 用のロール定義 (`model:` frontmatter が Claude
+  エイリアスのみ) のため対象外 (旧 invocation 契約は #1068)。
 - slash command の正規表現は path / branch 名の `/release` 等を誤検出しない
   (`(?<![a-z0-9._-])` + `(?![a-z0-9._-])` の前後境界)。
 """
@@ -206,6 +207,23 @@ def _run_repo_result(repo_root: Path) -> subprocess.CompletedProcess[str]:
 
 def _run_repo(repo_root: Path) -> int:
     return _run_repo_result(repo_root).returncode
+
+
+def test_runtime_messages_are_pinned(tmp_path: Path) -> None:
+    """実行時メッセージの header / hint 文言を pin する (#1066)。
+
+    宣言 (docstring / `ci.yml` comment) と発火側の文言が乖離すると、違反時に
+    保守者が誤った原因を読む。文言の revert が silent に通らないようにする。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "old.md").write_text(
+        "Claude は自動的に段階を進める。\n", encoding="utf-8"
+    )
+    result = _run_repo_result(tmp_path)
+    assert result.returncode == 1
+    assert "旧用語残存 または 検査不能" in result.stderr
+    assert "Zed + DeepSeek" in result.stderr
 
 
 def test_clean_repo_passes(tmp_path: Path) -> None:
