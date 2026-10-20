@@ -7,7 +7,10 @@
 本 file が特に固定するのは **scope** である:
 - 検査対象 = living doc (`.md` / `.sh` の doc / skill / hook / AGENTS.md / README)。
 - コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml`)、CHANGELOG、
-  eval レポート、dated plans・specs、archive、audits、GUI ソースは対象外 (#1044)。
+  eval fixture (`.agents/skills/**/eval/**`)、dated plans・specs、archive、audits、
+  GUI ソースは対象外 (#1044)。
+- `.claude/agents/**` は Claude Code 用のロール定義 (`model:` frontmatter が Claude
+  エイリアスのみ) のため対象外 (旧 invocation 契約は #1068)。
 - slash command の正規表現は path / branch 名の `/release` 等を誤検出しない
   (`(?<![a-z0-9._-])` + `(?![a-z0-9._-])` の前後境界)。
 """
@@ -55,6 +58,80 @@ _SLASH_NEGATIVE: list[tuple[str, str]] = [
 ]
 
 
+# --------------------------------------------------------------------------
+# regex: 主エージェント=Claude の旧表記 検出 vs 維持対象の誤検出 (#1066)
+# --------------------------------------------------------------------------
+
+# (label, text) -- いずれも「主エージェント=Claude の旧表記を検出する」べき。
+_CLAUDE_AGENT_POSITIVE: list[tuple[str, str]] = [
+    ("subject-ha", "Claude は自動的に段階を進め、要所で判断を仰ぐ"),
+    ("subject-ga", "Claude が `gh` コマンドを発行する"),
+    ("possessive-no", "ユーザーが Claude の判断を訂正した場合、蓄積する"),
+    ("host-uchi", "Stage 1: Claude 内 fresh subagent が実装"),
+    ("main", "Stage 2: controller (Claude main) が到達確認"),
+    ("thinking-body", "superpowers subagent (Claude 思考体) と Codex"),
+    ("code-fallback", "Claude Code fallback は同一 model の self-review に近い"),
+    ("fallback-de", "(B) Claude fallback で push する"),
+    ("fallback-ha", "Claude fallback は同一 model の self-review に近い"),
+    ("fallback-slash", "(再試行 / Claude fallback / abort) 3 択"),
+    ("paren-eq-plus", "エージェント (= Claude + 人間メンテナ Idios) が手動で実行する"),
+    (
+        "code-session-ugoku",
+        "メンテナ (= Claude Code セッションで動くアシスタント) が受領する",
+    ),
+    ("code-no-plan", "Claude Code の plan モード (ExitPlanMode ツール) を活用し"),
+]
+
+# (label, text) -- いずれも「誤検出してはならない」維持対象 (レビュー専用ツール / 製品名)。
+_CLAUDE_AGENT_NEGATIVE: list[tuple[str, str]] = [
+    (
+        "claude-code",
+        "Claude Code / Fable / Kimi Code は別途セッションを起動して利用する",
+    ),
+    ("claude-fable", "全体レビュー・相談は Claude Fable 最新に依頼する"),
+    ("claude-sonnet", "中難度定型は Claude Sonnet 最新 / DeepSeek V4 Flash"),
+    (
+        "claude-design",
+        "Claude Design (claude.ai/design) からエクスポートされた handoff bundle",
+    ),
+    (
+        "fallback-notice",
+        "> **Claude fallback notice**: 本成果物のレビューは Claude 不可のため DeepSeek が代行した",
+    ),
+    ("section-heading", "## Claude fallback（Claude レビュー不可時）"),
+    (
+        "claude-opus-fable",
+        "Claude（Opus / Fable）復旧後に再レビューしてから merge する",
+    ),
+    ("codex-independent", "Codex 本体は Claude と独立である"),
+    ("claude-kaifuku", "Claude 復旧後の再レビューを推奨する"),
+    (
+        "claude-review-noun",
+        "Claude レビューが使えない状況で DeepSeek がレビューを代行した",
+    ),
+    ("claude-code-slash", "Claude Code のスラッシュコマンドは invoke 不可"),
+    ("claude-code-subagent", "DeepSeek は Claude Code の subagent になれない"),
+    ("claude-code-session-review", "別途 Claude Code セッションで review 依頼"),
+    ("claude-ni-review", "Claude に再レビューを依頼する"),
+    ("claude-no-review", "Claude のレビュー結果を突合する"),
+    ("claude-no-rereview", "Claude の再レビューを推奨する"),
+    ("claude-no-usage", "Claude の usage limit 時"),
+    ("claude-no-permission", "Claude の permission prompt を表示する"),
+    ("claude-no-session", "Claude のセッション起動"),
+    ("claude-no-memory", "Claude の auto-memory"),
+    ("claude-no-slash", "Claude のスラッシュコマンド"),
+    # whitelist の残り 7 語 (#1066 Round 2)。whitelist は FP 抑制の唯一の契約なので、
+    # 各語が実際に branch を抑止することを pin する。
+    ("claude-no-kaifuku", "Claude の復旧を待つ"),
+    ("claude-no-fuka", "Claude の不可時は DeepSeek が代行する"),
+    ("claude-no-code-interpreter", "Claude の Code Interpreter を使う"),
+    ("claude-no-fable", "Claude の Fable 最新版に依頼する"),
+    ("claude-no-sonnet", "Claude の Sonnet 環境で実行する"),
+    ("claude-no-opus", "Claude の Opus モデルを選ぶ"),
+    ("claude-no-design", "Claude の Design 資料を参照する"),
+]
+
+
 @pytest.mark.parametrize(("label", "text"), _SLASH_POSITIVE, ids=lambda v: str(v)[:24])
 def test_slash_command_is_detected(label: str, text: str) -> None:
     assert guard._SLASH_RE.search(text), f"{label} が slash command と見なされなかった"
@@ -64,6 +141,25 @@ def test_slash_command_is_detected(label: str, text: str) -> None:
 def test_path_like_slash_is_not_detected(label: str, text: str) -> None:
     assert guard._SLASH_RE.search(text) is None, (
         f"{label} が slash command と誤検出された: {guard._SLASH_RE.search(text)}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "text"), _CLAUDE_AGENT_POSITIVE, ids=lambda v: str(v)[:24]
+)
+def test_claude_agent_old_term_is_detected(label: str, text: str) -> None:
+    assert guard._CLAUDE_AGENT_RE.search(text), (
+        f"{label} が主エージェント=Claude の旧表記と見なされなかった"
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "text"), _CLAUDE_AGENT_NEGATIVE, ids=lambda v: str(v)[:24]
+)
+def test_kept_claude_term_is_not_detected(label: str, text: str) -> None:
+    assert guard._CLAUDE_AGENT_RE.search(text) is None, (
+        f"{label} が主エージェント=Claude の旧表記と誤検出された: "
+        f"{guard._CLAUDE_AGENT_RE.search(text)}"
     )
 
 
@@ -96,9 +192,10 @@ def _make_repo(tmp_path: Path) -> None:
     (tmp_path / "AGENTS.md").write_text("# Allagan Eye\n", encoding="utf-8")
 
 
-def _run_repo(repo_root: Path) -> int:
+def _run_repo_result(repo_root: Path) -> subprocess.CompletedProcess[str]:
+    """checker を subprocess で起動し、exit code と stdout / stderr を返す。"""
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
-    result = subprocess.run(
+    return subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--repo-root", str(repo_root)],
         capture_output=True,
         text=True,
@@ -106,7 +203,30 @@ def _run_repo(repo_root: Path) -> int:
         errors="replace",
         env=env,
     )
-    return result.returncode
+
+
+def _run_repo(repo_root: Path) -> int:
+    return _run_repo_result(repo_root).returncode
+
+
+def test_runtime_messages_are_pinned(tmp_path: Path) -> None:
+    """実行時メッセージの header / hint 文言を pin する (#1066)。
+
+    宣言 (docstring / `ci.yml` comment) と発火側の文言が乖離すると、違反時に
+    保守者が誤った原因を読む。文言の revert が silent に通らないようにする。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "old.md").write_text(
+        "Claude は自動的に段階を進める。\n", encoding="utf-8"
+    )
+    result = _run_repo_result(tmp_path)
+    assert result.returncode == 1
+    assert "旧用語残存 または 検査不能" in result.stderr
+    assert "Zed + DeepSeek" in result.stderr
+    # per-violation label と `.claude/agents/**` の帰属行 (#1068) も pin する
+    assert "主エージェント=Claude の旧表記残存" in result.stderr
+    assert "#1068" in result.stderr
 
 
 def test_clean_repo_passes(tmp_path: Path) -> None:
@@ -146,6 +266,29 @@ def test_living_doc_codex_companion_is_exit_1(tmp_path: Path) -> None:
     assert _run_repo(tmp_path) == 1
 
 
+def test_living_doc_claude_agent_old_term_is_exit_1(tmp_path: Path) -> None:
+    """主エージェント=Claude の旧表記残存は exit 1 (#1066)。"""
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\nClaude は自動的に段階を進め、要所で判断を仰ぐ。\n",
+        encoding="utf-8",
+    )
+    assert _run_repo(tmp_path) == 1
+
+
+def test_living_doc_kept_claude_terms_pass(tmp_path: Path) -> None:
+    """維持対象 (Claude Code / Fable / Design / fallback notice) は exit 0 (#1066)。"""
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\nClaude Code / Claude Fable / Claude Design をレビュー専用とする。\n"
+        "> **Claude fallback notice**: 本成果物のレビューは Claude 不可のため代行した。\n",
+        encoding="utf-8",
+    )
+    assert _run_repo(tmp_path) == 0
+
+
 def test_hook_file_is_scanned(tmp_path: Path) -> None:
     """hook (session-start.sh) の slash 残存も検出する (Round 5 の再発事象)。"""
     _make_repo(tmp_path)
@@ -176,17 +319,51 @@ def test_code_file_is_excluded(tmp_path: Path) -> None:
 
 
 def test_gui_source_is_excluded(tmp_path: Path) -> None:
-    """GUI ソースの `CLAUDE.md` 参照は screenshot-freshness 回避で #1044 に defer。"""
+    """`gui/**` 配下は `.md` でも検査対象外 (screenshot-freshness 回避、#1044)。"""
     _make_repo(tmp_path)
     (tmp_path / "gui" / "src").mkdir(parents=True)
-    (tmp_path / "gui" / "src" / "store.ts").write_text(
-        "// Windows-only (see CLAUDE.md).\n", encoding="utf-8"
+    (tmp_path / "gui" / "src" / "README.md").write_text(
+        "Claude は自動的に段階を進める。\n", encoding="utf-8"
+    )
+    assert _run_repo(tmp_path) == 0
+
+
+def test_docs_archive_is_excluded(tmp_path: Path) -> None:
+    """`docs/archive/**` は履歴記録として検査対象外 (#1044)。"""
+    _make_repo(tmp_path)
+    (tmp_path / "docs" / "archive").mkdir(parents=True)
+    (tmp_path / "docs" / "archive" / "old.md").write_text(
+        "Claude は自動的に段階を進める。\n", encoding="utf-8"
+    )
+    assert _run_repo(tmp_path) == 0
+
+
+def test_build_cache_dir_is_skipped(tmp_path: Path) -> None:
+    """`build-cache/` は .gitignore 済の展開先なので検査対象外 (#1066)。
+
+    red 実証 (`git archive <rev> | tar -x -C build-cache/`) の展開物を checker が
+    拾うと false red になるため、`_SKIP_DIRS` で除外する。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "build-cache" / "old").mkdir(parents=True)
+    (tmp_path / "build-cache" / "old" / "old.md").write_text(
+        "Claude は自動的に段階を進める。\n", encoding="utf-8"
+    )
+    assert _run_repo(tmp_path) == 0
+
+
+def test_claude_agents_dir_is_excluded(tmp_path: Path) -> None:
+    """`.claude/agents/**` は Claude Code 用ロール定義なので除外する (#1066)。"""
+    _make_repo(tmp_path)
+    (tmp_path / ".claude" / "agents").mkdir(parents=True)
+    (tmp_path / ".claude" / "agents" / "role.md").write_text(
+        "Claude は自動的に段階を進める。\n", encoding="utf-8"
     )
     assert _run_repo(tmp_path) == 0
 
 
 def test_eval_report_is_excluded(tmp_path: Path) -> None:
-    """skill eval レポートの `.claude/skills` 参照は歴史記録 (棚卸 #1044) 対象外。"""
+    """skill eval fixture の `.claude/skills` 参照は歴史記録 (棚卸 #1044) 対象外。"""
     _make_repo(tmp_path)
     (tmp_path / ".agents" / "skills" / "review-pr" / "eval" / "reports").mkdir(
         parents=True
@@ -195,6 +372,51 @@ def test_eval_report_is_excluded(tmp_path: Path) -> None:
         tmp_path / ".agents" / "skills" / "review-pr" / "eval" / "reports" / "r.md"
     ).write_text("# 対象 `.claude/skills/review-pr/SKILL.md`\n", encoding="utf-8")
     assert _run_repo(tmp_path) == 0
+
+
+def test_eval_requirements_is_excluded(tmp_path: Path) -> None:
+    """`.agents/skills/**/eval/**` は fixture 全体 (requirements.md 含む) を除外する (#1066)。"""
+    _make_repo(tmp_path)
+    (tmp_path / ".agents" / "skills" / "review-pr" / "eval").mkdir(parents=True)
+    (
+        tmp_path / ".agents" / "skills" / "review-pr" / "eval" / "requirements.md"
+    ).write_text("# 要件\n\nClaude は自動的に段階を進める。\n", encoding="utf-8")
+    assert _run_repo(tmp_path) == 0
+
+
+def test_undecodable_living_doc_is_exit_1(tmp_path: Path) -> None:
+    """living doc (.md) が utf-8 decode 不能なら検査不能 = fail-closed (exit 1) (#1066)。"""
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "bad.md").write_bytes(b"\xff\xfe\x00 broken")
+    result = _run_repo_result(tmp_path)
+    assert result.returncode == 1
+    # 見出しが「旧用語残存」だけを原因として提示しない (検査不能も exit 1 の原因) (#1066)
+    assert "bad.md: 検査不能" in result.stderr
+
+
+def test_read_oserror_is_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """read 時の `OSError` も検査不能 = fail-closed で違反として扱う (#1066)。
+
+    subprocess では `OSError` を再現しにくいため、本 file で唯一 in-process で
+    `Path.read_text` を差し替えて分岐を pin する。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "unreadable.md").write_text("# ok\n", encoding="utf-8")
+
+    original_read_text = Path.read_text
+
+    def _fail_on_unreadable(self, *args, **kwargs):
+        if self.name == "unreadable.md":
+            raise OSError("simulated read failure")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _fail_on_unreadable)
+    violations = guard.check_sweep(tmp_path)
+    assert any("unreadable.md: 検査不能" in v for v in violations)
 
 
 # --------------------------------------------------------------------------
