@@ -7,8 +7,8 @@
 本 file が特に固定するのは **scope** である:
 - 検査対象 = living doc (`.md` / `.sh` の doc / skill / hook / AGENTS.md / README)。
 - コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml`)、CHANGELOG、
-  eval fixture (`.agents/skills/**/eval/**`)、dated plans・specs、archive、audits、GUI ソースは
-  対象外 (#1044)。
+  eval fixture (`.agents/skills/**/eval/**`)、dated plans・specs、archive、audits、GUI ソース、
+  `.claude/agents/**` (Claude Code 用のロール定義) は対象外 (#1044)。
 - slash command の正規表現は path / branch 名の `/release` 等を誤検出しない
   (`(?<![a-z0-9._-])` + `(?![a-z0-9._-])` の前後境界)。
 """
@@ -118,6 +118,15 @@ _CLAUDE_AGENT_NEGATIVE: list[tuple[str, str]] = [
     ("claude-no-session", "Claude のセッション起動"),
     ("claude-no-memory", "Claude の auto-memory"),
     ("claude-no-slash", "Claude のスラッシュコマンド"),
+    # whitelist の残り 7 語 (#1066 Round 2)。whitelist は FP 抑制の唯一の契約なので、
+    # 各語が実際に branch を抑止することを pin する。
+    ("claude-no-kaifuku", "Claude の復旧を待つ"),
+    ("claude-no-fuka", "Claude の不可時は DeepSeek が代行する"),
+    ("claude-no-code-interpreter", "Claude の Code Interpreter を使う"),
+    ("claude-no-fable", "Claude の Fable 最新版に依頼する"),
+    ("claude-no-sonnet", "Claude の Sonnet 環境で実行する"),
+    ("claude-no-opus", "Claude の Opus モデルを選ぶ"),
+    ("claude-no-design", "Claude の Design 資料を参照する"),
 ]
 
 
@@ -192,6 +201,19 @@ def _run_repo(repo_root: Path) -> int:
         env=env,
     )
     return result.returncode
+
+
+def _run_repo_result(repo_root: Path) -> subprocess.CompletedProcess[str]:
+    """`_run_repo` と同じ起動で stdout / stderr も返す (メッセージ契約の検査用)。"""
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    return subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--repo-root", str(repo_root)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
 
 
 def test_clean_repo_passes(tmp_path: Path) -> None:
@@ -334,7 +356,10 @@ def test_undecodable_living_doc_is_exit_1(tmp_path: Path) -> None:
     _make_repo(tmp_path)
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "bad.md").write_bytes(b"\xff\xfe\x00 broken")
-    assert _run_repo(tmp_path) == 1
+    result = _run_repo_result(tmp_path)
+    assert result.returncode == 1
+    # 見出しが「旧用語残存」だけを原因として提示しない (検査不能も exit 1 の原因) (#1066)
+    assert "検査不能" in result.stderr
 
 
 # --------------------------------------------------------------------------

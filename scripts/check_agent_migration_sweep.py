@@ -19,6 +19,8 @@ Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を個別に拾
     等の歴史記録) は棚卸 #1044 に回す。
   - 履歴記録 (`CHANGELOG.md` / eval fixture (`.agents/skills/**/eval/**`) /
     dated plans・specs / archive / audits) も対象外。
+  - `.claude/agents/**` は Claude Code 用のロール定義で、レビュー・相談専用ツール
+    (`Claude Fable` 等) を主エージェントとして扱う記述が設計上含まれるため除外。
 
 exit code: 0 = clean / 1 = 旧用語残存 (sweep 未完了) または 検査不能 (fail-closed)
          / 2 = 検査自体が壊れている。
@@ -230,7 +232,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if violations:
         print(
-            "ERROR: agent migration sweep が未完了 (旧用語が living doc に残存)。\n",
+            "ERROR: agent migration sweep が未完了 "
+            "(旧用語残存 または 検査不能 (fail-closed))。\n",
             file=sys.stderr,
         )
         for v in violations:

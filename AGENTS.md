@@ -369,7 +369,7 @@ repo 全域の用語 sweep (slash command の skill 名化、旧 path / 旧 file
 
 sweep の完全性は [`scripts/check_agent_migration_sweep.py`](scripts/check_agent_migration_sweep.py) が living doc (`.md` / `.sh` の doc / skill / hook) の旧用語残存を検出し、CI job `doc-agent-migration-sweep` が gate する。将来の sweep では、**先に check の旧用語リストを更新してから sweep を実行**し、CI green で完全性を実証すること。
 
-コードファイル / CHANGELOG / eval fixture (`.agents/skills/**/eval/**`) / dated plans・specs の旧参照は歴史記録 (棚卸 #1044) として対象外。
+コードファイル / CHANGELOG / eval fixture (`.agents/skills/**/eval/**`) / dated plans・specs の旧参照は歴史記録 (棚卸 #1044) として対象外。`.claude/agents/**` は Claude Code 用のロール定義で、レビュー・相談専用ツール (`Claude Fable` 等) を主エージェントとして扱う記述が設計上含まれるため除外。
 
 ## destructive write boundary audit checklist (#930 教訓)
 
