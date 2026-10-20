@@ -81,8 +81,12 @@ _CODEX_OLD_TERMS = [
 # 反転済 (#1043) なので、living doc に「Claude を主エージェントとして扱う」表記が
 # 残っていれば fail させる。維持対象 ("Claude Code" / "Claude Fable/Sonnet/Opus" /
 # "Claude Design" / "Claude fallback notice" / 節見出し "Claude fallback（...）") を
-# 誤検出しないよう、「Claude の直後が主エージェントを意味する語」に限定した狭い
-# パターンにする (positive/negative 両 fixture で緑を確認済)。
+# 誤検出しないよう、`の` + 名詞は whitelist で除外する。
+#
+# **tradeoff (意図的)**: 主語形 (`Claude は/が/内/main/思考体`) は助詞だけで判定する
+# ため、維持対象の文脈でも成立しうる (例: "Claude が復旧したら再レビューを依頼する")。
+# これは **FP 側に倒す** 設計で、文脈依存の narrow 化はしない (人手 sweep に委ねる
+# 方針と衝突するため)。現挙動は test の `claude-maintenance-context-tradeoff` で pin。
 _CLAUDE_AGENT_RE = re.compile(
     r"Claude\s*(?:は|が|内|main|思考体)"  # 主語 / ホスト
     # 所有 "の" は維持対象 (Claude のレビュー / permission prompt 等) を negative lookahead で
