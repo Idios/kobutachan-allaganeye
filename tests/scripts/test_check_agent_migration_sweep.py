@@ -8,7 +8,8 @@
 - 検査対象 = living doc (`.md` / `.sh` の doc / skill / hook / AGENTS.md / README)。
 - コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml`)、CHANGELOG、
   eval fixture (`.agents/skills/**/eval/**`)、dated plans・specs、archive、audits、GUI ソース、
-  `.claude/agents/**` (Claude Code 用のロール定義) は対象外 (#1044)。
+  `.claude/agents/**` (Claude Code 用のロール定義。`model:` frontmatter が Claude
+  エイリアスのみ) は対象外 (#1044)。
 - slash command の正規表現は path / branch 名の `/release` 等を誤検出しない
   (`(?<![a-z0-9._-])` + `(?![a-z0-9._-])` の前後境界)。
 """
@@ -190,21 +191,8 @@ def _make_repo(tmp_path: Path) -> None:
     (tmp_path / "AGENTS.md").write_text("# Allagan Eye\n", encoding="utf-8")
 
 
-def _run_repo(repo_root: Path) -> int:
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH), "--repo-root", str(repo_root)],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
-    )
-    return result.returncode
-
-
 def _run_repo_result(repo_root: Path) -> subprocess.CompletedProcess[str]:
-    """`_run_repo` と同じ起動で stdout / stderr も返す (メッセージ契約の検査用)。"""
+    """checker を subprocess で起動し、exit code と stdout / stderr を返す。"""
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--repo-root", str(repo_root)],
@@ -214,6 +202,10 @@ def _run_repo_result(repo_root: Path) -> subprocess.CompletedProcess[str]:
         errors="replace",
         env=env,
     )
+
+
+def _run_repo(repo_root: Path) -> int:
+    return _run_repo_result(repo_root).returncode
 
 
 def test_clean_repo_passes(tmp_path: Path) -> None:
@@ -329,8 +321,18 @@ def test_build_cache_dir_is_skipped(tmp_path: Path) -> None:
     assert _run_repo(tmp_path) == 0
 
 
+def test_claude_agents_dir_is_excluded(tmp_path: Path) -> None:
+    """`.claude/agents/**` は Claude Code 用ロール定義なので除外する (#1066)。"""
+    _make_repo(tmp_path)
+    (tmp_path / ".claude" / "agents").mkdir(parents=True)
+    (tmp_path / ".claude" / "agents" / "role.md").write_text(
+        "Claude は自動的に段階を進める。\n", encoding="utf-8"
+    )
+    assert _run_repo(tmp_path) == 0
+
+
 def test_eval_report_is_excluded(tmp_path: Path) -> None:
-    """skill eval レポートの `.claude/skills` 参照は歴史記録 (棚卸 #1044) 対象外。"""
+    """skill eval fixture の `.claude/skills` 参照は歴史記録 (棚卸 #1044) 対象外。"""
     _make_repo(tmp_path)
     (tmp_path / ".agents" / "skills" / "review-pr" / "eval" / "reports").mkdir(
         parents=True
@@ -359,7 +361,31 @@ def test_undecodable_living_doc_is_exit_1(tmp_path: Path) -> None:
     result = _run_repo_result(tmp_path)
     assert result.returncode == 1
     # 見出しが「旧用語残存」だけを原因として提示しない (検査不能も exit 1 の原因) (#1066)
-    assert "検査不能" in result.stderr
+    assert "bad.md: 検査不能" in result.stderr
+
+
+def test_read_oserror_is_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """read 時の `OSError` も検査不能 = fail-closed で違反として扱う (#1066)。
+
+    subprocess では `OSError` を再現しにくいため、本 file で唯一 in-process で
+    `Path.read_text` を差し替えて分岐を pin する。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "unreadable.md").write_text("# ok\n", encoding="utf-8")
+
+    original_read_text = Path.read_text
+
+    def _fail_on_unreadable(self, *args, **kwargs):
+        if self.name == "unreadable.md":
+            raise OSError("simulated read failure")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _fail_on_unreadable)
+    violations = guard.check_sweep(tmp_path)
+    assert any("unreadable.md: 検査不能" in v for v in violations)
 
 
 # --------------------------------------------------------------------------

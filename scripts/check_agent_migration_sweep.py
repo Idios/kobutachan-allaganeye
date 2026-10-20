@@ -19,8 +19,9 @@ Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を個別に拾
     等の歴史記録) は棚卸 #1044 に回す。
   - 履歴記録 (`CHANGELOG.md` / eval fixture (`.agents/skills/**/eval/**`) /
     dated plans・specs / archive / audits) も対象外。
-  - `.claude/agents/**` は Claude Code 用のロール定義で、レビュー・相談専用ツール
-    (`Claude Fable` 等) を主エージェントとして扱う記述が設計上含まれるため除外。
+  - `.claude/agents/**` は Claude Code 用のロール定義 (frontmatter の `model:` が
+    Claude エイリアスのみ) で用語 sweep の対象外。旧 Codex invocation 契約は
+    #1068 で追跡する。
 
 exit code: 0 = clean / 1 = 旧用語残存 (sweep 未完了) または 検査不能 (fail-closed)
          / 2 = 検査自体が壊れている。
@@ -245,7 +246,8 @@ def main(argv: list[str] | None = None) -> int:
             "`codex` CLI 直呼び (§Codex 運用) へ置換すること (#1043)。\n"
             "主エージェント=Claude の旧表記は `Zed + DeepSeek` (または `主エージェント`) "
             "へ置換すること (#1066)。\n"
-            "コードファイル / CHANGELOG / eval / dated plans・specs は対象外 (#1044)。",
+            "コードファイル / CHANGELOG / eval fixture / `.claude/agents/**` / "
+            "dated plans・specs は対象外 (#1044)。",
             file=sys.stderr,
         )
         return EXIT_DRIFT
