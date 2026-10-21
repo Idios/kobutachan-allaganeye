@@ -243,9 +243,17 @@ def test_runtime_messages_are_pinned(tmp_path: Path) -> None:
     # hint の除外列挙も pin する (宣言側 drift を止める)
     assert "archive / audits" in result.stderr
     assert ".claude/agents/**" in result.stderr
+    # 本 PR で hint に追加した除外列挙も pin する (宣言 spot の 1 つである以上、
+    # 新規文言を assert なしで追加しない)
+    assert "`_SCAN_EXTS` の allowlist が living doc のみを走査するため" in result.stderr
+    assert (
+        "`build-cache/` は build キャッシュ置き場のため対象外 (#1066)" in result.stderr
+    )
+    assert "コードコメントの旧参照は #1076 で追跡する" in result.stderr
 
 
-# 宣言の正 (#1073)。検出 class は 3 spot / exit code は 2 spot / 除外の帰属は 3 spot で共有する。
+# 宣言の正 (#1073)。検出 class は 3 spot / exit code は 2 spot / 除外の帰属は 3 spot。
+# runtime hint は `test_runtime_messages_are_pinned` が pin する。
 # spot 間で表記を変えるときは、ここも同時に更新すること。
 _DETECTION_CLASS_TOKENS = (
     "slash command",
@@ -278,7 +286,7 @@ def _agents_declaration_section() -> str:
 
 
 def _bullet_containing(lines: list[str], index: int) -> str:
-    """`index` 行を含む篝条書き (直近の `- ` 始まりから次の `- ` まで) を返す。"""
+    """`index` 行を含む箇条書き (直近の `- ` 始まりから次の `- ` まで) を返す。"""
     start = index
     while start > 0 and not lines[start].lstrip().startswith("- "):
         start -= 1
