@@ -22,9 +22,9 @@ in PR #1051 Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を
   - 履歴記録 (`CHANGELOG.md` / eval fixture (`.agents/skills/**/eval/**`) /
     `docs/superpowers/**` (dated 以外の記録も含む) / `docs/archive/**` /
     `docs/audits/**`) も対象外。
-  - `gui/**` は GUI ソースのため `.md` でも対象外。`build-cache/` は Portable ZIP
-    の build キャッシュ置き場 (`.gitignore` 済) のため対象外。
   - `gui/**` は GUI ソースのため `.md` でも対象外 (screenshot-freshness 回避、#1044)。
+    `build-cache/` は Portable ZIP の build キャッシュ置き場 (`.gitignore` 済) の
+    ため対象外。
   - `.claude/agents/**` は Claude Code 用のロール定義 (frontmatter の `model:` が
     Claude エイリアスのみ) で用語 sweep の対象外。旧 Codex invocation 契約は
     #1068 で追跡する。
@@ -260,7 +260,8 @@ def main(argv: list[str] | None = None) -> int:
             "`codex` CLI 直呼び (§Codex 運用) へ置換すること (#1043)。\n"
             "主エージェント=Claude の旧表記は `Zed + DeepSeek` (または `主エージェント`) "
             "へ置換すること (#1066)。\n"
-            "コードファイル / CHANGELOG / eval fixture / `docs/superpowers/**` / "
+            "コードファイルは検査対象外 (`_SCAN_EXTS` の allowlist が living doc のみを "
+            "走査するため)。CHANGELOG / eval fixture / `docs/superpowers/**` / "
             "archive / audits / `gui/**` / `build-cache/` は対象外 (#1044)。"
             "コードコメントの旧参照は #1076 で追跡する。\n"
             "`.claude/agents/**` は Claude Code 用ロール定義のため対象外 "

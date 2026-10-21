@@ -6,8 +6,9 @@
 
 本 file が特に固定するのは **scope** である:
 - 検査対象 = living doc (`.md` / `.sh` の doc / skill / hook / AGENTS.md / README)。
-- コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml`)、CHANGELOG、
-  eval fixture (`.agents/skills/**/eval/**`)、`docs/superpowers/**` (dated 以外も含む)、
+- コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml`) は `_SCAN_EXTS` の
+  allowlist (living doc のみ) により対象外。CHANGELOG、eval fixture
+  (`.agents/skills/**/eval/**`)、`docs/superpowers/**` (dated 以外も含む)、
   archive、audits、GUI ソース、`build-cache/` は対象外 (#1044)。
 - コードコメントの旧参照は #1076 で追跡する (#1044 は未参照ファイルの削除が範囲)。
 - `.claude/agents/**` は Claude Code 用のロール定義 (`model:` frontmatter が Claude
