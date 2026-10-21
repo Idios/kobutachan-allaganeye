@@ -303,8 +303,8 @@ def test_declarations_are_consistent_across_spots() -> None:
     """
     # (1) 検出 class の宣言: 列挙行 / docstring / ci.yml の宣言コメントブロックに限定する。
     # whole-file の部分一致だと、別行に同 token がある場合に宣言行の drift を mask する。
-    agents_text = AGENTS_PATH.read_text(encoding="utf-8")
-    class_lines = [ln for ln in agents_text.splitlines() if "4 class" in ln]
+    agents_section = _agents_declaration_section()
+    class_lines = [ln for ln in agents_section.splitlines() if "4 class" in ln]
     assert len(class_lines) == 1, "AGENTS.md の class 列挙行が 1 行ではない"
     for token in _DETECTION_CLASS_TOKENS:
         assert token in class_lines[0], f"AGENTS.md: class 列挙行に無い: {token}"
@@ -332,6 +332,11 @@ def test_declarations_are_consistent_across_spots() -> None:
         ("test docstring", _test_module_docstring()),
     )
     for name, text in spots:
+        # marker 自体の存在を要求する (bullet ごと削除されると bullet 検査が空振りする)
+        for marker, _issue in _ATTRIBUTION_RULES:
+            assert marker in text, f"{name}: 除外 class の宣言が無い: {marker}"
+        for marker, _forbidden in _FORBIDDEN_IN_BULLET:
+            assert marker in text, f"{name}: 除外 class の宣言が無い: {marker}"
         lines = text.splitlines()
         for i, line in enumerate(lines):
             for marker, issue in _ATTRIBUTION_RULES:
