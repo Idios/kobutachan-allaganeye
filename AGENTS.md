@@ -375,7 +375,7 @@ sweep は **「旧用語リスト更新 → sweep 前の実 tree で red を確�
 
 > **向きの注記**: [`.agents/skills/iterate-review/SKILL.md`](.agents/skills/iterate-review/SKILL.md) は positive / negative を逆の向き (positive = 正しい literal で緑) で使っている。**本 checklist の向きを正**とし、skill 側の統一は #1075 で扱う。
 >
-> **適用範囲 (規律であり CI gate ではない)**: 本ルールを機械的に強制する check はまだ無い。既存 class のうち **literal 3 語**には positive fixture が無く、検出を外しても test が green のままになる (対象の列挙は #1075)。**新規に追加する class から適用**し、既存分の補完と meta-test は #1075 で行う。本ルールは [`docs/l2-workflow.md`](docs/l2-workflow.md) §「規約・ガード導入の 3 点セット」の適用対象だが、①発火点と③red 実証は user 裁定で #1075 に分割している (②非実施時の記録義務は本注記が該当)。
+> **適用範囲 (規律であり CI gate ではない)**: 本ルールを機械的に強制する check はまだ無い。既存 class のうち **literal 3 語**には positive fixture が無い (うち 1 語は list 所属 pin も無く検出を外しても test が green のまま / 残り 2 語は list 所属 pin のみで detection fixture は無い。対象の列挙は #1075)。**新規に追加する class から適用**し、既存分の補完と meta-test は #1075 で行う。本ルールは [`docs/l2-workflow.md`](docs/l2-workflow.md) §「規約・ガード導入の 3 点セット」の適用対象。**①発火点と③red 実証は user 裁定で #1075 に分割**しており、同節の Red Flag「3 点セットは分割不可」に対する明示承認付きの例外である (②非実施時の記録義務は本注記が該当し、①③は #1075 で追跡するため silent no-op にはならない)。
 
 ### 検査対象外 (SSoT は実装)
 
