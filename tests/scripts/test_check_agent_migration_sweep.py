@@ -7,8 +7,9 @@
 本 file が特に固定するのは **scope** である:
 - 検査対象 = living doc (`.md` / `.sh` の doc / skill / hook / AGENTS.md / README)。
 - コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml`)、CHANGELOG、
-  eval fixture (`.agents/skills/**/eval/**`)、dated plans・specs、archive、audits、
-  GUI ソースは対象外 (#1044)。
+  eval fixture (`.agents/skills/**/eval/**`)、`docs/superpowers/**` (dated 以外も含む)、
+  archive、audits、GUI ソース、`build-cache/` は対象外 (#1044)。
+- コードコメントの旧参照は #1076 で追跡する (#1044 は未参照ファイルの削除が範囲)。
 - `.claude/agents/**` は Claude Code 用のロール定義 (`model:` frontmatter が Claude
   エイリアスのみ) のため対象外 (旧 invocation 契約は #1068)。
 - slash command の正規表現は path / branch 名の `/release` 等を誤検出しない
@@ -336,7 +337,7 @@ def test_changelog_is_excluded(tmp_path: Path) -> None:
 
 
 def test_code_file_is_excluded(tmp_path: Path) -> None:
-    """コードファイルのコメント旧参照は #1044 (コードコメント棚卸) 対象外。"""
+    """コードファイルのコメント旧参照は #1076 で追跡するため対象外。"""
     _make_repo(tmp_path)
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "check_version_consistency.py").write_text(
@@ -366,10 +367,10 @@ def test_docs_archive_is_excluded(tmp_path: Path) -> None:
 
 
 def test_build_cache_dir_is_skipped(tmp_path: Path) -> None:
-    """`build-cache/` は .gitignore 済の展開先なので検査対象外 (#1066)。
+    """`build-cache/` は Portable ZIP の build キャッシュ置き場なので検査対象外 (#1066)。
 
-    red 実証 (`git archive <rev> | tar -x -C build-cache/`) の展開物を checker が
-    拾うと false red になるため、`_SKIP_DIRS` で除外する。
+    red 実証の展開先は repo 外を推奨するが、repo 内に置かれた場合の false red を
+    防ぐため `_SKIP_DIRS` で除外する。
     """
     _make_repo(tmp_path)
     (tmp_path / "build-cache" / "old").mkdir(parents=True)
@@ -390,7 +391,10 @@ def test_claude_agents_dir_is_excluded(tmp_path: Path) -> None:
 
 
 def test_eval_report_is_excluded(tmp_path: Path) -> None:
-    """skill eval fixture の `.claude/skills` 参照は歴史記録 (棚卸 #1044) 対象外。"""
+    """skill eval fixture の `.claude/skills` 参照は eval fixture 全体の除外により対象外。
+
+    残置の追跡先は #1068。
+    """
     _make_repo(tmp_path)
     (tmp_path / ".agents" / "skills" / "review-pr" / "eval" / "reports").mkdir(
         parents=True
