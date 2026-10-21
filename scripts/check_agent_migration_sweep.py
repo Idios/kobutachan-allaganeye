@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Check the Claude Code → Zed+DeepSeek agent migration sweep is complete (#1041/#1042).
 
-Detects "old terminology" (skill slash commands / old path `.claude/skills` /
-old filename `CLAUDE.md` / 主エージェント=Claude の旧表記 / #1043 の Codex 旧表記)
-that remains in **living docs**, to prevent the incomplete-sweep recurrence seen
-in PR #1051 Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を
-個別に拾う事象)。
+Detects "old terminology" — **4 class**: slash command / 旧 path・旧 filename /
+主エージェント=Claude 表記 / Codex 旧 invocation 契約 (#1043) — that remains in
+**living docs**, to prevent the incomplete-sweep recurrence seen in PR #1051
+Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を個別に拾う事象)。
 
 再発防止の設計意図:
 - 用語 sweep は「まとめて置換」だけでは漏れる (対象ファイルの取りこぼし)。
@@ -17,10 +16,14 @@ in PR #1051 Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を
   - 拡張子 `.md` / `.sh` のファイル (docs / skill / hook / AGENTS.md / README)。
   - コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml` 等) は対象外。
     コードコメントの旧参照 (GUI ソースの `CLAUDE.md` / `// … /iterate-review Round N`
-    等の歴史記録) は棚卸 #1044 に回す。
+    等) は #1076 で追跡する (棚卸 #1044 は未参照ファイルの削除が範囲で、
+    コードコメントの修正を含まない)。
   - 履歴記録 (`CHANGELOG.md` / eval fixture (`.agents/skills/**/eval/**`) /
-    dated plans・specs / archive / audits) も対象外。
-  - `gui/**` は GUI ソースのため `.md` でも対象外 (screenshot-freshness 回避、#1044)。
+    `docs/superpowers/**` (dated 以外の記録も含む) / `docs/archive/**` /
+    `docs/audits/**`) も対象外。
+  - `gui/**` は GUI ソースのため `.md` でも対象外 (screenshot-freshness 回避)。
+    `build-cache/` は Portable ZIP の build キャッシュ置き場 (`.gitignore` 済) の
+    ため対象外。
   - `.claude/agents/**` は Claude Code 用のロール定義 (frontmatter の `model:` が
     Claude エイリアスのみ) で用語 sweep の対象外。旧 Codex invocation 契約は
     #1068 で追跡する。
@@ -114,7 +117,7 @@ _CLAUDE_AGENT_RE = re.compile(
 # 検査対象と除外
 # --------------------------------------------------------------------------
 
-# living doc = doc / skill / hook のみ (コードファイルは #1044 へ)
+# living doc = doc / skill / hook のみ (コードファイルの旧参照は #1076 へ)
 _SCAN_EXTS = {".md", ".sh"}
 
 _SKIP_DIRS = {
@@ -138,7 +141,7 @@ _SKIP_DIRS = {
 # だけでなく `requirements.md` / `scenario_*.md` も含む)。これらは特定時点の評価基準 /
 # シナリオを固定する記録で、**用語 sweep の対象外** (旧用語が当時の文脈で意味を持つため
 # 遡及置換しない)。ただし **skill の契約自体が変わった場合は eval の妥当性を保つため
-# fixture の期待値を更新する** (例: #1071 で `review-pr/eval/requirements.md` の I-5 を
+# fixture の期待値を更新する** (例: PR #1071 で `review-pr/eval/requirements.md` の I-5 を
 # 「Claude fallback」→「DeepSeek fallback / abort」へ更新)。fixture 内に残る旧 Codex 契約
 # 等の残置は #1068 / #1069 で別途追跡する。
 _EXCLUDED_GLOBS = [
@@ -256,8 +259,11 @@ def main(argv: list[str] | None = None) -> int:
             "`codex` CLI 直呼び (§Codex 運用) へ置換すること (#1043)。\n"
             "主エージェント=Claude の旧表記は `Zed + DeepSeek` (または `主エージェント`) "
             "へ置換すること (#1066)。\n"
-            "コードファイル / CHANGELOG / eval fixture / dated plans・specs / "
-            "archive / audits / `gui/**` は対象外 (#1044)。\n"
+            "コードファイルは検査対象外 (`_SCAN_EXTS` の allowlist が living doc のみを"
+            "走査するため)。CHANGELOG / eval fixture / `docs/superpowers/**` / "
+            "archive / audits は対象外 (#1044)。`gui/**` は GUI ソースのため対象外 "
+            "(screenshot-freshness 回避)。`build-cache/` は build キャッシュ置き場の"
+            "ため対象外 (#1066)。コードコメントの旧参照は #1076 で追跡する。\n"
             "`.claude/agents/**` は Claude Code 用ロール定義のため対象外 "
             "(旧 invocation 契約は #1068)。",
             file=sys.stderr,

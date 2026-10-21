@@ -365,11 +365,28 @@ subprocess / IPC / OS API を介した encoding fix を行うときは、**以�
 
 ## 用語 sweep 完全性 checklist (#1041/#1042 教訓)
 
-repo 全域の用語 sweep (slash command の skill 名化、旧 path / 旧 filename の置換) を含む PR は、**「まとめて置換」だけでは漏れる** (PR #1051 は Round 4/5 まで session-start.sh / versioning.md の残存を個別に拾った)。
+repo 全域の用語 sweep (slash command の skill 名化、旧 path / 旧 filename の置換、主エージェント表記の反転 (#1043)、Codex invocation 契約の一本化) を含む PR は、**「まとめて置換」だけでは漏れる** (PR #1051 は Round 4/5 まで session-start.sh / versioning.md の残存を個別に拾った)。
 
-sweep の完全性は [`scripts/check_agent_migration_sweep.py`](scripts/check_agent_migration_sweep.py) が living doc (`.md` / `.sh` の doc / skill / hook) の旧用語残存を検出し、CI job `doc-agent-migration-sweep` が gate する。将来の sweep では、**先に check の旧用語リストを更新してから sweep を実行**し、CI green で完全性を実証すること。
+sweep の完全性は [`scripts/check_agent_migration_sweep.py`](scripts/check_agent_migration_sweep.py) が living doc (`.md` / `.sh` の doc / skill / hook) の旧用語残存を検出し、CI job `doc-agent-migration-sweep` が gate する。本 checklist の対象は、この check が検出する **4 class** — slash command / 旧 path・旧 filename / 主エージェント=Claude 表記 / Codex 旧 invocation 契約 — である。
 
-コードファイル / CHANGELOG / eval レポート / dated plans・specs の旧参照は歴史記録 (棚卸 #1044) として対象外。
+sweep は **「旧用語リスト更新 → sweep 前の実 tree で red を確認 → sweep → CI green で完全性を実証」** の順で行う。red を確認せず green だけを見ると、追加した class が実際に発火することを示せない。
+
+**検出 class を追加する際は positive / negative 両 fixture を必須とする。** ここで **positive = 検出すべき入力**、**negative = 検出してはならない維持対象** を指す (fixture の命名もこの向きに揃える)。片側だけだと誤検出 / 取り逃しのどちらかが pin されず、後続の変更で silent に壊れる。fixture の置き場は [`tests/scripts/test_check_agent_migration_sweep.py`](tests/scripts/test_check_agent_migration_sweep.py)。
+
+> **向きの注記**: [`.agents/skills/iterate-review/SKILL.md`](.agents/skills/iterate-review/SKILL.md) は positive / negative を逆の向き (positive = 正しい literal で緑) で使っている。**本 checklist の向きを正**とし、skill 側の統一は #1075 で扱う。
+>
+> **適用範囲 (規律であり CI gate ではない)**: 本ルールを機械的に強制する check はまだ無い。既存 class のうち **literal 3 語**には positive fixture が無く、検出を外しても test が green のままになる (対象の列挙は #1075)。**新規に追加する class から適用**し、既存分の補完と meta-test は #1075 で行う。本ルールは [`docs/l2-workflow.md`](docs/l2-workflow.md) §「規約・ガード導入の 3 点セット」の適用対象だが、①発火点と③red 実証は user 裁定で #1075 に分割している (②非実施時の記録義務は本注記が該当)。
+
+### 検査対象外 (SSoT は実装)
+
+除外の正は `scripts/check_agent_migration_sweep.py` の `_SCAN_EXTS` (走査拡張子の allowlist) / `_EXCLUDED_GLOBS` (path glob) / `_SKIP_DIRS` (任意階層のディレクトリ名) であり、本節はその要約である。逸脱時は実装を正とする。
+
+- **コードファイル** (`.py` / `.js` / `.ts` / `.tsx` / `.rs` / `.ps1` / `.yml` 等): 対象外。コードコメントの旧参照は本 sweep ではなく #1076 で追跡する (棚卸 #1044 は未参照ファイルの削除が範囲で、コードコメントの修正は含まない)。
+- **履歴記録**: `CHANGELOG.md` / `docs/superpowers/**` (dated plans・specs に限らず、同 dir 配下の非 dated 記録も含む) / `docs/archive/**` / `docs/audits/**`。
+- **eval fixture** (`.agents/skills/**/eval/**`): 特定時点の評価基準・シナリオを固定する記録なので遡及置換しない。ただし **skill の契約自体が変わった場合は、eval の妥当性を保つため fixture の期待値を更新する** (PR #1071 に前例)。未更新の残置は #1068 で追跡中。
+- **`gui/**`**: GUI ソースのため `.md` でも対象外 (screenshot-freshness 回避)。
+- **`build-cache/`**: Portable ZIP の build キャッシュ置き場 (`.gitignore` 済)。`.md` が混ざっても検査しない。red 実証の一時展開先には使わず repo 外に置くこと (#1066)。
+- **`.claude/agents/**`**: Claude Code 用のロール定義。frontmatter の `model:` は Claude エイリアスのみだが、**本文はモデル非依存で fallback 時に DeepSeek も読む**ため「Claude 専用だから除外」は理由にならない。現状は**暫定的な除外**で、既知の残置は旧 invocation 契約 1 行のみ。この 1 行は #1068 で追跡する。
 
 ## destructive write boundary audit checklist (#930 教訓)
 

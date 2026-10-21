@@ -6,9 +6,13 @@
 
 本 file が特に固定するのは **scope** である:
 - 検査対象 = living doc (`.md` / `.sh` の doc / skill / hook / AGENTS.md / README)。
-- コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml`)、CHANGELOG、
-  eval fixture (`.agents/skills/**/eval/**`)、dated plans・specs、archive、audits、
-  GUI ソースは対象外 (#1044)。
+- コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml`) は `_SCAN_EXTS` の
+  allowlist (living doc のみ) により対象外。CHANGELOG、eval fixture
+  (`.agents/skills/**/eval/**`)、`docs/superpowers/**` (dated 以外も含む)、
+  archive、audits は対象外 (#1044)。
+- GUI ソースは screenshot-freshness 回避のため対象外。
+- `build-cache/` は build キャッシュ置き場のため対象外 (#1066)。
+- コードコメントの旧参照は #1076 で追跡する (#1044 は未参照ファイルの削除が範囲)。
 - `.claude/agents/**` は Claude Code 用のロール定義 (`model:` frontmatter が Claude
   エイリアスのみ) のため対象外 (旧 invocation 契約は #1068)。
 - slash command の正規表現は path / branch 名の `/release` 等を誤検出しない
@@ -27,6 +31,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "check_agent_migration_sweep.py"
+AGENTS_PATH = REPO_ROOT / "AGENTS.md"
+CI_YML_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 _spec = importlib.util.spec_from_file_location(
     "check_agent_migration_sweep", SCRIPT_PATH
@@ -238,22 +244,65 @@ def test_runtime_messages_are_pinned(tmp_path: Path) -> None:
     assert ".claude/agents/**" in result.stderr
 
 
-def test_declarations_name_the_detection_classes() -> None:
-    """宣言 (module docstring / `ci.yml` comment) が検出 class を名指ししていることを pin する。
+# 宣言の正 (#1073)。検出 class / exit code は 3 spot、除外の帰属は 3 spot で共有する。
+# spot 間で表記を変えるときは、ここも同時に更新すること。
+_DETECTION_CLASS_TOKENS = (
+    "slash command",
+    "旧 path",
+    "主エージェント=Claude",
+    "旧 invocation 契約",
+)
+_EXCLUSION_ATTRIBUTION_TOKENS = (
+    "screenshot-freshness",
+    "#1066",
+    "#1068",
+    "#1076",
+    "#1044",
+)
 
-    発火側 (実行時文言) だけでなく宣言側の drift も止める (#1073 AC4)。
-    `AGENTS.md` 側の追補は Phase 2 (PR-B) で扱う。
+
+def test_declarations_are_consistent_across_spots() -> None:
+    """宣言 spot 間の一致を pin する (#1073 / #1075 の一部前倒し)。
+
+    人手レビューだけだと「1 spot ずつ直して次の spot が見つかる」ループが続く
+    (PR #1077 で実測 14 findings 中 8 件が修正工程由来)。class 名 / exit code 語 /
+    除外の帰属を機械検証し、この class を CI で閉じる。
     """
-    assert "主エージェント=Claude" in (guard.__doc__ or "")
-    assert "Codex 旧表記" in (guard.__doc__ or "")
-    assert "検査不能 (fail-closed)" in (guard.__doc__ or "")
+    # 検出 class の列挙行がすべての class を含むこと (他の箇所の偶然一致を排除)
+    agents_text = AGENTS_PATH.read_text(encoding="utf-8")
+    class_lines = [ln for ln in agents_text.splitlines() if "4 class" in ln]
+    assert len(class_lines) == 1, "AGENTS.md の class 列挙行が 1 行ではない"
+    for token in _DETECTION_CLASS_TOKENS:
+        assert token in class_lines[0], f"AGENTS.md: class 列挙行に無い: {token}"
 
-    ci_yml = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
-        encoding="utf-8"
-    )
-    assert "主エージェント=Claude" in ci_yml
-    assert "Codex 旧表記" in ci_yml
-    assert "検査不能 (fail-closed)" in ci_yml
+    for name, path in (("checker", SCRIPT_PATH), ("ci.yml", CI_YML_PATH)):
+        text = path.read_text(encoding="utf-8")
+        for token in _DETECTION_CLASS_TOKENS:
+            assert token in text, f"{name}: 検出 class の宣言が無い: {token}"
+
+    # exit code の語は checker (docstring / hint) と ci.yml comment が宣言する
+    for path in (SCRIPT_PATH, CI_YML_PATH):
+        assert "検査不能 (fail-closed)" in path.read_text(encoding="utf-8"), (
+            f"{path.name}: exit 1 の語が無い"
+        )
+
+    # module docstring は `__doc__` でも確認する (コメント行の偶然一致を排除)
+    for token in _DETECTION_CLASS_TOKENS:
+        assert token in (guard.__doc__ or ""), f"module docstring に無い: {token}"
+
+    for path in (AGENTS_PATH, SCRIPT_PATH, Path(__file__)):
+        text = path.read_text(encoding="utf-8")
+        for token in _EXCLUSION_ATTRIBUTION_TOKENS:
+            assert token in text, f"{path.name}: 除外の帰属が無い: {token}"
+        # `gui/**` の帰属は screenshot-freshness のみ (履歴記録側の issue 番号を混ぜない)
+        for line in text.splitlines():
+            if "screenshot-freshness" in line:
+                assert "#1044" not in line, (
+                    f"{path.name}: gui の帰属に #1044 が混ざっている: {line.strip()}"
+                )
+
+    # `gui/**` の宣言は module docstring 内で 1 回だけ (重複行の再発防止)
+    assert (guard.__doc__ or "").count("`gui/**` は GUI ソースのため") == 1
 
 
 def test_clean_repo_passes(tmp_path: Path) -> None:
@@ -336,7 +385,7 @@ def test_changelog_is_excluded(tmp_path: Path) -> None:
 
 
 def test_code_file_is_excluded(tmp_path: Path) -> None:
-    """コードファイルのコメント旧参照は #1044 (コードコメント棚卸) 対象外。"""
+    """コードファイルのコメント旧参照は #1076 で追跡するため対象外。"""
     _make_repo(tmp_path)
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "check_version_consistency.py").write_text(
@@ -346,7 +395,7 @@ def test_code_file_is_excluded(tmp_path: Path) -> None:
 
 
 def test_gui_source_is_excluded(tmp_path: Path) -> None:
-    """`gui/**` 配下は `.md` でも検査対象外 (screenshot-freshness 回避、#1044)。"""
+    """`gui/**` 配下は `.md` でも検査対象外 (screenshot-freshness 回避)。"""
     _make_repo(tmp_path)
     (tmp_path / "gui" / "src").mkdir(parents=True)
     (tmp_path / "gui" / "src" / "README.md").write_text(
@@ -366,10 +415,10 @@ def test_docs_archive_is_excluded(tmp_path: Path) -> None:
 
 
 def test_build_cache_dir_is_skipped(tmp_path: Path) -> None:
-    """`build-cache/` は .gitignore 済の展開先なので検査対象外 (#1066)。
+    """`build-cache/` は Portable ZIP の build キャッシュ置き場なので検査対象外 (#1066)。
 
-    red 実証 (`git archive <rev> | tar -x -C build-cache/`) の展開物を checker が
-    拾うと false red になるため、`_SKIP_DIRS` で除外する。
+    red 実証の展開先は repo 外を推奨するが、repo 内に置かれた場合の false red を
+    防ぐため `_SKIP_DIRS` で除外する。
     """
     _make_repo(tmp_path)
     (tmp_path / "build-cache" / "old").mkdir(parents=True)
@@ -390,7 +439,10 @@ def test_claude_agents_dir_is_excluded(tmp_path: Path) -> None:
 
 
 def test_eval_report_is_excluded(tmp_path: Path) -> None:
-    """skill eval fixture の `.claude/skills` 参照は歴史記録 (棚卸 #1044) 対象外。"""
+    """skill eval fixture の `.claude/skills` 参照は eval fixture 全体の除外により対象外。
+
+    残置の追跡先は #1068。
+    """
     _make_repo(tmp_path)
     (tmp_path / ".agents" / "skills" / "review-pr" / "eval" / "reports").mkdir(
         parents=True
