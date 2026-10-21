@@ -268,27 +268,29 @@ def test_declarations_are_consistent_across_spots() -> None:
     (PR #1077 で実測 14 findings 中 8 件が修正工程由来)。class 名 / exit code 語 /
     除外の帰属を機械検証し、この class を CI で閉じる。
     """
-    # 検出 class の列挙行がすべての class を含むこと (他の箇所の偶然一致を排除)
+    # (1) 検出 class の宣言: 列挙行 / docstring / ci.yml の宣言コメントブロックに限定する。
+    # whole-file の部分一致だと、別行に同 token がある場合に宣言行の drift を mask する。
     agents_text = AGENTS_PATH.read_text(encoding="utf-8")
     class_lines = [ln for ln in agents_text.splitlines() if "4 class" in ln]
     assert len(class_lines) == 1, "AGENTS.md の class 列挙行が 1 行ではない"
     for token in _DETECTION_CLASS_TOKENS:
         assert token in class_lines[0], f"AGENTS.md: class 列挙行に無い: {token}"
 
-    for name, path in (("checker", SCRIPT_PATH), ("ci.yml", CI_YML_PATH)):
-        text = path.read_text(encoding="utf-8")
-        for token in _DETECTION_CLASS_TOKENS:
-            assert token in text, f"{name}: 検出 class の宣言が無い: {token}"
-
-    # exit code の語は checker (docstring / hint) と ci.yml comment が宣言する
-    for path in (SCRIPT_PATH, CI_YML_PATH):
-        assert "検査不能 (fail-closed)" in path.read_text(encoding="utf-8"), (
-            f"{path.name}: exit 1 の語が無い"
-        )
-
-    # module docstring は `__doc__` でも確認する (コメント行の偶然一致を排除)
+    doc = guard.__doc__ or ""
     for token in _DETECTION_CLASS_TOKENS:
-        assert token in (guard.__doc__ or ""), f"module docstring に無い: {token}"
+        assert token in doc, f"module docstring に無い: {token}"
+    assert "検査不能 (fail-closed)" in doc, "module docstring に exit 1 の語が無い"
+
+    ci_lines = CI_YML_PATH.read_text(encoding="utf-8").splitlines()
+    start = next(i for i, ln in enumerate(ci_lines) if "用語 sweep 完全性 gate" in ln)
+    # `exit 1 =` は他の job にも現れるため、宣言ブロックの開始以降で探す
+    end = next(i for i, ln in enumerate(ci_lines[start:], start) if "exit 1 =" in ln)
+    ci_block = "\n".join(ci_lines[start : end + 1])
+    for token in _DETECTION_CLASS_TOKENS:
+        assert token in ci_block, f"ci.yml: 宣言ブロックに無い: {token}"
+    assert "検査不能 (fail-closed)" in ci_block, "ci.yml: exit 1 の語が無い"
+
+    # exit code の語は上の 2 spot (docstring / ci.yml 宣言ブロック) で検査済み。
 
     for path in (AGENTS_PATH, SCRIPT_PATH, Path(__file__)):
         text = path.read_text(encoding="utf-8")
