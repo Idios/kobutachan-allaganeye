@@ -9,7 +9,8 @@
 - コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml`) は `_SCAN_EXTS` の
   allowlist (living doc のみ) により対象外。CHANGELOG、eval fixture
   (`.agents/skills/**/eval/**`)、`docs/superpowers/**` (dated 以外も含む)、
-  archive、audits、GUI ソース、`build-cache/` は対象外 (#1044)。
+  archive、audits は対象外 (#1044)。GUI ソースは screenshot-freshness 回避、
+  `build-cache/` は build キャッシュ置き場のため対象外 (#1066)。
 - コードコメントの旧参照は #1076 で追跡する (#1044 は未参照ファイルの削除が範囲)。
 - `.claude/agents/**` は Claude Code 用のロール定義 (`model:` frontmatter が Claude
   エイリアスのみ) のため対象外 (旧 invocation 契約は #1068)。

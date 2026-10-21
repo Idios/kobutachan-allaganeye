@@ -260,10 +260,11 @@ def main(argv: list[str] | None = None) -> int:
             "`codex` CLI 直呼び (§Codex 運用) へ置換すること (#1043)。\n"
             "主エージェント=Claude の旧表記は `Zed + DeepSeek` (または `主エージェント`) "
             "へ置換すること (#1066)。\n"
-            "コードファイルは検査対象外 (`_SCAN_EXTS` の allowlist が living doc のみを "
+            "コードファイルは検査対象外 (`_SCAN_EXTS` の allowlist が living doc のみを"
             "走査するため)。CHANGELOG / eval fixture / `docs/superpowers/**` / "
-            "archive / audits / `gui/**` / `build-cache/` は対象外 (#1044)。"
-            "コードコメントの旧参照は #1076 で追跡する。\n"
+            "archive / audits は対象外 (#1044)。`gui/**` は GUI ソースのため対象外 "
+            "(screenshot-freshness 回避)。`build-cache/` は build キャッシュ置き場の"
+            "ため対象外 (#1066)。コードコメントの旧参照は #1076 で追跡する。\n"
             "`.claude/agents/**` は Claude Code 用ロール定義のため対象外 "
             "(旧 invocation 契約は #1068)。",
             file=sys.stderr,
