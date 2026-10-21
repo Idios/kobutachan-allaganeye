@@ -22,8 +22,8 @@ Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を個別に拾
     `docs/superpowers/**` (dated 以外の記録も含む) / `docs/archive/**` /
     `docs/audits/**`) も対象外。
   - `gui/**` は GUI ソースのため `.md` でも対象外 (screenshot-freshness 回避)。
-    `build-cache/` は Portable ZIP の build キャッシュ置き場 (`.gitignore` 済) の
-    ため対象外。
+  - `build-cache/` は Portable ZIP の build キャッシュ置き場 (`.gitignore` 済) の
+    ため対象外 (#1066)。
   - `.claude/agents/**` は Claude Code 用のロール定義 (frontmatter の `model:` が
     Claude エイリアスのみ) で用語 sweep の対象外。旧 Codex invocation 契約は
     #1068 で追跡する。

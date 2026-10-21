@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import os
 import subprocess
@@ -244,7 +245,7 @@ def test_runtime_messages_are_pinned(tmp_path: Path) -> None:
     assert ".claude/agents/**" in result.stderr
 
 
-# 宣言の正 (#1073)。検出 class / exit code は 3 spot、除外の帰属は 3 spot で共有する。
+# 宣言の正 (#1073)。検出 class は 3 spot / exit code は 2 spot / 除外の帰属は 3 spot で共有する。
 # spot 間で表記を変えるときは、ここも同時に更新すること。
 _DETECTION_CLASS_TOKENS = (
     "slash command",
@@ -252,13 +253,45 @@ _DETECTION_CLASS_TOKENS = (
     "主エージェント=Claude",
     "旧 invocation 契約",
 )
-_EXCLUSION_ATTRIBUTION_TOKENS = (
-    "screenshot-freshness",
-    "#1066",
-    "#1068",
-    "#1076",
-    "#1044",
+# 除外 class の帰属は「その class を名指しする bullet」単位で pin する
+# (whole-file の部分一致だと、別行の同 token が帰属行の drift を mask する)
+_ATTRIBUTION_RULES = (
+    ("build-cache", "#1066"),
+    (".claude/agents/", "#1068"),
 )
+_FORBIDDEN_IN_BULLET = (("screenshot-freshness", "#1044"),)
+
+
+def _agents_declaration_section() -> str:
+    """AGENTS.md の §用語 sweep 完全性 の本文 (次の `## ` 見出しまで)。"""
+    lines = AGENTS_PATH.read_text(encoding="utf-8").splitlines()
+    start = next(
+        i
+        for i, ln in enumerate(lines)
+        if ln.startswith("## 用語 sweep 完全性 checklist")
+    )
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
+def _bullet_containing(lines: list[str], index: int) -> str:
+    """`index` 行を含む篝条書き (直近の `- ` 始まりから次の `- ` まで) を返す。"""
+    start = index
+    while start > 0 and not lines[start].lstrip().startswith("- "):
+        start -= 1
+    end = start + 1
+    while end < len(lines) and not lines[end].lstrip().startswith("- "):
+        end += 1
+    return "\n".join(lines[start:end])
+
+
+def _test_module_docstring() -> str:
+    return (
+        ast.get_docstring(ast.parse(Path(__file__).read_text(encoding="utf-8"))) or ""
+    )
 
 
 def test_declarations_are_consistent_across_spots() -> None:
@@ -292,16 +325,33 @@ def test_declarations_are_consistent_across_spots() -> None:
 
     # exit code の語は上の 2 spot (docstring / ci.yml 宣言ブロック) で検査済み。
 
-    for path in (AGENTS_PATH, SCRIPT_PATH, Path(__file__)):
-        text = path.read_text(encoding="utf-8")
-        for token in _EXCLUSION_ATTRIBUTION_TOKENS:
-            assert token in text, f"{path.name}: 除外の帰属が無い: {token}"
-        # `gui/**` の帰属は screenshot-freshness のみ (履歴記録側の issue 番号を混ぜない)
-        for line in text.splitlines():
-            if "screenshot-freshness" in line:
-                assert "#1044" not in line, (
-                    f"{path.name}: gui の帰属に #1044 が混ざっている: {line.strip()}"
-                )
+    # (2) 除外 class の帰属: 「その class を名指しする bullet」の中に issue 番号があること
+    spots = (
+        ("AGENTS.md", _agents_declaration_section()),
+        ("checker docstring", guard.__doc__ or ""),
+        ("test docstring", _test_module_docstring()),
+    )
+    for name, text in spots:
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            for marker, issue in _ATTRIBUTION_RULES:
+                if marker in line:
+                    bullet = _bullet_containing(lines, i)
+                    assert issue in bullet, (
+                        f"{name}: {marker} の bullet に {issue} が無い: {bullet.strip()}"
+                    )
+            for marker, forbidden in _FORBIDDEN_IN_BULLET:
+                if marker in line:
+                    bullet = _bullet_containing(lines, i)
+                    assert forbidden not in bullet, (
+                        f"{name}: {marker} の bullet に {forbidden} が混入: "
+                        f"{bullet.strip()}"
+                    )
+
+    # (3) 履歴記録 / コードコメントの帰属は各 spot に存在すること (presence)
+    for name, text in spots:
+        for token in ("#1044", "#1076"):
+            assert token in text, f"{name}: 帰属が無い: {token}"
 
     # `gui/**` の宣言は module docstring 内で 1 回だけ (重複行の再発防止)
     assert (guard.__doc__ or "").count("`gui/**` は GUI ソースのため") == 1
