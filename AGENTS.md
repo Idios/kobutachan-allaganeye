@@ -373,11 +373,13 @@ sweep は **「旧用語リスト更新 → sweep 前の実 tree で red を確�
 
 **検出 class を追加する際は positive / negative 両 fixture を必須とする。** ここで **positive = 検出すべき入力**、**negative = 検出してはならない維持対象** を指す (fixture の命名もこの向きに揃える)。片側だけだと誤検出 / 取り逃しのどちらかが pin されず、後続の変更で silent に壊れる。fixture の置き場は [`tests/scripts/test_check_agent_migration_sweep.py`](tests/scripts/test_check_agent_migration_sweep.py)。
 
-> **適用範囲 (規律であり CI gate ではない)**: 本ルールを機械的に強制する check はまだ無い。既存 class のうち literal 系には positive fixture が無く、検出を外しても test が green のままになる。**新規に追加する class から適用**し、既存分の補完と meta-test は #1075 で行う。
+> **向きの注記**: [`.agents/skills/iterate-review/SKILL.md`](.agents/skills/iterate-review/SKILL.md) は positive / negative を逆の向き (positive = 正しい literal で緑) で使っている。**本 checklist の向きを正**とし、skill 側の統一は #1075 で扱う。
+>
+> **適用範囲 (規律であり CI gate ではない)**: 本ルールを機械的に強制する check はまだ無い。既存 class のうち **literal 3 語**には positive fixture が無く、検出を外しても test が green のままになる (対象の列挙は #1075)。**新規に追加する class から適用**し、既存分の補完と meta-test は #1075 で行う。本ルールは [`docs/l2-workflow.md`](docs/l2-workflow.md) §「規約・ガード導入の 3 点セット」の適用対象だが、①発火点と③red 実証は user 裁定で #1075 に分割している (②非実施時の記録義務は本注記が該当)。
 
 ### 検査対象外 (SSoT は実装)
 
-除外の正は `scripts/check_agent_migration_sweep.py` の `_EXCLUDED_GLOBS` (path glob) と `_SKIP_DIRS` (任意階層のディレクトリ名) であり、本節はその要約である。逸脱時は実装を正とする。
+除外の正は `scripts/check_agent_migration_sweep.py` の `_SCAN_EXTS` (走査拡張子の allowlist) / `_EXCLUDED_GLOBS` (path glob) / `_SKIP_DIRS` (任意階層のディレクトリ名) であり、本節はその要約である。逸脱時は実装を正とする。
 
 - **コードファイル** (`.py` / `.js` / `.ts` / `.tsx` / `.rs` / `.ps1` / `.yml` 等): 対象外。コードコメントの旧参照は本 sweep ではなく #1076 で追跡する (棚卸 #1044 は未参照ファイルの削除が範囲で、コードコメントの修正は含まない)。
 - **履歴記録**: `CHANGELOG.md` / `docs/superpowers/**` (dated plans・specs に限らず、同 dir 配下の非 dated 記録も含む) / `docs/archive/**` / `docs/audits/**`。

@@ -17,9 +17,11 @@ in PR #1051 Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を
   - 拡張子 `.md` / `.sh` のファイル (docs / skill / hook / AGENTS.md / README)。
   - コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml` 等) は対象外。
     コードコメントの旧参照 (GUI ソースの `CLAUDE.md` / `// … /iterate-review Round N`
-    等の歴史記録) は棚卸 #1044 に回す。
+    等) は #1076 で追跡する (棚卸 #1044 は未参照ファイルの削除が範囲で、
+    コードコメントの修正を含まない)。
   - 履歴記録 (`CHANGELOG.md` / eval fixture (`.agents/skills/**/eval/**`) /
-    dated plans・specs / archive / audits) も対象外。
+    `docs/superpowers/**` (dated 以外の記録も含む) / `docs/archive/**` /
+    `docs/audits/**`) も対象外。
   - `gui/**` は GUI ソースのため `.md` でも対象外 (screenshot-freshness 回避、#1044)。
   - `.claude/agents/**` は Claude Code 用のロール定義 (frontmatter の `model:` が
     Claude エイリアスのみ) で用語 sweep の対象外。旧 Codex invocation 契約は
@@ -256,8 +258,9 @@ def main(argv: list[str] | None = None) -> int:
             "`codex` CLI 直呼び (§Codex 運用) へ置換すること (#1043)。\n"
             "主エージェント=Claude の旧表記は `Zed + DeepSeek` (または `主エージェント`) "
             "へ置換すること (#1066)。\n"
-            "コードファイル / CHANGELOG / eval fixture / dated plans・specs / "
-            "archive / audits / `gui/**` は対象外 (#1044)。\n"
+            "コードファイル / CHANGELOG / eval fixture / `docs/superpowers/**` / "
+            "archive / audits / `gui/**` は対象外 (#1044)。コードコメントの旧参照は "
+            "#1076 で追跡する。\n"
             "`.claude/agents/**` は Claude Code 用ロール定義のため対象外 "
             "(旧 invocation 契約は #1068)。",
             file=sys.stderr,
