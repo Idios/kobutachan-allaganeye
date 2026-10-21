@@ -263,7 +263,7 @@ _FORBIDDEN_IN_BULLET = (("screenshot-freshness", "#1044"),)
 
 
 def _agents_declaration_section() -> str:
-    """AGENTS.md の §用語 sweep 完全性 の本文 (次の `## ` 見出しまで)。"""
+    """AGENTS.md の「用語 sweep 完全性 checklist」節の本文 (次の `## ` 見出しまで)。"""
     lines = AGENTS_PATH.read_text(encoding="utf-8").splitlines()
     start = next(
         i
