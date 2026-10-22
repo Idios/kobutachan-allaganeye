@@ -469,11 +469,11 @@ Codex review 起動: 判定不能 (理由: 変更ファイル一覧の取得が�
 
 Codex review が exit 0 で完了したら、**finding を stdout から拾う**。`codex` CLI は非対話で stdout に直接結果を出して終了する (旧 companion script の job 追跡機構 `status` / `result` / job id は廃止済)。契約の正は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md) で、本 step はその適用にあたる。
 
-1. review を実行した worktree の cwd で `codex review --base <base> "<focus>"` を実行し、**stdout をそのまま finding の入力にする**:
+1. review を実行した worktree の cwd で `codex review --base <base>` を実行し、**stdout をそのまま finding の入力にする**:
 
    ```bash
    cd "<review を実行した worktree の絶対パス>"   # cwd は turn 境界で main repo へドリフトしうる。明示する
-   codex review --base <base> "<focus>"
+   codex review --base <base>
    #   → finding は stdout に出る。exit code 0 = 成功 / 非ゼロ = 失敗 (§Codex fallback)
    ```
 
@@ -517,7 +517,7 @@ Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §C
    - (A) Codex 復旧待ち (本 PR 一時 abort、Codex 復旧後に再 invoke) [Recommended]
    - (B) DeepSeek fallback で push (主エージェント (DeepSeek) の直接レビュー)
    - (C) abort (本 PR 全体停止、user 手動判断)
-3. **明確な failure (重要 PR でない)** → 自動 fallback: 主エージェント (DeepSeek) が直接レビューする。**focus の使い方 (#856 item4)**: tier 1 の `codex CLI review` は **focus positional を受け付けない**ため「Codex に渡した focus 文字列」は**存在しない**。「流用」できる文字列は無いので、fallback の直接レビューでは [`docs/l2-workflow.md` §「Step 5 の focus 導出手順」](../../../docs/l2-workflow.md) で**導出した focus を用いる** (project 固有 focus を Codex 側へ渡す場合に `adversarial-review` subcommand で使うはずだったものと同じ導出結果)
+3. **明確な failure (重要 PR でない)** → 自動 fallback: レビュー実行者 (主エージェント (DeepSeek)。`iterate-review` から dispatch された場合は同一モデルの subagent) が直接レビューする。**focus の使い方 (#856 item4 / #1068)**: `codex review --base <base>` は `--base` と `[PROMPT]` を併用できないため (2026-10-22 実測)、**Codex は focus を受け取っていない**。「Codex に渡した focus 文字列」は存在しないので、fallback では [`docs/l2-workflow.md` §「Step 5 の focus 導出手順」](../../../docs/l2-workflow.md) で**導出し PR 本文に記録した** focus を用いる
 4. **曖昧 (重要 PR でない)** → user に AskUserQuestion (再試行 / DeepSeek fallback / abort) 3 択
 5. fallback 実行時は **Step 6 レビュー報告に「Codex fallback notice」を必須記載** (Iron Law 5 整合、template は docs/l2-workflow.md §Codex fallback 参照)
 

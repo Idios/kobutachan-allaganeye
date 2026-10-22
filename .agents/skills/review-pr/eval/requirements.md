@@ -152,14 +152,14 @@ PR 本文: `scripts/build-portable-zip.ps1` の `get-pip.py` DL URL を `https:/
 
 ## シナリオ I (L-β β-5 C6 Codex fallback): モック /iterate-review Round 内で Codex review が rate-limit fail
 
-PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector module を含む)。`/review-pr` Step 5a で C3 起動条件すべて該当のため Codex review (tier 1 = `codex-companion.mjs review`) を実行、Codex CLI exit code 1 + stderr に `Error: rate limit exceeded (429)` が含まれる。
+PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector module を含む)。`/review-pr` Step 5a で C3 起動条件すべて該当のため Codex review (tier 1 = `codex review --base <base>`) を実行、Codex CLI exit code 1 + stderr に `Error: rate limit exceeded (429)` が含まれる。
 
 1. **[critical]** **I-1**: Codex CLI fail を検出 (exit code 非ゼロ + stderr keyword `rate.?limit` または `429`) → **token 枯渇 (明確)** 判定
-2. **[critical]** **I-2**: 自動 fallback として superpowers `requesting-code-review` subagent を起動する。**focus は「Codex へ渡した文字列の流用」ではない** — tier 1 の `codex-companion.mjs review` は focus positional を受け付けないため流用元の文字列は存在しない。`docs/l2-workflow.md` §「Step 5 の focus 導出手順」で**導出した** focus を fallback subagent へ渡すこと (#856 item4 で矛盾解消)
+2. **[critical]** **I-2**: 自動 fallback として `review-pr` Step 5a item 3 に従い、レビュー実行者 (主エージェント。dispatch 時は同一モデルの subagent) が直接レビューする。**focus は「Codex へ渡した文字列の流用」ではない** — `codex review --base <base>` は `--base` と `[PROMPT]` を併用できないため (2026-10-22 実測、#1068)、Codex に focus を渡す経路は無い。`docs/l2-workflow.md` §「Step 5 の focus 導出手順」で**導出し PR 本文に記録した** focus を用いること (#856 item4)
 3. **[critical]** **I-3**: Step 6 レビュー報告に「Codex fallback notice」(`> **Codex fallback notice**: ...` template) を必須記載 (Iron Law 5 整合)
 4. **[critical]** **I-4**: fallback 経路 (`docs/l2-workflow.md` §Codex fallback) を参照する
 5. **[critical]** **I-5**: 重要 PR (大規模 refactor) なので user に AskUserQuestion で「Codex 復旧待ち / DeepSeek fallback / abort」3 択を提示する
-6. **I-6** (#854 で追加、dispatch 時事前固定 non-critical): Codex review の実行手段を companion script (`codex-companion.mjs review --base ...` の Bash 実行) と正しく特定し、slash command `/codex:review` を agent 自身が invoke する前提にしない (evidence: `eval/reports/iter_854_3tier_revaluation.md` Iteration 1)
+6. **I-6** (#854 で追加、dispatch 時事前固定 non-critical): Codex review の実行手段を `codex` CLI 直呼び (`codex review --base ...` の Bash 実行) と正しく特定し、廃止済みの companion script / slash command を agent 自身が invoke する前提にしない (#1043 / #1068)
 
 ---
 
@@ -169,7 +169,7 @@ PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector m
 
 モック: PR 作成直前の Pre-flight Step 5 実行計画を executor に立てさせる。
 
-1. **[critical]** **P-1**: Step 5 の実行手段を companion script 直接呼び出し (tier 1、`codex-companion.mjs adversarial-review`) と特定し、slash `/codex:adversarial-review` を agent 自身が invoke する計画にしない
-2. **[critical]** **P-2**: focus 文字列を固定の例示リストから選ばず**本 PR の diff から導出**する — 新設・変更した外部入力境界 (CLI option / metadata field / GUI 自由入力 / 環境変数) と、そこから到達する不可逆操作 (上書き / 削除 / truncate) の対応ペアを列挙して focus に含める。ペアがゼロなら「ゼロである」ことを focus に明記する (導出手順は `docs/l2-workflow.md` §「Step 5 の focus 導出手順」。Refs #935 P2-1 で固定 3 項目の例示から置換。**旧条文 (Iron Law 3 scope creep / encoding boundary / GPU fallback / 同 issue 過去 PR root cause の 4 例示を含めれば pass) に戻さないこと** — 例示リストは新しい欠陥クラスへの検出力を持たない)
+1. **[critical]** **P-1**: Step 5 の実行手段を `codex` CLI 直呼び (tier 1、`codex review --base <base>`) と特定し、廃止済みの companion script / `adversarial-review` subcommand / slash command の利用を計画しない (#1043 / #1068)
+2. **[critical]** **P-2**: focus 文字列を固定の例示リストから選ばず**本 PR の diff から導出**する — 新設・変更した外部入力境界 (CLI option / metadata field / GUI 自由入力 / 環境変数) と、そこから到達する不可逆操作 (上書き / 削除 / truncate) の対応ペアを列挙して focus に含める。ペアがゼロなら「ゼロである」ことを focus に明記する (`codex review --base` は focus を受け取らないため、導出した focus は PR 本文に記録する。導出手順は `docs/l2-workflow.md` §「Step 5 の focus 導出手順」。Refs #935 P2-1 で固定 3 項目の例示から置換。**旧条文 (Iron Law 3 scope creep / encoding boundary / GPU fallback / 同 issue 過去 PR root cause の 4 例示を含めれば pass) に戻さないこと** — 例示リストは新しい欠陥クラスへの検出力を持たない)
 3. **P-3**: invocation path の詳細参照先として docs/l2-workflow.md §Step 5 の invocation path (3-tier、#795) に到達する
 4. **P-4**: Codex CLI fail 時は tier 2 fallback (C6) の存在を認識し、fallback 時は Codex fallback notice 記載が必要と述べる
