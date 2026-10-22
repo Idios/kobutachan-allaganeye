@@ -309,6 +309,27 @@ def test_cli_options_gate_reports_both_directions() -> None:
     assert any("--ghost" in p and "not implemented" in p for p in problems)
 
 
+def test_cli_options_are_compared_per_command() -> None:
+    """共有 option が片方のコマンドから消えた drift を検出する。
+
+    全体の和集合だけを見ると `--gpu` が `split` に残っている限り緑になる。
+    Codex adversarial-review [P2]。
+    """
+    problems = cd._compare_cli_options_per_command(
+        {"detect": {"--gpu", "--workers"}, "split": {"--gpu"}},
+        {"detect": {"--workers"}, "split": {"--gpu"}},
+    )
+    assert any("detect" in p and "--gpu" in p for p in problems)
+
+
+def test_cli_options_reports_command_set_drift() -> None:
+    problems = cd._compare_cli_options_per_command(
+        {"shown": set(), "hidden_in_doc": set()}, {"shown": set(), "ghost": set()}
+    )
+    assert any("hidden_in_doc" in p and "無い" in p for p in problems)
+    assert any("ghost" in p and "実装に無い" in p for p in problems)
+
+
 def test_line_refs_are_absent_from_living_docs() -> None:
     """living doc に行番号参照 (`path:NNN`) が無い (Phase 2 で 49 件を除去)。"""
     assert cd.check_line_refs(REPO_ROOT) == []

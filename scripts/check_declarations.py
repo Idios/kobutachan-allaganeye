@@ -255,21 +255,79 @@ def check_exit_codes(root: Path) -> list[str]:
     return problems
 
 
-def _compare_cli_options(code_opts: set[str], doc_opts: set[str]) -> list[str]:
+def _compare_cli_options(
+    code_opts: set[str], doc_opts: set[str], command: str | None = None
+) -> list[str]:
+    prefix = f"cli-options: {command}" if command else "cli-options"
     problems: list[str] = []
     for opt in sorted(code_opts - doc_opts):
         problems.append(
-            f"cli-options: {opt} は実装にあるが docs/cli-spec.md に not documented"
+            f"{prefix}: {opt} は実装にあるが docs/cli-spec.md に not documented"
         )
     for opt in sorted(doc_opts - code_opts):
         problems.append(
-            f"cli-options: {opt} は docs/cli-spec.md にあるが実装で not implemented"
+            f"{prefix}: {opt} は docs/cli-spec.md にあるが実装で not implemented"
         )
     return problems
 
 
+def _compare_cli_options_per_command(
+    runtime: dict[str, set[str]], documented: dict[str, set[str]]
+) -> list[str]:
+    """コマンド単位で比較する。
+
+    全体の和集合だけを見ると、共有 option が片方のコマンドから消えても
+    気づけない (例: `detect` から `--gpu` を外しても `split` に残っていれば
+    集合は同じ)。Codex adversarial-review [P2]。
+    """
+    problems: list[str] = []
+    for command in sorted(set(runtime) - set(documented)):
+        problems.append(
+            f"cli-options: command `{command}` が実装にあるが docs/cli-spec.md に無い"
+        )
+    for command in sorted(set(documented) - set(runtime)):
+        problems.append(
+            f"cli-options: command `{command}` が docs/cli-spec.md にあるが実装に無い"
+        )
+    for command in sorted(set(runtime) & set(documented)):
+        problems.extend(
+            _compare_cli_options(runtime[command], documented[command], command=command)
+        )
+    return problems
+
+
+def _section_by_heading(text: str, pattern: str) -> dict[str, str]:
+    """`## <name> ...` 見出しごとに節を切り出す (pattern の 1 つ目の group を name にする)。"""
+    lines = text.splitlines()
+    compiled = re.compile(pattern)
+    sections: dict[str, list[str]] = {}
+    current = ""
+    for line in lines:
+        match = compiled.match(line)
+        if match and match.group(1):
+            current = match.group(1).strip()
+            sections[current] = []
+            continue
+        if line.startswith("## "):
+            current = ""
+            continue
+        if current:
+            sections[current].append(line)
+    return {name: "\n".join(body) for name, body in sections.items()}
+
+
+def _table_options(section: str) -> set[str]:
+    """表の行だけから `--opt` を拾う (散文の言及で集合を膨らませない)。"""
+    found: set[str] = set()
+    for line in section.splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        found |= set(re.findall(r"`(--[a-z0-9][a-z0-9-]*)", line))
+    return found
+
+
 def check_cli_options(root: Path) -> list[str]:
-    """typer runtime registry の option 集合と `docs/cli-spec.md` を突合する。
+    """typer runtime registry と `docs/cli-spec.md` を **コマンド単位** で突合する。
 
     静的な regex 抽出では typer の宣言形（`typer.Option` の位置引数 /
     `Annotated`）を取りこぼすため、実際に登録された click command を読む
@@ -291,7 +349,6 @@ def check_cli_options(root: Path) -> list[str]:
         ]
 
     group = typer.main.get_command(app)
-    code_opts: set[str] = set()
 
     def _collect(params: list[object]) -> set[str]:
         found: set[str] = set()
@@ -302,18 +359,27 @@ def check_cli_options(root: Path) -> list[str]:
             found |= {opt for opt in opts if opt.startswith("--")}
         return found
 
-    for command in getattr(group, "commands", {}).values():
+    runtime: dict[str, set[str]] = {}
+    for name, command in getattr(group, "commands", {}).items():
         if getattr(command, "hidden", False):
             continue
-        code_opts |= _collect(list(getattr(command, "params", [])))
-    code_opts |= _collect(list(getattr(group, "params", [])))
-    code_opts -= _BUILTIN_OPTIONS
+        runtime[name] = (
+            _collect(list(getattr(command, "params", []))) - _BUILTIN_OPTIONS
+        )
+    global_opts = _collect(list(getattr(group, "params", []))) - _BUILTIN_OPTIONS
 
-    doc_opts = set(
-        re.findall(r"`(--[a-z0-9][a-z0-9-]*)", doc.read_text(encoding="utf-8"))
-    )
-    doc_opts -= _BUILTIN_OPTIONS
-    return _compare_cli_options(code_opts, doc_opts)
+    text = doc.read_text(encoding="utf-8")
+    documented = {
+        name: _table_options(body) - _BUILTIN_OPTIONS
+        for name, body in _section_by_heading(text, r"^## (\S+) コマンド$").items()
+    }
+    globals_section = _section_by_heading(text, r"^## (グローバルオプション)$")
+    documented_global = _table_options(globals_section.get("グローバルオプション", ""))
+    documented_global -= _BUILTIN_OPTIONS
+
+    problems = _compare_cli_options_per_command(runtime, documented)
+    problems.extend(_compare_cli_options(global_opts, documented_global, "<global>"))
+    return problems
 
 
 def check_line_refs(root: Path) -> list[str]:
