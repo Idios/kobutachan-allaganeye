@@ -73,3 +73,15 @@ class IntegrityError(AllaganEyeError):
     """
 
     exit_code = 7
+
+
+class MetadataConflictError(AllaganEyeError):
+    """metadata.json was modified externally between read and write (#514).
+
+    Used by write-back paths that take ``--expected-mtime`` (CAS guard). The
+    CLI maps this to exit code 6 and the GUI turns it into ``ConflictModal``.
+    The code is declared here so ``docs/declaration-catalog.md`` can treat
+    ``exceptions.py`` as the single source for exit code values.
+    """
+
+    exit_code = 6

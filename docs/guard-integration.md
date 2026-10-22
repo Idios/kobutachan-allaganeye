@@ -154,7 +154,7 @@ GitHub の issue・PR に添付またはリンクされた動画ファイルに�
 
 外部ユーザー向けドキュメント (`.github/ISSUE_TEMPLATE/bug_report.yml`、`docs/bug-report-guide.md` 等) では **allaganeye-guard の存在・運用方法を露出させない**。報告者にはプライバシー・機密情報の確認のみを依頼する形を取る。
 
-**Why**: 2026-04-21、PR #497 インラインコメント (`bug_report.yml:13`) で Idios が明示: 「報告者は allaganeye-guard の存在は知らない前提。プライバシーと機密情報の確認だけ依頼する形」。guard の存在・運用ルールはメンテナ側の責務として本ドキュメントに集約されている。報告者が guard を知らなくてもバグ報告できる設計を優先。
+**Why**: 2026-04-21、PR #497 インラインコメント (`bug_report.yml`) で Idios が明示: 「報告者は allaganeye-guard の存在は知らない前提。プライバシーと機密情報の確認だけ依頼する形」。guard の存在・運用ルールはメンテナ側の責務として本ドキュメントに集約されている。報告者が guard を知らなくてもバグ報告できる設計を優先。
 
 **How to apply**:
 

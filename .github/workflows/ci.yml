@@ -370,9 +370,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11.9"
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
+
+      # `cli-options` gate は typer runtime registry (実際に登録された click
+      # command) を読むため、`doc-code-refs` と違い CLI を import できる状態が要る
+      # (`check_feature_announcement.py` と同じ理由)。残りの gate は stdlib のみ。
+      - name: Install allaganeye (CLI registry を読むため)
+        run: pip install -e . -c constraints.txt
 
       # 宣言カタログ (#1079) の自己整合 gate。台帳 (docs/declaration-catalog.md) が
-      # 実 tree と食い違うと fail する。標準ライブラリのみで動く。
+      # 実 tree と食い違うと fail する。
       # exit 1 = 台帳と実 tree の食い違い / exit 2 = 台帳の構造破壊。
       # 行の削除は本 job では検出できない (未登録クラスは drift ではないため)。
       # id 集合の消失は tests/scripts/test_check_declarations.py が pin する。

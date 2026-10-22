@@ -1,8 +1,9 @@
 # axum 局所 HTTP 動画サーバ仕様
 
 > **Status**: v0.2.0 リリースゲート blocking spec
-> **対象実装**: `gui/src-tauri/src/lib.rs:42-879` (VideoServer 系、[#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) / PR [#540](https://github.com/Idios/kobutachan-allaganeye/pull/540) で landed)
+> **対象実装**: `gui/src-tauri/src/lib.rs` (VideoServer 系、[#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) / PR [#540](https://github.com/Idios/kobutachan-allaganeye/pull/540) で landed)
 > **本 doc の用途**: 後続 PR ([#589](https://github.com/Idios/kobutachan-allaganeye/issues/589) / [#645](https://github.com/Idios/kobutachan-allaganeye/issues/645) 等) のレビュー判断基準。preview 関連変更時は本 spec との適合確認を行う
+> **行番号は記載しない**: 行番号は腐る (実測: 本 doc の 43 件がすべて同一 commit 内で 2 行以上ずれていた)。各要素は表の 1 列目の symbol 名で検索すること (`scripts/check_declarations.py` の `line-refs` gate が再混入を禁止する)
 
 ## §1 Overview
 
@@ -20,17 +21,17 @@
 
 ### 既存実装位置
 
-| 要素 | line |
+| 要素 | 定義ファイル |
 | --- | --- |
-| `TokenMap` 型エイリアス (`Arc<Mutex<HashMap<Uuid, PathBuf>>>`) | `gui/src-tauri/src/lib.rs:35` |
-| `VideoServer` struct (フィールド: `port: Option<u16>`, `tokens: TokenMap`) | `gui/src-tauri/src/lib.rs:42-45` |
-| `VIDEO_SERVER` static (`OnceLock<Mutex<VideoServer>>`) + `video_server()` accessor | `gui/src-tauri/src/lib.rs:56-60` |
-| `RegisteredVideo` struct (`url: String`, `token: String`、Serialize) | `gui/src-tauri/src/lib.rs:67-70` |
-| `register_video` Tauri command | `gui/src-tauri/src/lib.rs:562-577` |
-| `register_video_sync` testable helper (UUID 発行 + tokens insert の pure 関数) | `gui/src-tauri/src/lib.rs:805-809` |
-| `ensure_server_started` (port 確保 + axum 背景 spawn、idempotent) | `gui/src-tauri/src/lib.rs:814-841` |
-| `build_router` (axum `Router::new()` 構築) | `gui/src-tauri/src/lib.rs:846-850` |
-| `serve_video` route handler (`tower_http::services::ServeFile` 経由) | `gui/src-tauri/src/lib.rs:852-879` |
+| `TokenMap` 型エイリアス (`Arc<Mutex<HashMap<Uuid, PathBuf>>>`) | `gui/src-tauri/src/lib.rs` |
+| `VideoServer` struct (フィールド: `port: Option<u16>`, `tokens: TokenMap`) | `gui/src-tauri/src/lib.rs` |
+| `VIDEO_SERVER` static (`OnceLock<Mutex<VideoServer>>`) + `video_server()` accessor | `gui/src-tauri/src/lib.rs` |
+| `RegisteredVideo` struct (`url: String`, `token: String`、Serialize) | `gui/src-tauri/src/lib.rs` |
+| `register_video` Tauri command | `gui/src-tauri/src/lib.rs` |
+| `register_video_sync` testable helper (UUID 発行 + tokens insert の pure 関数) | `gui/src-tauri/src/lib.rs` |
+| `ensure_server_started` (port 確保 + axum 背景 spawn、idempotent) | `gui/src-tauri/src/lib.rs` |
+| `build_router` (axum `Router::new()` 構築) | `gui/src-tauri/src/lib.rs` |
+| `serve_video` route handler (`tower_http::services::ServeFile` 経由) | `gui/src-tauri/src/lib.rs` |
 
 ### 関連
 
@@ -77,20 +78,20 @@
 ### Token 形式
 
 - 型: `Uuid` (v4)
-- 発行ルール: `register_video_sync` 呼び出しごとに `Uuid::new_v4()` で生成 (`gui/src-tauri/src/lib.rs:805-809`)
-- 同一 path で複数回 `register_video` を呼んだ場合、毎回 distinct token が発行される。これは既存テスト `register_video_same_file_twice_yields_distinct_tokens` (`gui/src-tauri/src/lib.rs:3577-3590`) で保証される (Uuid v4 衝突確率は 122-bit entropy で実用上ゼロ)
+- 発行ルール: `register_video_sync` 呼び出しごとに `Uuid::new_v4()` で生成 (`gui/src-tauri/src/lib.rs`)
+- 同一 path で複数回 `register_video` を呼んだ場合、毎回 distinct token が発行される。これは既存テスト `register_video_same_file_twice_yields_distinct_tokens` (`gui/src-tauri/src/lib.rs`) で保証される (Uuid v4 衝突確率は 122-bit entropy で実用上ゼロ)
 
 ### lifecycle
 
 - 失効ルール: **GUI セッション中は保持、明示失効 API 無し** (現状実装)
-- 不備として認識: `register_video_sync` で insert した token は明示的な remove 経路が無く、process 終了まで `VIDEO_SERVER` の `tokens: HashMap<Uuid, PathBuf>` (`gui/src-tauri/src/lib.rs:35` + `:44`) に残る。triage 課題 (failure to invalidate API; long-running session で memory growth、[#670](https://github.com/Idios/kobutachan-allaganeye/issues/670) で改善検討)
-- frontend → backend 受け渡し: `register_video` (`gui/src-tauri/src/lib.rs:573-576`) の戻り値 `RegisteredVideo` struct (`url: String`, `token: String`、`gui/src-tauri/src/lib.rs:67-70`) を frontend が受け、`<video src={url}>` に組み立てる (`url` は `format!("http://127.0.0.1:{}/video/{}", port, token)` で生成)
+- 不備として認識: `register_video_sync` で insert した token は明示的な remove 経路が無く、process 終了まで `VIDEO_SERVER` の `tokens: HashMap<Uuid, PathBuf>` (`gui/src-tauri/src/lib.rs` の `VideoServer`) に残る。triage 課題 (failure to invalidate API; long-running session で memory growth、[#670](https://github.com/Idios/kobutachan-allaganeye/issues/670) で改善検討)
+- frontend → backend 受け渡し: `register_video` (`gui/src-tauri/src/lib.rs`) の戻り値 `RegisteredVideo` struct (`url: String`, `token: String`) を frontend が受け、`<video src={url}>` に組み立てる (`url` は `format!("http://127.0.0.1:{}/video/{}", port, token)` で生成)
 
 ### tokens HashMap 構造
 
 - `tokens: HashMap<Uuid, PathBuf>` で token → 解決 path をマップ
-- `TokenMap` 型エイリアス: `Arc<Mutex<HashMap<Uuid, PathBuf>>>` (`gui/src-tauri/src/lib.rs:35`、`tokio::sync::Mutex`)
-- lookup は `serve_video` route handler 内で実施 (`gui/src-tauri/src/lib.rs:852-879`)
+- `TokenMap` 型エイリアス: `Arc<Mutex<HashMap<Uuid, PathBuf>>>` (`gui/src-tauri/src/lib.rs`、`tokio::sync::Mutex`)
+- lookup は `serve_video` route handler 内で実施 (`gui/src-tauri/src/lib.rs`)
 - axum handler state と Tauri command の双方が `Arc::clone` で同じ map を共有
 
 ## §4 Range request 仕様
@@ -98,13 +99,13 @@
 ### 準拠
 
 - RFC 7233 Range Requests に準拠
-- 実装: axum 既定ではなく **`tower_http::services::ServeFile` に委譲** (`use tower_http::services::ServeFile;` `gui/src-tauri/src/lib.rs:22`)
+- 実装: axum 既定ではなく **`tower_http::services::ServeFile` に委譲** (`use tower_http::services::ServeFile;` `gui/src-tauri/src/lib.rs`)
 
 ### chunk size / partial content
 
 - HTML5 `<video>` 要素の seek パターン: 任意 byte range を要求
-- `ServeFile` が `Range` / `Content-Type` sniffing / `If-Range` を native ハンドル (`serve_video` 内コメント `// ServeFile handles Range, Content-Type sniffing, and If-Range. Forward the original request so the Range header survives.` `gui/src-tauri/src/lib.rs:869-870`)
-- 実装 (`gui/src-tauri/src/lib.rs:871-875`) で original request をそのまま forward し、`Range` header を ServeFile に届ける:
+- `ServeFile` が `Range` / `Content-Type` sniffing / `If-Range` を native ハンドル (`serve_video` 内コメント `// ServeFile handles Range, Content-Type sniffing, and If-Range. Forward the original request so the Range header survives.` `gui/src-tauri/src/lib.rs`)
+- 実装 (`gui/src-tauri/src/lib.rs`) で original request をそのまま forward し、`Range` header を ServeFile に届ける:
 
   ```rust
   let mut svc = ServeFile::new(p);
@@ -125,27 +126,27 @@
 
 ### allowlist 構造
 
-- `register_video` Tauri command (`gui/src-tauri/src/lib.rs:562-577`) で登録された path のみが serve 対象となる
-- 内部構造: `tokens: HashMap<Uuid, PathBuf>` (`gui/src-tauri/src/lib.rs:35` + `:44`、`TokenMap = Arc<Mutex<HashMap<Uuid, PathBuf>>>`)。token (Uuid v4) → canonical な `PathBuf` の lookup table
-- 未登録 path への直接アクセス経路は無い: `serve_video` route handler (`gui/src-tauri/src/lib.rs:852-879`) は受け取った URL path の `{token}` を `Uuid::parse_str` で validate し、`tokens` map から `PathBuf` を取得する。token が map に存在しなければ 404 を返し、URL path 自体は file system path として解決されない
+- `register_video` Tauri command (`gui/src-tauri/src/lib.rs`) で登録された path のみが serve 対象となる
+- 内部構造: `tokens: HashMap<Uuid, PathBuf>` (`gui/src-tauri/src/lib.rs` の `VideoServer`、`TokenMap = Arc<Mutex<HashMap<Uuid, PathBuf>>>`)。token (Uuid v4) → canonical な `PathBuf` の lookup table
+- 未登録 path への直接アクセス経路は無い: `serve_video` route handler (`gui/src-tauri/src/lib.rs`) は受け取った URL path の `{token}` を `Uuid::parse_str` で validate し、`tokens` map から `PathBuf` を取得する。token が map に存在しなければ 404 を返し、URL path 自体は file system path として解決されない
 
 ### canonical path 検証
 
-- `register_video` 内で `validate_video_path(&file_path)?` (`gui/src-tauri/src/lib.rs:564`) を呼び出す。`validate_video_path` ヘルパ (`gui/src-tauri/src/lib.rs:775-800`) は次の 3 段検証を実施する:
+- `register_video` 内で `validate_video_path(&file_path)?` を呼び出す。`validate_video_path` ヘルパ (`gui/src-tauri/src/lib.rs`) は次の 3 段検証を実施する:
   1. `path.exists()` で存在確認 (`io.file_not_found` AppError で reject)
   2. `fs::metadata(path)?.is_file()` で regular file 判定 (`validation.not_a_file` AppError で reject)
   3. `fs::canonicalize(path)?` で canonical 化 (失敗時は `io.read_failed` AppError で reject)
-- canonical 化された絶対 path のみが `tokens` map に insert される (`register_video_sync`、`gui/src-tauri/src/lib.rs:805-809`)
+- canonical 化された絶対 path のみが `tokens` map に insert される (`register_video_sync`、`gui/src-tauri/src/lib.rs`)
 - 既存 Rust テスト:
-  - `register_video_rejects_missing_file` (`gui/src-tauri/src/lib.rs:3517-3526`): 存在しない path を reject
-  - `register_video_rejects_directory` (`gui/src-tauri/src/lib.rs:3532-3540`): directory を reject
-  - `validate_video_path_accepts_regular_file` (`gui/src-tauri/src/lib.rs:3545-3552`): regular file を canonical 化された絶対 path に変換
+  - `register_video_rejects_missing_file` (`gui/src-tauri/src/lib.rs`): 存在しない path を reject
+  - `register_video_rejects_directory` (`gui/src-tauri/src/lib.rs`): directory を reject
+  - `validate_video_path_accepts_regular_file` (`gui/src-tauri/src/lib.rs`): regular file を canonical 化された絶対 path に変換
 
 ### 脅威モデル — Path traversal
 
 - 攻撃シナリオ: 外部 origin (もしくは loopback 経由でアクセスできる別プロセス) が `/video/{token}/../../etc/passwd` のような traversal を試行する
 - 防御: `serve_video` は URL path から token のみを抽出し、`tokens` map から取得する `PathBuf` を `ServeFile::new(p)` に渡す。token から得られる `PathBuf` は登録時に `validate_video_path` で canonical 化された絶対 path で固定されるため、URL path に traversal 文字が含まれても `tokens` lookup の結果は影響を受けない
-- 補強: axum の route definition は `/video/{token}` 単一 segment にのみマッチする (`build_router`、`gui/src-tauri/src/lib.rs:846-850`)。複数 segment や `..` を含む URL は route match 自体に失敗して 404 になる
+- 補強: axum の route definition は `/video/{token}` 単一 segment にのみマッチする (`build_router`、`gui/src-tauri/src/lib.rs`)。複数 segment や `..` を含む URL は route match 自体に失敗して 404 になる
 
 ### 脅威モデル — Token leak
 
@@ -158,15 +159,15 @@
 ### Bind address
 
 - **`127.0.0.1` 必須** — 外部 NIC への bind は禁止
-- 実装: `tokio::net::TcpListener::bind("127.0.0.1:0").await` (`gui/src-tauri/src/lib.rs:820`) で IPv4 loopback のみ
+- 実装: `tokio::net::TcpListener::bind("127.0.0.1:0").await` (`gui/src-tauri/src/lib.rs`) で IPv4 loopback のみ
 - IPv6 loopback `::1` の扱い: 現状実装は IPv4 loopback only (`127.0.0.1` literal で bind しているため `::1` には listen していない)。dual stack 非対応
 
 ### Port 動的割当
 
-- フィールド: `VideoServer` struct の `port: Option<u16>` (`gui/src-tauri/src/lib.rs:42-45`、初期値 `None`)
-- 起動時に OS から空き port を取得: `TcpListener::bind("127.0.0.1:0")` の `0` 指定で OS に動的割当を委譲し、`listener.local_addr()?.port()` で確定 port を読み取る (`gui/src-tauri/src/lib.rs:820-828`)
-- 単一インスタンス起動順序: `VIDEO_SERVER` static (`OnceLock<Mutex<VideoServer>>`、`gui/src-tauri/src/lib.rs:56-60`) を経由し、初回 `ensure_server_started().await` 呼び出し時に lazy init される (`guard.port` が `None` の場合のみ bind + spawn を実行、確保済みなら同じ port を即返却して idempotent)
-- port 割当後は `guard.port = Some(addr.port())` で永続化され、プロセス内では同一 port が再利用される (`gui/src-tauri/src/lib.rs:839`)
+- フィールド: `VideoServer` struct の `port: Option<u16>` (`gui/src-tauri/src/lib.rs`、初期値 `None`)
+- 起動時に OS から空き port を取得: `TcpListener::bind("127.0.0.1:0")` の `0` 指定で OS に動的割当を委譲し、`listener.local_addr()?.port()` で確定 port を読み取る (`gui/src-tauri/src/lib.rs`)
+- 単一インスタンス起動順序: `VIDEO_SERVER` static (`OnceLock<Mutex<VideoServer>>`、`gui/src-tauri/src/lib.rs`) を経由し、初回 `ensure_server_started().await` 呼び出し時に lazy init される (`guard.port` が `None` の場合のみ bind + spawn を実行、確保済みなら同じ port を即返却して idempotent)
+- port 割当後は `guard.port = Some(addr.port())` で永続化され、プロセス内では同一 port が再利用される (`gui/src-tauri/src/lib.rs`)
 
 ### 脅威モデル — 外部 IF 経由攻撃
 
@@ -178,7 +179,7 @@
 
 ### 背景 task の起動
 
-- `axum::serve(listener, app)` は `tokio::spawn` で背景 task として実行される (`gui/src-tauri/src/lib.rs:833-837`):
+- `axum::serve(listener, app)` は `tokio::spawn` で背景 task として実行される (`gui/src-tauri/src/lib.rs`):
 
   ```rust
   tokio::spawn(async move {
@@ -200,8 +201,8 @@
 
 ### 単一インスタンス前提
 
-- `VIDEO_SERVER: OnceLock<Mutex<VideoServer>>` (`gui/src-tauri/src/lib.rs:56`) により process 内で 1 つだけ
-- `video_server() -> &'static Mutex<VideoServer>` accessor (`gui/src-tauri/src/lib.rs:58-60`) が `OnceLock::get_or_init(|| Mutex::new(VideoServer::new()))` で初期化を冪等化
+- `VIDEO_SERVER: OnceLock<Mutex<VideoServer>>` (`gui/src-tauri/src/lib.rs`) により process 内で 1 つだけ
+- `video_server() -> &'static Mutex<VideoServer>` accessor (`gui/src-tauri/src/lib.rs`) が `OnceLock::get_or_init(|| Mutex::new(VideoServer::new()))` で初期化を冪等化
 - 複数 `register_video` 呼び出しは同一 server に token を追加するのみで、新たな bind / spawn は発生しない (`ensure_server_started` の idempotent 性、§2 起動シーケンス手順 2 参照)
 
 ## §8 想定負荷見積
@@ -246,8 +247,8 @@
 
 ### 既存テスト (回帰検出)
 
-- `gui/src-tauri/src/lib.rs:3517` — `register_video_rejects_missing_file`
-- `gui/src-tauri/src/lib.rs:3532` — `register_video_rejects_directory`
-- `gui/src-tauri/src/lib.rs:3545` — `validate_video_path_accepts_regular_file`
-- `gui/src-tauri/src/lib.rs:3557` — `register_video_returns_distinct_tokens_for_two_registrations`
-- `gui/src-tauri/src/lib.rs:3577` — `register_video_same_file_twice_yields_distinct_tokens`
+- `gui/src-tauri/src/lib.rs` — `register_video_rejects_missing_file`
+- `gui/src-tauri/src/lib.rs` — `register_video_rejects_directory`
+- `gui/src-tauri/src/lib.rs` — `validate_video_path_accepts_regular_file`
+- `gui/src-tauri/src/lib.rs` — `register_video_returns_distinct_tokens_for_two_registrations`
+- `gui/src-tauri/src/lib.rs` — `register_video_same_file_twice_yields_distinct_tokens`
