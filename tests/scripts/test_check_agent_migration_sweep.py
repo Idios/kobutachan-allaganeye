@@ -6,9 +6,13 @@
 
 本 file が特に固定するのは **scope** である:
 - 検査対象 = living doc (`.md` / `.sh` の doc / skill / hook / AGENTS.md / README)。
-- コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml`)、CHANGELOG、
-  eval fixture (`.agents/skills/**/eval/**`)、dated plans・specs、archive、audits、
-  GUI ソースは対象外 (#1044)。
+- コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml`) は `_SCAN_EXTS` の
+  allowlist (living doc のみ) により対象外。CHANGELOG、eval fixture
+  (`.agents/skills/**/eval/**`)、`docs/superpowers/**` (dated 以外も含む)、
+  archive、audits は対象外 (#1044)。
+- GUI ソースは screenshot-freshness 回避のため対象外。
+- `build-cache/` は build キャッシュ置き場のため対象外 (#1066)。
+- コードコメントの旧参照は #1076 で追跡する (#1044 は未参照ファイルの削除が範囲)。
 - `.claude/agents/**` は Claude Code 用のロール定義 (`model:` frontmatter が Claude
   エイリアスのみ) のため対象外 (旧 invocation 契約は #1068)。
 - slash command の正規表現は path / branch 名の `/release` 等を誤検出しない
@@ -17,6 +21,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import os
 import subprocess
@@ -27,6 +32,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "check_agent_migration_sweep.py"
+AGENTS_PATH = REPO_ROOT / "AGENTS.md"
+CI_YML_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 _spec = importlib.util.spec_from_file_location(
     "check_agent_migration_sweep", SCRIPT_PATH
@@ -236,24 +243,131 @@ def test_runtime_messages_are_pinned(tmp_path: Path) -> None:
     # hint の除外列挙も pin する (宣言側 drift を止める)
     assert "archive / audits" in result.stderr
     assert ".claude/agents/**" in result.stderr
-
-
-def test_declarations_name_the_detection_classes() -> None:
-    """宣言 (module docstring / `ci.yml` comment) が検出 class を名指ししていることを pin する。
-
-    発火側 (実行時文言) だけでなく宣言側の drift も止める (#1073 AC4)。
-    `AGENTS.md` 側の追補は Phase 2 (PR-B) で扱う。
-    """
-    assert "主エージェント=Claude" in (guard.__doc__ or "")
-    assert "Codex 旧表記" in (guard.__doc__ or "")
-    assert "検査不能 (fail-closed)" in (guard.__doc__ or "")
-
-    ci_yml = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
-        encoding="utf-8"
+    # 本 PR で hint に追加した除外列挙も pin する (宣言 spot の 1 つである以上、
+    # 新規文言を assert なしで追加しない)
+    assert "`_SCAN_EXTS` の allowlist が living doc のみを走査するため" in result.stderr
+    assert (
+        "`build-cache/` は build キャッシュ置き場のため対象外 (#1066)" in result.stderr
     )
-    assert "主エージェント=Claude" in ci_yml
-    assert "Codex 旧表記" in ci_yml
-    assert "検査不能 (fail-closed)" in ci_yml
+    assert "コードコメントの旧参照は #1076 で追跡する" in result.stderr
+
+
+# 宣言の正 (#1073)。検出 class は 3 spot / exit code は 2 spot / 除外の帰属は 3 spot。
+# runtime hint は `test_runtime_messages_are_pinned` が pin する。
+# spot 間で表記を変えるときは、ここも同時に更新すること。
+_DETECTION_CLASS_TOKENS = (
+    "slash command",
+    "旧 path",
+    "主エージェント=Claude",
+    "旧 invocation 契約",
+)
+# 除外 class の帰属は「その class を名指しする bullet」単位で pin する
+# (whole-file の部分一致だと、別行の同 token が帰属行の drift を mask する)
+_ATTRIBUTION_RULES = (
+    ("build-cache", "#1066"),
+    (".claude/agents/", "#1068"),
+)
+_FORBIDDEN_IN_BULLET = (("screenshot-freshness", "#1044"),)
+
+
+def _agents_declaration_section() -> str:
+    """AGENTS.md の「用語 sweep 完全性 checklist」節の本文 (次の `## ` 見出しまで)。"""
+    lines = AGENTS_PATH.read_text(encoding="utf-8").splitlines()
+    start = next(
+        i
+        for i, ln in enumerate(lines)
+        if ln.startswith("## 用語 sweep 完全性 checklist")
+    )
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
+def _bullet_containing(lines: list[str], index: int) -> str:
+    """`index` 行を含む箇条書き (直近の `- ` 始まりから次の `- ` まで) を返す。"""
+    start = index
+    while start > 0 and not lines[start].lstrip().startswith("- "):
+        start -= 1
+    end = start + 1
+    while end < len(lines) and not lines[end].lstrip().startswith("- "):
+        end += 1
+    return "\n".join(lines[start:end])
+
+
+def _test_module_docstring() -> str:
+    return (
+        ast.get_docstring(ast.parse(Path(__file__).read_text(encoding="utf-8"))) or ""
+    )
+
+
+def test_declarations_are_consistent_across_spots() -> None:
+    """宣言 spot 間の一致を pin する (#1073 / #1075 の一部前倒し)。
+
+    人手レビューだけだと「1 spot ずつ直して次の spot が見つかる」ループが続く
+    (PR #1077 で実測 14 findings 中 8 件が修正工程由来)。class 名 / exit code 語 /
+    除外の帰属を機械検証し、この class を CI で閉じる。
+    """
+    # (1) 検出 class の宣言: 列挙行 / docstring / ci.yml の宣言コメントブロックに限定する。
+    # whole-file の部分一致だと、別行に同 token がある場合に宣言行の drift を mask する。
+    agents_section = _agents_declaration_section()
+    class_lines = [ln for ln in agents_section.splitlines() if "4 class" in ln]
+    assert len(class_lines) == 1, "AGENTS.md の class 列挙行が 1 行ではない"
+    for token in _DETECTION_CLASS_TOKENS:
+        assert token in class_lines[0], f"AGENTS.md: class 列挙行に無い: {token}"
+
+    doc = guard.__doc__ or ""
+    for token in _DETECTION_CLASS_TOKENS:
+        assert token in doc, f"module docstring に無い: {token}"
+    assert "検査不能 (fail-closed)" in doc, "module docstring に exit 1 の語が無い"
+
+    ci_lines = CI_YML_PATH.read_text(encoding="utf-8").splitlines()
+    start = next(i for i, ln in enumerate(ci_lines) if "用語 sweep 完全性 gate" in ln)
+    # `exit 1 =` は他の job にも現れるため、宣言ブロックの開始以降で探す
+    end = next(i for i, ln in enumerate(ci_lines[start:], start) if "exit 1 =" in ln)
+    ci_block = "\n".join(ci_lines[start : end + 1])
+    for token in _DETECTION_CLASS_TOKENS:
+        assert token in ci_block, f"ci.yml: 宣言ブロックに無い: {token}"
+    assert "検査不能 (fail-closed)" in ci_block, "ci.yml: exit 1 の語が無い"
+
+    # exit code の語は上の 2 spot (docstring / ci.yml 宣言ブロック) で検査済み。
+
+    # (2) 除外 class の帰属: 「その class を名指しする bullet」の中に issue 番号があること
+    spots = (
+        ("AGENTS.md", _agents_declaration_section()),
+        ("checker docstring", guard.__doc__ or ""),
+        ("test docstring", _test_module_docstring()),
+    )
+    for name, text in spots:
+        # marker 自体の存在を要求する (bullet ごと削除されると bullet 検査が空振りする)
+        for marker, _issue in _ATTRIBUTION_RULES:
+            assert marker in text, f"{name}: 除外 class の宣言が無い: {marker}"
+        for marker, _forbidden in _FORBIDDEN_IN_BULLET:
+            assert marker in text, f"{name}: 除外 class の宣言が無い: {marker}"
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            for marker, issue in _ATTRIBUTION_RULES:
+                if marker in line:
+                    bullet = _bullet_containing(lines, i)
+                    assert issue in bullet, (
+                        f"{name}: {marker} の bullet に {issue} が無い: {bullet.strip()}"
+                    )
+            for marker, forbidden in _FORBIDDEN_IN_BULLET:
+                if marker in line:
+                    bullet = _bullet_containing(lines, i)
+                    assert forbidden not in bullet, (
+                        f"{name}: {marker} の bullet に {forbidden} が混入: "
+                        f"{bullet.strip()}"
+                    )
+
+    # (3) 履歴記録 / コードコメントの帰属は各 spot に存在すること (presence)
+    for name, text in spots:
+        for token in ("#1044", "#1076"):
+            assert token in text, f"{name}: 帰属が無い: {token}"
+
+    # `gui/**` の宣言は module docstring 内で 1 回だけ (重複行の再発防止)
+    assert (guard.__doc__ or "").count("`gui/**` は GUI ソースのため") == 1
 
 
 def test_clean_repo_passes(tmp_path: Path) -> None:
@@ -336,7 +450,7 @@ def test_changelog_is_excluded(tmp_path: Path) -> None:
 
 
 def test_code_file_is_excluded(tmp_path: Path) -> None:
-    """コードファイルのコメント旧参照は #1044 (コードコメント棚卸) 対象外。"""
+    """コードファイルのコメント旧参照は #1076 で追跡するため対象外。"""
     _make_repo(tmp_path)
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "check_version_consistency.py").write_text(
@@ -346,7 +460,7 @@ def test_code_file_is_excluded(tmp_path: Path) -> None:
 
 
 def test_gui_source_is_excluded(tmp_path: Path) -> None:
-    """`gui/**` 配下は `.md` でも検査対象外 (screenshot-freshness 回避、#1044)。"""
+    """`gui/**` 配下は `.md` でも検査対象外 (screenshot-freshness 回避)。"""
     _make_repo(tmp_path)
     (tmp_path / "gui" / "src").mkdir(parents=True)
     (tmp_path / "gui" / "src" / "README.md").write_text(
@@ -366,10 +480,10 @@ def test_docs_archive_is_excluded(tmp_path: Path) -> None:
 
 
 def test_build_cache_dir_is_skipped(tmp_path: Path) -> None:
-    """`build-cache/` は .gitignore 済の展開先なので検査対象外 (#1066)。
+    """`build-cache/` は Portable ZIP の build キャッシュ置き場なので検査対象外 (#1066)。
 
-    red 実証 (`git archive <rev> | tar -x -C build-cache/`) の展開物を checker が
-    拾うと false red になるため、`_SKIP_DIRS` で除外する。
+    red 実証の展開先は repo 外を推奨するが、repo 内に置かれた場合の false red を
+    防ぐため `_SKIP_DIRS` で除外する。
     """
     _make_repo(tmp_path)
     (tmp_path / "build-cache" / "old").mkdir(parents=True)
@@ -390,7 +504,10 @@ def test_claude_agents_dir_is_excluded(tmp_path: Path) -> None:
 
 
 def test_eval_report_is_excluded(tmp_path: Path) -> None:
-    """skill eval fixture の `.claude/skills` 参照は歴史記録 (棚卸 #1044) 対象外。"""
+    """skill eval fixture の `.claude/skills` 参照は eval fixture 全体の除外により対象外。
+
+    残置の追跡先は #1068。
+    """
     _make_repo(tmp_path)
     (tmp_path / ".agents" / "skills" / "review-pr" / "eval" / "reports").mkdir(
         parents=True
