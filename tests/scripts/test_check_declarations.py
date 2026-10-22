@@ -146,6 +146,33 @@ def test_missing_ci_step_is_reported(tmp_path: Path) -> None:
     assert any("step not found" in p for p in problems)
 
 
+def test_ci_step_is_scoped_to_its_job(tmp_path: Path) -> None:
+    """step 名の探索は宣言された job の中に限定する。
+
+    workflow 全体を探すと、別 job に同名 step があるだけで誤って通る。
+    metadata-schema の ts 側 step は gui-frontend にあるため、
+    `ci:python:` に付けると red にならなければならない (Codex review [P2])。
+    """
+    problems = _problems(
+        tmp_path,
+        [_row(gate="ci:python:Verify generated metadata.generated.ts is up to date")],
+    )
+    assert any("step not found in job python" in p for p in problems)
+
+
+def test_ci_step_in_its_own_job_passes(tmp_path: Path) -> None:
+    """正しい job に付けた step は通る (上の test の対照)。"""
+    problems = _problems(
+        tmp_path,
+        [
+            _row(
+                gate="ci:gui-frontend:Verify generated metadata.generated.ts is up to date"
+            )
+        ],
+    )
+    assert problems == []
+
+
 def test_duplicate_id_is_reported(tmp_path: Path) -> None:
     problems = _problems(tmp_path, [_row(id="dup"), _row(id="dup")])
     assert any("duplicate id" in p for p in problems)

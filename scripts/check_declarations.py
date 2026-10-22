@@ -68,14 +68,37 @@ def parse_catalog(path: Path) -> list[dict[str, str]]:
     return rows
 
 
+def _job_block(text: str, job: str) -> str | None:
+    """workflow の text から job の block を切り出す (見つからなければ None)。
+
+    job 名は 2 space indent の key で、job 内の key は 4 space 以降にしか
+    現れない。step 名の探索を **job 内に限定する**ため、次の job 名
+    (または EOF) までを 1 block として返す。
+    """
+    lines = text.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if re.fullmatch(rf"  {re.escape(job)}:\s*", line):
+            start = i
+            break
+    if start is None:
+        return None
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        if re.fullmatch(r"  [A-Za-z0-9_-]+:\s*", lines[j]):
+            end = j
+            break
+    return "\n".join(lines[start:end])
+
+
 def _job_exists(root: Path, job: str, step: str | None) -> tuple[bool, str]:
     for wf in sorted((root / ".github" / "workflows").glob("*.yml")):
-        text = wf.read_text(encoding="utf-8")
-        if not re.search(rf"^  {re.escape(job)}:\s*$", text, re.M):
+        block = _job_block(wf.read_text(encoding="utf-8"), job)
+        if block is None:
             continue
-        if step is None or step in text:
+        if step is None or step in block:
             return True, ""
-        return False, f"step not found in {wf.name}: {step}"
+        return False, f"step not found in job {job} ({wf.name}): {step}"
     return False, f"job not found in workflows: {job}"
 
 
