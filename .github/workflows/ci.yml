@@ -362,6 +362,24 @@ jobs:
         shell: bash
         run: python scripts/check_agent_migration_sweep.py
 
+  doc-declaration-catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+
+      # 宣言カタログ (#1079) の自己整合 gate。台帳 (docs/declaration-catalog.md) が
+      # 実 tree と食い違うと fail する。標準ライブラリのみで動く。
+      # exit 1 = 台帳と実 tree の食い違い / exit 2 = 台帳の構造破壊。
+      # 行の削除は本 job では検出できない (未登録クラスは drift ではないため)。
+      # id 集合の消失は tests/scripts/test_check_declarations.py が pin する。
+      - name: Check declaration catalog self-consistency
+        shell: bash
+        run: python scripts/check_declarations.py
+
   feature-announcement:
     runs-on: ubuntu-latest
     steps:

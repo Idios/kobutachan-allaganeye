@@ -86,6 +86,16 @@ Conventional Commits 形式:
 - `AGENTS.md` は索引として**要約**してよい。数値を書く場合は出典リンクを併記する
 - 既存 doc に複製値を見つけたら、その doc の修正時に正 1 箇所へ寄せて他をリンク化する (W6 doc 一括再同期でも本規約を適用する)
 
+### 宣言カタログ (#1079)
+
+規約だけでは複製は消えない。検出機構が無いため、drift はレビューのサンプリングでしか見つからず、spot 単位の修正は収束しない (同じクラスの別 spot が次のラウンドで見つかる)。そこで **複製を持つ事実を 1 行 1 事実で登録する台帳** を [`docs/declaration-catalog.md`](declaration-catalog.md) に置く。
+
+- 各行は `SSoT` / `複製 spot` / `mode` / `gate` / `status` を宣言する
+- `mode` は `generated` / `checked` / `runtime-extract` / `prose-only` のいずれか。**機械検証しない選択は `prose-only` として理由付きで明示する** (「検査してゼロ」と「検査しなかった」を区別するため)
+- `status` が `active` の行は gate が実装済みでなければならない。未実装のまま `active` と書くと `scripts/check_declarations.py` が落ちる (守られていないのに守られているように見える状態を作らない)
+- 行を削除しても checker は 0 を返す (行の削除は drift ではなく「未登録クラス」である)。**id 集合は `tests/scripts/test_check_declarations.py` が pin する**ため、消失はそちらで検出される
+- 新しい規約・宣言を足す PR は、台帳に行を足すか `prose-only` の理由を書く
+
 ### 背景 (違反の代表事例)
 
 workers 上限「24」が 4 doc 15 箇所 (うち仕様主張は 8 箇所、残る 7 箇所は当時の計測値を記録した実測記録) に複製されたまま実装 (32) と drift した (2026-06-10 full audit P2-25。監査 headline の「6 doc 7 箇所」は #862 の再突合で実測と不一致であることが判明した)。同種の doc–実装 drift が P2-26〜P2-28 等でも反復しており、値の複製自体が drift の構造的な再発要因。**実測記録は書き換えない** — 行われていない測定条件を記録することになるため、SSoT 化の対象は仕様を主張している箇所に限る。詳細は [`docs/audits/2026-06-10-full-audit.md`](audits/2026-06-10-full-audit.md) および [audit-remediation spec §N3](superpowers/specs/2026-06-10-audit-remediation-design.md#n3-doc-ssot-規約の明文化--release-gate-追記) を参照。
