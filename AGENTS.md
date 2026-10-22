@@ -319,6 +319,7 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 - ユーザー (Idios) が戦略・方針を判断し、主エージェント (DeepSeek) は選択肢提示と実装を担う
 - skill (`.agents/skills/*/SKILL.md`) 改修 PR は mizchi `empirical-prompt-tuning` protocol に従う。詳細は [`docs/l2-workflow.md` §skill 改修ワークフロー](docs/l2-workflow.md#skill-改修ワークフロー-empirical-prompt-tuning) を参照
 - 規約 / ガード / チェックを**新設**する PR は **3 点セット** (①発火点をファイルと行で指定 ②非実施時の 1 行記録義務 ③発火側の red 実証) を必ず揃える。詳細は [`docs/l2-workflow.md` §規約・ガード導入の 3 点セット](docs/l2-workflow.md) を参照
+- 同じ事実を 2 spot 以上に書く場合は [`docs/declaration-catalog.md`](docs/declaration-catalog.md) に 1 行登録する (SSoT / 複製 spot / mode / gate)。台帳の自己整合は `scripts/check_declarations.py`、id 集合の消失は `tests/scripts/test_check_declarations.py` が検出する (#1079)
 
 ### `iterate-review` workflow と (A) 強優先方針
 
