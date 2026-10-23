@@ -91,19 +91,41 @@ _CODEX_OLD_TERMS = [
 # ため、維持対象の文脈でも成立しうる (例: "Claude が復旧したら再レビューを依頼する")。
 # これは **FP 側に倒す** 設計で、文脈依存の narrow 化はしない (人手 sweep に委ねる
 # 方針と衝突するため)。現挙動は test の `claude-maintenance-context-tradeoff` で pin。
-_CLAUDE_AGENT_RE = re.compile(
-    r"Claude\s*(?:は|が|内|main|思考体)"  # 主語 / ホスト
+_CLAUDE_AGENT_BRANCHES: list[tuple[str, str]] = [
+    # 主語 / ホスト
+    ("subject", r"Claude\s*(?:は|が|内|main|思考体)"),
     # 所有 "の" は維持対象 (Claude のレビュー / permission prompt 等) を negative lookahead で
     # 除外し、主エージェント所有 (Claude の判断 / 責務 等) のみ拾う。whitelist 方式のため、
     # 維持対象の「の + 名詞」を新たに living doc に書く場合は本リストへ追加する
     # (未追加だと FP で CI red になる)。
-    r"|Claude\s*の(?!\s*(?:レビュー|再レビュー|usage|復旧|不可|Code|Fable|Sonnet|Opus|Design|permission|セッション|auto-memory|スラッシュコマンド))"
-    r"|Claude\s+Code\s+fallback"  # C6 fallback 実行者を Claude Code とする旧表記
-    r"|Claude\s+fallback\s+(?:で|は)"  # C6 fallback 実行者を Claude とする旧表記
-    r"|/\s*Claude\s+fallback"  # 選択肢 "… / Claude fallback / …"
-    r"|=\s*Claude\s*\+"  # "エージェント (= Claude + 人間メンテナ Idios)"
-    r"|Claude\s+Code\s+セッションで動く"  # "Claude Code セッションで動くアシスタント"
-    r"|Claude\s+Code\s+の\s*plan"  # "Claude Code の plan モード"
+    (
+        "ownership",
+        r"Claude\s*の(?!\s*(?:レビュー|再レビュー|usage|復旧|不可|Code|Fable|Sonnet|Opus|Design|permission|セッション|auto-memory|スラッシュコマンド))",
+    ),
+    (
+        "code-fallback",
+        r"Claude\s+Code\s+fallback",
+    ),  # C6 fallback 実行者を Claude Code とする旧表記
+    (
+        "fallback-particle",
+        r"Claude\s+fallback\s+(?:で|は)",
+    ),  # 実行者を Claude とする旧表記
+    ("fallback-slash", r"/\s*Claude\s+fallback"),  # 選択肢 "… / Claude fallback / …"
+    (
+        "equals-plus",
+        r"=\s*Claude\s*\+",
+    ),  # "エージェント (= Claude + 人間メンテナ Idios)"
+    (
+        "code-session",
+        r"Claude\s+Code\s+セッションで動く",
+    ),  # "Claude Code セッションで動くアシスタント"
+    ("code-plan", r"Claude\s+Code\s+の\s*plan"),  # "Claude Code の plan モード"
+]
+
+# 分岐を list で持ち、regex はそこから組み立てる (#1075)。test が「各分岐に positive
+# fixture があること」と「分岐を 1 つ外すと検出されなくなること」を pin できる。
+_CLAUDE_AGENT_RE = re.compile(
+    "|".join(f"(?:{pattern})" for _, pattern in _CLAUDE_AGENT_BRANCHES)
 )
 
 # 検出網の制約 (意図的): 上記 regex は **分離可能な旧 idiom のみ** を対象とする。
