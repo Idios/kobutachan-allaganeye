@@ -469,14 +469,19 @@ Codex review 起動: 判定不能 (理由: 変更ファイル一覧の取得が�
 
 Codex review が exit 0 で完了したら、**finding を stdout から拾う**。`codex` CLI は非対話で stdout に直接結果を出して終了する (旧 companion script の job 追跡機構 `status` / `result` / job id は廃止済)。契約の正は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md) で、本 step はその適用にあたる。
 
-1. review を実行した worktree の cwd で `codex review --base <base> "<focus>"` を実行し、**stdout をそのまま finding の入力にする**:
+1. review を実行した worktree の cwd で `codex review "<focus + diff 指示>"` を実行し、**stdout をそのまま finding の入力にする**:
 
    ```bash
    cd "<review を実行した worktree の絶対パス>"   # cwd は turn 境界で main repo へドリフトしうる。明示する
-   codex review --base <base> "<focus>"
+   codex review "Review the diff against <base> (run: git diff <base>...HEAD). Focus: <focus>"
    #   → finding は stdout に出る。exit code 0 = 成功 / 非ゼロ = 失敗 (§Codex fallback)
    ```
 
+   > **`--base` と `[PROMPT]` は併用できない** (2026-10-22 実測、codex-cli 0.163.0)。
+   > `--base` を付けると focus を渡せないため、**focus を渡す場合は `--base` を外し、prompt 内で
+   > `git diff <base>...HEAD` を指示する** (この形は同日の実測で成功)。以下の説明で `--base` と
+   > あるのは「base 比較」の意で読む。
+   >
    > **`cd` を省略しない。** 本 repo では turn 境界や background task の後に Bash の cwd が
    > worktree から main repo へドリフトする事象が観測されている。`--base` で指定した base に
    > 対する diff を取れるのは review を実行した worktree のみ
@@ -503,7 +508,7 @@ Codex の finding は Step 5b トリアージ表に「出所 = codex review」�
 
 #### Codex fail 時の fallback 手順 (C6、L-β β-5 で追加)
 
-Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback) の検出条件 table に従い:
+Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback-c6codex-token-枯渇--failure-時) の検出条件 table に従い:
 
 > **step の優先順 (逐語、#856 item2)**: step 1 の分類後、**必ず step 2 の重要 PR 判定を先に評価する**。重要 PR に該当したら step 2 の AskUserQuestion で確定させ、**step 3 / 4 は評価しない (短絡)**。step 3 / 4 は「重要 PR に該当しなかった場合」にのみ到達する分岐であり、step 2 と並列の選択肢ではない。判定順は `1 → 2 → (2 に該当すれば終了) → 3 または 4` である。
 
@@ -515,10 +520,10 @@ Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §C
 
    AskUserQuestion 3 択 (Recommended 順):
    - (A) Codex 復旧待ち (本 PR 一時 abort、Codex 復旧後に再 invoke) [Recommended]
-   - (B) DeepSeek fallback で push (主エージェント (DeepSeek) の直接レビュー)
+   - (B) DeepSeek 直接レビューで push (レビューを実行している agent 自身が直接レビューする。別 subagent は spawn しない)
    - (C) abort (本 PR 全体停止、user 手動判断)
-3. **明確な failure (重要 PR でない)** → 自動 fallback: 主エージェント (DeepSeek) が直接レビューする。**focus の使い方 (#856 item4)**: tier 1 の `codex CLI review` は **focus positional を受け付けない**ため「Codex に渡した focus 文字列」は**存在しない**。「流用」できる文字列は無いので、fallback の直接レビューでは [`docs/l2-workflow.md` §「Step 5 の focus 導出手順」](../../../docs/l2-workflow.md) で**導出した focus を用いる** (project 固有 focus を Codex 側へ渡す場合に `adversarial-review` subcommand で使うはずだったものと同じ導出結果)
-4. **曖昧 (重要 PR でない)** → user に AskUserQuestion (再試行 / DeepSeek fallback / abort) 3 択
+3. **明確な failure (重要 PR でない)** → 自動 fallback: **レビューを実行している agent 自身** (主エージェント。`iterate-review` から dispatch されている場合はその subagent) が直接レビューする。**別 subagent は spawn しない** (同一 model で bias が変わらず、入れ子 dispatch は実行環境依存)。**focus の使い方 (#856 item4 / #1068)**: tier 1 に渡した focus (PROMPT 形式) と同じ導出結果を、fallback の直接レビューでも用いる。focus を渡さない `--base` 単独で実行した場合は focus が存在しないため、[`docs/l2-workflow.md` §「Step 5 の focus 導出手順」](../../../docs/l2-workflow.md) で導出する
+4. **曖昧 (重要 PR でない)** → user に AskUserQuestion (再試行 / DeepSeek 直接レビュー / abort) 3 択
 5. fallback 実行時は **Step 6 レビュー報告に「Codex fallback notice」を必須記載** (Iron Law 5 整合、template は docs/l2-workflow.md §Codex fallback 参照)
 
 詳細運用は `AGENTS.md` §Codex 運用 を参照。

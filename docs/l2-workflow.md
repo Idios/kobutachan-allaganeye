@@ -135,7 +135,7 @@ template 内の各節は既存実装と整合する位置取り。Iron Law 4 (Cl
 
 ## PR 作成 Pre-flight (Iron Law 6 サブ条)
 
-PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。2026-05-13 #722 で Step 0 ハードゲートを追加 (build/verify 前に `gh pr list --search "<元issue#>" --state open` を <1s で実行、PR #721 で発生した 49s redundant work 再発を防止)。2026-05-17 L-β β-4 で Step 5 (Codex adversarial-review、agent 実行は tier 1 = companion script) を追加 (C2)。Step 0 と Step 4 は検出 window が異なるため両方とも実施する。
+PR 作成前に base 最新化と並行 worktree PR 重複を必ず確認する。`feedback_pr_review_base_merge_regression.md` (PR #627 Round 4 で発覚した base 取り込み機能 regression) と `feedback_concurrent_worktree_pr_check.md` (#646 / PR #647 並行作業重複) の skill / 規約昇格として運用化 (2026-04-29 #659)。2026-05-13 #722 で Step 0 ハードゲートを追加 (build/verify 前に `gh pr list --search "<元issue#>" --state open` を <1s で実行、PR #721 で発生した 49s redundant work 再発を防止)。2026-05-17 L-β β-4 で Step 5 (Codex adversarial-review、agent 実行は tier 1 = `codex` CLI) を追加 (C2)。Step 0 と Step 4 は検出 window が異なるため両方とも実施する。
 
 > **checkbox 表記 convention**: Self-Test Report (machine-verified) は `- [x]` (CI ゲート対象)、実機検証 (machine-unverifiable) は plain bullet `-` (CI ゲート対象外) で書き分ける。詳細は本 doc §「Self-Test Report 規約」 を参照。
 
@@ -172,7 +172,9 @@ gh pr list --search "<元issue#>" --state all \
 # Step 0-4 通過後、PR 作成直前に Codex GPT-5.4 で adversarial pass。
 # invocation path は 3-tier (#795、下記 §Step 5 の invocation path 参照)。
 # default (tier 1) は `codex` CLI 直接呼び出し (#1043 で companion script → CLI に統合):
-#   codex review --base <base> "<focus 文字列 (ASCII)>"
+#   codex review "Review the diff against <base> (run: git diff <base>...HEAD). Focus: <focus>"
+#   # `--base` と `[PROMPT]` は併用できない (実測)。focus を渡すときは --base を外し、
+#   # prompt の中で base と diff 取得手順を指定する (§Step 5 の invocation path の注記)。
 #   # `codex review` は非対話で stdout に finding を直接出す。
 #   # 旧 companion script の job 追跡機構 (`status` / `result` / job id) は
 #   # 廃止済み。出力は stdout を直接読む (§「Codex 出力の読み取り」参照)。
@@ -235,22 +237,24 @@ Codex は **standalone CLI (`codex`) 直呼び** (terminal 権限依存)。旧 c
 
 | tier | path | trigger | 実行者 |
 | --- | --- | --- | --- |
-| 1 (default) | **`codex` CLI 直接呼び出し**: `codex review --base <base> "<focus>"` を Bash 経由で実行 (§Codex 運用、AGENTS.md)。本物の Codex review が agent 一気通貫で回る (focus は ASCII 推奨)。`--base` は未マージ変更の diff 対象 base を指定 (help 参照)。finding は stdout に直接出るので、そのまま §「Codex 出力の読み取り」の手順で取り込む | 常時 (Pre-flight Step 5 必須実行) | agent (DeepSeek) |
-| 2 (fallback) | Codex CLI が rate-limit / quota / network / auth 等で fail した場合のみ、主エージェント (DeepSeek) が直接レビュー (検出条件・重要 PR 判定・「Codex fallback notice」必須記載は §Codex fallback (C6) に従う) | tier 1 の Codex CLI fail | agent (DeepSeek) |
+| 1 (default) | **`codex` CLI 直接呼び出し**: `codex review "<focus + diff 指示>"` を Bash 経由で実行 (§Codex 運用、AGENTS.md)。本物の Codex review が agent 一気通貫で回る (focus は ASCII 推奨)。**`--base` と `[PROMPT]` は併用できない**ため、base は prompt 内で `git diff <base>...HEAD` として指定する (§直下の注記)。finding は stdout に直接出るので、そのまま §「Codex 出力の読み取り」の手順で取り込む | 常時 (Pre-flight Step 5 必須実行) | agent (DeepSeek) |
+| 2 (fallback) | Codex CLI が rate-limit / quota / network / auth 等で fail した場合のみ、レビューを実行している agent 自身（主エージェント。dispatch 時はその subagent）が直接レビュー (検出条件・重要 PR 判定・「Codex fallback notice」必須記載は §Codex fallback (C6) に従う) | tier 1 の Codex CLI fail | agent (DeepSeek) |
 | 3 (escalation) | Idios 自身が `codex review` を直接 invoke し、結果を agent に share して PR 本文に追記 | Idios が tier 1/2 の review 内容・結果に不足ありと判断した場合 | Idios |
 
 tier 1 が成功している限り「Codex review 実施済」の記載は正当 (Iron Law 5 整合)。tier 2 で代替した場合は Codex fallback notice を必ず記載し、Codex review 済と誤認させない。
+
+**`--base` と `[PROMPT]` は併用できない (2026-10-22 実測、codex-cli 0.163.0)。** `codex review --base <base> "<focus>"` は `error: the argument '--base <BRANCH>' cannot be used with '[PROMPT]'` で落ちる。**focus を渡すときは `--base` を外し、prompt 内で diff を指示する** — `codex review "Review the diff against <base> (run: git diff <base>...HEAD). Focus: <focus>"` は同日の実測で成功し、base 差分を読んだ finding を返した。`--base` 単独 (`codex review --base <base>`) も成功するが、その場合は focus を渡せない。CLI 側の受理仕様が変わったら本注記を再実測して更新する (#1068)。
 
 > **歴史記録の扱い (#854 R2 確定)**: 実行済み dated plans/specs (`docs/superpowers/plans/` / `docs/superpowers/specs/`) 内の slash 表記 (`/codex:review` 等) は当時の実行記録 (historical record) であり、本 3-tier への遡及書き換えは行わない。sweep で検出しても対応不要 (living doc = AGENTS.md / 本 doc / skill / hook / 現行 roadmap (現時点は `docs/superpowers/plans/2026-09-04-v040-roadmap.md`。roadmap 交代時は本注記も更新する) のみが整合対象)。
 
 #### Codex 出力の読み取り (#949→#1043 で `codex` CLI に統合)
 
-Codex review (`codex review --base <base> "<focus>"`) の finding は **stdout に直接出る**。旧 companion script が持っていた job 追跡機構 (`status` / `result` / job id / `storedJob.rendered`) は **廃止済み** — `codex` CLI は非対話で実行し、完了時に結果を stdout に出力して終了する。**新しい保存機構は作らない。stdout を直接読む。**
+Codex review (`codex review "<focus + diff 指示>"`) の finding は **stdout に直接出る**。旧 companion script が持っていた job 追跡機構 (`status` / `result` / job id / `storedJob.rendered`) は **廃止済み** — `codex` CLI は非対話で実行し、完了時に結果を stdout に出力して終了する。**新しい保存機構は作らない。stdout を直接読む。**
 
 ```bash
 # review を実行した worktree の cwd で、`codex` CLI を直接呼ぶ
 cd "<review を実行した worktree の絶対パス>"
-codex review --base <base> "<focus 文字列 (ASCII)>"
+codex review "Review the diff against <base> (run: git diff <base>...HEAD). Focus: <focus 文字列 (ASCII)>"
 #   → finding は stdout に出る。exit code 0 = 成功 / 非ゼロ = 失敗 (§Codex fallback)
 ```
 
@@ -1117,7 +1121,7 @@ typo fix / リンク更新では過剰。`iterate-review` のような中核 ski
 
 ## Codex fallback (C6、Codex token 枯渇 / failure 時)
 
-`codex` CLI (`codex review` 等) が以下のいずれかで fail した場合、主エージェント (DeepSeek) が直接レビューを fallback 実行する。Iron Law 1 / 6 違反 (受け入れ条件検証 / Pre-flight ゲート不通過のまま進行) を防ぐ。
+`codex` CLI (`codex review` 等) が以下のいずれかで fail した場合、**レビューを実行している agent 自身**（主エージェント。`review-pr` が subagent として dispatch されている場合はその subagent）が直接レビューを fallback 実行する。別 subagent は spawn しない（同一 model で bias が変わらず、入れ子 dispatch は実行環境依存のため）。Iron Law 1 / 6 違反 (受け入れ条件検証 / Pre-flight ゲート不通過のまま進行) を防ぐ。
 
 ### 検出条件
 
@@ -1131,10 +1135,10 @@ typo fix / リンク更新では過剰。`iterate-review` のような中核 ski
 
 ### 検出 + fallback の擬似コード (skill 内実装イメージ)
 
-`review-pr` Step 5a / `iterate-review` Round 2.1 等で Codex を invoke した後の処理イメージ。agent からの通常実行は `codex` CLI 直接呼び出し (§Step 5 の invocation path (3-tier、#795) の tier 1)。`codex review` は `[PROMPT]` (positional) に focus を渡す (§Codex 運用)。
+`review-pr` Step 5a / `iterate-review` Round 2.1 等で Codex を invoke した後の処理イメージ。agent からの通常実行は `codex` CLI 直接呼び出し (§Step 5 の invocation path (3-tier、#795) の tier 1)。**focus は PROMPT 形式で渡す** (`--base` 併用不可、§Step 5 の invocation path の注記)。
 
 ```text
-run = run_bash('codex review --base develop-0.3.1 "<focus>"')
+run = run_bash('codex review "Review the diff against develop-0.3.1 (run: git diff develop-0.3.1...HEAD). Focus: <focus>"')
 
 if run.exit_code != 0:
     stderr_lower = run.stderr.lower()
@@ -1164,13 +1168,13 @@ if fallback_invoked:
     report.append(format_fallback_notice(fallback_reason, run.stderr[:200]))
 ```
 
-実装は skill prompt 側 (`review-pr` SKILL.md Step 5a / `iterate-review` SKILL.md Step 2.1) で行う。fallback は主エージェント (DeepSeek) が直接レビュー (superpowers `requesting-code-review` 相当を Zed で代替)、「Codex fallback notice」記載は必須 (§Codex 運用 C6)。
+実装は skill prompt 側 (`review-pr` SKILL.md Step 5a / `iterate-review` SKILL.md Step 2.1) で行う。fallback は**レビューを実行している agent 自身**（主エージェント。dispatch 時はその subagent）が直接レビュー (superpowers `requesting-code-review` 相当を Zed で代替)、「Codex fallback notice」記載は必須 (§Codex 運用 C6)。
 
 ### Fallback 戦略
 
 | Codex 実行 (agent の通常 path) | 通常用途 | Fallback 内容 |
 | --- | --- | --- |
-| `codex review --base <base> "<focus>"` (C3 / C2 で Bash 実行 = tier 1) | code quality adversarial pass / Pre-flight 第 5 ゲート | 主エージェント (DeepSeek) が直接レビュー。focus 文字列は Codex に渡した (渡す予定だった) ものと同じ。「adversarial / approve させない姿勢」を明示 |
+| `codex review "<focus + diff 指示>"` (C3 / C2 で Bash 実行 = tier 1) | code quality adversarial pass / Pre-flight 第 5 ゲート | レビューを実行している agent 自身 (主エージェント。dispatch 時はその subagent) が直接レビュー。focus は Codex に渡したもの (PROMPT 形式) と同じ導出結果を用いる。「adversarial / approve させない姿勢」を明示 |
 | `codex exec` (C4 で root-cause 調査時に invoke) | bug 根本原因 + 類似バグ探索 | 主エージェント (DeepSeek) + `systematic-debugging` 相当で自力調査。`scope-guard` 規約は維持 (独断 fix 禁止) |
 
 ### Fallback 実行時の必須記載 (Iron Law 5 整合)
@@ -1188,8 +1192,8 @@ skill report (`review-pr` Step 6 レビュー報告 / `iterate-review` **Final s
 
 ### Fallback の限界 (明示)
 
-- Codex は GPT-5.4 (独立 model) の second opinion。DeepSeek fallback（主エージェント）は同一 model の self-review に近く、bias 構造が同じになる
-- 重要 PR (release 直前 / 大規模 refactor / [`.agents/skills/review-pr/SKILL.md`](../.agents/skills/review-pr/SKILL.md) §「core 変更対象ファイル」の表に該当する変更) で Codex fallback が trigger した場合、user に AskUserQuestion で「Codex 復旧待ち / DeepSeek fallback / abort」の 3 択を提示
+- Codex は GPT-5.4 (独立 model) の second opinion。DeepSeek 直接レビュー（実行者が主エージェントでも dispatch された subagent でも同一 model）は self-review に近く、bias 構造が同じになる
+- 重要 PR (release 直前 / 大規模 refactor / [`.agents/skills/review-pr/SKILL.md`](../.agents/skills/review-pr/SKILL.md) §「core 変更対象ファイル」の表に該当する変更) で Codex fallback が trigger した場合、user に AskUserQuestion で「Codex 復旧待ち / DeepSeek 直接レビュー / abort」の 3 択を提示
 - fallback report には「fallback で実行済」を明示することで、後日 Codex 復旧時に再 review が要否を判断可能にする
 
 ## Claude fallback（Claude レビュー不可時）
@@ -1272,7 +1276,7 @@ Claude レビュー不可時の fallback でレビューを代行した成果物
 | 軸 | Iron Law 6 Pre-flight Step 5 (C2) | subagent + Codex 直列構成 (C5、本節) |
 | --- | --- | --- |
 | 起動タイミング | PR 作成**直前** (Step 0-4 通過後) | `review-pr` 段階の **deep-dive** (Step 5a) |
-| Codex command | `codex review --base <base> "<focus>"` (approve させない姿勢、tier 1 = `codex` CLI) | `codex review --base <base> "<focus>"` (code quality 一般、同) |
+| Codex command | `codex review "<focus + diff 指示>"` (approve させない姿勢、tier 1 = `codex` CLI) | `codex review "<focus + diff 指示>"` (code quality 一般、同) |
 | 必須 / オプション | **必須** (Pre-flight ゲート) | optional (起動条件 3 件: 条件 1 大規模 PR / 条件 2 **再発 root cause** 複数 / 条件 3 **core 変更対象ファイル**。定義の正は [`.agents/skills/review-pr/SKILL.md`](../.agents/skills/review-pr/SKILL.md) §「core 変更対象ファイル」 と §「root cause の 2 用法」) |
 | 直前 stage | Step 4 並行 PR 重複再確認 | subagent (spawn_agent) 実装 + reachability 確認 |
 

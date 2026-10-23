@@ -387,7 +387,7 @@ sweep は **「旧用語リスト更新 → sweep 前の実 tree で red を確�
 - **eval fixture** (`.agents/skills/**/eval/**`): 特定時点の評価基準・シナリオを固定する記録なので遡及置換しない。ただし **skill の契約自体が変わった場合は、eval の妥当性を保つため fixture の期待値を更新する** (PR #1071 に前例)。未更新の残置は #1068 で追跡中。
 - **`gui/**`**: GUI ソースのため `.md` でも対象外 (screenshot-freshness 回避)。
 - **`build-cache/`**: Portable ZIP の build キャッシュ置き場 (`.gitignore` 済)。`.md` が混ざっても検査しない。red 実証の一時展開先には使わず repo 外に置くこと (#1066)。
-- **`.claude/agents/**`**: Claude Code 用のロール定義。frontmatter の `model:` は Claude エイリアスのみだが、**本文はモデル非依存で fallback 時に DeepSeek も読む**ため「Claude 専用だから除外」は理由にならない。現状は**暫定的な除外**で、既知の残置は旧 invocation 契約 1 行のみ。この 1 行は #1068 で追跡する。
+- **`.claude/agents/**`**: Claude Code 用のロール定義。frontmatter の `model:` は Claude エイリアスのみだが、**本文はモデル非依存で fallback 時に DeepSeek も読む**ため「Claude 専用だから除外」は理由にならない。現状は**暫定的な除外**で、本文の旧 invocation 契約は #1068 で修正済み（残置は 0 件）。
 
 ## destructive write boundary audit checklist (#930 教訓)
 
@@ -439,9 +439,9 @@ Codex を Iron Law 3 / 5 と衝突しない形で workflow に統合する。設
 
 ### Token 枯渇時の fallback (C6)
 
-Codex CLI が rate-limit / quota / network / auth 等で fail した場合、主エージェント (DeepSeek) が直接レビューを fallback として実行する。**fallback 実行時は skill report に「Codex fallback notice」を必須記載** (Iron Law 5 整合、Codex review 済との誤認防止)。
+Codex CLI が rate-limit / quota / network / auth 等で fail した場合、**レビューを実行している agent 自身**（主エージェント。`review-pr` が subagent として dispatch されている場合はその subagent）が直接レビューを fallback として実行する（別 subagent は spawn しない。同一 model で bias が変わらないため）。**fallback 実行時は skill report に「Codex fallback notice」を必須記載** (Iron Law 5 整合、Codex review 済との誤認防止)。
 
-詳細 (検出条件 / 戦略 / 擬似コード example) は [`docs/l2-workflow.md` §Codex fallback](docs/l2-workflow.md#codex-fallback) を参照。
+詳細 (検出条件 / 戦略 / 擬似コード example) は [`docs/l2-workflow.md` §Codex fallback](docs/l2-workflow.md#codex-fallback-c6codex-token-枯渇--failure-時) を参照。
 
 ### subagent + Codex 直列構成 (C5)
 

@@ -25,7 +25,7 @@ tools: Read, Grep, Glob, WebSearch, WebFetch
 ## 非対象（Codex へ）
 
 - コードのバグ/セキュリティ/GPU fallback 文字列/encoding boundary/adversarial pass
-  → これらは Codex（`codex-companion.mjs`）を使う
+  → これらは Codex (`codex review`) を使う
 - 「Fable にレビューさせた」ことを Codex レビュー省略の口実にしない
 
 ## 制約
