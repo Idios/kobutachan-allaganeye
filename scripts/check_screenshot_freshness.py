@@ -251,32 +251,54 @@ def _strip_comment_lines(text: str, suffix: str) -> str:
     対象は次の 3 種のみ:
 
     * 行頭 (空白のみ前置) の `//` 行
-    * 行頭の `/*` から始まり `*/` で閉じるブロック (doc comment を含む)
+    * 行頭の `/*` から始まるブロック (doc comment を含む)
     * `.html` の行頭 `<!--` ブロック
 
-    閉じ行を含む行は丸ごと落とす (コメント内の字面は見た目に影響しない)。
+    **閉じ記号の後ろに残るコードは保存する。** 行ごと捨てると
+    `/* theme */ .a { color: red; }` の red -> blue のような実変更まで
+    見逃す (Codex adversarial-review [P2])。
     """
     if suffix not in _COMMENT_STRIPPED_SUFFIXES:
         return text
     out: list[str] = []
     block_end = ""
     for line in text.split("\n"):
-        stripped = line.lstrip()
-        if block_end:
-            if block_end in line:
+        rest = line
+        while True:
+            stripped = rest.lstrip()
+            if block_end:
+                index = rest.find(block_end)
+                if index == -1:
+                    rest = ""
+                    break
+                rest = rest[index + len(block_end) :]
                 block_end = ""
+                continue
+            if stripped.startswith("/*"):
+                index = rest.find("*/", rest.find("/*") + 2)
+                if index == -1:
+                    block_end = "*/"
+                    rest = ""
+                    break
+                rest = rest[index + 2 :]
+                continue
+            if stripped.startswith("//"):
+                rest = ""
+                break
+            if suffix == ".html" and stripped.startswith("<!--"):
+                index = rest.find("-->", rest.find("<!--") + 4)
+                if index == -1:
+                    block_end = "-->"
+                    rest = ""
+                    break
+                rest = rest[index + 3 :]
+                continue
+            break
+        if rest.strip() == "" and line.strip() != "":
+            # 行全体がコメントだった行は落とす (空白行は保存する)。行数を保つと
+            # コメントの追加・削除だけで digest が変わらない。
             continue
-        if stripped.startswith("/*"):
-            if "*/" not in stripped:
-                block_end = "*/"
-            continue
-        if stripped.startswith("//"):
-            continue
-        if suffix == ".html" and stripped.startswith("<!--"):
-            if "-->" not in stripped:
-                block_end = "-->"
-            continue
-        out.append(line)
+        out.append(rest)
     return "\n".join(out)
 
 

@@ -237,6 +237,41 @@ def test_css_comment_only_change_keeps_digest(tmp_path: Path) -> None:
     assert guard.compute_digest(root, resolved) == before
 
 
+def test_code_after_closing_delimiter_still_affects_digest(tmp_path: Path) -> None:
+    """閉じ記号の後ろのコードを捨てない (Codex adversarial-review [P2])。
+
+    `/* theme */ .a { color: red; }` と `... color: blue; }` が同じ digest に
+    なると、意図しない見た目の変更が撮り直しなしで通る。
+    """
+    root = _build_repo(
+        tmp_path,
+        sources={"gui/src/App.css": "/* theme */ .a { color: red; }\n"},
+        source_globs=["gui/src/**/*.css"],
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.css").write_text(
+        "/* theme */ .a { color: blue; }\n", encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) != before
+
+
+def test_code_after_multiline_comment_close_still_affects_digest(
+    tmp_path: Path,
+) -> None:
+    root = _build_repo(
+        tmp_path,
+        sources={"gui/src/App.css": "/*\n theme\n*/ .a { color: red; }\n"},
+        source_globs=["gui/src/**/*.css"],
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.css").write_text(
+        "/*\n theme\n*/ .a { color: blue; }\n", encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) != before
+
+
 def test_html_comment_only_change_keeps_digest(tmp_path: Path) -> None:
     root = _build_repo(
         tmp_path,
@@ -249,6 +284,20 @@ def test_html_comment_only_change_keeps_digest(tmp_path: Path) -> None:
         '<!-- note -->\n<div id="a"></div>\n', encoding="utf-8"
     )
     assert guard.compute_digest(root, resolved) == before
+
+
+def test_html_code_after_comment_still_affects_digest(tmp_path: Path) -> None:
+    root = _build_repo(
+        tmp_path,
+        sources={"gui/src/App.html": '<!-- note --><div class="a"></div>\n'},
+        source_globs=["gui/src/**/*.html"],
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.html").write_text(
+        '<!-- note --><div class="b"></div>\n', encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) != before
 
 
 def test_digest_changes_when_a_source_file_is_renamed(tmp_path: Path) -> None:
