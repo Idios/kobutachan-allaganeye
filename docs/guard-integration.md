@@ -193,6 +193,6 @@ GitHub の issue・PR に添付またはリンクされた動画ファイルに�
 
 ## 参考: 過去の program-integration 計画について
 
-2026-04-21 以前、本ドキュメントには allaganeye 側に `--verify` CLI オプション、`allaganeye/guard.py` subprocess ラッパー、exit code 6 (SecurityVerificationError)、`pyproject.toml` の `[guard]` optional-deps、`tests/test_guard_integration.py` 統合テスト等を追加する program-integration 計画が含まれていた (旧 §4.2 / §5 / §6 / §7 / §10 / §11)。
+2026-04-21 以前、本ドキュメントには allaganeye 側に guard 用の `--verify` CLI オプション、subprocess ラッパー、専用 exit code 6、`pyproject.toml` の `[guard]` optional-deps、統合テスト等を追加する program-integration 計画が含まれていた (旧 §4.2 / §5 / §6 / §7 / §10 / §11)。
 
 本方針転換によりこれらの構想は全て破棄し、本ドキュメントからも削除した。関連 issue (#454 / #455 / #456 / #457 / #460) と PR #488 はクローズ済み。復活が必要になった場合は本 §1 「運用原則」を先に見直すこと。

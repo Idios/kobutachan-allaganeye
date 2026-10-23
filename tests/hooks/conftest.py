@@ -119,6 +119,8 @@ def tmp_repo(tmp_path: Path) -> Path:
 
     # Wire in real scripts/ + .claude/hooks/ via symlink (fallback: copy).
     _symlink_or_copy(PROJECT_ROOT / "scripts", repo / "scripts")
+    # session-start.sh は AGENTS.md から Iron Law を実行時抽出する (#1079 Phase 3)。
+    _symlink_or_copy(PROJECT_ROOT / "AGENTS.md", repo / "AGENTS.md")
     (repo / ".claude").mkdir()
     _symlink_or_copy(PROJECT_ROOT / ".claude" / "hooks", repo / ".claude" / "hooks")
     return repo
