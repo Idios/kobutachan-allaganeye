@@ -38,7 +38,6 @@ EXPECTED_IDS = {
     "exit-codes",
     "cli-options",
     "tauri-commands",
-    "tauri-commands-agents",
     "iron-law",
     "bulk-threshold",
     "required-checks",
@@ -258,6 +257,105 @@ def test_wrong_cell_count_is_structure_error(tmp_path: Path) -> None:
 def test_missing_catalog_is_structure_error(tmp_path: Path) -> None:
     with pytest.raises(cd.StructureError):
         cd.parse_catalog(tmp_path / "absent.md")
+
+
+# --------------------------------------------------------------------------
+# Phase 2 gates: exit codes / CLI options / line refs
+# --------------------------------------------------------------------------
+
+
+def test_exit_codes_documented_set_matches_code() -> None:
+    """AGENTS.md の Exit Codes 表と実装が一致する。"""
+    assert cd.check_exit_codes(REPO_ROOT) == []
+
+
+def test_exit_codes_gate_detects_undocumented_code(tmp_path: Path) -> None:
+    """実装にしか無い code と、表にしか無い code の両方を報告する。"""
+    (tmp_path / "allaganeye").mkdir()
+    (tmp_path / "allaganeye" / "cli.py").write_text(
+        "raise typer.Exit(code=99)\n", encoding="utf-8"
+    )
+    (tmp_path / "AGENTS.md").write_text(
+        "## Exit Codes\n\n| 0 | ok |\n| 1 | general |\n| 42 | ghost |\n",
+        encoding="utf-8",
+    )
+    problems = cd.check_exit_codes(tmp_path)
+    assert any("99" in p and "undocumented" in p for p in problems)
+    assert any("42" in p and "never produced" in p for p in problems)
+
+
+def test_exit_code_class_attributes_count_as_produced(tmp_path: Path) -> None:
+    """`exit_code = N` (例外クラス) は produced に含める。"""
+    (tmp_path / "allaganeye").mkdir()
+    (tmp_path / "allaganeye" / "exceptions.py").write_text(
+        "class E:\n    exit_code = 3\n", encoding="utf-8"
+    )
+    (tmp_path / "AGENTS.md").write_text(
+        "## Exit Codes\n\n| 0 | ok |\n| 3 | ffmpeg |\n", encoding="utf-8"
+    )
+    assert cd.check_exit_codes(tmp_path) == []
+
+
+def test_cli_options_documented_set_matches_runtime() -> None:
+    """runtime registry の option 集合と docs/cli-spec.md が一致する。"""
+    assert cd.check_cli_options(REPO_ROOT) == []
+
+
+def test_cli_options_gate_reports_both_directions() -> None:
+    problems = cd._compare_cli_options(
+        {"--kept", "--undocumented"}, {"--kept", "--ghost"}
+    )
+    assert any("--undocumented" in p and "not documented" in p for p in problems)
+    assert any("--ghost" in p and "not implemented" in p for p in problems)
+
+
+def test_cli_options_are_compared_per_command() -> None:
+    """共有 option が片方のコマンドから消えた drift を検出する。
+
+    全体の和集合だけを見ると `--gpu` が `split` に残っている限り緑になる。
+    Codex adversarial-review [P2]。
+    """
+    problems = cd._compare_cli_options_per_command(
+        {"detect": {"--gpu", "--workers"}, "split": {"--gpu"}},
+        {"detect": {"--workers"}, "split": {"--gpu"}},
+    )
+    assert any("detect" in p and "--gpu" in p for p in problems)
+
+
+def test_cli_options_reports_command_set_drift() -> None:
+    problems = cd._compare_cli_options_per_command(
+        {"shown": set(), "hidden_in_doc": set()}, {"shown": set(), "ghost": set()}
+    )
+    assert any("hidden_in_doc" in p and "無い" in p for p in problems)
+    assert any("ghost" in p and "実装に無い" in p for p in problems)
+
+
+def test_line_refs_are_absent_from_living_docs() -> None:
+    """living doc に行番号参照 (`path:NNN`) が無い (Phase 2 で 49 件を除去)。"""
+    assert cd.check_line_refs(REPO_ROOT) == []
+
+
+def test_line_refs_gate_detects_reference(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "sample.md").write_text(
+        "see `allaganeye/cli.py:12` for details\n", encoding="utf-8"
+    )
+    problems = cd.check_line_refs(tmp_path)
+    assert any("sample.md" in p and "line reference" in p for p in problems)
+
+
+def test_line_refs_allows_placeholder_and_history(tmp_path: Path) -> None:
+    """`path/to/...` の記入例と、履歴記録 (`docs/superpowers/**`) は対象外。"""
+    docs = tmp_path / "docs"
+    (docs / "superpowers").mkdir(parents=True)
+    (docs / "sample.md").write_text(
+        "write `path/to/file.py:123` here\n", encoding="utf-8"
+    )
+    (docs / "superpowers" / "old.md").write_text(
+        "`allaganeye/cli.py:12`\n", encoding="utf-8"
+    )
+    assert cd.check_line_refs(tmp_path) == []
 
 
 # --------------------------------------------------------------------------

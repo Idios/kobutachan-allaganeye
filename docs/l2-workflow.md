@@ -744,7 +744,7 @@ grep -rnE '(別 ?issue|別途 ?issue|後続 ?issue|follow-?up issue)[^#]*(で|�
   docs/*.md AGENTS.md README.md | grep -v 'grep -rnE'
 ```
 
-> **(4) で `| grep -vE '#[0-9]{3,}'` による自動免除を使わないこと (Refs #966 の実測)**。「同一行に 3 桁の `#` があれば追跡済み」という判定は、**その `#` が当の先送りの追跡先とは限らない**ため leak を素通りさせる。実例: `docs/detection-map.md:61` は「#576 で新 path を default 化 … v0.3.x で**削除予定**」で、撤去の追跡先は #576 ではなく **#864**。無関係な #576 のせいで行ごと免除され、#870 が対象とする当の leak クラスを落としていた。**免除ありで 7 hit / 免除なしで 13 hit** — 差の 6 件を人が仕分ける方が、leak を見逃すより安い。各 hit は「行内の `#NNN` が本当にこの先送りを追跡しているか」を 1 件ずつ確認する。
+> **(4) で `| grep -vE '#[0-9]{3,}'` による自動免除を使わないこと (Refs #966 の実測)**。「同一行に 3 桁の `#` があれば追跡済み」という判定は、**その `#` が当の先送りの追跡先とは限らない**ため leak を素通りさせる。実例: `docs/detection-map.md` は「#576 で新 path を default 化 … v0.3.x で**削除予定**」で、撤去の追跡先は #576 ではなく **#864**。無関係な #576 のせいで行ごと免除され、#870 が対象とする当の leak クラスを落としていた。**免除ありで 7 hit / 免除なしで 13 hit** — 差の 6 件を人が仕分ける方が、leak を見逃すより安い。各 hit は「行内の `#NNN` が本当にこの先送りを追跡しているか」を 1 件ずつ確認する。
 
 **hit の扱い**: (2)-(4) の hit は**違反ではなく triage 候補**である。各 hit を「実在 issue を伴う宣言か / 単なる process 記述か / 起票漏れか」で仕分け、起票漏れのみ [`create-task`](../.agents/skills/create-task/SKILL.md) へ回す。特に (4) は process を説明する散文 (「(B) 別 issue 起票」等) も拾うため、**仕分け前提の粗い網**であることを承知して使う。網を細くして取りこぼすより、粗く拾って仕分ける方を選んでいる。
 
@@ -1018,7 +1018,7 @@ brainstorming で「stale 参照 X を post-Y に更新する」「dangling refe
 
 ### Why
 
-PR #746 (Lane V Phase 3 / Group I, issue #699) で「dangling `appErrorMessage` / `appErrorHint` 参照を sweep」と確定したが、brainstorming で 3 箇所と list した一方、実装中の Phase C scan で 2 file 追加発見 (`ui-interaction-spec.md:693`, `tauri-commands.md` lines 10/58/65/73) した。結果 user の AskUserQuestion を再度発火させ、scope expansion 承認を得て Phase D で PR 内 fix した。brainstorming で `git grep` していれば最初から正しい sweep 範囲を Q1 に提示でき、Phase D は不要だった。
+PR #746 (Lane V Phase 3 / Group I, issue #699) で「dangling `appErrorMessage` / `appErrorHint` 参照を sweep」と確定したが、brainstorming で 3 箇所と list した一方、実装中の Phase C scan で 2 file 追加発見 (`ui-interaction-spec.md`, `tauri-commands.md` lines 10/58/65/73) した。結果 user の AskUserQuestion を再度発火させ、scope expansion 承認を得て Phase D で PR 内 fix した。brainstorming で `git grep` していれば最初から正しい sweep 範囲を Q1 に提示でき、Phase D は不要だった。
 
 ### How to apply
 
@@ -1041,7 +1041,7 @@ subagent prompt の `## Stop conditions` セクションに以下を含める:
 
 #### Why
 
-PR #746 Phase C で「repo-wide dangling-ref scan」を dispatch した subagent が、scan で見つけた `ui-interaction-spec.md:693` の dangling ref を独断で fix commit (`a752fc0`) し、別 file の `tauri-commands.md` 4 件は「out-of-scope」と判定した。fix-vs-flag の境界判断を subagent が独断したことが Iron Law 5 違反。本来 STOP/escalate して controller (= main session) が判断すべき。事後の整合作業 (Phase D での PR body 修復含む) が発生した。
+PR #746 Phase C で「repo-wide dangling-ref scan」を dispatch した subagent が、scan で見つけた `ui-interaction-spec.md` の dangling ref を独断で fix commit (`a752fc0`) し、別 file の `tauri-commands.md` 4 件は「out-of-scope」と判定した。fix-vs-flag の境界判断を subagent が独断したことが Iron Law 5 違反。本来 STOP/escalate して controller (= main session) が判断すべき。事後の整合作業 (Phase D での PR body 修復含む) が発生した。
 
 ### Orphan commit 防止 (controller 側 verification)
 

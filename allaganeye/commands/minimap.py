@@ -22,6 +22,7 @@ import typer
 from allaganeye.exceptions import (
     AllaganEyeError,
     ConfigValidationError,
+    MetadataConflictError,
 )
 from allaganeye.export.encoder import enumerate_h264_encoders
 from allaganeye.export.pool import (
@@ -440,7 +441,7 @@ def register(app: typer.Typer) -> None:
                     "not writing",
                     err=True,
                 )
-                raise typer.Exit(code=6)
+                raise typer.Exit(code=MetadataConflictError.exit_code)
         try:
             write_metadata_atomic(metadata_path, payload)
         except AllaganEyeError as e:

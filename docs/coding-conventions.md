@@ -95,6 +95,7 @@ Conventional Commits 形式:
 - `status` が `active` の行は gate が実装済みでなければならない。未実装のまま `active` と書くと `scripts/check_declarations.py` が落ちる (守られていないのに守られているように見える状態を作らない)
 - 行を削除しても checker は 0 を返す (行の削除は drift ではなく「未登録クラス」である)。**id 集合は `tests/scripts/test_check_declarations.py` が pin する**ため、消失はそちらで検出される
 - 新しい規約・宣言を足す PR は、台帳に行を足すか `prose-only` の理由を書く
+- **行番号参照の禁止**: living doc で `path:行番号` 形式の参照を書かない。行番号は必ず腐る (実測: `docs/axum-video-server.md` の 43 件がすべて同一 commit 内で 2 行以上ずれていた)。symbol 名で参照し、rename は `check_doc_code_refs.py` の symbol 検査に任せる。履歴記録 (`docs/superpowers/**` 等) は当時の記録なので対象外 (`scripts/check_declarations.py` の `line-refs` gate)
 
 ### 背景 (違反の代表事例)
 
