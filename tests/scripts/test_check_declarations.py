@@ -404,6 +404,30 @@ def test_bulk_threshold_gate_detects_drift(tmp_path: Path) -> None:
     assert any(("9" in p and "60" in p) or "5" in p for p in problems)
 
 
+def test_bulk_threshold_ignores_unrelated_counts(tmp_path: Path) -> None:
+    """実装値だけを変えても、無関係な「1 件」で green にならない (Codex [P2])。
+
+    実 doc は「サンプル 1 件提示」等を含むため、全文検索だと閾値 3 -> 1 の
+    変更を捕まえられない。宣言箇所を特定して比較することを固定する。
+    """
+    hooks = tmp_path / ".claude" / "hooks"
+    docs = tmp_path / "docs"
+    hooks.mkdir(parents=True)
+    docs.mkdir()
+    (hooks / "preuse.py").write_text(
+        "_BULK_THRESHOLD: int = 1\n_BULK_WINDOW_SEC: float = 60.0\n", encoding="utf-8"
+    )
+    (docs / "l2-workflow.md").write_text(
+        (REPO_ROOT / "docs" / "l2-workflow.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (tmp_path / "AGENTS.md").write_text(
+        (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    problems = cd.check_bulk_threshold(tmp_path)
+    assert any("1 件" in p and "3 件" in p for p in problems)
+
+
 def test_required_checks_exist_as_jobs() -> None:
     assert cd.check_required_checks(REPO_ROOT) == []
 

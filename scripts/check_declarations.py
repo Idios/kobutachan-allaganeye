@@ -496,20 +496,40 @@ def check_bulk_threshold(root: Path) -> list[str]:
     if not doc.is_file():
         return ["bulk-threshold: docs/l2-workflow.md が無い"]
     doc_text = doc.read_text(encoding="utf-8")
+    # 全文検索は使わない。無関係な「1 件」(サンプル提示の指示等) が混ざると、
+    # 閾値が変わっても green になる (Codex adversarial-review [P2])。
+    doc_decl = re.search(r"bulk 閾値 \(([0-9]+) 件 / ([0-9]+)s\)", doc_text)
+    if not doc_decl:
+        return [
+            "bulk-threshold: l2-workflow に「bulk 閾値 (N 件 / Ns)」の宣言が無い"
+            " (検査不能)"
+        ]
     problems: list[str] = []
-    if f"{count} 件" not in doc_text:
+    if int(doc_decl.group(1)) != count:
         problems.append(
-            f"bulk-threshold: l2-workflow に「{count} 件」が無い (実装値と不一致)"
+            f"bulk-threshold: l2-workflow の閾値 {doc_decl.group(1)} 件が"
+            f" 実装 {count} 件と不一致"
         )
-    if f"{seconds:g}s" not in doc_text:
+    if float(doc_decl.group(2)) != seconds:
         problems.append(
-            f"bulk-threshold: l2-workflow に「{seconds:g}s」が無い (実装値と不一致)"
+            f"bulk-threshold: l2-workflow の window {doc_decl.group(2)}s が"
+            f" 実装 {seconds:g}s と不一致"
         )
     agents = root / "AGENTS.md"
-    if agents.is_file() and f"{count} 件" not in agents.read_text(encoding="utf-8"):
-        problems.append(
-            f"bulk-threshold: AGENTS.md に「{count} 件」が無い (実装値と不一致)"
+    if agents.is_file():
+        agents_decl = re.search(
+            r"([0-9]+) 件以上の issue 編集", agents.read_text(encoding="utf-8")
         )
+        if not agents_decl:
+            problems.append(
+                "bulk-threshold: AGENTS.md Iron Law 2 に「N 件以上の issue 編集」の"
+                "宣言が無い (検査不能)"
+            )
+        elif int(agents_decl.group(1)) != count:
+            problems.append(
+                f"bulk-threshold: AGENTS.md の閾値 {agents_decl.group(1)} 件が"
+                f" 実装 {count} 件と不一致"
+            )
     return problems
 
 
