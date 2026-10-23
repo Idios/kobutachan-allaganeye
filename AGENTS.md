@@ -439,9 +439,9 @@ Codex を Iron Law 3 / 5 と衝突しない形で workflow に統合する。設
 
 ### Token 枯渇時の fallback (C6)
 
-Codex CLI が rate-limit / quota / network / auth 等で fail した場合、主エージェント (DeepSeek) が直接レビューを fallback として実行する。**fallback 実行時は skill report に「Codex fallback notice」を必須記載** (Iron Law 5 整合、Codex review 済との誤認防止)。
+Codex CLI が rate-limit / quota / network / auth 等で fail した場合、**レビューを実行している agent 自身**（主エージェント。`review-pr` が subagent として dispatch されている場合はその subagent）が直接レビューを fallback として実行する（別 subagent は spawn しない。同一 model で bias が変わらないため）。**fallback 実行時は skill report に「Codex fallback notice」を必須記載** (Iron Law 5 整合、Codex review 済との誤認防止)。
 
-詳細 (検出条件 / 戦略 / 擬似コード example) は [`docs/l2-workflow.md` §Codex fallback](docs/l2-workflow.md#codex-fallback) を参照。
+詳細 (検出条件 / 戦略 / 擬似コード example) は [`docs/l2-workflow.md` §Codex fallback](docs/l2-workflow.md#codex-fallback-c6codex-token-枯渇--failure-時) を参照。
 
 ### subagent + Codex 直列構成 (C5)
 

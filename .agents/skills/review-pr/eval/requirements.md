@@ -155,10 +155,10 @@ PR 本文: `scripts/build-portable-zip.ps1` の `get-pip.py` DL URL を `https:/
 PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector module を含む)。`/review-pr` Step 5a で C3 起動条件すべて該当のため Codex review (tier 1 = `codex review --base <base>`) を実行、Codex CLI exit code 1 + stderr に `Error: rate limit exceeded (429)` が含まれる。
 
 1. **[critical]** **I-1**: Codex CLI fail を検出 (exit code 非ゼロ + stderr keyword `rate.?limit` または `429`) → **token 枯渇 (明確)** 判定
-2. **[critical]** **I-2**: 重要 PR のため step 2 の 3 択 (I-5) で **(B) DeepSeek fallback が選ばれた場合**、レビュー実行者 (主エージェント。dispatch 時は同一モデルの subagent) が直接レビューする。**focus は tier 1 に渡したもの (PROMPT 形式) と同じ導出結果**を用いる。`--base` 単独で実行して focus を渡していない場合は `docs/l2-workflow.md` §「Step 5 の focus 導出手順」で導出する (#856 item4 / #1068)
+2. **[critical]** **I-2**: 重要 PR のため step 2 の 3 択 (I-5) で **(B) DeepSeek 直接レビューが選ばれた場合**、**レビューを実行している agent 自身** (dispatch 時はその subagent) が直接レビューする (別 subagent は spawn しない)。**focus は tier 1 に渡したもの (PROMPT 形式) と同じ導出結果**を用いる。`--base` 単独で実行して focus を渡していない場合は `docs/l2-workflow.md` §「Step 5 の focus 導出手順」で導出する (#856 item4 / #1068)
 3. **[critical]** **I-3**: Step 6 レビュー報告に「Codex fallback notice」(`> **Codex fallback notice**: ...` template) を必須記載 (Iron Law 5 整合)
 4. **[critical]** **I-4**: fallback 経路 (`docs/l2-workflow.md` §Codex fallback) を参照する
-5. **[critical]** **I-5**: 重要 PR (大規模 refactor) なので user に AskUserQuestion で「Codex 復旧待ち / DeepSeek fallback / abort」3 択を提示する
+5. **[critical]** **I-5**: 重要 PR (大規模 refactor) なので user に AskUserQuestion で「Codex 復旧待ち / DeepSeek 直接レビュー / abort」3 択を提示する
 6. **I-6** (#854 で追加、dispatch 時事前固定 non-critical): Codex review の実行手段を `codex` CLI 直呼び (`codex review --base ...` の Bash 実行) と正しく特定し、廃止済みの companion script / slash command を agent 自身が invoke する前提にしない (#1043 / #1068)
 
 ---

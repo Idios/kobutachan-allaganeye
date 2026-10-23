@@ -238,7 +238,7 @@ Codex は **standalone CLI (`codex`) 直呼び** (terminal 権限依存)。旧 c
 | tier | path | trigger | 実行者 |
 | --- | --- | --- | --- |
 | 1 (default) | **`codex` CLI 直接呼び出し**: `codex review "<focus + diff 指示>"` を Bash 経由で実行 (§Codex 運用、AGENTS.md)。本物の Codex review が agent 一気通貫で回る (focus は ASCII 推奨)。**`--base` と `[PROMPT]` は併用できない**ため、base は prompt 内で `git diff <base>...HEAD` として指定する (§直下の注記)。finding は stdout に直接出るので、そのまま §「Codex 出力の読み取り」の手順で取り込む | 常時 (Pre-flight Step 5 必須実行) | agent (DeepSeek) |
-| 2 (fallback) | Codex CLI が rate-limit / quota / network / auth 等で fail した場合のみ、主エージェント (DeepSeek) が直接レビュー (検出条件・重要 PR 判定・「Codex fallback notice」必須記載は §Codex fallback (C6) に従う) | tier 1 の Codex CLI fail | agent (DeepSeek) |
+| 2 (fallback) | Codex CLI が rate-limit / quota / network / auth 等で fail した場合のみ、レビューを実行している agent 自身（主エージェント。dispatch 時はその subagent）が直接レビュー (検出条件・重要 PR 判定・「Codex fallback notice」必須記載は §Codex fallback (C6) に従う) | tier 1 の Codex CLI fail | agent (DeepSeek) |
 | 3 (escalation) | Idios 自身が `codex review` を直接 invoke し、結果を agent に share して PR 本文に追記 | Idios が tier 1/2 の review 内容・結果に不足ありと判断した場合 | Idios |
 
 tier 1 が成功している限り「Codex review 実施済」の記載は正当 (Iron Law 5 整合)。tier 2 で代替した場合は Codex fallback notice を必ず記載し、Codex review 済と誤認させない。
@@ -1121,7 +1121,7 @@ typo fix / リンク更新では過剰。`iterate-review` のような中核 ski
 
 ## Codex fallback (C6、Codex token 枯渇 / failure 時)
 
-`codex` CLI (`codex review` 等) が以下のいずれかで fail した場合、主エージェント (DeepSeek) が直接レビューを fallback 実行する。Iron Law 1 / 6 違反 (受け入れ条件検証 / Pre-flight ゲート不通過のまま進行) を防ぐ。
+`codex` CLI (`codex review` 等) が以下のいずれかで fail した場合、**レビューを実行している agent 自身**（主エージェント。`review-pr` が subagent として dispatch されている場合はその subagent）が直接レビューを fallback 実行する。別 subagent は spawn しない（同一 model で bias が変わらず、入れ子 dispatch は実行環境依存のため）。Iron Law 1 / 6 違反 (受け入れ条件検証 / Pre-flight ゲート不通過のまま進行) を防ぐ。
 
 ### 検出条件
 
@@ -1168,13 +1168,13 @@ if fallback_invoked:
     report.append(format_fallback_notice(fallback_reason, run.stderr[:200]))
 ```
 
-実装は skill prompt 側 (`review-pr` SKILL.md Step 5a / `iterate-review` SKILL.md Step 2.1) で行う。fallback は主エージェント (DeepSeek) が直接レビュー (superpowers `requesting-code-review` 相当を Zed で代替)、「Codex fallback notice」記載は必須 (§Codex 運用 C6)。
+実装は skill prompt 側 (`review-pr` SKILL.md Step 5a / `iterate-review` SKILL.md Step 2.1) で行う。fallback は**レビューを実行している agent 自身**（主エージェント。dispatch 時はその subagent）が直接レビュー (superpowers `requesting-code-review` 相当を Zed で代替)、「Codex fallback notice」記載は必須 (§Codex 運用 C6)。
 
 ### Fallback 戦略
 
 | Codex 実行 (agent の通常 path) | 通常用途 | Fallback 内容 |
 | --- | --- | --- |
-| `codex review "<focus + diff 指示>"` (C3 / C2 で Bash 実行 = tier 1) | code quality adversarial pass / Pre-flight 第 5 ゲート | 主エージェント (DeepSeek) が直接レビュー。focus は Codex に渡したもの (PROMPT 形式) と同じ導出結果を用いる。「adversarial / approve させない姿勢」を明示 |
+| `codex review "<focus + diff 指示>"` (C3 / C2 で Bash 実行 = tier 1) | code quality adversarial pass / Pre-flight 第 5 ゲート | レビューを実行している agent 自身 (主エージェント。dispatch 時はその subagent) が直接レビュー。focus は Codex に渡したもの (PROMPT 形式) と同じ導出結果を用いる。「adversarial / approve させない姿勢」を明示 |
 | `codex exec` (C4 で root-cause 調査時に invoke) | bug 根本原因 + 類似バグ探索 | 主エージェント (DeepSeek) + `systematic-debugging` 相当で自力調査。`scope-guard` 規約は維持 (独断 fix 禁止) |
 
 ### Fallback 実行時の必須記載 (Iron Law 5 整合)
@@ -1192,8 +1192,8 @@ skill report (`review-pr` Step 6 レビュー報告 / `iterate-review` **Final s
 
 ### Fallback の限界 (明示)
 
-- Codex は GPT-5.4 (独立 model) の second opinion。DeepSeek fallback（主エージェント）は同一 model の self-review に近く、bias 構造が同じになる
-- 重要 PR (release 直前 / 大規模 refactor / [`.agents/skills/review-pr/SKILL.md`](../.agents/skills/review-pr/SKILL.md) §「core 変更対象ファイル」の表に該当する変更) で Codex fallback が trigger した場合、user に AskUserQuestion で「Codex 復旧待ち / DeepSeek fallback / abort」の 3 択を提示
+- Codex は GPT-5.4 (独立 model) の second opinion。DeepSeek 直接レビュー（実行者が主エージェントでも dispatch された subagent でも同一 model）は self-review に近く、bias 構造が同じになる
+- 重要 PR (release 直前 / 大規模 refactor / [`.agents/skills/review-pr/SKILL.md`](../.agents/skills/review-pr/SKILL.md) §「core 変更対象ファイル」の表に該当する変更) で Codex fallback が trigger した場合、user に AskUserQuestion で「Codex 復旧待ち / DeepSeek 直接レビュー / abort」の 3 択を提示
 - fallback report には「fallback で実行済」を明示することで、後日 Codex 復旧時に再 review が要否を判断可能にする
 
 ## Claude fallback（Claude レビュー不可時）
