@@ -51,6 +51,40 @@ _LINE_REF_DOC_GLOBS = (
     ".claude/agents/*.md",
 )
 _EXIT_CODES_HEADING = "Exit Codes"
+_REQUIRED_CHECKS_HEADING = "ブランチ保護と required status checks"
+_IRON_LAW_MARKERS = (
+    "NO PR MERGE WITHOUT ALL ACCEPTANCE CRITERIA",
+    "NO BULK OPERATION WITHOUT",
+)
+# パス参照として検査するのは「repo の既知の root で始まる」token のみ。
+# `output/...` (実行時生成物) / `src/...` (GUI 内の相対例) は対象外。
+_KNOWN_ROOTS = {
+    "allaganeye",
+    "docs",
+    "gui",
+    "scripts",
+    "tests",
+    "schemas",
+    "plans",
+    ".agents",
+    ".claude",
+    ".github",
+}
+# doc は root 相対 / `allaganeye/` 相対 / `gui/src-tauri/` 相対などの形で書かれる。
+_PATH_BASES = (
+    "",
+    "allaganeye/",
+    "gui/",
+    "gui/src-tauri/",
+    ".agents/skills/",
+    "docs/superpowers/",
+    "docs/",
+)
+# 実在しないことが正しい参照 (gitignore される設定ファイル等)。
+_PATH_ALLOWLIST = (".claude/settings.local.json",)
+_PATH_TOKEN_RE = re.compile(
+    r"`([A-Za-z0-9_.\-/]+\.(?:py|md|sh|ts|tsx|json|yml|yaml|toml|css|js|mjs|ps1|rs))`"
+)
 
 
 class StructureError(Exception):
@@ -189,18 +223,28 @@ def check(root: Path, rows: list[dict[str, str]], gate_root: Path) -> list[str]:
 
 
 def _section(text: str, title: str) -> str:
-    """`## title` / `### title` の節を、次の見出しまで切り出す。"""
+    """`## title` / `### title` の節を、**同レベル以上の次の見出し**まで切り出す。
+
+    下位見出し (`###`) は節に含める。`## Exit Codes` の下に `### ...` がある
+    ような構造で、表が subsection 側に置かれている場合に必要。
+    """
     lines = text.splitlines()
-    heading_re = re.compile(rf"^#{{2,4}} {re.escape(title)}$")
+    heading_re = re.compile(rf"^#{{2,4}} {re.escape(title)}")
     start = next(
         (i for i, line in enumerate(lines) if heading_re.match(line.strip())), None
     )
     if start is None:
         return ""
-    end = next(
-        (i for i in range(start + 1, len(lines)) if re.match(r"^#{2,4} ", lines[i])),
-        len(lines),
-    )
+    level = len(lines[start].strip()) - len(lines[start].strip().lstrip("#"))
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        stripped = lines[i].strip()
+        if not re.match(r"^#{2,4} ", stripped):
+            continue
+        depth = len(stripped) - len(stripped.lstrip("#"))
+        if depth <= level:
+            end = i
+            break
     return "\n".join(lines[start:end])
 
 
@@ -409,11 +453,157 @@ def check_line_refs(root: Path) -> list[str]:
     return problems
 
 
+def check_iron_law_mirror(root: Path) -> list[str]:
+    """Iron Law 本文が hook に複製されていないことを検査する。
+
+    本文の正は `AGENTS.md` §Iron Law。hook は実行時にそれを抽出する。
+    複製を持つと、AGENTS.md だけを更新したときに注入内容が古いままになる。
+    """
+    hook = root / ".claude" / "hooks" / "session-start.sh"
+    if not hook.is_file():
+        return ["iron-law: .claude/hooks/session-start.sh が無い"]
+    text = hook.read_text(encoding="utf-8")
+    problems: list[str] = []
+    for marker in _IRON_LAW_MARKERS:
+        if marker in text:
+            problems.append(
+                f"iron-law: hook に Iron Law 本文の copy が残っている ({marker}...)。"
+                " AGENTS.md から実行時抽出すること"
+            )
+    if "AGENTS.md" not in text:
+        problems.append(
+            "iron-law: hook が AGENTS.md を参照していない (本文の正は AGENTS.md)"
+        )
+    return problems
+
+
+def check_bulk_threshold(root: Path) -> list[str]:
+    """bulk 操作の閾値が doc と実装で一致することを検査する。"""
+    preuse = root / ".claude" / "hooks" / "preuse.py"
+    if not preuse.is_file():
+        return ["bulk-threshold: .claude/hooks/preuse.py が無い"]
+    text = preuse.read_text(encoding="utf-8")
+    threshold = re.search(r"_BULK_THRESHOLD:\s*int\s*=\s*(\d+)", text)
+    window = re.search(r"_BULK_WINDOW_SEC:\s*float\s*=\s*([\d.]+)", text)
+    if not threshold or not window:
+        return [
+            "bulk-threshold: preuse.py の _BULK_THRESHOLD / _BULK_WINDOW_SEC を"
+            "読めない (検査不能)"
+        ]
+    count = int(threshold.group(1))
+    seconds = float(window.group(1))
+    doc = root / "docs" / "l2-workflow.md"
+    if not doc.is_file():
+        return ["bulk-threshold: docs/l2-workflow.md が無い"]
+    doc_text = doc.read_text(encoding="utf-8")
+    # 全文検索は使わない。無関係な「1 件」(サンプル提示の指示等) が混ざると、
+    # 閾値が変わっても green になる (Codex adversarial-review [P2])。
+    doc_decl = re.search(r"bulk 閾値 \(([0-9]+) 件 / ([0-9]+)s\)", doc_text)
+    if not doc_decl:
+        return [
+            "bulk-threshold: l2-workflow に「bulk 閾値 (N 件 / Ns)」の宣言が無い"
+            " (検査不能)"
+        ]
+    problems: list[str] = []
+    if int(doc_decl.group(1)) != count:
+        problems.append(
+            f"bulk-threshold: l2-workflow の閾値 {doc_decl.group(1)} 件が"
+            f" 実装 {count} 件と不一致"
+        )
+    if float(doc_decl.group(2)) != seconds:
+        problems.append(
+            f"bulk-threshold: l2-workflow の window {doc_decl.group(2)}s が"
+            f" 実装 {seconds:g}s と不一致"
+        )
+    agents = root / "AGENTS.md"
+    if agents.is_file():
+        agents_decl = re.search(
+            r"([0-9]+) 件以上の issue 編集", agents.read_text(encoding="utf-8")
+        )
+        if not agents_decl:
+            problems.append(
+                "bulk-threshold: AGENTS.md Iron Law 2 に「N 件以上の issue 編集」の"
+                "宣言が無い (検査不能)"
+            )
+        elif int(agents_decl.group(1)) != count:
+            problems.append(
+                f"bulk-threshold: AGENTS.md の閾値 {agents_decl.group(1)} 件が"
+                f" 実装 {count} 件と不一致"
+            )
+    return problems
+
+
+def check_required_checks(root: Path) -> list[str]:
+    """required status checks の一覧が実在の workflow job を指すことを検査する。
+
+    ruleset は repo 外設定なので、job 名の rename を検知できるのは本 gate だけ。
+    """
+    doc = root / "docs" / "release-process.md"
+    if not doc.is_file():
+        return ["required-checks: docs/release-process.md が無い"]
+    section = _section(doc.read_text(encoding="utf-8"), _REQUIRED_CHECKS_HEADING)
+    if not section:
+        return [
+            "required-checks: 「ブランチ保護と required status checks」節を"
+            "読めない (検査不能)"
+        ]
+    names = [
+        m.group(1)
+        for line in section.splitlines()
+        if (m := re.match(r"^\|\s*`([a-z0-9-]+)`\s*\|", line))
+    ]
+    if not names:
+        return ["required-checks: required check の表を読めない (走査 0 行 = 検査不能)"]
+    problems: list[str] = []
+    for name in names:
+        ok, _ = _job_exists(root, name, None)
+        if not ok:
+            problems.append(
+                f"required-checks: `{name}` は release-process.md にあるが"
+                " workflow job に無い (rename されると required 設定が無効化される)"
+            )
+    return problems
+
+
+def check_path_refs(root: Path) -> list[str]:
+    """living doc の backtick path 参照が実在することを検査する。
+
+    対象は **repo の既知の root で始まる token** のみ。`output/...` のような
+    実行時生成物や `src/...` のような相対例は対象外。doc は複数の基底
+    (`allaganeye/` / `gui/src-tauri/` / `.agents/skills/` 等) で書かれるため、
+    `_PATH_BASES` のいずれかで解決すればよい。
+    """
+    problems: list[str] = []
+    for pattern in _LINE_REF_DOC_GLOBS:
+        for path in sorted(root.glob(pattern)):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(root).as_posix()
+            text = path.read_text(encoding="utf-8")
+            for lineno, line in enumerate(text.splitlines(), 1):
+                for match in _PATH_TOKEN_RE.finditer(line):
+                    token = match.group(1)
+                    if "/" not in token or token in _PATH_ALLOWLIST:
+                        continue
+                    if token.split("/")[0] not in _KNOWN_ROOTS:
+                        continue
+                    if any((root / base / token).exists() for base in _PATH_BASES):
+                        continue
+                    problems.append(
+                        f"path-refs: {rel} の {lineno} 行目 `{token}` が解決しない"
+                    )
+    return problems
+
+
 _GATES.update(
     {
         "check_exit_codes": check_exit_codes,
         "check_cli_options": check_cli_options,
         "check_line_refs": check_line_refs,
+        "check_iron_law_mirror": check_iron_law_mirror,
+        "check_bulk_threshold": check_bulk_threshold,
+        "check_required_checks": check_required_checks,
+        "check_path_refs": check_path_refs,
     }
 )
 

@@ -887,7 +887,7 @@ node .github/scripts/<gate>.js <fixture>; echo "exit=$?"   # 非ゼロを期待
 
 ## ルールと強制メカニズム
 
-本プロジェクトの基本ルールは **Iron Law** (6 条 + Red Flags) として `AGENTS.md` §Iron Law に記される。**条文と Red Flags の正は AGENTS.md** (Claude Code review session では `.claude/hooks/session-start.sh` が同内容を注入する)。本ドキュメントでは重複記載しない。
+本プロジェクトの基本ルールは **Iron Law** (6 条 + Red Flags) として `AGENTS.md` §Iron Law に記される。**条文と Red Flags の正は AGENTS.md** (Claude Code review session では `.claude/hooks/session-start.sh` が **AGENTS.md から実行時に抽出して**注入する。hook は本文の複製を持たない — #1079 Phase 3)。本ドキュメントでは重複記載しない。
 
 ### 強制メカニズム
 
@@ -1350,4 +1350,4 @@ Python 依存側でも同型が起きた (#916)。`opencv-python-headless>=4.8` 
 - [code.claude.com/docs/en/best-practices](https://code.claude.com/docs/en/best-practices) — 単一セッション推奨
 - `docs/release-process.md` — ブランチ戦略と手動リリース手順
 - `docs/issue-policy.md` — Issue 起票ルール (role:* 節を削除済み)
-- `plans/deffere-issue-l2-deffered-1-l1-issue-2-graceful-clover.md` — L2 移行計画全体
+- `plans/2026-05-07-l2-v020-roadmap.md` — L2 (v0.2.0) のロードマップ

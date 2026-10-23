@@ -360,6 +360,118 @@ def test_line_refs_allows_placeholder_and_history(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------
+# Phase 3 gates: iron law / bulk threshold / required checks / path refs
+# --------------------------------------------------------------------------
+
+
+def test_iron_law_is_not_duplicated_in_hook() -> None:
+    """Iron Law 本文は AGENTS.md に 1 つだけ置き、hook は実行時に抽出する。"""
+    assert cd.check_iron_law_mirror(REPO_ROOT) == []
+
+
+def test_iron_law_gate_detects_copy(tmp_path: Path) -> None:
+    hooks = tmp_path / ".claude" / "hooks"
+    hooks.mkdir(parents=True)
+    (hooks / "session-start.sh").write_text(
+        "# NO PR MERGE WITHOUT ALL ACCEPTANCE CRITERIA CHECKED\n", encoding="utf-8"
+    )
+    problems = cd.check_iron_law_mirror(tmp_path)
+    assert any("copy" in p for p in problems)
+
+
+def test_iron_law_gate_requires_agents_md_reference(tmp_path: Path) -> None:
+    hooks = tmp_path / ".claude" / "hooks"
+    hooks.mkdir(parents=True)
+    (hooks / "session-start.sh").write_text("echo hi\n", encoding="utf-8")
+    problems = cd.check_iron_law_mirror(tmp_path)
+    assert any("AGENTS.md" in p for p in problems)
+
+
+def test_bulk_threshold_matches_docs() -> None:
+    assert cd.check_bulk_threshold(REPO_ROOT) == []
+
+
+def test_bulk_threshold_gate_detects_drift(tmp_path: Path) -> None:
+    hooks = tmp_path / ".claude" / "hooks"
+    docs = tmp_path / "docs"
+    hooks.mkdir(parents=True)
+    docs.mkdir()
+    (hooks / "preuse.py").write_text(
+        "_BULK_THRESHOLD: int = 9\n_BULK_WINDOW_SEC: float = 5.0\n", encoding="utf-8"
+    )
+    (docs / "l2-workflow.md").write_text("bulk 閾値 (3 件 / 60s)\n", encoding="utf-8")
+    problems = cd.check_bulk_threshold(tmp_path)
+    assert any(("9" in p and "60" in p) or "5" in p for p in problems)
+
+
+def test_bulk_threshold_ignores_unrelated_counts(tmp_path: Path) -> None:
+    """実装値だけを変えても、無関係な「1 件」で green にならない (Codex [P2])。
+
+    実 doc は「サンプル 1 件提示」等を含むため、全文検索だと閾値 3 -> 1 の
+    変更を捕まえられない。宣言箇所を特定して比較することを固定する。
+    """
+    hooks = tmp_path / ".claude" / "hooks"
+    docs = tmp_path / "docs"
+    hooks.mkdir(parents=True)
+    docs.mkdir()
+    (hooks / "preuse.py").write_text(
+        "_BULK_THRESHOLD: int = 1\n_BULK_WINDOW_SEC: float = 60.0\n", encoding="utf-8"
+    )
+    (docs / "l2-workflow.md").write_text(
+        (REPO_ROOT / "docs" / "l2-workflow.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (tmp_path / "AGENTS.md").write_text(
+        (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    problems = cd.check_bulk_threshold(tmp_path)
+    assert any("1 件" in p and "3 件" in p for p in problems)
+
+
+def test_required_checks_exist_as_jobs() -> None:
+    assert cd.check_required_checks(REPO_ROOT) == []
+
+
+def test_required_checks_gate_detects_missing_job(tmp_path: Path) -> None:
+    docs = tmp_path / "docs"
+    workflows = tmp_path / ".github" / "workflows"
+    docs.mkdir()
+    workflows.mkdir(parents=True)
+    (docs / "release-process.md").write_text(
+        "## ブランチ保護と required status checks (#947)\n\n"
+        "| check 名 | 定義元 | 役割 |\n| --- | --- | --- |\n"
+        "| `python` | `.github/workflows/ci.yml` | x |\n"
+        "| `ghost-job` | `.github/workflows/ci.yml` | x |\n",
+        encoding="utf-8",
+    )
+    (workflows / "ci.yml").write_text(
+        "jobs:\n  python:\n    runs-on: ubuntu\n", encoding="utf-8"
+    )
+    problems = cd.check_required_checks(tmp_path)
+    assert any("ghost-job" in p for p in problems)
+
+
+def test_path_refs_resolve() -> None:
+    assert cd.check_path_refs(REPO_ROOT) == []
+
+
+def test_path_refs_gate_detects_broken(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text(
+        "see `docs/no_such_doc.md` for details\n", encoding="utf-8"
+    )
+    problems = cd.check_path_refs(tmp_path)
+    assert any("no_such_doc" in p for p in problems)
+
+
+def test_path_refs_skips_examples_and_unknown_roots(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text(
+        "runtime `output/metadata.json` / example `path/to/file.py`\n",
+        encoding="utf-8",
+    )
+    assert cd.check_path_refs(tmp_path) == []
+
+
+# --------------------------------------------------------------------------
 # main() の exit code
 # --------------------------------------------------------------------------
 
