@@ -29,9 +29,11 @@
 | model-routing | 用途別モデル割当 | AGENTS.md | docs/l2-workflow.md, .claude/agents/ | prose-only | none | active |
 | gui-screens | GUI 画面数 6 | gui/src/screens | AGENTS.md, docs/gui-development.md, docs/ui-architecture.md, docs/ui-interaction-spec.md | prose-only | none | active |
 | detection-modules | allaganeye モジュール一覧 | allaganeye | AGENTS.md | prose-only | none | active |
+| codex-invocation | codex CLI の focus 渡し方 (`--base` と `[PROMPT]` の併用不可 / PROMPT 単独形式) | docs/l2-workflow.md | .agents/skills/review-pr/SKILL.md, .agents/skills/iterate-review/SKILL.md | prose-only | none | active |
 
 ## 備考 (prose-only の理由)
 
 - `model-routing`: モデル名は外部サービス側の名称で、repo 内に機械可読な正が無い。変更時は `AGENTS.md` §モデルルーティング を起点に手動照合する
 - `gui-screens`: 画面数はディレクトリから数えられるが、doc 側の「6 画面」は文脈付きの主張で、機械抽出すると誤検出が多い。追加・削除時に `gui/src/screens/` を ls して確認する
 - `detection-modules`: `AGENTS.md` §モジュール構成 は索引であり、`detection/*` は行内で列挙される。完全一致を強制すると索引の自由度を失う
+- `codex-invocation`: 検証対象は **外部 CLI (`codex`) の受理仕様**であり、CI に `codex` を持ち込まない方針のため機械検証しない。**再実測トリガー**: `codex` CLI を version up したとき / `codex review --help` の `[PROMPT]`・`--base` の記述が変わったとき。実測記録は `docs/l2-workflow.md` §Step 5 の invocation path の注記 (日付・version 付き)

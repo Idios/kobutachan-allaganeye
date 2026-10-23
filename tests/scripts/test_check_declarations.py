@@ -51,6 +51,7 @@ EXPECTED_IDS = {
     "model-routing",
     "gui-screens",
     "detection-modules",
+    "codex-invocation",
 }
 
 

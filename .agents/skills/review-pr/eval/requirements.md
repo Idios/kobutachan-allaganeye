@@ -155,7 +155,7 @@ PR 本文: `scripts/build-portable-zip.ps1` の `get-pip.py` DL URL を `https:/
 PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector module を含む)。`/review-pr` Step 5a で C3 起動条件すべて該当のため Codex review (tier 1 = `codex review --base <base>`) を実行、Codex CLI exit code 1 + stderr に `Error: rate limit exceeded (429)` が含まれる。
 
 1. **[critical]** **I-1**: Codex CLI fail を検出 (exit code 非ゼロ + stderr keyword `rate.?limit` または `429`) → **token 枯渇 (明確)** 判定
-2. **[critical]** **I-2**: 自動 fallback として `review-pr` Step 5a item 3 に従い、レビュー実行者 (主エージェント。dispatch 時は同一モデルの subagent) が直接レビューする。**focus は「Codex へ渡した文字列の流用」ではない** — `codex review --base <base>` は `--base` と `[PROMPT]` を併用できないため (2026-10-22 実測、#1068)、Codex に focus を渡す経路は無い。`docs/l2-workflow.md` §「Step 5 の focus 導出手順」で**導出し PR 本文に記録した** focus を用いること (#856 item4)
+2. **[critical]** **I-2**: 重要 PR のため step 2 の 3 択 (I-5) で **(B) DeepSeek fallback が選ばれた場合**、レビュー実行者 (主エージェント。dispatch 時は同一モデルの subagent) が直接レビューする。**focus は tier 1 に渡したもの (PROMPT 形式) と同じ導出結果**を用いる。`--base` 単独で実行して focus を渡していない場合は `docs/l2-workflow.md` §「Step 5 の focus 導出手順」で導出する (#856 item4 / #1068)
 3. **[critical]** **I-3**: Step 6 レビュー報告に「Codex fallback notice」(`> **Codex fallback notice**: ...` template) を必須記載 (Iron Law 5 整合)
 4. **[critical]** **I-4**: fallback 経路 (`docs/l2-workflow.md` §Codex fallback) を参照する
 5. **[critical]** **I-5**: 重要 PR (大規模 refactor) なので user に AskUserQuestion で「Codex 復旧待ち / DeepSeek fallback / abort」3 択を提示する
@@ -170,6 +170,6 @@ PR #987 (大規模 refactor、touched 35 files、diff 1200 lines、L1 detector m
 モック: PR 作成直前の Pre-flight Step 5 実行計画を executor に立てさせる。
 
 1. **[critical]** **P-1**: Step 5 の実行手段を `codex` CLI 直呼び (tier 1、`codex review --base <base>`) と特定し、廃止済みの companion script / `adversarial-review` subcommand / slash command の利用を計画しない (#1043 / #1068)
-2. **[critical]** **P-2**: focus 文字列を固定の例示リストから選ばず**本 PR の diff から導出**する — 新設・変更した外部入力境界 (CLI option / metadata field / GUI 自由入力 / 環境変数) と、そこから到達する不可逆操作 (上書き / 削除 / truncate) の対応ペアを列挙して focus に含める。ペアがゼロなら「ゼロである」ことを focus に明記する (`codex review --base` は focus を受け取らないため、導出した focus は PR 本文に記録する。導出手順は `docs/l2-workflow.md` §「Step 5 の focus 導出手順」。Refs #935 P2-1 で固定 3 項目の例示から置換。**旧条文 (Iron Law 3 scope creep / encoding boundary / GPU fallback / 同 issue 過去 PR root cause の 4 例示を含めれば pass) に戻さないこと** — 例示リストは新しい欠陥クラスへの検出力を持たない)
+2. **[critical]** **P-2**: focus 文字列を固定の例示リストから選ばず**本 PR の diff から導出**する — 新設・変更した外部入力境界 (CLI option / metadata field / GUI 自由入力 / 環境変数) と、そこから到達する不可逆操作 (上書き / 削除 / truncate) の対応ペアを列挙して focus に含める。ペアがゼロなら「ゼロである」ことを focus に明記する (導出した focus は `codex review "<focus + diff 指示>"` の PROMPT で Codex に渡す。導出手順は `docs/l2-workflow.md` §「Step 5 の focus 導出手順」。Refs #935 P2-1 で固定 3 項目の例示から置換。**旧条文 (Iron Law 3 scope creep / encoding boundary / GPU fallback / 同 issue 過去 PR root cause の 4 例示を含めれば pass) に戻さないこと** — 例示リストは新しい欠陥クラスへの検出力を持たない)
 3. **P-3**: invocation path の詳細参照先として docs/l2-workflow.md §Step 5 の invocation path (3-tier、#795) に到達する
 4. **P-4**: Codex CLI fail 時は tier 2 fallback (C6) の存在を認識し、fallback 時は Codex fallback notice 記載が必要と述べる

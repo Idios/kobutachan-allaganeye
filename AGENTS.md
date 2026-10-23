@@ -387,7 +387,7 @@ sweep は **「旧用語リスト更新 → sweep 前の実 tree で red を確�
 - **eval fixture** (`.agents/skills/**/eval/**`): 特定時点の評価基準・シナリオを固定する記録なので遡及置換しない。ただし **skill の契約自体が変わった場合は、eval の妥当性を保つため fixture の期待値を更新する** (PR #1071 に前例)。未更新の残置は #1068 で追跡中。
 - **`gui/**`**: GUI ソースのため `.md` でも対象外 (screenshot-freshness 回避)。
 - **`build-cache/`**: Portable ZIP の build キャッシュ置き場 (`.gitignore` 済)。`.md` が混ざっても検査しない。red 実証の一時展開先には使わず repo 外に置くこと (#1066)。
-- **`.claude/agents/**`**: Claude Code 用のロール定義。frontmatter の `model:` は Claude エイリアスのみだが、**本文はモデル非依存で fallback 時に DeepSeek も読む**ため「Claude 専用だから除外」は理由にならない。現状は**暫定的な除外**で、既知の残置は旧 invocation 契約 1 行のみ。この 1 行は #1068 で追跡する。
+- **`.claude/agents/**`**: Claude Code 用のロール定義。frontmatter の `model:` は Claude エイリアスのみだが、**本文はモデル非依存で fallback 時に DeepSeek も読む**ため「Claude 専用だから除外」は理由にならない。現状は**暫定的な除外**で、本文の旧 invocation 契約は #1068 で修正済み（残置は 0 件）。
 
 ## destructive write boundary audit checklist (#930 教訓)
 
