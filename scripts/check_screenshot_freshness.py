@@ -243,6 +243,25 @@ def _normalize_newlines(data: bytes) -> bytes:
 _COMMENT_STRIPPED_SUFFIXES = {".ts", ".tsx", ".css", ".html", ".js", ".mjs"}
 
 
+def _template_open_after(line: str, in_template: bool) -> bool:
+    """template literal (`...`) の開閉状態を行単位で追う。
+
+    `\\` でエスケープされた backtick は数えない。文字列リテラル内の backtick で
+    誤って toggle した場合は「テンプレート内」と見なして**strip を止める**側に
+    倒れる (false-red 方向。false-green より安全)。
+    """
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "`":
+            in_template = not in_template
+        index += 1
+    return in_template
+
+
 def _strip_comment_lines(text: str, suffix: str) -> str:
     """**行頭のコメントだけ**を落とす (#1008)。
 
@@ -257,12 +276,25 @@ def _strip_comment_lines(text: str, suffix: str) -> str:
     **閉じ記号の後ろに残るコードは保存する。** 行ごと捨てると
     `/* theme */ .a { color: red; }` の red -> blue のような実変更まで
     見逃す (Codex adversarial-review [P2])。
+
+    ## false-green を避けるための 2 つの退避
+
+    1. **template literal 内の行は触らない** — `` const s = `\n// not a comment\n` ``
+       の行頭 `//` は文字列の一部で、消すと実変更を隱す。
+    2. **閉じ忘れの block comment は strip を諦める** — どこまでがコメントか
+       決められない以上、生テキストで比較する方が安全 (fail-closed)。
     """
     if suffix not in _COMMENT_STRIPPED_SUFFIXES:
         return text
+    track_templates = suffix in {".ts", ".tsx", ".js", ".mjs"}
     out: list[str] = []
     block_end = ""
+    in_template = False
     for line in text.split("\n"):
+        if in_template:
+            out.append(line)
+            in_template = _template_open_after(line, True)
+            continue
         rest = line
         while True:
             stripped = rest.lstrip()
@@ -295,10 +327,14 @@ def _strip_comment_lines(text: str, suffix: str) -> str:
                 continue
             break
         if rest.strip() == "" and line.strip() != "":
-            # 行全体がコメントだった行は落とす (空白行は保存する)。行数を保つと
-            # コメントの追加・削除だけで digest が変わらない。
+            # 行全体がコメントだった行は落とす (空白行は保存する)。
             continue
         out.append(rest)
+        if track_templates:
+            in_template = _template_open_after(rest, False)
+    if block_end:
+        # 閉じ忘れ: どこまでがコメントか決められない。生テキストで比較する。
+        return text
     return "\n".join(out)
 
 

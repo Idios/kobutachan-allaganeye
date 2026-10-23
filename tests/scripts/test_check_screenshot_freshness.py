@@ -223,6 +223,52 @@ def test_inline_block_comment_like_string_is_not_stripped(tmp_path: Path) -> Non
     assert before != after
 
 
+def test_template_literal_line_start_slashes_are_not_stripped(tmp_path: Path) -> None:
+    """template literal 内の行頭 `//` は文字列の一部 (#1008 の敵対的 fixture)。
+
+    これをコメントとして消すと、テンプレートの中身の変更が見逃される。
+    """
+    root = _build_repo(
+        tmp_path,
+        sources={
+            "gui/src/App.tsx": "const s = `\n// keep me A\n`;\nexport const A = 1;\n"
+        },
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.tsx").write_text(
+        "const s = `\n// keep me B\n`;\nexport const A = 1;\n", encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) != before
+
+
+def test_unclosed_block_comment_falls_back_to_raw(tmp_path: Path) -> None:
+    """閉じ忘れの block comment では strip を諦める (fail-closed)。
+
+    どこまでがコメントか決められない以上、生テキストで比較する方が安全。
+    """
+    root = _build_repo(
+        tmp_path,
+        sources={"gui/src/App.css": "/* never closed\n.a { color: red; }\n"},
+        source_globs=["gui/src/**/*.css"],
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.css").write_text(
+        "/* never closed\n.a { color: blue; }\n", encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) != before
+
+
+def test_double_slash_inside_string_is_not_stripped(tmp_path: Path) -> None:
+    before, after = _digest_after_edit(
+        tmp_path,
+        "gui/src/App.tsx",
+        'const url = "http://example.com/b";\nexport const A = 1;\n',
+    )
+    assert before != after
+
+
 def test_css_comment_only_change_keeps_digest(tmp_path: Path) -> None:
     root = _build_repo(
         tmp_path,
