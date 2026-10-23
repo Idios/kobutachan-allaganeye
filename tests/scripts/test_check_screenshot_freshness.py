@@ -163,12 +163,92 @@ def test_digest_uses_case_sensitive_posix_ordering(tmp_path: Path) -> None:
     # 契約: relative posix 文字列の case-sensitive 昇順で連結する。
     expected = hashlib.sha256()
     for rel in sorted(p.relative_to(root).as_posix() for p in resolved):
-        inner = hashlib.sha256(
-            guard._normalize_newlines((root / rel).read_bytes())
-        ).hexdigest()
+        inner = guard._file_digest(root / rel)
         expected.update(f"{rel}\0{inner}\n".encode())
 
     assert guard.compute_digest(root, resolved) == expected.hexdigest()
+
+
+# --------------------------------------------------------------------------
+# コメントだけの変更は digest を変えない (#1008)
+# --------------------------------------------------------------------------
+
+
+def _digest_after_edit(tmp_path: Path, rel: str, new_text: str) -> tuple[str, str]:
+    root = _build_repo(tmp_path, sources={rel: "export const A = 1;\n"})
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / rel).write_text(new_text, encoding="utf-8")
+    return before, guard.compute_digest(root, resolved)
+
+
+def test_line_comment_only_change_keeps_digest(tmp_path: Path) -> None:
+    """関数の中の行頭 `//` コメントを変えても撮り直しを要求しない。"""
+    before, after = _digest_after_edit(
+        tmp_path, "gui/src/App.tsx", "// note changed\nexport const A = 1;\n"
+    )
+    assert before == after
+
+
+def test_block_comment_change_keeps_digest(tmp_path: Path) -> None:
+    """doc comment (`/** ... */`) の文面変更も digest を変えない。"""
+    before, after = _digest_after_edit(
+        tmp_path,
+        "gui/src/App.tsx",
+        "/**\n * The current platform is Windows-only (see AGENTS.md).\n */\nexport const A = 1;\n",
+    )
+    assert before == after
+
+
+def test_code_change_after_comment_still_changes_digest(tmp_path: Path) -> None:
+    """コメントを落としても、コードの実変更は digest に現れる。"""
+    before, after = _digest_after_edit(
+        tmp_path,
+        "gui/src/App.tsx",
+        "// note\nexport const A = 2;\n",
+    )
+    assert before != after
+
+
+def test_inline_block_comment_like_string_is_not_stripped(tmp_path: Path) -> None:
+    """行中に現れる `/*` は触らない (glob 文字列を消して差分を隱さない)。
+
+    `"**/*.css"` をコメントとして剔除すると、その文字列の変更を検出できなくなる。
+    """
+    before, after = _digest_after_edit(
+        tmp_path,
+        "gui/src/App.tsx",
+        'const glob = "**/*.css";\nexport const A = 1;\n',
+    )
+    assert before != after
+
+
+def test_css_comment_only_change_keeps_digest(tmp_path: Path) -> None:
+    root = _build_repo(
+        tmp_path,
+        sources={"gui/src/App.css": ".a { color: red; }\n"},
+        source_globs=["gui/src/**/*.css"],
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.css").write_text(
+        "/* note */\n.a { color: red; }\n", encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) == before
+
+
+def test_html_comment_only_change_keeps_digest(tmp_path: Path) -> None:
+    root = _build_repo(
+        tmp_path,
+        sources={"gui/src/App.html": '<div id="a"></div>\n'},
+        source_globs=["gui/src/**/*.html"],
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.html").write_text(
+        '<!-- note -->\n<div id="a"></div>\n', encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) == before
 
 
 def test_digest_changes_when_a_source_file_is_renamed(tmp_path: Path) -> None:

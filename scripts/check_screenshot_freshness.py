@@ -40,7 +40,10 @@ exit code:
 * `screenshots` -- 撮影対象の一覧 (`file` と `screen`)。
   `scripts/capture-readme-screens.mjs` が**同じ表**を読んで撮影する。
 * `sources` / `source_exclude` -- スクショの見た目を決める source の glob。
-* `sources_sha256` -- 上記 source 集合の内容ハッシュ。
+* `sources_sha256` -- 上記 source 集合の内容ハッシュ。**改行と行頭コメントは
+  正規化して落とす** (#1008): コメントだけの変更で「撮り直し」を要求しないため。
+  行中に現れる `/* ... */` は対象外 (glob 文字列を消して本物の差分を隱さないため)。
+  コメント除去を変えたときは一度だけ `--update` で再 baseline する。
 
 CI は `sources` を解決して内容ハッシュを再計算し、`sources_sha256` と突合する。
 不一致 = 「GUI を変えたのにスクショを撮り直していない」。
@@ -234,6 +237,64 @@ def _normalize_newlines(data: bytes) -> bytes:
     return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
+# コメントだけの変更で digest を変えない (#1008)。生バイトを hash すると、
+# `//` や doc comment の修正だけで「撮り直しが必要」になり、コメントのみの PR が
+# 恒久的に赤になる (実例: PR #1085)。
+_COMMENT_STRIPPED_SUFFIXES = {".ts", ".tsx", ".css", ".html", ".js", ".mjs"}
+
+
+def _strip_comment_lines(text: str, suffix: str) -> str:
+    """**行頭のコメントだけ**を落とす (#1008)。
+
+    インラインの `/*` は触らない。glob 文字列 (`**/*.css`) や文字列リテラルに
+    現れうるため、素朴に除去すると **コードごと消して本物の差分を隱す**。
+    対象は次の 3 種のみ:
+
+    * 行頭 (空白のみ前置) の `//` 行
+    * 行頭の `/*` から始まり `*/` で閉じるブロック (doc comment を含む)
+    * `.html` の行頭 `<!--` ブロック
+
+    閉じ行を含む行は丸ごと落とす (コメント内の字面は見た目に影響しない)。
+    """
+    if suffix not in _COMMENT_STRIPPED_SUFFIXES:
+        return text
+    out: list[str] = []
+    block_end = ""
+    for line in text.split("\n"):
+        stripped = line.lstrip()
+        if block_end:
+            if block_end in line:
+                block_end = ""
+            continue
+        if stripped.startswith("/*"):
+            if "*/" not in stripped:
+                block_end = "*/"
+            continue
+        if stripped.startswith("//"):
+            continue
+        if suffix == ".html" and stripped.startswith("<!--"):
+            if "-->" not in stripped:
+                block_end = "-->"
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
+def _digestable_bytes(path: Path) -> bytes:
+    """hash 対象の正規化済みバイト列 (改行 + コメント)。"""
+    raw = _normalize_newlines(path.read_bytes())
+    suffix = path.suffix.lower()
+    if suffix not in _COMMENT_STRIPPED_SUFFIXES:
+        return raw
+    text = raw.decode("utf-8", errors="surrogateescape")
+    return _strip_comment_lines(text, suffix).encode("utf-8", errors="surrogateescape")
+
+
+def _file_digest(path: Path) -> str:
+    """1 file 分の digest。`compute_digest` と test が同じ関数を使う。"""
+    return hashlib.sha256(_digestable_bytes(path)).hexdigest()
+
+
 def compute_digest(repo_root: Path, paths: Sequence[Path]) -> str:
     """path と内容の両方を含む安定ハッシュ。rename でも変わる。
 
@@ -249,8 +310,7 @@ def compute_digest(repo_root: Path, paths: Sequence[Path]) -> str:
     outer = hashlib.sha256()
     by_rel = sorted((path.relative_to(repo_root).as_posix(), path) for path in paths)
     for rel, path in by_rel:
-        inner = hashlib.sha256(_normalize_newlines(path.read_bytes())).hexdigest()
-        outer.update(f"{rel}\0{inner}\n".encode())
+        outer.update(f"{rel}\0{_file_digest(path)}\n".encode())
     return outer.hexdigest()
 
 
