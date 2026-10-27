@@ -24,6 +24,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -193,6 +194,121 @@ def test_codex_old_terms_cover_invocation_contract() -> None:
     assert "codex-companion.mjs" in guard._CODEX_OLD_TERMS
     assert "CLAUDE_PLUGIN_ROOT" in guard._CODEX_OLD_TERMS
     assert ".claude/plugins" in guard._CODEX_OLD_TERMS
+
+
+# --------------------------------------------------------------------------
+# meta: 各分岐 / 各 literal に fixture があることを強制する (#1075)
+#
+# 向きの定義 (本 file で統一):
+#   positive = 検出されるべき入力 / negative = 検出されてはならない入力。
+# --------------------------------------------------------------------------
+
+_CLAUDE_BRANCH_SAMPLES: dict[str, str] = {
+    "subject": "Claude が `gh` コマンドを発行する",
+    "ownership": "ユーザーが Claude の判断を訂正した場合",
+    "code-fallback": "Claude Code fallback は同一 model の self-review",
+    "fallback-particle": "Claude fallback で push する",
+    "fallback-slash": "(再試行 / Claude fallback / abort) 3 択",
+    "equals-plus": "エージェント (= Claude + 人間メンテナ Idios)",
+    "code-session": "メンテナ (= Claude Code セッションで動くアシスタント)",
+    "code-plan": "Claude Code の plan モードを活用する",
+}
+
+
+def test_every_claude_branch_has_a_sample() -> None:
+    """分岐の追加・削除と sample の対応を pin する (片方だけ更新されると落ちる)。"""
+    branches = {name for name, _ in guard._CLAUDE_AGENT_BRANCHES}
+    assert branches == set(_CLAUDE_BRANCH_SAMPLES)
+
+
+@pytest.mark.parametrize(
+    ("name", "pattern"),
+    guard._CLAUDE_AGENT_BRANCHES,
+    ids=[name for name, _ in guard._CLAUDE_AGENT_BRANCHES],
+)
+def test_claude_branch_detects_its_sample(name: str, pattern: str) -> None:
+    assert re.search(pattern, _CLAUDE_BRANCH_SAMPLES[name]), (
+        f"{name} の sample が検出されない"
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "pattern"),
+    guard._CLAUDE_AGENT_BRANCHES,
+    ids=[name for name, _ in guard._CLAUDE_AGENT_BRANCHES],
+)
+def test_claude_branch_removal_breaks_its_sample(name: str, pattern: str) -> None:
+    """分岐を 1 つ外すと、その sample が検出されなくなる。
+
+    これが無いと「sample が別の分岐にも当たっている」状態を見逃し、
+    分岐を削除しても test が green のままになる。
+    """
+    reduced = [p for n, p in guard._CLAUDE_AGENT_BRANCHES if n != name]
+    assert reduced, "全分岐を外すと検査が空になる"
+    regex = re.compile("|".join(f"(?:{p})" for p in reduced))
+    assert regex.search(_CLAUDE_BRANCH_SAMPLES[name]) is None, (
+        f"{name} を外しても sample が検出される (= 他の分岐と重複している)"
+    )
+
+
+# literal 系 2 class の positive fixture。key は checker の list と完全一致させる。
+_LITERAL_POSITIVE: dict[str, str] = {
+    ".claude/skills": "旧 `.claude/skills` 配下を参照する",
+    "CLAUDE.md": "`CLAUDE.md` に書かれている",
+}
+_CODEX_OLD_POSITIVE: dict[str, str] = {
+    "codex-companion.mjs": "`codex-companion.mjs review` を実行する",
+    "CLAUDE_PLUGIN_ROOT": "`CLAUDE_PLUGIN_ROOT` を参照する",
+    ".claude/plugins": "`.claude/plugins/openai-codex` 配下",
+}
+
+# negative = 置換後の正 / 無関係な正当参照 (検出されてはならない)。
+_LITERAL_NEGATIVE: list[tuple[str, str]] = [
+    ("replacement-skills", "`.agents/skills/review-pr/SKILL.md`"),
+    ("replacement-agents", "`AGENTS.md` を参照"),
+    ("legit-claude-settings", "`.claude/settings.json` を編集"),
+    ("legit-env", "`CLAUDE_PROJECT_DIR` を使う"),
+    ("new-cli", "`codex review --base <base>` を実行"),
+]
+
+
+def _literal_hits(text: str) -> list[str]:
+    return [t for t in guard._LITERAL_TERMS + guard._CODEX_OLD_TERMS if t in text]
+
+
+def test_literal_terms_have_positive_fixtures() -> None:
+    assert set(_LITERAL_POSITIVE) == set(guard._LITERAL_TERMS)
+
+
+def test_codex_old_terms_have_positive_fixtures() -> None:
+    assert set(_CODEX_OLD_POSITIVE) == set(guard._CODEX_OLD_TERMS)
+
+
+@pytest.mark.parametrize(
+    ("term", "text"), _LITERAL_POSITIVE.items(), ids=list(_LITERAL_POSITIVE)
+)
+def test_literal_positive_fixtures_are_detected(term: str, text: str) -> None:
+    assert term in text, f"fixture 自体が term を含まない: {term}"
+    assert _literal_hits(text) == [term], (
+        f"検出結果が term 1 件でない: {_literal_hits(text)}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("term", "text"), _CODEX_OLD_POSITIVE.items(), ids=list(_CODEX_OLD_POSITIVE)
+)
+def test_codex_old_positive_fixtures_are_detected(term: str, text: str) -> None:
+    assert term in text, f"fixture 自体が term を含まない: {term}"
+    assert _literal_hits(text) == [term], (
+        f"検出結果が term 1 件でない: {_literal_hits(text)}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "text"), _LITERAL_NEGATIVE, ids=[label for label, _ in _LITERAL_NEGATIVE]
+)
+def test_literal_negative_fixtures_are_not_detected(label: str, text: str) -> None:
+    assert _literal_hits(text) == [], f"{label} が誤検出された: {_literal_hits(text)}"
 
 
 # --------------------------------------------------------------------------
@@ -475,6 +591,28 @@ def test_docs_archive_is_excluded(tmp_path: Path) -> None:
     (tmp_path / "docs" / "archive").mkdir(parents=True)
     (tmp_path / "docs" / "archive" / "old.md").write_text(
         "Claude は自動的に段階を進める。\n", encoding="utf-8"
+    )
+    assert _run_repo(tmp_path) == 0
+
+
+def test_superpowers_dir_is_excluded(tmp_path: Path) -> None:
+    """`docs/superpowers/**` は履歴記録 (dated plans / specs 含む) として対象外。"""
+    _make_repo(tmp_path)
+    plans = tmp_path / "docs" / "superpowers" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "2026-01-01-old.md").write_text(
+        "旧 `.claude/skills` 配下を参照する。\n", encoding="utf-8"
+    )
+    assert _run_repo(tmp_path) == 0
+
+
+def test_audits_dir_is_excluded(tmp_path: Path) -> None:
+    """`docs/audits/**` は当時の監査記録として対象外。"""
+    _make_repo(tmp_path)
+    audits = tmp_path / "docs" / "audits"
+    audits.mkdir(parents=True)
+    (audits / "2026-01-01-audit.md").write_text(
+        "`CLAUDE.md` を参照する。\n", encoding="utf-8"
     )
     assert _run_repo(tmp_path) == 0
 
