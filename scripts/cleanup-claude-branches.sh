@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cleanup-claude-branches.sh — Delete safe `claude/*` local branches (Refs #708 / #710).
+# cleanup-claude-branches.sh — Delete safe local branches (Refs #708 / #710 / #1067).
 #
 # Output: stdout NDJSON (one JSON object per line). Schema: schemas/cleanup-output.schema.json.
 #
@@ -11,7 +11,9 @@
 #      ancestor-only fallback)
 #   2. active 不在: not referenced by any active worktree
 #   3. cooldown: last commit ≥ 24h ago
-#   (prefix filter: claude/* only is listed)
+#   対象 = `main` / `master` / `develop-*` を除く全ローカル branch。旧 #708 の
+#   `claude/*` 限定は #1067 Phase 2 で撤廃した (主エージェントの Zed 移行で branch 名が
+#   `<issue#>-<slug>` 形式になったため)。ファイル名は互換のため据え置き。
 #
 # Usage:
 #   scripts/cleanup-claude-branches.sh           # dry-run
@@ -65,7 +67,13 @@ while (( $# > 0 )); do
   shift
 done
 
-mapfile -t BRANCHES < <(git -C "$REPO_ROOT" branch --list 'claude/*' --format='%(refname:short)')
+# 対象 branch の列挙 (#1067 Phase 2)。保護 branch は列挙段階で除外する
+# (kept イベントも出さない。schema の reason enum を増やさないため)。
+_PROTECTED_BRANCH_RE='^(main|master|develop|develop-.*)$'
+mapfile -t BRANCHES < <(
+  git -C "$REPO_ROOT" branch --list --format='%(refname:short)' \
+    | grep -Ev "$_PROTECTED_BRANCH_RE" || true
+)
 
 deleted=0
 kept=0

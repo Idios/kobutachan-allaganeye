@@ -6,6 +6,9 @@ PR #732 mock scenarios 5 件 x 2 modes (dry-run / apply) + summary consistency.
 from pathlib import Path
 
 
+import pytest
+
+
 def _of_event(events, evt):
     return [e for e in events if e.get("event") == evt]
 
@@ -99,27 +102,38 @@ def test_cooldown_kept(
     ), result.stdout
 
 
-# ---------- Scenario 5: prefix 違い (feature/xxx) -> 列挙対象外 ----------
+# ---------- Scenario 5: prefix 非依存 + 保護 branch (#1067 Phase 2) ----------
 
 
-def test_non_claude_prefix_ignored(
-    tmp_repo: Path,
+def test_non_claude_branch_deleted_when_safe(
+    make_claude_branch,
     run_hook,
     assert_valid_ndjson,
 ) -> None:
-    import subprocess
-
-    subprocess.run(
-        ["git", "checkout", "-q", "-b", "feature/not-touched"],
-        cwd=tmp_repo,
-        check=True,
+    """`claude/` prefix を持たない branch も安全条件を満たせば削除対象 (#1067 Phase 2)。"""
+    branch = make_claude_branch(
+        "p2a", merged=True, age_seconds=86400 * 2, name="1067-example-slug"
     )
-    subprocess.run(["git", "checkout", "-q", "develop-0.2.0"], cwd=tmp_repo, check=True)
     result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
     assert_valid_ndjson(result.ndjson)
-    # No event references feature/not-touched
+    deleted = _of_event(result.ndjson, "deleted")
+    assert any(e["name"] == branch for e in deleted), result.stdout
+
+
+@pytest.mark.parametrize("protected", ["main", "master", "develop", "develop-9.9.9"])
+def test_protected_branch_not_listed(
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+    protected: str,
+) -> None:
+    """`main` / `master` / `develop*` は merged / old でも列挙されない。"""
+    make_claude_branch("p2prot", merged=True, age_seconds=86400 * 2, name=protected)
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
     for e in result.ndjson:
-        assert e.get("name") != "feature/not-touched", result.stdout
+        assert e.get("name") != protected, result.stdout
+    assert result.ndjson[-1]["total"] == 0
 
 
 # ---------- summary counter 一貫性 ----------

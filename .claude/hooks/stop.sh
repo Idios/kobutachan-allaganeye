@@ -3,8 +3,9 @@
 #
 # 2 つの cleanup script を順次起動する:
 #   1. scripts/cleanup-worktrees.sh --apply    — worktree 空 dir を rmdir で除去 (#477)
-#   2. scripts/cleanup-claude-branches.sh --apply — 安全 AND 条件を満たす claude/* branch を
-#      git branch -D で削除 (#708、merged + active 不在 + claude/ prefix + 24h cooldown)
+#   2. scripts/cleanup-claude-branches.sh --apply — 安全 AND 条件を満たす branch を
+#      git branch -D で削除 (#708、merged + active 不在 + 24h cooldown。
+#      対象は main / master / develop-* 以外の全 local branch = #1067 Phase 2)
 #
 # rmdir / git branch -D とも明示的な安全条件下のみ操作するため、未保存ファイルや
 # 作業中の worktree / branch が誤って消失することはない。
