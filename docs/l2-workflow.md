@@ -169,7 +169,7 @@ gh pr list --search "<元issue#>" --state all \
   --json number,headRefName,state,createdAt
 
 # 5. Codex adversarial-review (Codex 統合、C2、L-β β-4 で追加)
-# Step 0-4 通過後、PR 作成直前に Codex GPT-5.4 で adversarial pass。
+# Step 0-4 通過後、PR 作成直前に Codex で adversarial pass。
 # invocation path は 3-tier (#795、下記 §Step 5 の invocation path 参照)。
 # default (tier 1) は `codex` CLI 直接呼び出し (#1043 で companion script → CLI に統合):
 #   codex review "Review the diff against <base> (run: git diff <base>...HEAD). Focus: <focus>"
@@ -874,7 +874,7 @@ node .github/scripts/<gate>.js <fixture>; echo "exit=$?"   # 非ゼロを期待
 | [`review-pr`](../.agents/skills/review-pr/SKILL.md) Step 5 | PR が CI job / hook / skill step を**新設**している場合、本節の 3 点に照らして逐条検証し、欠けていれば Step 5b トリアージ表に計上する |
 | [`create-task`](../.agents/skills/create-task/SKILL.md) §ガード / 規約 / チェックを追加する issue の受け入れ条件 | 「ガードを追加する」issue を起票する際、`## 受け入れ条件` に 3 点セットを反映する |
 | [`AGENTS.md`](../AGENTS.md) §開発ワークフロー | 発見可能性の確保のため 1 行リンクを置く |
-| `superpowers:brainstorming` | **規律のみ (コード上の発火点ではない)。** plugin skill は本 repo に存在せず編集できないため、再発防止機構を設計する creative work で本節を引くのは実行者の規律に依存する。**この行を「実装済みの発火点」と数えない** |
+| brainstorming (規律のみ) | **コード上の発火点ではない。** 再発防止機構を設計する creative work で本節を引くのは実行者の規律に依存する。**この行を「実装済みの発火点」と数えない** |
 
 ### Red Flags
 
@@ -1049,7 +1049,7 @@ PR #746 Phase C で「repo-wide dangling-ref scan」を dispatch した subagent
 
 ### Orphan commit 防止 (controller 側 verification)
 
-subagent-driven-development の Task 実装で、subagent が `git checkout <SHA>` 等で detached HEAD に入ってから commit すると、新 commit は元の branch HEAD ではなく detached state の上に作られる。subagent が戻る (checkout branch) 際に reattach しないと、commit は orphan 化 (`git show <SHA>` では見えるが branch から到達不能) する。
+subagent 駆動の Task 実装で、subagent が `git checkout <SHA>` 等で detached HEAD に入ってから commit すると、新 commit は元の branch HEAD ではなく detached state の上に作られる。subagent が戻る (checkout branch) 際に reattach しないと、commit は orphan 化 (`git show <SHA>` では見えるが branch から到達不能) する。
 
 controller (main session) は subagent dispatch 後に以下を**必ず**実行:
 
@@ -1168,14 +1168,14 @@ if fallback_invoked:
     report.append(format_fallback_notice(fallback_reason, run.stderr[:200]))
 ```
 
-実装は skill prompt 側 (`review-pr` SKILL.md Step 5a / `iterate-review` SKILL.md Step 2.1) で行う。fallback は**レビューを実行している agent 自身**（主エージェント。dispatch 時はその subagent）が直接レビュー (superpowers `requesting-code-review` 相当を Zed で代替)、「Codex fallback notice」記載は必須 (§Codex 運用 C6)。
+実装は skill prompt 側 (`review-pr` SKILL.md Step 5a / `iterate-review` SKILL.md Step 2.1) で行う。fallback は**レビューを実行している agent 自身**（主エージェント。dispatch 時はその subagent）が直接レビュー (code review subagent 相当を Zed で代替)、「Codex fallback notice」記載は必須 (§Codex 運用 C6)。
 
 ### Fallback 戦略
 
 | Codex 実行 (agent の通常 path) | 通常用途 | Fallback 内容 |
 | --- | --- | --- |
 | `codex review "<focus + diff 指示>"` (C3 / C2 で Bash 実行 = tier 1) | code quality adversarial pass / Pre-flight 第 5 ゲート | レビューを実行している agent 自身 (主エージェント。dispatch 時はその subagent) が直接レビュー。focus は Codex に渡したもの (PROMPT 形式) と同じ導出結果を用いる。「adversarial / approve させない姿勢」を明示 |
-| `codex exec` (C4 で root-cause 調査時に invoke) | bug 根本原因 + 類似バグ探索 | 主エージェント (DeepSeek) + `systematic-debugging` 相当で自力調査。`scope-guard` 規約は維持 (独断 fix 禁止) |
+| `codex exec` (C4 で root-cause 調査時に invoke) | bug 根本原因 + 類似バグ探索 | 主エージェント (DeepSeek) が体系的なデバッグ手順で自力調査。`scope-guard` 規約は維持 (独断 fix 禁止) |
 
 ### Fallback 実行時の必須記載 (Iron Law 5 整合)
 
@@ -1192,7 +1192,7 @@ skill report (`review-pr` Step 6 レビュー報告 / `iterate-review` **Final s
 
 ### Fallback の限界 (明示)
 
-- Codex は GPT-5.4 (独立 model) の second opinion。DeepSeek 直接レビュー（実行者が主エージェントでも dispatch された subagent でも同一 model）は self-review に近く、bias 構造が同じになる
+- Codex は独立 model の second opinion。DeepSeek 直接レビュー（実行者が主エージェントでも dispatch された subagent でも同一 model）は self-review に近く、bias 構造が同じになる
 - 重要 PR (release 直前 / 大規模 refactor / [`.agents/skills/review-pr/SKILL.md`](../.agents/skills/review-pr/SKILL.md) §「core 変更対象ファイル」の表に該当する変更) で Codex fallback が trigger した場合、user に AskUserQuestion で「Codex 復旧待ち / DeepSeek 直接レビュー / abort」の 3 択を提示
 - fallback report には「fallback で実行済」を明示することで、後日 Codex 復旧時に再 review が要否を判断可能にする
 
@@ -1207,7 +1207,7 @@ Claude レビュー経路（Claude Code セッションでの Fable 俯瞰レビ
 ### 実行メカニズム（正直な制約）
 
 - Claude レビューが使えない間、俯瞰レビューは **主エージェント（= DeepSeek V4 Pro）が代行**する（Idios の判断で発動。hook 強制は不可）。
-- Zed + DeepSeek 環境での Claude Code 固有機構の対応（`Agent` tool → `spawn_agent` / `AskUserQuestion` → 散文での確認依頼 / `superpowers:requesting-code-review` → 主エージェントの直接レビュー / スラッシュコマンド → SKILL.md を read して手動追従 / `codex` CLI → 直呼び）は `AGENTS.md` §レビュー実行経路 を参照。
+- Zed + DeepSeek 環境での Claude Code 固有機構の対応（`Agent` tool → `spawn_agent` / `AskUserQuestion` → 散文での確認依頼 / Claude Code の code review subagent → 主エージェントの直接レビュー / スラッシュコマンド → SKILL.md を read して手動追従 / `codex` CLI → 直呼び）は `AGENTS.md` §レビュー実行経路 を参照。
 
 ### Fable fallback（並列独立 + 主エージェント突合）
 
@@ -1244,7 +1244,7 @@ Claude レビュー不可時の fallback でレビューを代行した成果物
 ```text
 ┌─────────────────────────────────────────────────────────────┐
 │ Stage 1: 主エージェント内 fresh subagent が実装              │
-│         (spawn_agent: subagent-driven-development)           │
+│         (spawn_agent: subagent 駆動実装)                     │
 │         - per-task subagent dispatch                         │
 │         - 2-stage review (spec reviewer + code quality)      │
 │         - HARD-GATE: scope を超える発見 → BLOCKED 報告       │
@@ -1257,7 +1257,7 @@ Claude レビュー不可時の fallback でレビューを代行した成果物
 └─────────────────────────────────────────────────────────────┘
                             ↓ branch HEAD が想定 SHA を含む
 ┌─────────────────────────────────────────────────────────────┐
-│ Stage 3: Codex review (tier 1, GPT-5.4) で adversarial pass   │
+│ Stage 3: Codex review (tier 1) で adversarial pass            │
 │         独立 model の second opinion                          │
 │         focus 文字列で project 固有焦点                       │
 │         Codex 自身に commit させない (M3 整合)                │
@@ -1283,7 +1283,7 @@ Claude レビュー不可時の fallback でレビューを代行した成果物
 ### 並列ではなく直列にする理由
 
 - Codex に fix させると Iron Law 3 (scope creep) / Iron Law 5 (independent judgment) の衝突リスク
-- subagent (spawn_agent)（主エージェントと同一モデル）と Codex (GPT-5.4) を並列起動しても finding が重複するだけで bias は減らない
+- subagent (spawn_agent)（主エージェントと同一モデル）と Codex を並列起動しても finding が重複するだけで bias は減らない
 - 直列で「実装 → reachability → adversarial review → triage」と段階化すると、各 stage で人 (Idios) が介入できる checkpoint が確保される
 
 ### Fallback (Codex fail 時)

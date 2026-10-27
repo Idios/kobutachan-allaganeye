@@ -273,19 +273,77 @@ _CODEX_OLD_POSITIVE: dict[str, str] = {
     "CLAUDE_PLUGIN_ROOT": "`CLAUDE_PLUGIN_ROOT` を参照する",
     ".claude/plugins": "`.claude/plugins/openai-codex` 配下",
 }
+_PLUGIN_OLD_POSITIVE: dict[str, str] = {
+    "superpowers:": "`superpowers:brainstorming` を invoke する",
+    "subagent-driven-development": "`subagent-driven-development` の Task 実装",
+    "requesting-code-review": "`requesting-code-review` 相当を代行する",
+    "systematic-debugging": "`systematic-debugging` 相当で調査する",
+    "GPT-5.4": "Codex (GPT-5.4) の second opinion",
+}
 
 # negative = 置換後の正 / 無関係な正当参照 (検出されてはならない)。
+# **class 単位で保持**し、各 class に 1 件以上あることを test が要求する
+# (AGENTS.md の用語 sweep 完全性 checklist にある「positive / negative 両 fixture 必須」を
+# negative 側でも機械検査する。iterate-review Round 2 の finding)。
+_LITERAL_NEGATIVE_BY_CLASS: dict[str, list[tuple[str, str]]] = {
+    "literal": [
+        ("replacement-skills", "`.agents/skills/review-pr/SKILL.md`"),
+        ("replacement-agents", "`AGENTS.md` を参照"),
+        ("legit-claude-settings", "`.claude/settings.json` を編集"),
+        ("legit-env", "`CLAUDE_PROJECT_DIR` を使う"),
+    ],
+    "codex-old": [
+        ("new-cli", "`codex review --base <base>` を実行"),
+    ],
+    "plugin-old": [
+        # 出典帰属 / 方式名としての言及は維持対象 (#1064)。bare 語で持つとここが誤検出になる
+        ("superpowers-attribution", "`obra/superpowers` の pattern に倣う"),
+        ("superpowers-parenthetical", "session-start.sh は superpowers 方式"),
+        ("model-agnostic", "Codex は独立 model の second opinion"),
+        # 上流 skill への帰属 URL は維持対象 (Codex adversarial-review の P2)
+        (
+            "upstream-skill-url",
+            "https://github.com/obra/superpowers/tree/main/skills/systematic-debugging/SKILL.md",
+        ),
+        (
+            "upstream-skill-url-branch-name",
+            "[skill](https://github.com/obra/superpowers/tree/main/skills/requesting-code-review)",
+        ),
+        # scheme 無しの URL / repo 内 anchor も出典参照として維持する
+        (
+            "upstream-scheme-less-url",
+            "github.com/obra/superpowers/tree/main/skills/systematic-debugging/SKILL.md を参照",
+        ),
+        ("internal-anchor", "docs/guide.md#systematic-debugging-section を見よ"),
+        # markdown リンクの label が上流 skill 名の場合は出典帰属として許容する
+        # (Round 1 Q2=(a) の「帰属は維持対象」と同方向。Round 5 の ambiguous をこの向きで確定)
+        (
+            "markdown-link-label-attribution",
+            "[superpowers:brainstorming](https://github.com/obra/superpowers/tree/main/skills/brainstorming)",
+        ),
+    ],
+}
 _LITERAL_NEGATIVE: list[tuple[str, str]] = [
-    ("replacement-skills", "`.agents/skills/review-pr/SKILL.md`"),
-    ("replacement-agents", "`AGENTS.md` を参照"),
-    ("legit-claude-settings", "`.claude/settings.json` を編集"),
-    ("legit-env", "`CLAUDE_PROJECT_DIR` を使う"),
-    ("new-cli", "`codex review --base <base>` を実行"),
+    item for items in _LITERAL_NEGATIVE_BY_CLASS.values() for item in items
 ]
+# positive fixture を class 単位で束ねたもの (registry との一致を meta-test が要求する)。
+_POSITIVE_BY_GROUP: dict[str, dict[str, str]] = {
+    "literal": _LITERAL_POSITIVE,
+    "codex-old": _CODEX_OLD_POSITIVE,
+    "plugin-old": _PLUGIN_OLD_POSITIVE,
+}
+# registry を持たない語 list (slash command は regex で検査する。exclusion glob は
+# 用語ではないため、いずれも対象外)。
+_ALLOWED_UNREGISTERED_TERM_LISTS = {"_SLASH_SKILLS", "_EXCLUDED_GLOBS"}
 
 
 def _literal_hits(text: str) -> list[str]:
-    return [t for t in guard._LITERAL_TERMS + guard._CODEX_OLD_TERMS if t in text]
+    """checker と同じ判定で literal 一致を返す (registry 駆動。URL 除外を尊重)。"""
+    hits: list[str] = []
+    for terms, _label, strip_urls in guard._LITERAL_TERM_GROUPS.values():
+        haystack = guard._URL_RE.sub("", text) if strip_urls else text
+        hits += [t for t in terms if t in haystack]
+    return hits
 
 
 def test_literal_terms_have_positive_fixtures() -> None:
@@ -294,6 +352,86 @@ def test_literal_terms_have_positive_fixtures() -> None:
 
 def test_codex_old_terms_have_positive_fixtures() -> None:
     assert set(_CODEX_OLD_POSITIVE) == set(guard._CODEX_OLD_TERMS)
+
+
+def test_plugin_old_terms_list_is_non_empty() -> None:
+    assert guard._PLUGIN_OLD_TERMS, "_PLUGIN_OLD_TERMS が空 (#1064)"
+
+
+def test_plugin_old_terms_have_positive_fixtures() -> None:
+    assert set(_PLUGIN_OLD_POSITIVE) == set(guard._PLUGIN_OLD_TERMS)
+
+
+def test_every_literal_class_has_negative_fixtures() -> None:
+    """literal 系の各 class に positive / negative fixture がそろっている。
+
+    checker の `_LITERAL_TERM_GROUPS` が literal 系 class の単一の正であるため、
+    group を追加すると fixture （positive / negative 両方）を足すまで red になる。
+    """
+    groups = guard._LITERAL_TERM_GROUPS
+    assert set(_POSITIVE_BY_GROUP) == set(groups), "新 class の positive fixture が無い"
+    assert set(_LITERAL_NEGATIVE_BY_CLASS) == set(groups), (
+        "新 class の negative fixture が無い"
+    )
+    for class_name, (terms, _label, _strip_urls) in groups.items():
+        assert set(_POSITIVE_BY_GROUP[class_name]) == set(terms), (
+            f"{class_name}: positive fixture が list と不一致"
+        )
+        assert _LITERAL_NEGATIVE_BY_CLASS[class_name], (
+            f"{class_name}: negative fixture が空"
+        )
+
+
+@pytest.mark.parametrize(
+    ("group", "term"),
+    [
+        (group, term)
+        for group in _POSITIVE_BY_GROUP
+        for term in _POSITIVE_BY_GROUP[group]
+    ],
+    ids=[
+        f"{group}:{term}"
+        for group in _POSITIVE_BY_GROUP
+        for term in _POSITIVE_BY_GROUP[group]
+    ],
+)
+def test_each_positive_fixture_is_detected_by_check_sweep(
+    tmp_path: Path, group: str, term: str
+) -> None:
+    """positive fixture を **1 語ずつ** checker 本体 (check_sweep) に食わせて発火確認。
+
+    `_literal_hits` は fixture 側の mirror であり、checker 本体が語を取り損ねても
+    気付きにくい。group を一括で流すと 1 語の壊れが他の語で masking されるため、
+    語単位で E2E 検証する (`term` は ids と可読性のため受け取る)。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        _POSITIVE_BY_GROUP[group][term] + "\n", encoding="utf-8"
+    )
+    assert _run_repo(tmp_path) == 1, f"{group}:{term} が検出されない"
+
+
+def test_registry_covers_all_term_lists() -> None:
+    """`_LITERAL_TERM_GROUPS` に未登録の語 list を作らない。
+
+    未登録の list は `check_sweep` から見えないため、fixture を要求する
+    上記 test もすり抜ける。**命名規約に依存せず** `vars(guard)` の list[str]
+    を全部走査し、登録漏れを red にする。
+    """
+    registered = {
+        id(terms) for terms, _label, _strip_urls in guard._LITERAL_TERM_GROUPS.values()
+    }
+    unregistered = sorted(
+        name
+        for name, value in vars(guard).items()
+        if isinstance(value, list)
+        and value
+        and all(isinstance(item, str) for item in value)
+        and name not in _ALLOWED_UNREGISTERED_TERM_LISTS
+        and id(value) not in registered
+    )
+    assert not unregistered, f"_LITERAL_TERM_GROUPS に未登録の語 list: {unregistered}"
 
 
 @pytest.mark.parametrize(
@@ -310,6 +448,16 @@ def test_literal_positive_fixtures_are_detected(term: str, text: str) -> None:
     ("term", "text"), _CODEX_OLD_POSITIVE.items(), ids=list(_CODEX_OLD_POSITIVE)
 )
 def test_codex_old_positive_fixtures_are_detected(term: str, text: str) -> None:
+    assert term in text, f"fixture 自体が term を含まない: {term}"
+    assert _literal_hits(text) == [term], (
+        f"検出結果が term 1 件でない: {_literal_hits(text)}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("term", "text"), _PLUGIN_OLD_POSITIVE.items(), ids=list(_PLUGIN_OLD_POSITIVE)
+)
+def test_plugin_old_positive_fixtures_are_detected(term: str, text: str) -> None:
     assert term in text, f"fixture 自体が term を含まない: {term}"
     assert _literal_hits(text) == [term], (
         f"検出結果が term 1 件でない: {_literal_hits(text)}"
@@ -378,6 +526,7 @@ def test_runtime_messages_are_pinned(tmp_path: Path) -> None:
         "`build-cache/` は build キャッシュ置き場のため対象外 (#1066)" in result.stderr
     )
     assert "コードコメントの旧参照は #1076 で追跡する" in result.stderr
+    assert "「独立 model」へ置換すること (#1064)" in result.stderr
 
 
 # 宣言の正 (#1073)。検出 class は 3 spot / exit code は 2 spot / 除外の帰属は 3 spot。
@@ -388,6 +537,7 @@ _DETECTION_CLASS_TOKENS = (
     "旧 path",
     "主エージェント=Claude",
     "旧 invocation 契約",
+    "Claude Code plugin 旧表記",
 )
 # 除外 class の帰属は「その class を名指しする bullet」単位で pin する
 # (whole-file の部分一致だと、別行の同 token が帰属行の drift を mask する)
@@ -440,7 +590,7 @@ def test_declarations_are_consistent_across_spots() -> None:
     # (1) 検出 class の宣言: 列挙行 / docstring / ci.yml の宣言コメントブロックに限定する。
     # whole-file の部分一致だと、別行に同 token がある場合に宣言行の drift を mask する。
     agents_section = _agents_declaration_section()
-    class_lines = [ln for ln in agents_section.splitlines() if "4 class" in ln]
+    class_lines = [ln for ln in agents_section.splitlines() if "5 class" in ln]
     assert len(class_lines) == 1, "AGENTS.md の class 列挙行が 1 行ではない"
     for token in _DETECTION_CLASS_TOKENS:
         assert token in class_lines[0], f"AGENTS.md: class 列挙行に無い: {token}"
@@ -541,6 +691,92 @@ def test_living_doc_claude_agent_old_term_is_exit_1(tmp_path: Path) -> None:
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "guide.md").write_text(
         "# Guide\n\nClaude は自動的に段階を進め、要所で判断を仰ぐ。\n",
+        encoding="utf-8",
+    )
+    assert _run_repo(tmp_path) == 1
+
+
+def test_living_doc_plugin_old_term_is_exit_1(tmp_path: Path) -> None:
+    """Claude Code plugin 旧表記の残存は exit 1 (#1064)。"""
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\n`superpowers:brainstorming` を invoke する。\n", encoding="utf-8"
+    )
+    assert _run_repo(tmp_path) == 1
+
+
+def test_living_doc_old_term_after_fullwidth_bracket_is_exit_1(
+    tmp_path: Path,
+) -> None:
+    """全角括弧で囲んだ URL の直後の旧用語も検出する (#1064、Round 3 finding)。
+
+    日本語では `出典（https://example.com）によれば<旧用語>を使う` のように全角で URL を
+    囲むため、打ち切り文字に全角の閉じ記号が無いと検出漏れになる。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\n"
+        "出典（https://github.com/obra/superpowers）によればsystematic-debuggingを使う。\n",
+        encoding="utf-8",
+    )
+    assert _run_repo(tmp_path) == 1
+
+
+def test_living_doc_old_term_after_bare_url_is_exit_1(tmp_path: Path) -> None:
+    """scheme 付き bare URL 直後 (非 ASCII 散文) の旧用語も検出する (#1064、Round 4)。
+
+    URL の打ち切りを記号列挙にすると、日本語散文が続く場合に打ち切れず
+    行末まで飲み込んで検出漏れになる。ASCII 肯定形で切り出すことを pin する。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\n"
+        "詳細はhttps://example.comを参照してsystematic-debuggingを実行する。\n",
+        encoding="utf-8",
+    )
+    assert _run_repo(tmp_path) == 1
+
+
+def test_living_doc_canonical_slash_form_is_exit_1(tmp_path: Path) -> None:
+    """plugin skill の canonical 呼び出し形 (`/superpowers:...`) も検出する。
+
+    先頭スラッシュがあると scheme 無し URL 分岐にパスとして食われ、第 5 class の
+    主語が素通りしていた (Round 5 finding)。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\n`/superpowers:brainstorming` を起動する。\n", encoding="utf-8"
+    )
+    assert _run_repo(tmp_path) == 1
+
+
+def test_living_doc_upstream_skill_url_passes(tmp_path: Path) -> None:
+    """上流 skill への帰属 URL は exit 0 (#1064、Codex adversarial-review の P2)。"""
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\n"
+        "https://github.com/obra/superpowers/tree/main/skills/systematic-debugging/SKILL.md\n",
+        encoding="utf-8",
+    )
+    assert _run_repo(tmp_path) == 0
+
+
+def test_living_doc_old_term_after_markdown_link_is_exit_1(tmp_path: Path) -> None:
+    r"""URL 直後 (空白なし) の旧用語も検出する (#1064、Round 2 finding)。
+
+    日本語散文は語間に空白を置かないため、URL を `\S+` で消費すると行末まで
+    飲み込んで検出漏れになる。閉じ括弧 / 引用符で打ち切ることを E2E で pin する。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\n"
+        "[仕様](https://example.com/spec)に従い、`systematic-debugging` を実行する。\n",
         encoding="utf-8",
     )
     assert _run_repo(tmp_path) == 1

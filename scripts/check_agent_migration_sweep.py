@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Check the Claude Code → Zed+DeepSeek agent migration sweep is complete (#1041/#1042).
 
-Detects "old terminology" — **4 class**: slash command / 旧 path・旧 filename /
-主エージェント=Claude 表記 / Codex 旧 invocation 契約 (#1043) — that remains in
+Detects "old terminology" — **5 class**: slash command / 旧 path・旧 filename /
+主エージェント=Claude 表記 / Codex 旧 invocation 契約 (#1043) /
+Claude Code plugin 旧表記 (#1064) — that remains in
 **living docs**, to prevent the incomplete-sweep recurrence seen in PR #1051
 Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を個別に拾う事象)。
 
@@ -79,6 +80,62 @@ _CODEX_OLD_TERMS = [
     "CLAUDE_PLUGIN_ROOT",
     ".claude/plugins",
 ]
+
+# Claude Code plugin 旧表記 + 旧モデル名 (#1064)。plugin skill 名は本 repo に存在せず
+# (`spawn_agent` / 主エージェント直接レビューが正)、旧モデル名は living doc で版を
+# 固定せず「独立 model」と書く。
+#
+# `superpowers:` は **コロン込み** で持つ: `obra/superpowers` への出典帰属リンクと
+# 「(superpowers 方式)」は維持対象 (plugin 呼び出しではなく帰属表現) のため、
+# bare 語で持つと誤検出する (negative fixture `superpowers-attribution` /
+# `superpowers-parenthetical` で pin)。
+#
+# 旧モデル名は一般の model 版固定検出 (例: `GPT-\d`) を行わず、sweep で実際に
+# 残っていた版名のみ literal で持つ (汎用 regex は正式名称の記述まで巻き込むため)。
+#
+# 上流 skill への **出典帰属 URL** (`https://github.com/obra/superpowers/tree/main/
+# skills/<name>/SKILL.md` 等) は維持対象のため、URL 内の一致は判定から除外する
+# (`_URL_RE`)。`.claude/skills` 等の repo 内 path とは違い、これら 4 語は上流の
+# 正当な名称でもあるため (Codex adversarial-review [P2])。
+_PLUGIN_OLD_TERMS = [
+    "superpowers:",
+    "subagent-driven-development",
+    "requesting-code-review",
+    "systematic-debugging",
+    "GPT-5.4",
+]
+
+# 帰属 URL / path / anchor の判定からの除外に使う (上記 `_PLUGIN_OLD_TERMS` のみに適用する)。
+#
+# **打ち切り文字の列挙ではなく、URL / path に使われる ASCII 文字の肯定形で切り出す**:
+# 列挙方式だと、`https://example.comを参照して<旧用語>を使う` のように URL 直後に
+# 日本語散文が続く場合に打ち切り文字が現れず、行末まで飲み込んで検出漏れになる
+# (iterate-review Round 2 / Round 3 / Round 4 の finding)。ASCII 肯定形なら
+# 非 ASCII で自動的に止まるため、全角括弧・句読点を個別に列挙する必要がない。
+#
+# 2 番目の分岐は **scheme 無しの URL / repo 内 path / anchor** を拾う
+# (`github.com/.../SKILL.md` / `docs/guide.md#<旧用語>`)。いずれも上流・内部への
+# 出典参照で、operational instruction ではない。
+#
+# ただし **`.` か `#` を含むことを要求**する: これが無いと
+# `/superpowers:brainstorming` のような **plugin skill の canonical 呼び出し形** が
+# パスと誤認されて消え、第 5 class の主語が素通りする (Round 5 finding)。
+# `GPT-5.4` は `/` を持たないため影響を受けない。
+_URL_CHARS = r"A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%"
+_URL_RE = re.compile(
+    rf"(?:https?://|www\.)[{_URL_CHARS}]+"
+    rf"|(?=[{_URL_CHARS}]*[.#])[{_URL_CHARS}]*/[{_URL_CHARS}]+"
+)
+
+# literal 系 class の **単一の正**。key は test の positive / negative fixture の key と
+# 一致することを meta-test が要求する (`_LITERAL_TERM_GROUPS` に group を足すと、
+# fixture を足すまで test が red になる)。
+# value = (旧用語 list, 違反ラベル, URL 内の一致を無視するか)。
+_LITERAL_TERM_GROUPS: dict[str, tuple[list[str], str, bool]] = {
+    "literal": (_LITERAL_TERMS, "旧表記残存", False),
+    "codex-old": (_CODEX_OLD_TERMS, "Codex 呼び出し契約の旧表記残存", False),
+    "plugin-old": (_PLUGIN_OLD_TERMS, "Claude Code plugin 旧表記残存", True),
+}
 
 # 主エージェント=Claude の旧表記 (#1066)。運用は Zed + DeepSeek が主エージェントへ
 # 反転済 (#1043) なので、living doc に「Claude を主エージェントとして扱う」表記が
@@ -215,6 +272,8 @@ def check_sweep(repo_root: Path) -> list[str]:
             )
             continue
         for lineno, line in enumerate(text.splitlines(), 1):
+            # 帰属 URL 内の上流 skill 名は維持対象 (operational instruction ではない)。
+            line_without_urls = _URL_RE.sub("", line)
             if _SLASH_RE.search(line):
                 violations.append(f"{rel}:{lineno}: slash command 残存: {line.strip()}")
             if _CLAUDE_AGENT_RE.search(line):
@@ -222,17 +281,13 @@ def check_sweep(repo_root: Path) -> list[str]:
                     f"{rel}:{lineno}: 主エージェント=Claude の旧表記残存: "
                     f"{line.strip()}"
                 )
-            for term in _LITERAL_TERMS:
-                if term in line:
-                    violations.append(
-                        f"{rel}:{lineno}: 旧表記残存 ({term}): {line.strip()}"
-                    )
-            for term in _CODEX_OLD_TERMS:
-                if term in line:
-                    violations.append(
-                        f"{rel}:{lineno}: Codex 呼び出し契約の旧表記残存 ({term}): "
-                        f"{line.strip()}"
-                    )
+            for terms, label, strip_urls in _LITERAL_TERM_GROUPS.values():
+                haystack = line_without_urls if strip_urls else line
+                for term in terms:
+                    if term in haystack:
+                        violations.append(
+                            f"{rel}:{lineno}: {label} ({term}): {line.strip()}"
+                        )
     return violations
 
 
@@ -280,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
             "`codex` CLI 直呼び (§Codex 運用) へ置換すること (#1043)。\n"
             "主エージェント=Claude の旧表記は `Zed + DeepSeek` (または `主エージェント`) "
             "へ置換すること (#1066)。\n"
+            "Claude Code plugin 旧表記 (plugin 固有名 / 旧モデル名) は `spawn_agent` / "
+            "主エージェント直接レビュー / 「独立 model」へ置換すること (#1064)。\n"
             "コードファイルは検査対象外 (`_SCAN_EXTS` の allowlist が living doc のみを"
             "走査するため)。CHANGELOG / eval fixture / `docs/superpowers/**` / "
             "archive / audits は対象外 (#1044)。`gui/**` は GUI ソースのため対象外 "

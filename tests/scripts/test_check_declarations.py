@@ -51,6 +51,7 @@ EXPECTED_IDS = {
     "gui-screens",
     "detection-modules",
     "codex-invocation",
+    "sweep-classes",
 }
 
 

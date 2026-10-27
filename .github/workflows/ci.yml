@@ -353,7 +353,8 @@ jobs:
 
       # agent migration (#1041/#1042) の用語 sweep 完全性 gate。
       # 旧用語 (slash command / 旧 path・旧 filename / 主エージェント=Claude 表記 /
-      # Codex 旧 invocation 契約 (#1043)) が living doc に残ると fail する (Round 4/5 で
+      # Codex 旧 invocation 契約 (#1043) / Claude Code plugin 旧表記 (#1064)) が
+      # living doc に残ると fail する (Round 4/5 で
       # session-start.sh / versioning.md の残存を個別に拾った事象の再発防止)。
       # 検出 class の実装は `scripts/check_agent_migration_sweep.py` の各 regex /
       # literal list を正とする。標準ライブラリのみで動く。
