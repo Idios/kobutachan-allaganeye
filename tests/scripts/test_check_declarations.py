@@ -52,6 +52,7 @@ EXPECTED_IDS = {
     "detection-modules",
     "codex-invocation",
     "sweep-classes",
+    "zed-hook-fallbacks",
 }
 
 

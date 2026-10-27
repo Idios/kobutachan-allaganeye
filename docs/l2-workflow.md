@@ -905,6 +905,8 @@ node .github/scripts/<gate>.js <fixture>; echo "exit=$?"   # 非ゼロを期待
 
 **ハードゲートの実装**: `.claude/hooks/preuse.py` が `PreToolUse` で `gh` bulk 操作・PR マージ等をインターセプトし、#559 以降は `permissionDecision=ask` を返して Claude Code の permission prompt を出す (旧: #401 の exit 2 block + bypass prefix 運用)。**本 hook は Claude Code セッションでのみ発火する** (Zed + DeepSeek の主エージェントには発火しない。Zed では Iron Law 2 の bulk 操作確認を主エージェントが散文で行う)。GitHub Action でのマージブロックは将来候補。
 
+**Zed 期の強制力** (#1067): 上表のうち `SessionStart` / `PreToolUse` / `Stop` の 3 層は `.claude/settings.json` 登録の **Claude Code 専用 hook** であり、Zed + DeepSeek では**一切発火しない**。Zed での代替・強制力の一覧は §Zed 期の強制・継続機構 を参照 (本節は Claude Code 期の実装記録として残す)。
+
 #### PreToolUse hook の gate 運用 (#485 / #513 / #559)
 
 `preuse.py` は gate 発動時に **exit 0 + stdout JSON (`permissionDecision: "ask"`)** を出力し、Claude Code 本体の permission prompt でユーザーが allow / deny を選ぶ (#559)。allow なら同一 tool invocation でそのまま実行、deny ならキャンセルされる。旧来の `ALLAGANEYE_PREUSE_BYPASS=1 <command>` prefix は **非対話環境向けの escape hatch** として維持 (自動化スクリプト等で permission prompt が出せない場合 / 旧 exit 2 方式の hook と互換したい場合)。
@@ -931,6 +933,50 @@ prefix は strip されて `gh issue close 123` が実行される。`[preuse:by
 - **ask / bypass されたコマンドは state に記録されない** (#513 挙動を #559 以降も維持)。permission prompt で deny された場合や prefix 付き実行 (`[preuse:bypass]`) では counter が累積膨張せず、以降の bulk 判定に影響を与えない
 - `ALLAGANEYE_PREUSE_BYPASS=0` 等は認識されない (prefix 正規表現は `=1` 固定)
 - `.claude/settings.local.json` で `"pretooluse_gate": false` を設定すると gate 全体を無効化できる (緊急避難用、通常は true = デフォルト)
+
+## Zed 期の強制・継続機構 (#1067)
+
+主エージェントを Zed + DeepSeek へ移行した (#1043 / #1066) ことで、Claude Code の hook で実装されていた強制・継続機構が**発火しない**状態になった。本節は「どの機構が Zed で使え、何が代替で、強制力がどれくらいか」の**単一の正**である (#1067)。
+
+### 機構マトリクス
+
+| 機構 | Claude Code の実装 | Zed + DeepSeek の代替 | Zed での強制力 |
+| --- | --- | --- | --- |
+| Iron Law / Red Flags のセッション注入 | `SessionStart` hook (`.claude/hooks/session-start.sh`) | `AGENTS.md` の project rules 注入 | 中 (毎 turn 読まれる) |
+| bulk 操作ゲート (Iron Law 2) | `PreToolUse` hook (`.claude/hooks/preuse.py`) | 主エージェントの散文 3 択 (§Iron Law 2 (bulk 操作) の Zed 経路) | 弱 (規律依存) |
+| worktree 残骸の掃除 | `Stop` hook → `scripts/cleanup-worktrees.sh` | 手動 `--apply` (§worktree メンテナンス §手動実行) | 弱 |
+| local branch の掃除 | `Stop` hook → `scripts/cleanup-claude-branches.sh` | 手動 `--apply`。**現状の対象は `claude/` prefix のみ** | 弱 |
+| orphan commit 検出 | `Stop` hook (`git fsck --unreachable` + author heuristic) | 手動 `git fsck --unreachable` / PR 作成時の branch HEAD 確認 | 弱 |
+| worktree-as-PR-head 検出 | `SessionStart` hook (`^claude/` 限定) | セッション開始時に `gh pr list --head <branch> --state open` を実行 | 弱 |
+| 選択肢提示 | `AskUserQuestion` tool | 散文 3 択 (§AskUserQuestion の等価物) | 中 (規約 + 可読性) |
+| ユーザー訂正の蓄積 | auto-memory (`~/.claude/projects/<project>/memory/`) | なし (必要時 manual read → `docs/knowledge/` へ昇格、§Memory 階層化) | なし |
+
+hook の登録先は `.claude/settings.json` の `hooks.SessionStart` / `PreToolUse` / `PostToolUse` / `Stop`。Zed はこの file を読まないため、これらは **Zed セッションでは発火しない**。
+
+### Iron Law 2 (bulk 操作) の Zed 経路
+
+hook が無いため、**主エージェントが操作前に散文で確認する**。規律のみだが、手順を固定することで抜けを減らす:
+
+1. 対象を実測して列挙する (`gh issue list` / `gh pr list` / `git branch --list` 等。件数を出す)
+2. サンプルを 1 件提示する
+3. `(a) 全件 OK【Recommended】/ (b) 個別調整 / (c) やめる` を提示し、**user の回答を待つ**
+4. 承認後に実行し、実行後の件数を報告する
+
+- 「bulk」とみなす閾値の正は `AGENTS.md` §Iron Law の 2 条目 (本節では再掲しない)
+- 回答が曖昧な場合は**未承認**として扱い、実行しない
+- 実施しなかった場合も「未実施 (理由)」を 1 行残す (§規約・ガード導入の 3 点セット ②)
+
+### AskUserQuestion の等価物
+
+- Claude Code セッションでは `AskUserQuestion` tool で選択肢を提示する。
+- **Zed + DeepSeek には `AskUserQuestion` に相当する tool が無い**ため、主エージェントは **応答本文内の散文で同じ 3 択 (Recommended 付き) を提示し、user の回答を待つ**。これを本 repo における等価物と定める (#1067)。
+- 書式: `(a)` / `(b)` / `(c)` の記号 + 1 行説明、1 つに `【Recommended】`。**回答が来るまで次の作業に進まない** (Iron Law 5)。
+- **skill 本文の `AskUserQuestion` 表記は置換しない**: Claude Code でも実行できる skill として可搬性を保つため tool 名はそのまま残し、Zed 実行時に本節の読み替えを適用する。eval fixture (`*/eval/**`) は履歴記録のため対象外。
+
+### 自動化の余地と限界
+
+- **git hook (`core.hooksPath`) では Iron Law 2 を代替できない**: hook が発火するのは `git` の commit / push 等であり、Iron Law 2 の対象である `gh` の bulk 操作 (issue / PR の一括編集・クローズ) を捕捉しない。したがって bulk ゲートの自動化は Zed 側の機構待ちで、当面は上記の散文経路が唯一の経路である
+- branch 掃除 script は安全条件 (merged / active 不在 / cooldown) を実装済みで、squash merge も OID 一致で拾う (#827)。**`claude/` prefix 限定のため Zed 期の branch 名は対象外**で、汎用化の是非は #1067 で扱う
 
 ## タスクフロー
 
@@ -962,6 +1008,8 @@ Claude Code のセッション用 worktree はセッション終了時に `git w
 
 設定箇所: `.claude/settings.json` の `hooks.Stop` セクション。
 
+**Zed セッションでは Stop hook が発火しない** (§Zed 期の強制・継続機構、#1067)。Zed 期は下記 §手動実行 のコマンドを区切りで実行する。
+
 ### branch cleanup の安全条件 (AND)
 
 `scripts/cleanup-claude-branches.sh --apply` が `git branch -D` で削除する条件 (#708):
@@ -969,7 +1017,7 @@ Claude Code のセッション用 worktree はセッション終了時に `git w
 - **AND 1 (merged)**: 最新 (`sort -V`) の `origin/develop-*` または `origin/main` の祖先 (`git merge-base --is-ancestor`。#816 で develop-0.2.0 固定から一般化。stale な旧 develop ref を merge 根拠にしないため最新のみを採用)、**または** local branch tip の OID が `gh pr list --state merged` の head commit OID (`headRefOid`) 集合に一致する (#827)。本 repo の PR は `--squash` マージのため branch tip が base の祖先にならず is-ancestor では永遠に not-merged 扱いになる。この構造的不整合を gh の merged head OID で OR 補完する。**OID 同一性で照合する**ため、PR merge 後に同名 branch を再作成し未 merge の新 commit を積んでも local tip OID が一致せず kept になり、不可逆 data-loss を構造的に防ぐ (codex HIGH)。gh または `timeout` が不在 / 非ゼロ exit / timeout 発火時は集合を空に倒し is-ancestor のみに fallback する (安全側)
 - **AND 2 (active 参照なし)**: `git worktree list --porcelain` の `branch refs/heads/...` 集合に含まれない
 - **AND 3 (24h cooldown)**: 最終 commit (`git log -1 --format=%ct`) が 24h 以上前
-- **prefix 限定**: `claude/` のみ (= `feature/xxx` 等の手動 branch は対象外)
+- **prefix 限定**: `claude/` のみ (= `feature/xxx` 等の手動 branch は対象外)。Zed 期の branch 名 (例: `<issue#>-<slug>`) も対象外 (§Zed 期の強制・継続機構、#1067)
 
 **評価順序**: AND 2 → AND 1 → AND 3 (cost-efficient: AND 2 は local hash lookup で安価、AND 1 / AND 3 は git subprocess を spawn するため後回し)。最初に fail した条件が `kept <branch> (reason: not-merged | active | cooldown)` の reason として記録される。gh merged 判定 (#827) は `command -v gh` + `command -v timeout` の両方が揃うときのみループ前に 1 回だけ `timeout 10 gh pr list` を呼ぶ (network 依存だが必ず bound される)。判定経路は start event の `gh_merged_lookup` (`ok` / `unavailable` / `error`) と deleted / would_delete event の `merged_via` (`ancestor` / `gh`) で可視化される。
 

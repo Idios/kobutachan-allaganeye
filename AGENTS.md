@@ -329,7 +329,7 @@ PR 作成後は `iterate-review` skill (<PR#>) で review-fix ループを自走
 
 プロジェクト基本ルールは本ファイル (AGENTS.md) §Iron Law (6 条 + Red Flags 表) に記される。条文と Red Flags の正は同節。違反が 1% でも疑われる状況では STOP し `AskUserQuestion` でユーザー確認する。
 
-強制メカニズム (7 層) の詳細は [docs/l2-workflow.md](docs/l2-workflow.md) §強制メカニズム を参照。
+強制メカニズム (7 層) の詳細は [docs/l2-workflow.md](docs/l2-workflow.md) §強制メカニズム を参照。**Zed 期の強制力 (どの層が発火し、何が代替か) の正は同 doc §Zed 期の強制・継続機構** (#1067)。
 
 ### Memory 活用 (ユーザー訂正の蓄積)
 
