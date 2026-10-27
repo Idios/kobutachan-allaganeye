@@ -309,18 +309,34 @@ _LITERAL_NEGATIVE_BY_CLASS: dict[str, list[tuple[str, str]]] = {
             "upstream-skill-url-branch-name",
             "[skill](https://github.com/obra/superpowers/tree/main/skills/requesting-code-review)",
         ),
+        # scheme 無しの URL / repo 内 anchor も出典参照として維持する
+        (
+            "upstream-scheme-less-url",
+            "github.com/obra/superpowers/tree/main/skills/systematic-debugging/SKILL.md を参照",
+        ),
+        ("internal-anchor", "docs/guide.md#systematic-debugging-section を見よ"),
     ],
 }
 _LITERAL_NEGATIVE: list[tuple[str, str]] = [
     item for items in _LITERAL_NEGATIVE_BY_CLASS.values() for item in items
 ]
+# positive fixture を class 単位で束ねたもの (registry との一致を meta-test が要求する)。
+_POSITIVE_BY_GROUP: dict[str, dict[str, str]] = {
+    "literal": _LITERAL_POSITIVE,
+    "codex-old": _CODEX_OLD_POSITIVE,
+    "plugin-old": _PLUGIN_OLD_POSITIVE,
+}
+# registry を持たない語 list (slash command は regex で検査する。exclusion glob は
+# 用語ではないため、いずれも対象外)。
+_ALLOWED_UNREGISTERED_TERM_LISTS = {"_SLASH_SKILLS", "_EXCLUDED_GLOBS"}
 
 
 def _literal_hits(text: str) -> list[str]:
-    """checker と同じ判定で literal 一致を返す (plugin 旧表記のみ URL を除く)。"""
-    text_without_urls = guard._URL_RE.sub("", text)
-    hits = [t for t in guard._LITERAL_TERMS + guard._CODEX_OLD_TERMS if t in text]
-    hits += [t for t in guard._PLUGIN_OLD_TERMS if t in text_without_urls]
+    """checker と同じ判定で literal 一致を返す (registry 駆動。URL 除外を尊重)。"""
+    hits: list[str] = []
+    for terms, _label, strip_urls in guard._LITERAL_TERM_GROUPS.values():
+        haystack = guard._URL_RE.sub("", text) if strip_urls else text
+        hits += [t for t in terms if t in haystack]
     return hits
 
 
@@ -347,17 +363,12 @@ def test_every_literal_class_has_negative_fixtures() -> None:
     group を追加すると fixture （positive / negative 両方）を足すまで red になる。
     """
     groups = guard._LITERAL_TERM_GROUPS
-    positive_by_group: dict[str, dict[str, str]] = {
-        "literal": _LITERAL_POSITIVE,
-        "codex-old": _CODEX_OLD_POSITIVE,
-        "plugin-old": _PLUGIN_OLD_POSITIVE,
-    }
-    assert set(positive_by_group) == set(groups), "新 class の positive fixture が無い"
+    assert set(_POSITIVE_BY_GROUP) == set(groups), "新 class の positive fixture が無い"
     assert set(_LITERAL_NEGATIVE_BY_CLASS) == set(groups), (
         "新 class の negative fixture が無い"
     )
     for class_name, (terms, _label, _strip_urls) in groups.items():
-        assert set(positive_by_group[class_name]) == set(terms), (
+        assert set(_POSITIVE_BY_GROUP[class_name]) == set(terms), (
             f"{class_name}: positive fixture が list と不一致"
         )
         assert _LITERAL_NEGATIVE_BY_CLASS[class_name], (
@@ -365,26 +376,44 @@ def test_every_literal_class_has_negative_fixtures() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "group", list(_POSITIVE_BY_GROUP), ids=list(_POSITIVE_BY_GROUP)
+)
+def test_group_positive_fixtures_are_detected_by_check_sweep(
+    tmp_path: Path, group: str
+) -> None:
+    """各 class の positive fixture が checker 本体 (check_sweep) で検出される。
+
+    `_literal_hits` は fixture 側の mirror であり、checker 本体が group を
+    読み損ねていても緑になり得る。E2E で class ごとに発火を確認する。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    body = "\n".join(_POSITIVE_BY_GROUP[group].values())
+    (tmp_path / "docs" / "guide.md").write_text(body + "\n", encoding="utf-8")
+    assert _run_repo(tmp_path) == 1
+
+
 def test_registry_covers_all_term_lists() -> None:
-    """`_LITERAL_TERM_GROUPS` に未登録の検出語 list を作らない。
+    """`_LITERAL_TERM_GROUPS` に未登録の語 list を作らない。
 
     未登録の list は `check_sweep` から見えないため、fixture を要求する
-    上記 test もすり抜ける。list を追加したら registry 登録を強制する。
+    上記 test もすり抜ける。**命名規約に依存せず** `vars(guard)` の list[str]
+    を全部走査し、登録漏れを red にする。
     """
     registered = {
         id(terms) for terms, _label, _strip_urls in guard._LITERAL_TERM_GROUPS.values()
     }
-    term_lists = {
-        name: value
+    unregistered = sorted(
+        name
         for name, value in vars(guard).items()
         if isinstance(value, list)
-        and (name.endswith("_OLD_TERMS") or name == "_LITERAL_TERMS")
-    }
-    assert term_lists, "検出語 list が見つからない (命名規約が変わった?)"
-    for name, value in term_lists.items():
-        assert id(value) in registered, (
-            f"{name} が _LITERAL_TERM_GROUPS に未登録 (check_sweep から見えない)"
-        )
+        and value
+        and all(isinstance(item, str) for item in value)
+        and name not in _ALLOWED_UNREGISTERED_TERM_LISTS
+        and id(value) not in registered
+    )
+    assert not unregistered, f"_LITERAL_TERM_GROUPS に未登録の語 list: {unregistered}"
 
 
 @pytest.mark.parametrize(
@@ -672,6 +701,22 @@ def test_living_doc_old_term_after_fullwidth_bracket_is_exit_1(
     (tmp_path / "docs" / "guide.md").write_text(
         "# Guide\n\n"
         "出典（https://github.com/obra/superpowers）によればsystematic-debuggingを使う。\n",
+        encoding="utf-8",
+    )
+    assert _run_repo(tmp_path) == 1
+
+
+def test_living_doc_old_term_after_bare_url_is_exit_1(tmp_path: Path) -> None:
+    """scheme 付き bare URL 直後 (非 ASCII 散文) の旧用語も検出する (#1064、Round 4)。
+
+    URL の打ち切りを記号列挙にすると、日本語散文が続く場合に打ち切れず
+    行末まで飲み込んで検出漏れになる。ASCII 肯定形で切り出すことを pin する。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\n"
+        "詳細はhttps://example.comを参照してsystematic-debuggingを実行する。\n",
         encoding="utf-8",
     )
     assert _run_repo(tmp_path) == 1

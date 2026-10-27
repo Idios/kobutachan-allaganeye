@@ -105,16 +105,22 @@ _PLUGIN_OLD_TERMS = [
     "GPT-5.4",
 ]
 
-# 帰属 URL の判定からの除外に使う (上記 `_PLUGIN_OLD_TERMS` のみに適用する。
-# 既存 class の literal は repo 内 path なので挙動を変えない)。
+# 帰属 URL / path / anchor の判定からの除外に使う (上記 `_PLUGIN_OLD_TERMS` のみに適用する)。
 #
-# `\S+` ではなく **閉じ記号で打ち切る**: 日本語散文は語間に空白を置かないため、
-# `[仕様](https://example.com/spec)に従い、<旧用語>を実行する` のようにリンク直後に
-# 旧用語が続くと、`\S+` は行末近くまで飲み込んで検出漏れ (FN) になる。
-# 打ち切り文字には **全角の閉じ記号と句読点** も含める: 日本語では
-# `出典（https://…）によれば<旧用語>を使う` のように全角括弧で URL を囲むため、
-# 半角だけだと同じ FN が再発する (iterate-review Round 2 / Round 3 の finding)。
-_URL_RE = re.compile(r"https?://[^\s)\]}>\"'`）］｝〉》」』】〕、。，．]+")
+# **打ち切り文字の列挙ではなく、URL / path に使われる ASCII 文字の肯定形で切り出す**:
+# 列挙方式だと、`https://example.comを参照して<旧用語>を使う` のように URL 直後に
+# 日本語散文が続く場合に打ち切り文字が現れず、行末まで飲み込んで検出漏れになる
+# (iterate-review Round 2 / Round 3 / Round 4 の finding)。ASCII 肯定形なら
+# 非 ASCII で自動的に止まるため、全角括弧・句読点を個別に列挙する必要がない。
+#
+# 2 番目の分岐は **scheme 無しの URL / repo 内 path / anchor** を拾う
+# (`github.com/.../SKILL.md` / `docs/guide.md#<旧用語>`)。いずれも上流・内部への
+# 出典参照で、operational instruction ではない。
+_URL_CHARS = r"A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%"
+_URL_RE = re.compile(
+    rf"(?:https?://|www\.)[{_URL_CHARS}]+"
+    rf"|[{_URL_CHARS}]*/[{_URL_CHARS}]+"
+)
 
 # literal 系 class の **単一の正**。key は test の positive / negative fixture の key と
 # 一致することを meta-test が要求する (`_LITERAL_TERM_GROUPS` に group を足すと、
