@@ -133,9 +133,10 @@ PR #<N> を review してください。`review-pr` skill を invoke します�
    - mergeStateStatus: <CLEAN/BEHIND/...>
    - 並行 PR: <検出ゼロ / [#X handled]>
    - CI status: <green/failing/pending>
-   - Codex 出力読み取り: <成功 (job <job-id> の result 全文を finding の入力にした) / 失敗 (理由: <1 行>、stdout の範囲のみで triage) / 非起動 (理由: <起動記録の非対象 (3 条件の実測値) または 判定不能 (fail-closed)> )>
+   - Codex 出力読み取り: <成功 (job <job-id> の result 全文を finding の入力にした) / 失敗 (理由: <1 行>、stdout の範囲のみで triage) / 非起動 (理由: <起動記録の非対象 (3 条件の実測値) または 判定不能 (fail-closed)>)>
      <非起動 の理由は `review-pr` を読まずとも書けるよう、代表形をここに置く:
-      `条件1 touched <N> file / <M> lines・条件2 再発 root cause <K> 件・条件3 core 変更対象ファイル 該当 0`>
+      `条件1 touched <N> file / <M> lines・条件2 再発 root cause <K> 件・条件3 core 変更対象ファイル 該当 0`
+      (判定不能 由来なら `変更ファイル一覧の取得が打ち切られ起動判定ができない`)>
    ```
 
 8. **Codex review を起動した場合は、finding を `review-pr` §「Codex 出力の読み取り」の手順で保存済み全文から取り込む。** stdout に見えた分だけで triage しない。`## meta` の `Codex 出力読み取り` 行は**省略不可**で、`失敗` と `非起動` は**理由も必須** (省略はいずれも parse error)。`非起動` の理由には `review-pr` の「起動記録 (該当時 / 不該当時とも必須)」の**非対象行または判定不能行**の内容を畳んでよい (#1063。どちらを畳んだかは理由の形で区別する) — **この行以外に Codex 関連の slot を新設しない**
