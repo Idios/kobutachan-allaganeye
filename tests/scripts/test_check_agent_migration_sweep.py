@@ -273,6 +273,13 @@ _CODEX_OLD_POSITIVE: dict[str, str] = {
     "CLAUDE_PLUGIN_ROOT": "`CLAUDE_PLUGIN_ROOT` を参照する",
     ".claude/plugins": "`.claude/plugins/openai-codex` 配下",
 }
+_PLUGIN_OLD_POSITIVE: dict[str, str] = {
+    "superpowers:": "`superpowers:brainstorming` を invoke する",
+    "subagent-driven-development": "`subagent-driven-development` の Task 実装",
+    "requesting-code-review": "`requesting-code-review` 相当を代行する",
+    "systematic-debugging": "`systematic-debugging` 相当で調査する",
+    "GPT-5.4": "Codex (GPT-5.4) の second opinion",
+}
 
 # negative = 置換後の正 / 無関係な正当参照 (検出されてはならない)。
 _LITERAL_NEGATIVE: list[tuple[str, str]] = [
@@ -281,11 +288,19 @@ _LITERAL_NEGATIVE: list[tuple[str, str]] = [
     ("legit-claude-settings", "`.claude/settings.json` を編集"),
     ("legit-env", "`CLAUDE_PROJECT_DIR` を使う"),
     ("new-cli", "`codex review --base <base>` を実行"),
+    # 出典帰属 / 方式名としての言及は維持対象 (#1064)。bare 語で持つとここが誤検出になる
+    ("superpowers-attribution", "`obra/superpowers` の pattern に倣う"),
+    ("superpowers-parenthetical", "session-start.sh は superpowers 方式"),
+    ("model-agnostic", "Codex は独立 model の second opinion"),
 ]
 
 
 def _literal_hits(text: str) -> list[str]:
-    return [t for t in guard._LITERAL_TERMS + guard._CODEX_OLD_TERMS if t in text]
+    return [
+        t
+        for t in guard._LITERAL_TERMS + guard._CODEX_OLD_TERMS + guard._PLUGIN_OLD_TERMS
+        if t in text
+    ]
 
 
 def test_literal_terms_have_positive_fixtures() -> None:
@@ -294,6 +309,14 @@ def test_literal_terms_have_positive_fixtures() -> None:
 
 def test_codex_old_terms_have_positive_fixtures() -> None:
     assert set(_CODEX_OLD_POSITIVE) == set(guard._CODEX_OLD_TERMS)
+
+
+def test_plugin_old_terms_list_is_non_empty() -> None:
+    assert guard._PLUGIN_OLD_TERMS, "_PLUGIN_OLD_TERMS が空 (#1064)"
+
+
+def test_plugin_old_terms_have_positive_fixtures() -> None:
+    assert set(_PLUGIN_OLD_POSITIVE) == set(guard._PLUGIN_OLD_TERMS)
 
 
 @pytest.mark.parametrize(
@@ -310,6 +333,16 @@ def test_literal_positive_fixtures_are_detected(term: str, text: str) -> None:
     ("term", "text"), _CODEX_OLD_POSITIVE.items(), ids=list(_CODEX_OLD_POSITIVE)
 )
 def test_codex_old_positive_fixtures_are_detected(term: str, text: str) -> None:
+    assert term in text, f"fixture 自体が term を含まない: {term}"
+    assert _literal_hits(text) == [term], (
+        f"検出結果が term 1 件でない: {_literal_hits(text)}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("term", "text"), _PLUGIN_OLD_POSITIVE.items(), ids=list(_PLUGIN_OLD_POSITIVE)
+)
+def test_plugin_old_positive_fixtures_are_detected(term: str, text: str) -> None:
     assert term in text, f"fixture 自体が term を含まない: {term}"
     assert _literal_hits(text) == [term], (
         f"検出結果が term 1 件でない: {_literal_hits(text)}"
@@ -378,6 +411,7 @@ def test_runtime_messages_are_pinned(tmp_path: Path) -> None:
         "`build-cache/` は build キャッシュ置き場のため対象外 (#1066)" in result.stderr
     )
     assert "コードコメントの旧参照は #1076 で追跡する" in result.stderr
+    assert "「独立 model」へ置換すること (#1064)" in result.stderr
 
 
 # 宣言の正 (#1073)。検出 class は 3 spot / exit code は 2 spot / 除外の帰属は 3 spot。
@@ -388,6 +422,7 @@ _DETECTION_CLASS_TOKENS = (
     "旧 path",
     "主エージェント=Claude",
     "旧 invocation 契約",
+    "Claude Code plugin 旧表記",
 )
 # 除外 class の帰属は「その class を名指しする bullet」単位で pin する
 # (whole-file の部分一致だと、別行の同 token が帰属行の drift を mask する)
@@ -440,7 +475,7 @@ def test_declarations_are_consistent_across_spots() -> None:
     # (1) 検出 class の宣言: 列挙行 / docstring / ci.yml の宣言コメントブロックに限定する。
     # whole-file の部分一致だと、別行に同 token がある場合に宣言行の drift を mask する。
     agents_section = _agents_declaration_section()
-    class_lines = [ln for ln in agents_section.splitlines() if "4 class" in ln]
+    class_lines = [ln for ln in agents_section.splitlines() if "5 class" in ln]
     assert len(class_lines) == 1, "AGENTS.md の class 列挙行が 1 行ではない"
     for token in _DETECTION_CLASS_TOKENS:
         assert token in class_lines[0], f"AGENTS.md: class 列挙行に無い: {token}"
@@ -542,6 +577,16 @@ def test_living_doc_claude_agent_old_term_is_exit_1(tmp_path: Path) -> None:
     (tmp_path / "docs" / "guide.md").write_text(
         "# Guide\n\nClaude は自動的に段階を進め、要所で判断を仰ぐ。\n",
         encoding="utf-8",
+    )
+    assert _run_repo(tmp_path) == 1
+
+
+def test_living_doc_plugin_old_term_is_exit_1(tmp_path: Path) -> None:
+    """Claude Code plugin 旧表記の残存は exit 1 (#1064)。"""
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\n`superpowers:brainstorming` を invoke する。\n", encoding="utf-8"
     )
     assert _run_repo(tmp_path) == 1
 

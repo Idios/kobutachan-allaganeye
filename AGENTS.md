@@ -368,7 +368,7 @@ subprocess / IPC / OS API を介した encoding fix を行うときは、**以�
 
 repo 全域の用語 sweep (slash command の skill 名化、旧 path / 旧 filename の置換、主エージェント表記の反転 (#1043)、Codex invocation 契約の一本化) を含む PR は、**「まとめて置換」だけでは漏れる** (PR #1051 は Round 4/5 まで session-start.sh / versioning.md の残存を個別に拾った)。
 
-sweep の完全性は [`scripts/check_agent_migration_sweep.py`](scripts/check_agent_migration_sweep.py) が living doc (`.md` / `.sh` の doc / skill / hook) の旧用語残存を検出し、CI job `doc-agent-migration-sweep` が gate する。本 checklist の対象は、この check が検出する **4 class** — slash command / 旧 path・旧 filename / 主エージェント=Claude 表記 / Codex 旧 invocation 契約 — である。
+sweep の完全性は [`scripts/check_agent_migration_sweep.py`](scripts/check_agent_migration_sweep.py) が living doc (`.md` / `.sh` の doc / skill / hook) の旧用語残存を検出し、CI job `doc-agent-migration-sweep` が gate する。本 checklist の対象は、この check が検出する **5 class** — slash command / 旧 path・旧 filename / 主エージェント=Claude 表記 / Codex 旧 invocation 契約 / Claude Code plugin 旧表記 — である。
 
 sweep は **「旧用語リスト更新 → sweep 前の実 tree で red を確認 → sweep → CI green で完全性を実証」** の順で行う。red を確認せず green だけを見ると、追加した class が実際に発火することを示せない。
 
@@ -376,7 +376,7 @@ sweep は **「旧用語リスト更新 → sweep 前の実 tree で red を確�
 
 > **向きの注記**: [`.agents/skills/iterate-review/SKILL.md`](.agents/skills/iterate-review/SKILL.md) は positive / negative を逆の向き (positive = 正しい literal で緑) で使っている。**本 checklist の向きを正**とし、skill 側の統一は #1075 で扱う。
 >
-> **適用範囲 (規律であり CI gate ではない)**: 本ルールを機械的に強制する check はまだ無い。既存 class のうち **literal 3 語**には positive fixture が無い (うち 1 語は list 所属 pin も無く検出を外しても test が green のまま / 残り 2 語は list 所属 pin のみで detection fixture は無い。対象の列挙は #1075)。**新規に追加する class から適用**し、既存分の補完と meta-test は #1075 で行う。本ルールは [`docs/l2-workflow.md`](docs/l2-workflow.md) §「規約・ガード導入の 3 点セット」の適用対象。**①発火点と③red 実証は user 裁定で #1075 に分割**しており、同節の Red Flag「3 点セットは分割不可」に対する明示承認付きの例外である (②非実施時の記録義務は本注記が該当し、①③は #1075 で追跡するため silent no-op にはならない)。
+> **適用範囲 (機械検査あり)**: #1075 で meta-test が入り、`scripts/check_agent_migration_sweep.py` の各 regex 分岐 (「分岐を外すと検出されなくなること」) と、各 literal list の語 (「positive fixture を持つこと」/「negative fixture を誤検出しないこと」) を [`tests/scripts/test_check_agent_migration_sweep.py`](tests/scripts/test_check_agent_migration_sweep.py) が検査する。**class を追加するときは list に語を足すだけでなく positive / negative fixture も同時に更新する** (fixture 集合と list の完全一致を test が要求するため、追加が強制される)。本ルールは [`docs/l2-workflow.md`](docs/l2-workflow.md) §「規約・ガード導入の 3 点セット」の適用対象である。
 
 ### 検査対象外 (SSoT は実装)
 

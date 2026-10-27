@@ -29,6 +29,7 @@
 | gui-screens | GUI 画面数 6 | gui/src/screens | AGENTS.md, docs/gui-development.md, docs/ui-architecture.md, docs/ui-interaction-spec.md | prose-only | none | active |
 | detection-modules | allaganeye モジュール一覧 | allaganeye | AGENTS.md | prose-only | none | active |
 | codex-invocation | codex CLI の focus 渡し方 (`--base` と `[PROMPT]` の併用不可 / PROMPT 単独形式) | docs/l2-workflow.md | .agents/skills/review-pr/SKILL.md, .agents/skills/iterate-review/SKILL.md | prose-only | none | active |
+| sweep-classes | 用語 sweep checker の検出 class 5 種 | scripts/check_agent_migration_sweep.py | AGENTS.md, .github/workflows/ci.yml, tests/scripts/test_check_agent_migration_sweep.py | prose-only | none | active |
 
 ## 備考
 
@@ -47,3 +48,4 @@
 - `gui-screens`: 画面数はディレクトリから数えられるが、doc 側の「6 画面」は文脈付きの主張で、機械抽出すると誤検出が多い。**再確認トリガー**: `gui/src/screens/` への画面追加・削除。追加・削除時に ls して確認する
 - `detection-modules`: `AGENTS.md` §モジュール構成 は索引であり、`detection/*` は行内で列挙される。完全一致を強制すると索引の自由度を失う。**再確認トリガー**: `allaganeye/` への module 追加・削除・rename。`scripts/check_doc_code_refs.py` の symbol 検査が rename を拾う
 - `codex-invocation`: 検証対象は **外部 CLI (`codex`) の受理仕様**であり、CI に `codex` を持ち込まない方針のため機械検証しない。**再実測トリガー**: `codex` CLI を version up したとき / `codex review --help` の `[PROMPT]`・`--base` の記述が変わったとき。実測記録は `docs/l2-workflow.md` §Step 5 の invocation path の注記 (日付・version 付き)
+- `sweep-classes`: class 名の列挙は checker docstring / `AGENTS.md` / `ci.yml` / test 定数の 4 spot に現れる。台帳 mode の vocabulary に「tests/ を gate にする」形が無いため `prose-only` + `none` としたが、**一致検査自体は存在する**: `tests/scripts/test_check_agent_migration_sweep.py` の `test_declarations_are_consistent_across_spots` が `_DETECTION_CLASS_TOKENS` を介して 3 spot を突合する。**再確認トリガー**: checker に検出 class を追加・削除したとき (同 test が red になる)

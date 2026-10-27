@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Check the Claude Code → Zed+DeepSeek agent migration sweep is complete (#1041/#1042).
 
-Detects "old terminology" — **4 class**: slash command / 旧 path・旧 filename /
-主エージェント=Claude 表記 / Codex 旧 invocation 契約 (#1043) — that remains in
+Detects "old terminology" — **5 class**: slash command / 旧 path・旧 filename /
+主エージェント=Claude 表記 / Codex 旧 invocation 契約 (#1043) /
+Claude Code plugin 旧表記 (#1064) — that remains in
 **living docs**, to prevent the incomplete-sweep recurrence seen in PR #1051
 Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を個別に拾う事象)。
 
@@ -78,6 +79,25 @@ _CODEX_OLD_TERMS = [
     "codex-companion.mjs",
     "CLAUDE_PLUGIN_ROOT",
     ".claude/plugins",
+]
+
+# Claude Code plugin 旧表記 + 旧モデル名 (#1064)。plugin skill 名は本 repo に存在せず
+# (`spawn_agent` / 主エージェント直接レビューが正)、旧モデル名は living doc で版を
+# 固定せず「独立 model」と書く。
+#
+# `superpowers:` は **コロン込み** で持つ: `obra/superpowers` への出典帰属リンクと
+# 「(superpowers 方式)」は維持対象 (plugin 呼び出しではなく帰属表現) のため、
+# bare 語で持つと誤検出する (negative fixture `superpowers-attribution` /
+# `superpowers-parenthetical` で pin)。
+#
+# 旧モデル名は一般の model 版固定検出 (例: `GPT-\d`) を行わず、sweep で実際に
+# 残っていた版名のみ literal で持つ (汎用 regex は正式名称の記述まで巻き込むため)。
+_PLUGIN_OLD_TERMS = [
+    "superpowers:",
+    "subagent-driven-development",
+    "requesting-code-review",
+    "systematic-debugging",
+    "GPT-5.4",
 ]
 
 # 主エージェント=Claude の旧表記 (#1066)。運用は Zed + DeepSeek が主エージェントへ
@@ -233,6 +253,12 @@ def check_sweep(repo_root: Path) -> list[str]:
                         f"{rel}:{lineno}: Codex 呼び出し契約の旧表記残存 ({term}): "
                         f"{line.strip()}"
                     )
+            for term in _PLUGIN_OLD_TERMS:
+                if term in line:
+                    violations.append(
+                        f"{rel}:{lineno}: Claude Code plugin 旧表記残存 ({term}): "
+                        f"{line.strip()}"
+                    )
     return violations
 
 
@@ -280,6 +306,8 @@ def main(argv: list[str] | None = None) -> int:
             "`codex` CLI 直呼び (§Codex 運用) へ置換すること (#1043)。\n"
             "主エージェント=Claude の旧表記は `Zed + DeepSeek` (または `主エージェント`) "
             "へ置換すること (#1066)。\n"
+            "Claude Code plugin 旧表記 (plugin 固有名 / 旧モデル名) は `spawn_agent` / "
+            "主エージェント直接レビュー / 「独立 model」へ置換すること (#1064)。\n"
             "コードファイルは検査対象外 (`_SCAN_EXTS` の allowlist が living doc のみを"
             "走査するため)。CHANGELOG / eval fixture / `docs/superpowers/**` / "
             "archive / audits は対象外 (#1044)。`gui/**` は GUI ソースのため対象外 "
