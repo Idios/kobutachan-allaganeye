@@ -59,7 +59,6 @@ _SLASH_SKILLS = [
     "close-issue",
     "create-task",
     "enforce-acceptance-criteria",
-    "test-pr",
 ]
 _SLASH_RE = re.compile(
     r"(?<![a-z0-9._-])/(" + "|".join(_SLASH_SKILLS) + r")(?![a-z0-9._-])"

@@ -32,7 +32,7 @@ gh issue view "<issue番号>" --repo Idios/kobutachan-allaganeye \
 - `state == OPEN` を確認 (`CLOSED` の場合は本 skill 対象外、`AskUserQuestion` で再オープン or 別対応を確認)
 - `closedByPullRequestsReferences` で紐づく PR 一覧を取得
 - 本文末尾の `作成: <session-id>` で起票元セッション ID を確認 (close コメント記載に使用)。記載なし / 空欄の場合は close コメント本文での「起票元 session-id」言及は省略可
-- **本 skill 実行 session-id の取得**: `pwd` で現在のディレクトリパス (例: `.../.claude/worktrees/hopeful-darwin-616414`) を取得し、最終ディレクトリ名を session-id とする (例: `hopeful-darwin-616414`)。Step 7 の close コメントには**実行 session-id を必ず含める** (起票 session-id の有無に関わらず)
+- **本 skill 実行 session-id の取得**: `pwd` の末尾 2 要素を見る。**現行 layout は `<root>/worktrees/<repo>/<session-id>/<repo>`** なので、**最終ディレクトリ名が repo 名 (`kobutachan-allaganeye`) と一致する場合は 1 つ上**を session-id とする (例: `.../worktrees/kobutachan-allaganeye/salty-maple/kobutachan-allaganeye` → `salty-maple`)。旧 layout (`.../.claude/worktrees/<session-id>`) では最終ディレクトリ名をそのまま使う。Step 7 の close コメントには**実行 session-id を必ず含める** (起票 session-id の有無に関わらず)
 
 #### Refs #N fallback (closedByPullRequestsReferences が空の場合)
 
@@ -139,16 +139,16 @@ git log origin/<baseRefName> --oneline -20  # マージ済 PR の commit が含�
   - lint: `ruff check <path>` 実行
 - **実測必要** (本 skill 範囲外):
   - long-running テスト (動画処理 / GPU / audio 統合)、UI 動作確認、リリース動作検証等
-  - これらは PR レビュー段階で `test-pr` 実施済みの前提。実施記録 (PR コメント / issue コメント / メモリ) を確認し、未実施なら ユーザー (Idios) に `test-pr` 実施を依頼してから再 dispatch
+  - これらは PR レビュー段階で **PR 検証（実機 / slow test / GPU / audio 等の手動検証）** 実施済みを前提とする。実施記録 (PR コメント / issue コメント / メモリ) を確認し、未実施なら ユーザー (Idios) に PR 検証の実施を依頼してから再 dispatch
 - **動的検証 vs 実測必要 の判定基準** (境界明示):
   - **動的検証可能** (skill 内で実行): unit/integration テストで `slow` マーカーなし + CI で実行されている範囲 + 30 秒以内目安。GPU/audio を伴わない CPU-only テスト。`ruff check` / `pyright` 等の静的解析。`pytest tests/test_x.py::test_y` で 1-2 件のみ単体実行
-  - **実測必要** (skill 範囲外、`test-pr` 既実施確認のみ): `pytest -m slow`、動画処理 (1 分超)、GPU mode (`--gpu`)、audio 統合 (`audio/scan` フル走査)、UI 動作確認 (Tauri GUI 起動)、リリース動作検証
+  - **実測必要** (skill 範囲外、PR 検証の既実施確認のみ): `pytest -m slow`、動画処理 (1 分超)、GPU mode (`--gpu`)、audio 統合 (`audio/scan` フル走査)、UI 動作確認 (Tauri GUI 起動)、リリース動作検証
   - 判断に迷う場合は `AskUserQuestion` でユーザー (Idios) に分類確認
-- **`test-pr` 既実施記録の取得とアクセス不可時の対応**:
-  - PR コメント取得: `gh pr view <PR#> --comments` で `test-pr` 実施記録の有無を確認
+- **PR 検証の既実施記録の取得とアクセス不可時の対応**:
+  - PR コメント取得: `gh pr view <PR#> --comments` で PR 検証の実施記録の有無を確認
   - issue コメント取得: `gh issue view <番号> --comments` で同様に確認 (PR コメントに見つからない場合の fallback)
   - **コメント取得に成功して実施記録が見つかる**: 「実測必要」項目を ○ と判定し、記録のコメント URL / コマンド / 結果サマリを close コメントに引用する
-  - **コメント取得に失敗 or 実施記録が見つからない**: `AskUserQuestion` でユーザー (Idios) に「`test-pr` 既実施か」を確認。記録不在の場合は close を保留し、`test-pr` 実施依頼を提示する (skill 内で `test-pr` を実行しない)
+  - **コメント取得に失敗 or 実施記録が見つからない**: `AskUserQuestion` でユーザー (Idios) に「PR 検証は既実施か」を確認。記録不在の場合は close を保留し、PR 検証の実施依頼を提示する (skill 内で PR 検証を実行しない)
   - 「PR 本文に実施したと書いてあるから OK」と独断して ○ にしない (実施記録の所在まで確認するのが必須)
 
 各項目に判定を付ける: ○ (満たす) / × (満たさない) / 部分的 / 実測必要。
@@ -181,7 +181,7 @@ issue 本文中の `## 受け入れ条件` 以外の `- [ ]` (例: `## 確認項
 - **1 項目以上 × or 部分的**: 残タスクを必ずトリアージ表に記載し、(B) / (C) のいずれかに振り分ける (Iron Law 1, 3 と整合、握り潰し禁止)
   - **(B) 新 issue 起票**: 残タスクが本 issue のスコープから外れる場合、`create-task` で別 issue として起票
   - **(C) 既存 issue 追記**: 既存の関連 issue に `gh issue comment` で残タスクを追記
-- **「実測必要」が残る場合**: ユーザーに `test-pr` 等の手動検証実施を提案し、結果が来てから本 skill を再 dispatch
+- **「実測必要」が残る場合**: ユーザーに PR 検証等の手動検証実施を提案し、結果が来てから本 skill を再 dispatch
 
 トリアージ表テンプレート:
 
@@ -211,12 +211,12 @@ gh issue close "<issue番号>" --repo Idios/kobutachan-allaganeye --comment "$(c
 - 未チェック `- [ ]`: 全消化
 - 残タスク: なし [もしくは (B) 新 issue #<番号> / (C) 既存 issue #<番号> に追記]
 
-検証方法サマリ: <静的 grep / 単体テスト pytest / `test-pr` 結果参照 等>
+検証方法サマリ: <静的 grep / 単体テスト pytest / PR 検証の結果参照 等>
 EOF
 )"
 ```
 
-`<session-id>` は本 skill 実行中の worktree 名 (例: `hopeful-darwin-616414`) を使用する。
+`<session-id>` は本 skill 実行中の worktree 名を使用する (導出規則は Step 1 の「本 skill 実行 session-id の取得」を参照。現行 layout の例: `salty-maple`)。
 
 ## ケース別運用 (詳細)
 
@@ -275,7 +275,7 @@ worktree 内で `git fetch origin <baseRefName>` が失敗する、または検�
 **適用手順**:
 
 1. 静的検証 (`gh pr view --json files` + `Read` / `Grep`) で代替可能な範囲はそれで実施
-2. 動的検証が必須な項目は「実測必要」マークを付け、ユーザーに `test-pr` 別環境実施を依頼
+2. 動的検証が必須な項目は「実測必要」マークを付け、ユーザーに別環境での PR 検証を依頼
 3. 「環境制約で検証 skip」は Iron Law 4 違反。実測検証ルートを欠落させない
 
 ### §D. issue クローズ後にコメント追記が必要な場合
@@ -295,7 +295,7 @@ close 後に追加情報 (関連 PR 番号 / 検証ログ / 残タスク子 issu
 | 「PR diff 上の `- [ ]` 確認だけで close 可」 | Iron Law 4 違反。マージ後の base ブランチで実測再検証 (Step 5) が必須 |
 | 「束ねた issue だから 1 件で代表検証してよい」 | Iron Law 1 違反。各 issue を独立に逐条検証する (ケース B) |
 | 「Phase 1 マージ済みだから Phase 2 を待たずに close できる」 | ケース C 違反。最終 PR マージ後にのみ close 可能 |
-| 「実測必要項目を skill 内で全部検証しよう」 | long-running / GPU / audio は本 skill 範囲外。`test-pr` 既実施を確認するに留める |
+| 「実測必要項目を skill 内で全部検証しよう」 | long-running / GPU / audio は本 skill 範囲外。PR 検証の既実施を確認するに留める |
 | 「× 項目があるが軽微だから close してよい」 | Iron Law 3 違反。残タスクは (B)/(C) にトリアージ、握り潰し禁止 |
 | 「受け入れ条件節が無いから自分の判断で close 基準を決めよう」 | Iron Law 5 違反。`AskUserQuestion` でユーザー確認 (環境制約 §A) |
 | 「ユーザー承認なしで close したほうが速い」 | Iron Law 4 + Iron Law 5 違反。close は必ず Step 7 のユーザー承認を経由 |
@@ -306,7 +306,7 @@ close 後に追加情報 (関連 PR 番号 / 検証ログ / 残タスク子 issu
 - **`closedByPullRequestsReferences` のみで PR 件数判定**: 本プロジェクトは Iron Law 4 (`Closes` 禁止) のため当該フィールドは**通常空**。Step 1 fallback ルート (`gh api .../timeline` cross-referenced-event + `gh search prs '"Refs #N"'`) を経由して紐づく PR を列挙する。timeline API の state は `closed` (実態は merged の近似)、search の state は `merged` で明確 — dedupe 時は search の `merged` を真値として採用
 - **Phase 分割の見落とし**: 単一 PR で完結したつもりが、`Refs #N` 記述由来で複数 PR が立っているケースあり。Step 1 fallback で取得した PR 一覧の件数で機械判定する (Step 2 ケース C)
 - **束ね PR で他 issue 分の受け入れ条件まで検証**: ケース B では本 issue 分のみ抽出する。他 issue は別 `close-issue` 呼び出しで扱う
-- **実測必要項目を skill 内で動的検証しようとする**: long-running は範囲外。ユーザーに `test-pr` 既実施を確認するに留める (Step 5)
+- **実測必要項目を skill 内で動的検証しようとする**: long-running は範囲外。ユーザーに PR 検証の既実施を確認するに留める (Step 5)
 - **× 項目を「軽微」と自己判定して close**: Iron Law 3 違反。トリアージ表で (B)/(C) に振り分ける (Step 6)
 - **close コメントから session-id / 検証方法サマリを省略**: 監査・トレーサビリティ用。Step 7 のテンプレートを省略しない
 - **未マージ PR があるのに skill を続行**: Step 3 で全 PR `MERGED` を確認、未マージなら terminate (環境制約 §B)

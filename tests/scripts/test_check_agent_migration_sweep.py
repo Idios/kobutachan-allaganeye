@@ -181,6 +181,18 @@ def test_slash_skills_list_is_non_empty() -> None:
     assert guard._SLASH_SKILLS, "_SLASH_SKILLS が空"
 
 
+def test_slash_skills_match_actual_skill_dirs() -> None:
+    """`_SLASH_SKILLS` は `.agents/skills/` の実体と一致する (#1069)。
+
+    dangling entry (`test-pr` のように実在しない skill) が検出対象に残ると、
+    「その skill がある」と誤認させる。逆に実在する skill をリストに入れ忘れると、
+    その slash 表記がすり抜ける。
+    """
+    skills_dir = REPO_ROOT / ".agents" / "skills"
+    actual = {p.name for p in skills_dir.iterdir() if p.is_dir()}
+    assert set(guard._SLASH_SKILLS) == actual
+
+
 def test_literal_terms_list_is_non_empty() -> None:
     assert guard._LITERAL_TERMS, "_LITERAL_TERMS が空"
 
