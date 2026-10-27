@@ -904,7 +904,7 @@ node .github/scripts/<gate>.js <fixture>; echo "exit=$?"   # 非ゼロを期待
 | 6 | PR テンプレート (`.github/pull_request_template.md`) | Iron Law 1/3/4 の逐条チェックリスト |
 | 7 | ユーザー最終承認 | マージは全て Idios が実行、未達 PR は差し戻し |
 
-**ハードゲートの実装**: `.claude/hooks/preuse.py` が `PreToolUse` で `gh` bulk 操作・PR マージ等をインターセプトし、#559 以降は `permissionDecision=ask` を返して Claude Code の permission prompt を出す (旧: #401 の exit 2 block + bypass prefix 運用)。**本 hook は Claude Code セッションでのみ発火する**。Zed 期の代替は §Zed 期の強制・継続機構 を参照。GitHub Action でのマージブロックは将来候補。
+**ハードゲートの実装**: `.claude/hooks/preuse.py` が `PreToolUse` で `gh` bulk 操作・PR マージ等をインターセプトし、#559 以降は `permissionDecision=ask` を返して Claude Code の permission prompt を出す (旧: #401 の exit 2 block + bypass prefix 運用)。**本 hook は Claude Code セッションでのみ発火する**。GitHub Action でのマージブロックは将来候補。
 
 **Zed 期の強制力** (#1067): 本節が扱う Claude Code hook と、その Zed 側の代替・強制力は §Zed 期の強制・継続機構 に集約した (本節は Claude Code 期の実装記録として残す)。
 
@@ -959,7 +959,7 @@ hook の登録先は `.claude/settings.json` の `hooks.SessionStart` / `PreTool
 
 **強制力の尺度** (表の列): `強` = 機械的に停止する / `中` = 毎 turn または規約で読まれるが最終的には規律依存 / `弱` = 文書化された手順 (script / command / 散文手順) があるが自動発火しない / `なし` = 手順も無い。本表に `強` の行は無い (Zed 期に機械強制できるものは無い、というのが本節の結論)。
 
-**手動代替の実施記録**: 上表の `弱` の行を実施しなかった場合は「未実施 (理由)」を 1 行残す (§規約・ガード導入の 3 点セット ②)。**①発火点は存在しない** (自動発火する仕組みが無いことが本節の前提で、規律 + doc 記述のみで運用する。Q2=(a) の user 裁定)。
+**手動代替の実施記録**: 上表の `弱` の行を実施しなかった場合は「未実施 (理由)」を **PR 本文の Self-Test Report 節** に 1 行残す (PR を伴わない作業では最終報告に 1 行。§規約・ガード導入の 3 点セット ②)。**①発火点は存在しない**: 自動発火する仕組みが無いことが本節の前提で、規律 + doc 記述のみで運用する (user 裁定で「手動一本化」を選択済み)。
 
 orphan 検出の `--no-reflogs` は省略しない: reflog に残る detached commit は同 flag 無しだと reachable 扱いになり、検出漏れになる (手動代替でも同じ flag を使う)。
 
@@ -972,16 +972,16 @@ hook が無いため、**主エージェントが操作前に散文で確認す�
 3. `(a) 全件 OK【Recommended】/ (b) 個別調整 / (c) やめる` を提示し、**user の回答を待つ**
 4. 承認後に実行し、実行後の件数を報告する
 
-- 「bulk」の閾値の正は §強制メカニズム (`.claude/hooks/preuse.py` の `_BULK_THRESHOLD` / `_BULK_WINDOW_SEC` と同節の宣言。本節では数値を再掲しない)
+- 「bulk」の閾値の正は §強制メカニズム (`.claude/hooks/preuse.py` の `_BULK_THRESHOLD` / `_BULK_WINDOW_SEC`、および `deferred` ラベル付き操作に使う `_DEFERRED_BULK_THRESHOLD`。本節では数値を再掲しない)
 - 回答が曖昧な場合は**未承認**として扱い、実行しない
-- 実施しなかった場合も「未実施 (理由)」を 1 行残す (§規約・ガード導入の 3 点セット ②)
+- 実施しなかった場合も「未実施 (理由)」を 1 行残す (§規約・ガード導入の 3 点セット ②。記録先は PR 本文の Self-Test Report 節)
 
 ### AskUserQuestion の等価物
 
 - Claude Code セッションでは `AskUserQuestion` tool で選択肢を提示する。
 - **Zed + DeepSeek には `AskUserQuestion` に相当する tool が無い**ため、主エージェントは **応答本文内の散文で同じ選択肢 (択数は下記の規則に従う。Recommended 付き) を提示し、user の回答を待つ**。これを本 repo における等価物と定める (#1067)。
 - **選択肢の数は元の指示に従う**: Iron Law 5 の標準は 2-4 択。**bulk 操作確認 (Iron Law 2) は 3 択 (`(a) 全件 OK / (b) 個別調整 / (c) やめる`) を必須**とし、それ以外 (resume-plan の `self` / parse error 時の再 dispatch 判断など) は元の節が定める択数をそのまま使う (択数を増やして選択肢を発明しない)。
-- 書式: `(a)` / `(b)` / `(c)` の記号 + 1 行説明、1 つに Recommended を付ける。**回答が来るまで次の作業に進まない** (Iron Law 5)。既存の `(Recommended)` / `[Recommended]` / `【Recommended】` はいずれも可 (表記統一のための一斉置換はしない)
+- 書式: 各選択肢に記号 + 1 行説明を付け、1 つに Recommended を付ける。**記号と Recommended の表記は元の節の慣習を保つ** (`(a)` / `(A)` / `A:`、`(Recommended)` / `[Recommended]` / `【Recommended】` のいずれも可。統一のための一斉置換はしない)。**回答が来るまで次の作業に進まない** (Iron Law 5)
 - **skill 本文の `AskUserQuestion` 表記は置換しない**: Claude Code でも実行できる skill として可搬性を保つため tool 名はそのまま残し、Zed 実行時に本節の読み替えを適用する。eval fixture (`*/eval/**`) は履歴記録のため対象外。
 
 ### 自動化の余地と限界
