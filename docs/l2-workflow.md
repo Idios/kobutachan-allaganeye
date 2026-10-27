@@ -945,19 +945,21 @@ prefix は strip されて `gh issue close 123` が実行される。`[preuse:by
 | --- | --- | --- | --- |
 | Iron Law / Red Flags のセッション注入 | `SessionStart` hook (`.claude/hooks/session-start.sh`) | `AGENTS.md` の project rules 注入 | 中 (毎 turn 読まれる) |
 | bulk 操作ゲート (Iron Law 2) | `PreToolUse` hook (`.claude/hooks/preuse.py` の bulk 閾値判定) | 主エージェントの散文 N 択 (bulk は 3 択必須、§Iron Law 2 (bulk 操作) の Zed 経路) | 弱 (規律依存) |
-| multi-scope 逸脱ゲート (Iron Law 3 backstop) | `PreToolUse` hook (`preuse.py` の `git commit` 分岐 + `_check_scope_creep`) | `scope-guard` skill (AGENTS.md §Iron Law の執行機構) | 弱 (規律依存) |
-| PR マージの always gate | `PreToolUse` hook (`preuse.py` の `gh pr merge`) | マージは user (Idios) が実行 (Iron Law 7 層表の層 7) | 中 (人間が実行) |
+| multi-scope 逸脱ゲート (Iron Law 3 backstop) | `PreToolUse` hook (`preuse.py` の `git commit` 分岐 + `_check_scope_creep`: distinct scope が 2 以上、**または未知パスが 1 件でもあれば ask**) | `scope-guard` skill (AGENTS.md §Iron Law の執行機構) | 弱 (規律依存) |
+| PR マージの always gate | `PreToolUse` hook (`preuse.py` の `gh pr merge`) | マージは user (Idios) が実行 (§強制メカニズム の 7 層表の層 7) | 中 (人間が実行) |
 | worktree 残骸の掃除 | `Stop` hook → `scripts/cleanup-worktrees.sh` | 手動 `--apply` (§worktree メンテナンス §手動実行) | 弱 |
 | local branch の掃除 | `Stop` hook → `scripts/cleanup-claude-branches.sh` | 手動 `--apply`。**現状の対象は `claude/` prefix のみ** | 弱 |
 | orphan commit 検出 | `Stop` hook (`git fsck --unreachable --no-reflogs` + author heuristic) | 手動 `git fsck --unreachable --no-reflogs` / PR 作成時の branch HEAD 確認 | 弱 |
 | worktree-as-PR-head 検出 | `SessionStart` hook (`^claude/` 限定) | セッション開始時に `gh pr list --head <branch> --state open` を実行 | 弱 |
-| merge 後の規約再読込 | `PostToolUse` hook (`.claude/hooks/post-merge-reload.sh`) | なし (merge / pull 後に `AGENTS.md` と該当 doc を読み直す運用) | なし |
+| merge 後の規約再読込 | `PostToolUse` hook (`.claude/hooks/post-merge-reload.sh`) | なし (Zed 側に機械機構は無い。読み直しは任意で、規約化していない) | なし |
 | 選択肢提示 | `AskUserQuestion` tool | 散文 N 択 (元の指示の択数。bulk は 3 択必須、§AskUserQuestion の等価物) | 中 (規約 + 可読性) |
-| ユーザー訂正の蓄積 | auto-memory (`~/.claude/projects/<project>/memory/`) | なし (必要時 manual read → `docs/knowledge/` へ昇格、§Memory 階層化) | なし |
+| ユーザー訂正の蓄積 | auto-memory (`~/.claude/projects/<project>/memory/`) | なし (auto-memory は存在しない。必要時に §Memory 階層化 の L2 path を read し、汎用知見は `docs/knowledge/` へ置く) | なし |
 
 hook の登録先は `.claude/settings.json` の `hooks.SessionStart` / `PreToolUse` / `PostToolUse` / `Stop`。Zed はこの file を読まないため、これらは **Zed セッションでは発火しない**。
 
-**強制力の尺度** (表の列): `強` = 機械的に停止する / `中` = 毎 turn または規約で読まれるが最終的には規律依存 / `弱` = 手動実行の規律のみ / `なし` = 仕組みが存在しない。本表に `強` の行は無い (Zed 期に機械強制できるものは無い、というのが本節の結論)。
+**強制力の尺度** (表の列): `強` = 機械的に停止する / `中` = 毎 turn または規約で読まれるが最終的には規律依存 / `弱` = 手動実行の手順 (script / command) がある / `なし` = Zed 側に代替の機構も手順も無い。本表に `強` の行は無い (Zed 期に機械強制できるものは無い、というのが本節の結論)。
+
+**手動代替の実施記録**: 上表の `弱` の行を実施しなかった場合は「未実施 (理由)」を 1 行残す (§規約・ガード導入の 3 点セット ②)。**①発火点は存在しない** (自動発火する仕組みが無いことが本節の前提で、規律 + doc 記述のみで運用する。Q2=(a) の user 裁定)。
 
 orphan 検出の `--no-reflogs` は省略しない: reflog に残る detached commit は同 flag 無しだと reachable 扱いになり、検出漏れになる (手動代替でも同じ flag を使う)。
 
