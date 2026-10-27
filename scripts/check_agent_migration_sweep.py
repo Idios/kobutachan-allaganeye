@@ -107,7 +107,12 @@ _PLUGIN_OLD_TERMS = [
 
 # 帰属 URL の判定からの除外に使う (上記 `_PLUGIN_OLD_TERMS` のみに適用する。
 # 既存 class の literal は repo 内 path なので挙動を変えない)。
-_URL_RE = re.compile(r"https?://\S+")
+#
+# `\S+` ではなく **閉じ括弧 / 引用符で打ち切る**: 日本語散文は語間に空白を置かないため、
+# `[仕様](https://example.com/spec)に従い、<旧用語>を実行する` のようにリンク直後に
+# 旧用語が続くと、`\S+` は行末近くまで飲み込んで検出漏れ (FN) になる
+# (iterate-review Round 2 の finding)。
+_URL_RE = re.compile(r"https?://[^\s)\]>\"'`]+")
 
 # 主エージェント=Claude の旧表記 (#1066)。運用は Zed + DeepSeek が主エージェントへ
 # 反転済 (#1043) なので、living doc に「Claude を主エージェントとして扱う」表記が

@@ -282,25 +282,37 @@ _PLUGIN_OLD_POSITIVE: dict[str, str] = {
 }
 
 # negative = 置換後の正 / 無関係な正当参照 (検出されてはならない)。
+# **class 単位で保持**し、各 class に 1 件以上あることを test が要求する
+# (AGENTS.md の用語 sweep 完全性 checklist にある「positive / negative 両 fixture 必須」を
+# negative 側でも機械検査する。iterate-review Round 2 の finding)。
+_LITERAL_NEGATIVE_BY_CLASS: dict[str, list[tuple[str, str]]] = {
+    "literal": [
+        ("replacement-skills", "`.agents/skills/review-pr/SKILL.md`"),
+        ("replacement-agents", "`AGENTS.md` を参照"),
+        ("legit-claude-settings", "`.claude/settings.json` を編集"),
+        ("legit-env", "`CLAUDE_PROJECT_DIR` を使う"),
+    ],
+    "codex-old": [
+        ("new-cli", "`codex review --base <base>` を実行"),
+    ],
+    "plugin-old": [
+        # 出典帰属 / 方式名としての言及は維持対象 (#1064)。bare 語で持つとここが誤検出になる
+        ("superpowers-attribution", "`obra/superpowers` の pattern に倣う"),
+        ("superpowers-parenthetical", "session-start.sh は superpowers 方式"),
+        ("model-agnostic", "Codex は独立 model の second opinion"),
+        # 上流 skill への帰属 URL は維持対象 (Codex adversarial-review の P2)
+        (
+            "upstream-skill-url",
+            "https://github.com/obra/superpowers/tree/main/skills/systematic-debugging/SKILL.md",
+        ),
+        (
+            "upstream-skill-url-branch-name",
+            "[skill](https://github.com/obra/superpowers/tree/main/skills/requesting-code-review)",
+        ),
+    ],
+}
 _LITERAL_NEGATIVE: list[tuple[str, str]] = [
-    ("replacement-skills", "`.agents/skills/review-pr/SKILL.md`"),
-    ("replacement-agents", "`AGENTS.md` を参照"),
-    ("legit-claude-settings", "`.claude/settings.json` を編集"),
-    ("legit-env", "`CLAUDE_PROJECT_DIR` を使う"),
-    ("new-cli", "`codex review --base <base>` を実行"),
-    # 出典帰属 / 方式名としての言及は維持対象 (#1064)。bare 語で持つとここが誤検出になる
-    ("superpowers-attribution", "`obra/superpowers` の pattern に倣う"),
-    ("superpowers-parenthetical", "session-start.sh は superpowers 方式"),
-    ("model-agnostic", "Codex は独立 model の second opinion"),
-    # 上流 skill への帰属 URL は維持対象 (Codex adversarial-review の P2)
-    (
-        "upstream-skill-url",
-        "https://github.com/obra/superpowers/tree/main/skills/systematic-debugging/SKILL.md",
-    ),
-    (
-        "upstream-skill-url-branch-name",
-        "[skill](https://github.com/obra/superpowers/tree/main/skills/requesting-code-review)",
-    ),
+    item for items in _LITERAL_NEGATIVE_BY_CLASS.values() for item in items
 ]
 
 
@@ -326,6 +338,17 @@ def test_plugin_old_terms_list_is_non_empty() -> None:
 
 def test_plugin_old_terms_have_positive_fixtures() -> None:
     assert set(_PLUGIN_OLD_POSITIVE) == set(guard._PLUGIN_OLD_TERMS)
+
+
+def test_every_literal_class_has_negative_fixtures() -> None:
+    """literal 系の各 class に negative fixture が 1 件以上ある。
+
+    positive は「fixture 集合 == list 集合」で強制されるが、negative は語と
+    結び付かないため放置すると「維持対象を誤検出する」回帰が入り得る。
+    """
+    assert set(_LITERAL_NEGATIVE_BY_CLASS) == {"literal", "codex-old", "plugin-old"}
+    for class_name, items in _LITERAL_NEGATIVE_BY_CLASS.items():
+        assert items, f"{class_name} の negative fixture が空"
 
 
 @pytest.mark.parametrize(
@@ -610,6 +633,22 @@ def test_living_doc_upstream_skill_url_passes(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert _run_repo(tmp_path) == 0
+
+
+def test_living_doc_old_term_after_markdown_link_is_exit_1(tmp_path: Path) -> None:
+    r"""URL 直後 (空白なし) の旧用語も検出する (#1064、Round 2 finding)。
+
+    日本語散文は語間に空白を置かないため、URL を `\S+` で消費すると行末まで
+    飲み込んで検出漏れになる。閉じ括弧 / 引用符で打ち切ることを E2E で pin する。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\n"
+        "[仕様](https://example.com/spec)に従い、`systematic-debugging` を実行する。\n",
+        encoding="utf-8",
+    )
+    assert _run_repo(tmp_path) == 1
 
 
 def test_living_doc_kept_claude_terms_pass(tmp_path: Path) -> None:

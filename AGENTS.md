@@ -376,7 +376,7 @@ sweep は **「旧用語リスト更新 → sweep 前の実 tree で red を確�
 
 > **向きの注記**: [`.agents/skills/iterate-review/SKILL.md`](.agents/skills/iterate-review/SKILL.md) は positive / negative を逆の向き (positive = 正しい literal で緑) で使っている。**本 checklist の向きを正**とし、skill 側の統一は #1075 で扱う。
 >
-> **適用範囲 (機械検査あり)**: #1075 で meta-test が入り、`scripts/check_agent_migration_sweep.py` の各 regex 分岐 (「分岐を外すと検出されなくなること」) と、各 literal list の語 (「positive fixture を持つこと」/「negative fixture を誤検出しないこと」) を [`tests/scripts/test_check_agent_migration_sweep.py`](tests/scripts/test_check_agent_migration_sweep.py) が検査する。**class を追加するときは list に語を足すだけでなく positive / negative fixture も同時に更新する** (fixture 集合と list の完全一致を test が要求するため、追加が強制される)。本ルールは [`docs/l2-workflow.md`](docs/l2-workflow.md) §「規約・ガード導入の 3 点セット」の適用対象である。
+> **適用範囲 (機械検査あり)**: #1075 で meta-test が入り、`scripts/check_agent_migration_sweep.py` の各 regex 分岐 (「分岐を外すと検出されなくなること」) と、各 literal list の語 (「positive fixture を持つこと」/「negative fixture を誤検出しないこと」) を [`tests/scripts/test_check_agent_migration_sweep.py`](tests/scripts/test_check_agent_migration_sweep.py) が検査する。**class を追加するときは list に語を足すだけでなく positive / negative fixture も同時に更新する** (positive は「fixture 集合 = list 集合」、negative は「class ごとに 1 件以上」を test が要求するため、どちらかが欠けると red になる)。本ルールは [`docs/l2-workflow.md`](docs/l2-workflow.md) §「規約・ガード導入の 3 点セット」の適用対象である。
 
 ### 検査対象外 (SSoT は実装)
 
