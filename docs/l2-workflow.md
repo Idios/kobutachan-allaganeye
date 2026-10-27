@@ -905,7 +905,7 @@ node .github/scripts/<gate>.js <fixture>; echo "exit=$?"   # 非ゼロを期待
 
 **ハードゲートの実装**: `.claude/hooks/preuse.py` が `PreToolUse` で `gh` bulk 操作・PR マージ等をインターセプトし、#559 以降は `permissionDecision=ask` を返して Claude Code の permission prompt を出す (旧: #401 の exit 2 block + bypass prefix 運用)。**本 hook は Claude Code セッションでのみ発火する** (Zed + DeepSeek の主エージェントには発火しない。Zed では Iron Law 2 の bulk 操作確認を主エージェントが散文で行う)。GitHub Action でのマージブロックは将来候補。
 
-**Zed 期の強制力** (#1067): 上表の層 1 のうち `SessionStart` hook と層 5 の `PreToolUse` hook (加えて表に無い `PostToolUse` / `Stop` hook) は `.claude/settings.json` 登録の **Claude Code 専用 hook** で、Zed + DeepSeek では**一切発火しない**。層 1 の `AGENTS.md` (project rules) は Zed でも有効で、層 5 の代替は §Zed 期の強制・継続機構 を参照 (本節は Claude Code 期の実装記録として残す)。
+**Zed 期の強制力** (#1067): 本節が扱う Claude Code hook と、その Zed 側の代替・強制力は §Zed 期の強制・継続機構 に集約した (本節は Claude Code 期の実装記録として残す)。
 
 #### PreToolUse hook の gate 運用 (#485 / #513 / #559)
 
@@ -943,15 +943,18 @@ prefix は strip されて `gh issue close 123` が実行される。`[preuse:by
 | 機構 | Claude Code の実装 | Zed + DeepSeek の代替 | Zed での強制力 |
 | --- | --- | --- | --- |
 | Iron Law / Red Flags のセッション注入 | `SessionStart` hook (`.claude/hooks/session-start.sh`) | `AGENTS.md` の project rules 注入 | 中 (毎 turn 読まれる) |
-| bulk 操作ゲート (Iron Law 2) | `PreToolUse` hook (`.claude/hooks/preuse.py`) | 主エージェントの散文 3 択 (§Iron Law 2 (bulk 操作) の Zed 経路) | 弱 (規律依存) |
+| bulk 操作ゲート (Iron Law 2) | `PreToolUse` hook (`.claude/hooks/preuse.py`) | 主エージェントの散文 N 択 (bulk は 3 択必須、§Iron Law 2 (bulk 操作) の Zed 経路) | 弱 (規律依存) |
 | worktree 残骸の掃除 | `Stop` hook → `scripts/cleanup-worktrees.sh` | 手動 `--apply` (§worktree メンテナンス §手動実行) | 弱 |
 | local branch の掃除 | `Stop` hook → `scripts/cleanup-claude-branches.sh` | 手動 `--apply`。**現状の対象は `claude/` prefix のみ** | 弱 |
 | orphan commit 検出 | `Stop` hook (`git fsck --unreachable --no-reflogs` + author heuristic) | 手動 `git fsck --unreachable --no-reflogs` / PR 作成時の branch HEAD 確認 | 弱 |
 | worktree-as-PR-head 検出 | `SessionStart` hook (`^claude/` 限定) | セッション開始時に `gh pr list --head <branch> --state open` を実行 | 弱 |
-| 選択肢提示 | `AskUserQuestion` tool | 散文 3 択 (§AskUserQuestion の等価物) | 中 (規約 + 可読性) |
+| merge 後の規約再読込 | `PostToolUse` hook (`.claude/hooks/post-merge-reload.sh`) | なし (merge / pull 後に `AGENTS.md` と該当 doc を読み直す運用) | なし |
+| 選択肢提示 | `AskUserQuestion` tool | 散文 N 択 (元の指示の択数。bulk は 3 択必須、§AskUserQuestion の等価物) | 中 (規約 + 可読性) |
 | ユーザー訂正の蓄積 | auto-memory (`~/.claude/projects/<project>/memory/`) | なし (必要時 manual read → `docs/knowledge/` へ昇格、§Memory 階層化) | なし |
 
 hook の登録先は `.claude/settings.json` の `hooks.SessionStart` / `PreToolUse` / `PostToolUse` / `Stop`。Zed はこの file を読まないため、これらは **Zed セッションでは発火しない**。
+
+**強制力の尺度** (表の列): `強` = 機械的に停止する / `中` = 毎 turn または規約で読まれるが最終的には規律依存 / `弱` = 手動実行の規律のみ / `なし` = 仕組みが存在しない。本表に `強` の行は無い (Zed 期に機械強制できるものは無い、というのが本節の結論)。
 
 orphan 検出の `--no-reflogs` は省略しない: reflog に残る detached commit は同 flag 無しだと reachable 扱いになり、検出漏れになる (手動代替でも同じ flag を使う)。
 
@@ -971,15 +974,15 @@ hook が無いため、**主エージェントが操作前に散文で確認す�
 ### AskUserQuestion の等価物
 
 - Claude Code セッションでは `AskUserQuestion` tool で選択肢を提示する。
-- **Zed + DeepSeek には `AskUserQuestion` に相当する tool が無い**ため、主エージェントは **応答本文内の散文で同じ 3 択 (Recommended 付き) を提示し、user の回答を待つ**。これを本 repo における等価物と定める (#1067)。
-- **選択肢の数は元の指示に従う**: Iron Law 5 の標準は 2-4 択。**bulk 操作確認 (Iron Law 2) は 3 択 (`(a) 全件 OK / (b) 個別調整 / (c) やめる`) を必須**とし、それ以外 (resume-plan の `self` / parse error 時の再 dispatch 判断など) は元の節が定める择数をそのまま使う (择数を増やして選択肢を発明しない)。
+- **Zed + DeepSeek には `AskUserQuestion` に相当する tool が無い**ため、主エージェントは **応答本文内の散文で同じ選択肢 (択数は下記の規則に従う。Recommended 付き) を提示し、user の回答を待つ**。これを本 repo における等価物と定める (#1067)。
+- **選択肢の数は元の指示に従う**: Iron Law 5 の標準は 2-4 択。**bulk 操作確認 (Iron Law 2) は 3 択 (`(a) 全件 OK / (b) 個別調整 / (c) やめる`) を必須**とし、それ以外 (resume-plan の `self` / parse error 時の再 dispatch 判断など) は元の節が定める択数をそのまま使う (択数を増やして選択肢を発明しない)。
 - 書式: `(a)` / `(b)` / `(c)` の記号 + 1 行説明、1 つに `【Recommended】`。**回答が来るまで次の作業に進まない** (Iron Law 5)。
 - **skill 本文の `AskUserQuestion` 表記は置換しない**: Claude Code でも実行できる skill として可搬性を保つため tool 名はそのまま残し、Zed 実行時に本節の読み替えを適用する。eval fixture (`*/eval/**`) は履歴記録のため対象外。
 
 ### 自動化の余地と限界
 
 - **git hook (`core.hooksPath`) では Iron Law 2 を代替できない**: hook が発火するのは `git` の commit / push 等であり、Iron Law 2 の対象である `gh` の bulk 操作 (issue / PR の一括編集・クローズ) を捕捉しない。したがって bulk ゲートの自動化は Zed 側の機構待ちで、当面は上記の散文経路が唯一の経路である
-- branch 掃除 script は安全条件 (merged / active 不在 / cooldown) を実装済みで、squash merge も OID 一致で拾う (#827)。**`claude/` prefix 限定のため Zed 期の branch 名は対象外**で、汎用化の是非は #1067 で扱う
+- branch 掃除 script は安全条件 (merged / active 不在 / cooldown) を実装済みで、squash merge も OID 一致で拾う (#827)。**`claude/` prefix 限定のため Zed 期の branch 名は対象外**で、汎用化は #1067 Phase 2 で行う (user 裁定: 汎用化する / Phase 1 = 本節の明文化、Phase 2 = script 変更)
 
 ## タスクフロー
 
