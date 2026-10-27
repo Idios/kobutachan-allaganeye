@@ -108,11 +108,23 @@ _PLUGIN_OLD_TERMS = [
 # 帰属 URL の判定からの除外に使う (上記 `_PLUGIN_OLD_TERMS` のみに適用する。
 # 既存 class の literal は repo 内 path なので挙動を変えない)。
 #
-# `\S+` ではなく **閉じ括弧 / 引用符で打ち切る**: 日本語散文は語間に空白を置かないため、
+# `\S+` ではなく **閉じ記号で打ち切る**: 日本語散文は語間に空白を置かないため、
 # `[仕様](https://example.com/spec)に従い、<旧用語>を実行する` のようにリンク直後に
-# 旧用語が続くと、`\S+` は行末近くまで飲み込んで検出漏れ (FN) になる
-# (iterate-review Round 2 の finding)。
-_URL_RE = re.compile(r"https?://[^\s)\]>\"'`]+")
+# 旧用語が続くと、`\S+` は行末近くまで飲み込んで検出漏れ (FN) になる。
+# 打ち切り文字には **全角の閉じ記号と句読点** も含める: 日本語では
+# `出典（https://…）によれば<旧用語>を使う` のように全角括弧で URL を囲むため、
+# 半角だけだと同じ FN が再発する (iterate-review Round 2 / Round 3 の finding)。
+_URL_RE = re.compile(r"https?://[^\s)\]}>\"'`）］｝〉》」』】〕、。，．]+")
+
+# literal 系 class の **単一の正**。key は test の positive / negative fixture の key と
+# 一致することを meta-test が要求する (`_LITERAL_TERM_GROUPS` に group を足すと、
+# fixture を足すまで test が red になる)。
+# value = (旧用語 list, 違反ラベル, URL 内の一致を無視するか)。
+_LITERAL_TERM_GROUPS: dict[str, tuple[list[str], str, bool]] = {
+    "literal": (_LITERAL_TERMS, "旧表記残存", False),
+    "codex-old": (_CODEX_OLD_TERMS, "Codex 呼び出し契約の旧表記残存", False),
+    "plugin-old": (_PLUGIN_OLD_TERMS, "Claude Code plugin 旧表記残存", True),
+}
 
 # 主エージェント=Claude の旧表記 (#1066)。運用は Zed + DeepSeek が主エージェントへ
 # 反転済 (#1043) なので、living doc に「Claude を主エージェントとして扱う」表記が
@@ -258,23 +270,13 @@ def check_sweep(repo_root: Path) -> list[str]:
                     f"{rel}:{lineno}: 主エージェント=Claude の旧表記残存: "
                     f"{line.strip()}"
                 )
-            for term in _LITERAL_TERMS:
-                if term in line:
-                    violations.append(
-                        f"{rel}:{lineno}: 旧表記残存 ({term}): {line.strip()}"
-                    )
-            for term in _CODEX_OLD_TERMS:
-                if term in line:
-                    violations.append(
-                        f"{rel}:{lineno}: Codex 呼び出し契約の旧表記残存 ({term}): "
-                        f"{line.strip()}"
-                    )
-            for term in _PLUGIN_OLD_TERMS:
-                if term in line_without_urls:
-                    violations.append(
-                        f"{rel}:{lineno}: Claude Code plugin 旧表記残存 ({term}): "
-                        f"{line.strip()}"
-                    )
+            for terms, label, strip_urls in _LITERAL_TERM_GROUPS.values():
+                haystack = line_without_urls if strip_urls else line
+                for term in terms:
+                    if term in haystack:
+                        violations.append(
+                            f"{rel}:{lineno}: {label} ({term}): {line.strip()}"
+                        )
     return violations
 
 

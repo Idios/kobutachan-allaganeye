@@ -341,14 +341,50 @@ def test_plugin_old_terms_have_positive_fixtures() -> None:
 
 
 def test_every_literal_class_has_negative_fixtures() -> None:
-    """literal 系の各 class に negative fixture が 1 件以上ある。
+    """literal 系の各 class に positive / negative fixture がそろっている。
 
-    positive は「fixture 集合 == list 集合」で強制されるが、negative は語と
-    結び付かないため放置すると「維持対象を誤検出する」回帰が入り得る。
+    checker の `_LITERAL_TERM_GROUPS` が literal 系 class の単一の正であるため、
+    group を追加すると fixture （positive / negative 両方）を足すまで red になる。
     """
-    assert set(_LITERAL_NEGATIVE_BY_CLASS) == {"literal", "codex-old", "plugin-old"}
-    for class_name, items in _LITERAL_NEGATIVE_BY_CLASS.items():
-        assert items, f"{class_name} の negative fixture が空"
+    groups = guard._LITERAL_TERM_GROUPS
+    positive_by_group: dict[str, dict[str, str]] = {
+        "literal": _LITERAL_POSITIVE,
+        "codex-old": _CODEX_OLD_POSITIVE,
+        "plugin-old": _PLUGIN_OLD_POSITIVE,
+    }
+    assert set(positive_by_group) == set(groups), "新 class の positive fixture が無い"
+    assert set(_LITERAL_NEGATIVE_BY_CLASS) == set(groups), (
+        "新 class の negative fixture が無い"
+    )
+    for class_name, (terms, _label, _strip_urls) in groups.items():
+        assert set(positive_by_group[class_name]) == set(terms), (
+            f"{class_name}: positive fixture が list と不一致"
+        )
+        assert _LITERAL_NEGATIVE_BY_CLASS[class_name], (
+            f"{class_name}: negative fixture が空"
+        )
+
+
+def test_registry_covers_all_term_lists() -> None:
+    """`_LITERAL_TERM_GROUPS` に未登録の検出語 list を作らない。
+
+    未登録の list は `check_sweep` から見えないため、fixture を要求する
+    上記 test もすり抜ける。list を追加したら registry 登録を強制する。
+    """
+    registered = {
+        id(terms) for terms, _label, _strip_urls in guard._LITERAL_TERM_GROUPS.values()
+    }
+    term_lists = {
+        name: value
+        for name, value in vars(guard).items()
+        if isinstance(value, list)
+        and (name.endswith("_OLD_TERMS") or name == "_LITERAL_TERMS")
+    }
+    assert term_lists, "検出語 list が見つからない (命名規約が変わった?)"
+    for name, value in term_lists.items():
+        assert id(value) in registered, (
+            f"{name} が _LITERAL_TERM_GROUPS に未登録 (check_sweep から見えない)"
+        )
 
 
 @pytest.mark.parametrize(
@@ -619,6 +655,24 @@ def test_living_doc_plugin_old_term_is_exit_1(tmp_path: Path) -> None:
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "guide.md").write_text(
         "# Guide\n\n`superpowers:brainstorming` を invoke する。\n", encoding="utf-8"
+    )
+    assert _run_repo(tmp_path) == 1
+
+
+def test_living_doc_old_term_after_fullwidth_bracket_is_exit_1(
+    tmp_path: Path,
+) -> None:
+    """全角括弧で囲んだ URL の直後の旧用語も検出する (#1064、Round 3 finding)。
+
+    日本語では `出典（https://example.com）によれば<旧用語>を使う` のように全角で URL を
+    囲むため、打ち切り文字に全角の閉じ記号が無いと検出漏れになる。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\n"
+        "出典（https://github.com/obra/superpowers）によればsystematic-debuggingを使う。\n",
+        encoding="utf-8",
     )
     assert _run_repo(tmp_path) == 1
 
