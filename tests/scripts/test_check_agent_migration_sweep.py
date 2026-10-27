@@ -292,15 +292,24 @@ _LITERAL_NEGATIVE: list[tuple[str, str]] = [
     ("superpowers-attribution", "`obra/superpowers` の pattern に倣う"),
     ("superpowers-parenthetical", "session-start.sh は superpowers 方式"),
     ("model-agnostic", "Codex は独立 model の second opinion"),
+    # 上流 skill への帰属 URL は維持対象 (Codex adversarial-review の P2)
+    (
+        "upstream-skill-url",
+        "https://github.com/obra/superpowers/tree/main/skills/systematic-debugging/SKILL.md",
+    ),
+    (
+        "upstream-skill-url-branch-name",
+        "[skill](https://github.com/obra/superpowers/tree/main/skills/requesting-code-review)",
+    ),
 ]
 
 
 def _literal_hits(text: str) -> list[str]:
-    return [
-        t
-        for t in guard._LITERAL_TERMS + guard._CODEX_OLD_TERMS + guard._PLUGIN_OLD_TERMS
-        if t in text
-    ]
+    """checker と同じ判定で literal 一致を返す (plugin 旧表記のみ URL を除く)。"""
+    text_without_urls = guard._URL_RE.sub("", text)
+    hits = [t for t in guard._LITERAL_TERMS + guard._CODEX_OLD_TERMS if t in text]
+    hits += [t for t in guard._PLUGIN_OLD_TERMS if t in text_without_urls]
+    return hits
 
 
 def test_literal_terms_have_positive_fixtures() -> None:
@@ -589,6 +598,18 @@ def test_living_doc_plugin_old_term_is_exit_1(tmp_path: Path) -> None:
         "# Guide\n\n`superpowers:brainstorming` を invoke する。\n", encoding="utf-8"
     )
     assert _run_repo(tmp_path) == 1
+
+
+def test_living_doc_upstream_skill_url_passes(tmp_path: Path) -> None:
+    """上流 skill への帰属 URL は exit 0 (#1064、Codex adversarial-review の P2)。"""
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\n"
+        "https://github.com/obra/superpowers/tree/main/skills/systematic-debugging/SKILL.md\n",
+        encoding="utf-8",
+    )
+    assert _run_repo(tmp_path) == 0
 
 
 def test_living_doc_kept_claude_terms_pass(tmp_path: Path) -> None:

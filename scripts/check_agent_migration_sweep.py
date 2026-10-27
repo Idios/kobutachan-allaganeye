@@ -92,6 +92,11 @@ _CODEX_OLD_TERMS = [
 #
 # 旧モデル名は一般の model 版固定検出 (例: `GPT-\d`) を行わず、sweep で実際に
 # 残っていた版名のみ literal で持つ (汎用 regex は正式名称の記述まで巻き込むため)。
+#
+# 上流 skill への **出典帰属 URL** (`https://github.com/obra/superpowers/tree/main/
+# skills/<name>/SKILL.md` 等) は維持対象のため、URL 内の一致は判定から除外する
+# (`_URL_RE`)。`.claude/skills` 等の repo 内 path とは違い、これら 4 語は上流の
+# 正当な名称でもあるため (Codex adversarial-review [P2])。
 _PLUGIN_OLD_TERMS = [
     "superpowers:",
     "subagent-driven-development",
@@ -99,6 +104,10 @@ _PLUGIN_OLD_TERMS = [
     "systematic-debugging",
     "GPT-5.4",
 ]
+
+# 帰属 URL の判定からの除外に使う (上記 `_PLUGIN_OLD_TERMS` のみに適用する。
+# 既存 class の literal は repo 内 path なので挙動を変えない)。
+_URL_RE = re.compile(r"https?://\S+")
 
 # 主エージェント=Claude の旧表記 (#1066)。運用は Zed + DeepSeek が主エージェントへ
 # 反転済 (#1043) なので、living doc に「Claude を主エージェントとして扱う」表記が
@@ -235,6 +244,8 @@ def check_sweep(repo_root: Path) -> list[str]:
             )
             continue
         for lineno, line in enumerate(text.splitlines(), 1):
+            # 帰属 URL 内の上流 skill 名は維持対象 (operational instruction ではない)。
+            line_without_urls = _URL_RE.sub("", line)
             if _SLASH_RE.search(line):
                 violations.append(f"{rel}:{lineno}: slash command 残存: {line.strip()}")
             if _CLAUDE_AGENT_RE.search(line):
@@ -254,7 +265,7 @@ def check_sweep(repo_root: Path) -> list[str]:
                         f"{line.strip()}"
                     )
             for term in _PLUGIN_OLD_TERMS:
-                if term in line:
+                if term in line_without_urls:
                     violations.append(
                         f"{rel}:{lineno}: Claude Code plugin 旧表記残存 ({term}): "
                         f"{line.strip()}"
