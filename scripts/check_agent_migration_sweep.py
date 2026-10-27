@@ -116,10 +116,15 @@ _PLUGIN_OLD_TERMS = [
 # 2 番目の分岐は **scheme 無しの URL / repo 内 path / anchor** を拾う
 # (`github.com/.../SKILL.md` / `docs/guide.md#<旧用語>`)。いずれも上流・内部への
 # 出典参照で、operational instruction ではない。
+#
+# ただし **`.` か `#` を含むことを要求**する: これが無いと
+# `/superpowers:brainstorming` のような **plugin skill の canonical 呼び出し形** が
+# パスと誤認されて消え、第 5 class の主語が素通りする (Round 5 finding)。
+# `GPT-5.4` は `/` を持たないため影響を受けない。
 _URL_CHARS = r"A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%"
 _URL_RE = re.compile(
     rf"(?:https?://|www\.)[{_URL_CHARS}]+"
-    rf"|[{_URL_CHARS}]*/[{_URL_CHARS}]+"
+    rf"|(?=[{_URL_CHARS}]*[.#])[{_URL_CHARS}]*/[{_URL_CHARS}]+"
 )
 
 # literal 系 class の **単一の正**。key は test の positive / negative fixture の key と

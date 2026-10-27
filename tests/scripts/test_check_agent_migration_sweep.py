@@ -315,6 +315,12 @@ _LITERAL_NEGATIVE_BY_CLASS: dict[str, list[tuple[str, str]]] = {
             "github.com/obra/superpowers/tree/main/skills/systematic-debugging/SKILL.md を参照",
         ),
         ("internal-anchor", "docs/guide.md#systematic-debugging-section を見よ"),
+        # markdown リンクの label が上流 skill 名の場合は出典帰属として許容する
+        # (Round 1 Q2=(a) の「帰属は維持対象」と同方向。Round 5 の ambiguous をこの向きで確定)
+        (
+            "markdown-link-label-attribution",
+            "[superpowers:brainstorming](https://github.com/obra/superpowers/tree/main/skills/brainstorming)",
+        ),
     ],
 }
 _LITERAL_NEGATIVE: list[tuple[str, str]] = [
@@ -377,21 +383,33 @@ def test_every_literal_class_has_negative_fixtures() -> None:
 
 
 @pytest.mark.parametrize(
-    "group", list(_POSITIVE_BY_GROUP), ids=list(_POSITIVE_BY_GROUP)
+    ("group", "term"),
+    [
+        (group, term)
+        for group in _POSITIVE_BY_GROUP
+        for term in _POSITIVE_BY_GROUP[group]
+    ],
+    ids=[
+        f"{group}:{term}"
+        for group in _POSITIVE_BY_GROUP
+        for term in _POSITIVE_BY_GROUP[group]
+    ],
 )
-def test_group_positive_fixtures_are_detected_by_check_sweep(
-    tmp_path: Path, group: str
+def test_each_positive_fixture_is_detected_by_check_sweep(
+    tmp_path: Path, group: str, term: str
 ) -> None:
-    """各 class の positive fixture が checker 本体 (check_sweep) で検出される。
+    """positive fixture を **1 語ずつ** checker 本体 (check_sweep) に食わせて発火確認。
 
-    `_literal_hits` は fixture 側の mirror であり、checker 本体が group を
-    読み損ねていても緑になり得る。E2E で class ごとに発火を確認する。
+    `_literal_hits` は fixture 側の mirror であり、checker 本体が語を取り損ねても
+    気付きにくい。group を一括で流すと 1 語の壊れが他の語で masking されるため、
+    語単位で E2E 検証する (`term` は ids と可読性のため受け取る)。
     """
     _make_repo(tmp_path)
     (tmp_path / "docs").mkdir()
-    body = "\n".join(_POSITIVE_BY_GROUP[group].values())
-    (tmp_path / "docs" / "guide.md").write_text(body + "\n", encoding="utf-8")
-    assert _run_repo(tmp_path) == 1
+    (tmp_path / "docs" / "guide.md").write_text(
+        _POSITIVE_BY_GROUP[group][term] + "\n", encoding="utf-8"
+    )
+    assert _run_repo(tmp_path) == 1, f"{group}:{term} が検出されない"
 
 
 def test_registry_covers_all_term_lists() -> None:
@@ -718,6 +736,20 @@ def test_living_doc_old_term_after_bare_url_is_exit_1(tmp_path: Path) -> None:
         "# Guide\n\n"
         "詳細はhttps://example.comを参照してsystematic-debuggingを実行する。\n",
         encoding="utf-8",
+    )
+    assert _run_repo(tmp_path) == 1
+
+
+def test_living_doc_canonical_slash_form_is_exit_1(tmp_path: Path) -> None:
+    """plugin skill の canonical 呼び出し形 (`/superpowers:...`) も検出する。
+
+    先頭スラッシュがあると scheme 無し URL 分岐にパスとして食われ、第 5 class の
+    主語が素通りしていた (Round 5 finding)。
+    """
+    _make_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text(
+        "# Guide\n\n`/superpowers:brainstorming` を起動する。\n", encoding="utf-8"
     )
     assert _run_repo(tmp_path) == 1
 
