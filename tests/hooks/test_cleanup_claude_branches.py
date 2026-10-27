@@ -120,6 +120,27 @@ def test_non_claude_branch_deleted_when_safe(
     assert any(e["name"] == branch for e in deleted), result.stdout
 
 
+@pytest.mark.parametrize("name", ["123", "true", "001"])
+def test_numeric_looking_branch_name_stays_string(
+    make_claude_branch,
+    run_hook,
+    assert_valid_ndjson,
+    name: str,
+) -> None:
+    """`123` / `true` / `001` のような branch 名も NDJSON 上で文字列のまま出る。
+
+    prefix 限定を外したことでこのような名前が新たに到達可能になった (#1067 Phase 2)。
+    `_emit` の型推論に任せると number / boolean になったり `001` が不正 JSON になる。
+    """
+    make_claude_branch("p2num", merged=True, age_seconds=86400 * 2, name=name)
+    result = run_hook("scripts/cleanup-claude-branches.sh", "--apply")
+    assert_valid_ndjson(result.ndjson)
+    deleted = _of_event(result.ndjson, "deleted")
+    assert any(e["name"] == name for e in deleted), result.stdout
+    # 生の stdout でもクオートされていること (`"name":001` / `"name":123` を許さない)
+    assert f'"name":"{name}"' in result.stdout, result.stdout
+
+
 @pytest.mark.parametrize("protected", ["main", "master", "develop", "develop-9.9.9"])
 def test_protected_branch_not_listed(
     make_claude_branch,

@@ -32,7 +32,10 @@ _emit() {
   for kv in "$@"; do
     local k="${kv%%=*}"
     local v="${kv#*=}"
-    if [[ "$v" =~ ^-?[0-9]+$ ]] || [[ "$v" == "true" || "$v" == "false" ]]; then
+    # `name` は常に文字列として出す (#1067 Phase 2)。branch 名は `123` / `true` /
+    # `001` のような「数値 / 真偽値に見える」値も合法で、型推論に任せると
+    # schema 違反 (string 型に number / boolean) や不正 JSON (`001`) になる。
+    if [[ "$k" != "name" ]] && { [[ "$v" =~ ^-?[0-9]+$ ]] || [[ "$v" == "true" || "$v" == "false" ]]; }; then
       out+=",\"$k\":$v"
     else
       v="${v//\\/\\\\}"; v="${v//\"/\\\"}"
