@@ -19,7 +19,8 @@ E:/projects/kobutachan-tools/kobutachan-allaganeye/  ← 唯一の worktree (mai
     ├── .claude/hooks/
     │   ├── session-start.sh         ← Iron Law を毎セッション先頭に注入 (superpowers 方式)
     │   ├── preuse.py                ← Bash 実行前の確認ゲート (#401 由来)
-    │   └── post-merge-reload.sh     ← マージ後のリロード
+    │   ├── post-merge-reload.sh     ← マージ後のリロード
+    │   └── stop.sh                  ← セッション終了時の worktree / branch 掃除 + orphan 検出
     ├── .agents/skills/
     │   ├── review-pr/               ← PR レビュー (#367 対策強化版)
     │   ├── enforce-acceptance-criteria/  ← 受け入れ条件逐条検証ゲート (Iron Law 1)
@@ -903,7 +904,7 @@ node .github/scripts/<gate>.js <fixture>; echo "exit=$?"   # 非ゼロを期待
 | 6 | PR テンプレート (`.github/pull_request_template.md`) | Iron Law 1/3/4 の逐条チェックリスト |
 | 7 | ユーザー最終承認 | マージは全て Idios が実行、未達 PR は差し戻し |
 
-**ハードゲートの実装**: `.claude/hooks/preuse.py` が `PreToolUse` で `gh` bulk 操作・PR マージ等をインターセプトし、#559 以降は `permissionDecision=ask` を返して Claude Code の permission prompt を出す (旧: #401 の exit 2 block + bypass prefix 運用)。**本 hook は Claude Code セッションでのみ発火する** (Zed + DeepSeek の主エージェントには発火しない。Zed では Iron Law 2 の bulk 操作確認を主エージェントが散文で行う)。GitHub Action でのマージブロックは将来候補。
+**ハードゲートの実装**: `.claude/hooks/preuse.py` が `PreToolUse` で `gh` bulk 操作・PR マージ等をインターセプトし、#559 以降は `permissionDecision=ask` を返して Claude Code の permission prompt を出す (旧: #401 の exit 2 block + bypass prefix 運用)。**本 hook は Claude Code セッションでのみ発火する**。Zed 期の代替は §Zed 期の強制・継続機構 を参照。GitHub Action でのマージブロックは将来候補。
 
 **Zed 期の強制力** (#1067): 本節が扱う Claude Code hook と、その Zed 側の代替・強制力は §Zed 期の強制・継続機構 に集約した (本節は Claude Code 期の実装記録として残す)。
 
@@ -943,7 +944,9 @@ prefix は strip されて `gh issue close 123` が実行される。`[preuse:by
 | 機構 | Claude Code の実装 | Zed + DeepSeek の代替 | Zed での強制力 |
 | --- | --- | --- | --- |
 | Iron Law / Red Flags のセッション注入 | `SessionStart` hook (`.claude/hooks/session-start.sh`) | `AGENTS.md` の project rules 注入 | 中 (毎 turn 読まれる) |
-| bulk 操作ゲート (Iron Law 2) | `PreToolUse` hook (`.claude/hooks/preuse.py`) | 主エージェントの散文 N 択 (bulk は 3 択必須、§Iron Law 2 (bulk 操作) の Zed 経路) | 弱 (規律依存) |
+| bulk 操作ゲート (Iron Law 2) | `PreToolUse` hook (`.claude/hooks/preuse.py` の bulk 閾値判定) | 主エージェントの散文 N 択 (bulk は 3 択必須、§Iron Law 2 (bulk 操作) の Zed 経路) | 弱 (規律依存) |
+| multi-scope 逸脱ゲート (Iron Law 3 backstop) | `PreToolUse` hook (`preuse.py` の `git commit` 分岐 + `_check_scope_creep`) | `scope-guard` skill (AGENTS.md §Iron Law の執行機構) | 弱 (規律依存) |
+| PR マージの always gate | `PreToolUse` hook (`preuse.py` の `gh pr merge`) | マージは user (Idios) が実行 (Iron Law 7 層表の層 7) | 中 (人間が実行) |
 | worktree 残骸の掃除 | `Stop` hook → `scripts/cleanup-worktrees.sh` | 手動 `--apply` (§worktree メンテナンス §手動実行) | 弱 |
 | local branch の掃除 | `Stop` hook → `scripts/cleanup-claude-branches.sh` | 手動 `--apply`。**現状の対象は `claude/` prefix のみ** | 弱 |
 | orphan commit 検出 | `Stop` hook (`git fsck --unreachable --no-reflogs` + author heuristic) | 手動 `git fsck --unreachable --no-reflogs` / PR 作成時の branch HEAD 確認 | 弱 |
@@ -967,7 +970,7 @@ hook が無いため、**主エージェントが操作前に散文で確認す�
 3. `(a) 全件 OK【Recommended】/ (b) 個別調整 / (c) やめる` を提示し、**user の回答を待つ**
 4. 承認後に実行し、実行後の件数を報告する
 
-- 「bulk」とみなす閾値の正は `AGENTS.md` §Iron Law の 2 条目 (本節では再掲しない)
+- 「bulk」の閾値の正は §強制メカニズム (`.claude/hooks/preuse.py` の `_BULK_THRESHOLD` / `_BULK_WINDOW_SEC` と同節の宣言。本節では数値を再掲しない)
 - 回答が曖昧な場合は**未承認**として扱い、実行しない
 - 実施しなかった場合も「未実施 (理由)」を 1 行残す (§規約・ガード導入の 3 点セット ②)
 
@@ -976,7 +979,7 @@ hook が無いため、**主エージェントが操作前に散文で確認す�
 - Claude Code セッションでは `AskUserQuestion` tool で選択肢を提示する。
 - **Zed + DeepSeek には `AskUserQuestion` に相当する tool が無い**ため、主エージェントは **応答本文内の散文で同じ選択肢 (択数は下記の規則に従う。Recommended 付き) を提示し、user の回答を待つ**。これを本 repo における等価物と定める (#1067)。
 - **選択肢の数は元の指示に従う**: Iron Law 5 の標準は 2-4 択。**bulk 操作確認 (Iron Law 2) は 3 択 (`(a) 全件 OK / (b) 個別調整 / (c) やめる`) を必須**とし、それ以外 (resume-plan の `self` / parse error 時の再 dispatch 判断など) は元の節が定める択数をそのまま使う (択数を増やして選択肢を発明しない)。
-- 書式: `(a)` / `(b)` / `(c)` の記号 + 1 行説明、1 つに `【Recommended】`。**回答が来るまで次の作業に進まない** (Iron Law 5)。
+- 書式: `(a)` / `(b)` / `(c)` の記号 + 1 行説明、1 つに Recommended を付ける。**回答が来るまで次の作業に進まない** (Iron Law 5)。既存の `(Recommended)` / `[Recommended]` / `【Recommended】` はいずれも可 (表記統一のための一斉置換はしない)
 - **skill 本文の `AskUserQuestion` 表記は置換しない**: Claude Code でも実行できる skill として可搬性を保つため tool 名はそのまま残し、Zed 実行時に本節の読み替えを適用する。eval fixture (`*/eval/**`) は履歴記録のため対象外。
 
 ### 自動化の余地と限界
@@ -1261,7 +1264,7 @@ Claude レビュー経路（Claude Code セッションでの Fable 俯瞰レビ
 ### 実行メカニズム（正直な制約）
 
 - Claude レビューが使えない間、俯瞰レビューは **主エージェント（= DeepSeek V4 Pro）が代行**する（Idios の判断で発動。hook 強制は不可）。
-- Zed + DeepSeek 環境での Claude Code 固有機構の対応（`Agent` tool → `spawn_agent` / `AskUserQuestion` → 散文での確認依頼 / Claude Code の code review subagent → 主エージェントの直接レビュー / スラッシュコマンド → SKILL.md を read して手動追従 / `codex` CLI → 直呼び）は `AGENTS.md` §レビュー実行経路 を参照。
+- Zed + DeepSeek 環境での Claude Code 固有機構の対応（`Agent` tool → `spawn_agent` / `AskUserQuestion` → 散文 N 択 / Claude Code の code review subagent → 主エージェントの直接レビュー / スラッシュコマンド → SKILL.md を read して手動追従 / `codex` CLI → 直呼び）は `AGENTS.md` §レビュー実行経路 と §Zed 期の強制・継続機構 §AskUserQuestion の等価物 (択数・書式・停止条件) を参照。
 
 ### Fable fallback（並列独立 + 主エージェント突合）
 
