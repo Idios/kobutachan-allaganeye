@@ -329,7 +329,7 @@ PR 作成後は `iterate-review` skill (<PR#>) で review-fix ループを自走
 
 プロジェクト基本ルールは本ファイル (AGENTS.md) §Iron Law (6 条 + Red Flags 表) に記される。条文と Red Flags の正は同節。違反が 1% でも疑われる状況では STOP し `AskUserQuestion` でユーザー確認する。
 
-強制メカニズム (7 層) の詳細は [docs/l2-workflow.md](docs/l2-workflow.md) §強制メカニズム を参照。
+強制メカニズム (7 層) の詳細は [docs/l2-workflow.md](docs/l2-workflow.md) §強制メカニズム を参照。**Zed 期の強制力 (どの hook / 機構が発火し、何が代替か) の正は同 doc §Zed 期の強制・継続機構** (#1067)。
 
 ### Memory 活用 (ユーザー訂正の蓄積)
 
@@ -492,7 +492,7 @@ Claude Code / Fable / Kimi Code は **Zed セッション内からは起動不�
 **正直な制約**:
 
 - **DeepSeek は Claude Code の subagent になれない**（`.claude/agents/*.md` の `model:` は Claude エイリアスのみ）。委譲先モデルは Idios が手動で選ぶ。
-- skill 実行は **DeepSeek が `.agents/skills/*/SKILL.md` を read して手順を手動追従**する形。Claude Code のスラッシュコマンドは DeepSeek から invoke 不可。`Agent` subagent / `AskUserQuestion` / superpowers plugin skill は Zed 等価物（`spawn_agent` / 散文での確認 / 直接レビュー）へ置換する。
+- skill 実行は **DeepSeek が `.agents/skills/*/SKILL.md` を read して手順を手動追従**する形。Claude Code のスラッシュコマンドは DeepSeek から invoke 不可。`Agent` subagent / `AskUserQuestion` / superpowers plugin skill は Zed 等価物（`spawn_agent` / 散文 N 択の確認 / 直接レビュー）で**読み替える**（**skill 本文の tool 名は可搬性のため置換しない**。択数・書式・停止条件は [`docs/l2-workflow.md`](docs/l2-workflow.md) §Zed 期の強制・継続機構 §AskUserQuestion の等価物 を参照）。
 - **Codex を DeepSeek から呼べるかは terminal 権限に依存**する。権限があれば `codex` CLI を直接実行できる（Codex 本体は Claude と独立）。無い場合は Idios 手動 invoke に落ちる。
 
 **fallback notice（記録義務、C6 同型）**: Claude レビューが使えない状況で DeepSeek がレビューを代行した成果物には、Claude/Opus/Fable レビュー済との誤認を防ぐため以下を明示する。

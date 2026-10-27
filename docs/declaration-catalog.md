@@ -30,6 +30,7 @@
 | detection-modules | allaganeye モジュール一覧 | allaganeye | AGENTS.md | prose-only | none | active |
 | codex-invocation | codex CLI の focus 渡し方 (`--base` と `[PROMPT]` の併用不可 / PROMPT 単独形式) | docs/l2-workflow.md | .agents/skills/review-pr/SKILL.md, .agents/skills/iterate-review/SKILL.md | prose-only | none | active |
 | sweep-classes | 用語 sweep checker の検出 class 5 種 | scripts/check_agent_migration_sweep.py | AGENTS.md, .github/workflows/ci.yml, tests/scripts/test_check_agent_migration_sweep.py | prose-only | none | active |
+| zed-hook-fallbacks | Zed 期の強制・継続機構の対応表 (hook 別の代替と強制力) | docs/l2-workflow.md | AGENTS.md | prose-only | none | active |
 
 ## 備考
 
@@ -49,3 +50,4 @@
 - `detection-modules`: `AGENTS.md` §モジュール構成 は索引であり、`detection/*` は行内で列挙される。完全一致を強制すると索引の自由度を失う。**再確認トリガー**: `allaganeye/` への module 追加・削除・rename。`scripts/check_doc_code_refs.py` の symbol 検査が rename を拾う
 - `codex-invocation`: 検証対象は **外部 CLI (`codex`) の受理仕様**であり、CI に `codex` を持ち込まない方針のため機械検証しない。**再実測トリガー**: `codex` CLI を version up したとき / `codex review --help` の `[PROMPT]`・`--base` の記述が変わったとき。実測記録は `docs/l2-workflow.md` §Step 5 の invocation path の注記 (日付・version 付き)
 - `sweep-classes`: class 名の列挙は checker docstring / `AGENTS.md` (sweep 種別列挙と class 列挙の 2 箇所) / `ci.yml` / test 定数の計 5 箇所 (4 file) に現れる。**台帳の gate では検証しない** (`gate: none`)。`ci:<job>` は job 単位でしか指せず、`script:<path>::<func>` は `scripts/*.py` の関数単位のため、どちらも「`tests/scripts/test_check_agent_migration_sweep.py` の `test_declarations_are_consistent_across_spots` が class 名の一致を検査する」ことを表せない (弱い gate を `checked` として提示すると、何を検査しているかを誤読させる)。実際の一致検査は同 test が `_DETECTION_CLASS_TOKENS` を介して **AGENTS.md の class 列挙行 / checker docstring / `ci.yml` の 3 箇所** を突合して担う。sweep 種別列挙の行は語形が違うため人手保守。**再確認トリガー**: checker に検出 class を追加・削除したとき (同 test が red になる) / AGENTS.md の sweep 種別列挙を編集したとき
+- `zed-hook-fallbacks`: SSoT は `docs/l2-workflow.md` §Zed 期の強制・継続機構 の機構マトリクス (強制力の尺度を含む)。`AGENTS.md` は同節への**ポインタ spot** で、事実の複製は置かない。同 doc 内の §強制メカニズム / §worktree メンテナンス / §Claude fallback の実行メカニズム の注記は**同節を参照する 1 行**にとどめ、hook 別の代替・強制力を再掲しない。**再確認トリガー**: hook の登録先や発火条件を変更したとき / Zed 側に hook 相当の機構が追加されたとき (#1067)
