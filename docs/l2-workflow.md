@@ -947,7 +947,7 @@ prefix は strip されて `gh issue close 123` が実行される。`[preuse:by
 | bulk 操作ゲート (Iron Law 2) | `PreToolUse` hook (`.claude/hooks/preuse.py` の bulk 閾値判定) | 主エージェントの散文 N 択 (bulk は 3 択必須、§Iron Law 2 (bulk 操作) の Zed 経路) | 弱 (規律依存) |
 | multi-scope 逸脱ゲート (Iron Law 3 backstop) | `PreToolUse` hook (`preuse.py` の `git commit` 分岐 + `_check_scope_creep`: distinct scope が 2 以上、**または未知パスが 1 件でもあれば ask**) | `scope-guard` skill (AGENTS.md §Iron Law の執行機構) | 弱 (規律依存) |
 | PR マージの always gate | `PreToolUse` hook (`preuse.py` の `gh pr merge`) | マージは user (Idios) が実行 (§強制メカニズム の 7 層表の層 7) | 中 (人間が実行) |
-| worktree 残骸の掃除 | `Stop` hook → `scripts/cleanup-worktrees.sh` | 手動 `--apply` (§worktree メンテナンス §手動実行) | 弱 |
+| worktree 残骸の掃除 | `Stop` hook → `scripts/cleanup-worktrees.sh` | 手動 `--apply`。**走査先は `.claude/worktrees/` 固定のため、Zed 期の repo 外 worktree は対象外** (手動 `git worktree remove`) | 弱 |
 | local branch の掃除 | `Stop` hook → `scripts/cleanup-claude-branches.sh` | 手動 `--apply`。**現状の対象は `claude/` prefix のみ** | 弱 |
 | orphan commit 検出 | `Stop` hook (`git fsck --unreachable --no-reflogs` + author heuristic) | 手動 `git fsck --unreachable --no-reflogs` / PR 作成時の branch HEAD 確認 | 弱 |
 | worktree-as-PR-head 検出 | `SessionStart` hook (`^claude/` 限定) | セッション開始時に `gh pr list --head <branch> --state open` を実行 | 弱 |
@@ -959,7 +959,7 @@ hook の登録先は `.claude/settings.json` の `hooks.SessionStart` / `PreTool
 
 **強制力の尺度** (表の列): `強` = 機械的に停止する / `中` = 毎 turn または規約で読まれるが最終的には規律依存 / `弱` = 文書化された手順 (script / command / 散文手順) があるが自動発火しない / `なし` = 手順も無い。本表に `強` の行は無い (Zed 期に機械強制できるものは無い、というのが本節の結論)。
 
-**手動代替の実施記録**: 上表の `弱` の行を実施しなかった場合は「未実施 (理由)」を **PR 本文の Self-Test Report 節** に 1 行残す (PR を伴わない作業では最終報告に 1 行。§規約・ガード導入の 3 点セット ②)。**①発火点は存在しない**: 自動発火する仕組みが無いことが本節の前提で、規律 + doc 記述のみで運用する (user 裁定で「手動一本化」を選択済み)。
+**手動代替の実施記録**: 上表の `弱` の行を実施しなかった場合は「未実施 (理由)」を **PR 本文の 実機検証 節 (plain bullet)** に 1 行残す (PR を伴わない作業では最終報告に 1 行。§規約・ガード導入の 3 点セット ②)。**①発火点は存在しない**: 自動発火する仕組みが無いことが本節の前提で、規律 + doc 記述のみで運用する (user 裁定で「手動一本化」を選択済み)。
 
 orphan 検出の `--no-reflogs` は省略しない: reflog に残る detached commit は同 flag 無しだと reachable 扱いになり、検出漏れになる (手動代替でも同じ flag を使う)。
 
@@ -972,9 +972,9 @@ hook が無いため、**主エージェントが操作前に散文で確認す�
 3. `(a) 全件 OK【Recommended】/ (b) 個別調整 / (c) やめる` を提示し、**user の回答を待つ**
 4. 承認後に実行し、実行後の件数を報告する
 
-- 「bulk」の閾値の正は §強制メカニズム (`.claude/hooks/preuse.py` の `_BULK_THRESHOLD` / `_BULK_WINDOW_SEC`、および `deferred` ラベル付き操作に使う `_DEFERRED_BULK_THRESHOLD`。本節では数値を再掲しない)
+- 「bulk」の閾値の正は §強制メカニズム (`.claude/hooks/preuse.py` の `_BULK_THRESHOLD` / `_BULK_WINDOW_SEC`、および `deferred` ラベル付き操作に使う `_DEFERRED_BULK_THRESHOLD`。本節では数値を再掲しない)。**`_BULK_WINDOW_SEC` は hook の検知窓**であり、規約上の件数基準は `AGENTS.md` Iron Law 2 (窓を超えて分散しても確認対象)
 - 回答が曖昧な場合は**未承認**として扱い、実行しない
-- 実施しなかった場合も「未実施 (理由)」を 1 行残す (§規約・ガード導入の 3 点セット ②。記録先は PR 本文の Self-Test Report 節)
+- 実施しなかった場合も「未実施 (理由)」を 1 行残す (§規約・ガード導入の 3 点セット ②。記録先は PR 本文の 実機検証 節)
 
 ### AskUserQuestion の等価物
 
@@ -1020,6 +1020,8 @@ Claude Code のセッション用 worktree はセッション終了時に `git w
 設定箇所: `.claude/settings.json` の `hooks.Stop` セクション。
 
 **Zed セッションでは Stop hook が発火しない** (§Zed 期の強制・継続機構、#1067)。Zed 期は下記 §手動実行 のコマンドを区切りで実行する。
+
+**Zed 期の worktree は repo 外 (`E:/projects/kobutachan-tools/worktrees/...`) に手動作成される**ため、`cleanup-worktrees.sh` の走査先 (`.claude/worktrees/`) には存在せず対象外。掃除は `git worktree remove <path>` で手動に行う (§Zed 期の強制・継続機構)。
 
 ### branch cleanup の安全条件 (AND)
 
