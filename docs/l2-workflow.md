@@ -953,11 +953,11 @@ prefix は strip されて `gh issue close 123` が実行される。`[preuse:by
 | worktree-as-PR-head 検出 | `SessionStart` hook (`^claude/` 限定) | セッション開始時に `gh pr list --head <branch> --state open` を実行 | 弱 |
 | merge 後の規約再読込 | `PostToolUse` hook (`.claude/hooks/post-merge-reload.sh`) | なし (Zed 側に機械機構は無い。読み直しは任意で、規約化していない) | なし |
 | 選択肢提示 | `AskUserQuestion` tool | 散文 N 択 (元の指示の択数。bulk は 3 択必須、§AskUserQuestion の等価物) | 中 (規約 + 可読性) |
-| ユーザー訂正の蓄積 | auto-memory (`~/.claude/projects/<project>/memory/`) | なし (auto-memory は存在しない。必要時に §Memory 階層化 の L2 path を read し、汎用知見は `docs/knowledge/` へ置く) | なし |
+| ユーザー訂正の蓄積 | auto-memory (`~/.claude/projects/<project>/memory/`) | 蓄積機構なし。残っている memory は §Memory 階層化 の L2 path を必要時 read し、汎用知見は `docs/knowledge/` へ置く | 弱 (手順のみ) |
 
 hook の登録先は `.claude/settings.json` の `hooks.SessionStart` / `PreToolUse` / `PostToolUse` / `Stop`。Zed はこの file を読まないため、これらは **Zed セッションでは発火しない**。
 
-**強制力の尺度** (表の列): `強` = 機械的に停止する / `中` = 毎 turn または規約で読まれるが最終的には規律依存 / `弱` = 手動実行の手順 (script / command) がある / `なし` = Zed 側に代替の機構も手順も無い。本表に `強` の行は無い (Zed 期に機械強制できるものは無い、というのが本節の結論)。
+**強制力の尺度** (表の列): `強` = 機械的に停止する / `中` = 毎 turn または規約で読まれるが最終的には規律依存 / `弱` = 文書化された手順 (script / command / 散文手順) があるが自動発火しない / `なし` = 手順も無い。本表に `強` の行は無い (Zed 期に機械強制できるものは無い、というのが本節の結論)。
 
 **手動代替の実施記録**: 上表の `弱` の行を実施しなかった場合は「未実施 (理由)」を 1 行残す (§規約・ガード導入の 3 点セット ②)。**①発火点は存在しない** (自動発火する仕組みが無いことが本節の前提で、規律 + doc 記述のみで運用する。Q2=(a) の user 裁定)。
 
