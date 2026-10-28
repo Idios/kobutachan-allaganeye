@@ -38,8 +38,9 @@
 // Recording convention when a re-capture was only needed to clear the gate:
 // if the images come back byte-identical (or differ only for the known
 // non-deterministic screens above) and no rendering change was intended,
-// revert the images and use `--update` (which rewrites only `sources_sha256`),
-// then state "再撮影で byte 一致 / 差分なし" in the PR body or commit message so
+// revert the images and use `--update` (it rewrites the recorded digests, so it
+// has to be the last step after the images are final), then state "再撮影で
+// byte 一致 / 差分なし" in the PR body or commit message so
 // the next reader knows the images were not silently refreshed (#1008).
 
 import { createRequire } from 'node:module';
