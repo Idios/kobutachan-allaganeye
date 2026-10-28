@@ -11,8 +11,9 @@
 // freshness gate's scope (#944).
 //
 // Playwright is a maintainer-only one-shot dependency and is deliberately NOT
-// declared in gui/package.json: the `playwright` package downloads a browser
-// on install, which would land on every CI `npm ci`. Install it transiently:
+// declared in gui/package.json: CI does not need it, and anyone running the
+// capture still has to fetch the browser explicitly
+// (`npx playwright install chromium`, ~120 MiB). Install it transiently:
 //
 //   cd gui && npm install --no-save playwright && npx playwright install chromium
 //
