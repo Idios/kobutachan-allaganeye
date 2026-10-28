@@ -12,8 +12,9 @@
 //
 // Playwright is a maintainer-only one-shot dependency and is deliberately NOT
 // declared in gui/package.json: CI does not need it, and anyone running the
-// capture still has to fetch the browser explicitly
-// (`npx playwright install chromium`, ~120 MiB). Install it transiently:
+// capture still has to fetch the browser explicitly with
+// `npx playwright install chromium` (which pulls both the full chromium and the
+// headless shell build). Install it transiently:
 //
 //   cd gui && npm install --no-save playwright && npx playwright install chromium
 //
@@ -30,13 +31,14 @@
 // resolver at gui/package.json is what makes the documented command work; if
 // you move this script, keep the anchor pointing at gui/.
 //
-// NOTE (2026-08-20 実測): capture is not byte-deterministic. 02-detecting and
-// 04-preview differ on every run (progress rendering and the video pane settle
-// at slightly different times), and **any** screen can drift when the rendering
-// environment differs (font / viewport / GPU / OS). "The PNG came back
-// identical" is therefore not a criterion for anything. The freshness gate's
-// *drift contract* is GUI sources; the per-image digests it records exist only
-// to catch images swapped after the record, not to promise determinism.
+// NOTE (2026-08-20 / 2026-10-28 実測): capture is not byte-deterministic.
+// 2026-08-20 の同一環境での 2 連続撮影では 02-detecting と 04-preview が毎回
+// 変わり、01/03/05 は byte 一致だった。しかし 2026-10-28 には source を変えて
+// いないのに 01-drop が差分になった (環境差)。つまり **どの screen も環境が
+// 変われば drift しうる** ので、"PNG が byte 一致した" を判定基準にしない。
+// The freshness gate's *drift contract* is GUI sources; the per-image digests it
+// records exist only to catch images swapped after the record, not to promise
+// determinism.
 //
 // Recording convention when a re-capture was only needed to clear the gate
 // (#1008):

@@ -18,7 +18,11 @@ a one-shot maintainer script does not need a general module-graph checker.
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "capture-readme-screens.mjs"
@@ -50,3 +54,29 @@ def test_no_bare_playwright_import() -> None:
     assert static is None, f"bare static playwright import re-introduced: {static}"
     assert reexport is None, f"playwright re-export re-introduced: {reexport}"
     assert dynamic is None, f"dynamic playwright import re-introduced: {dynamic}"
+
+
+def test_resolution_failure_exits_1_with_actionable_message(tmp_path: Path) -> None:
+    """playwright が解決できないときは書き込み前に exit 1 する (#1008)。
+
+    `tmp_path` に `gui/package.json` を作らないことで解決失敗を誘発する。
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is required to exercise the resolution failure path")
+    (tmp_path / "scripts").mkdir()
+    copied = tmp_path / "scripts" / SCRIPT.name
+    shutil.copy2(SCRIPT, copied)
+    result = subprocess.run(
+        [node, str(copied)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "gui/node_modules" in result.stderr
+    assert "npm install --no-save playwright" in result.stderr
+    assert not (tmp_path / "image").exists(), (
+        "capture must not start writing before playwright resolves"
+    )
