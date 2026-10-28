@@ -21,20 +21,50 @@
 //   node scripts/capture-readme-screens.mjs
 //   python scripts/check_screenshot_freshness.py --update
 //
+// NOTE (#1008): the import below resolves playwright **from gui/**, not from
+// this file's directory. A bare `import 'playwright'` would walk
+// scripts/ -> <repo root>/node_modules (neither exists) and fail with
+// ERR_MODULE_NOT_FOUND, even though the install above succeeded. Anchoring the
+// resolver at gui/package.json is what makes the documented command work; if
+// you move this script, keep the anchor pointing at gui/.
+//
 // NOTE (2026-08-20 実測): capture is not byte-deterministic for every screen.
 // 01 / 03 / 05 reproduce byte-identically, but 02-detecting and 04-preview
 // differ on every run (progress rendering and the video pane settle at
 // slightly different times). Commit only the screenshots that actually
 // changed for a reason; the freshness gate hashes GUI *sources*, not images,
 // precisely because image hashes are not a usable contract here.
+//
+// Recording convention when a re-capture was only needed to clear the gate:
+// if the images come back byte-identical (or differ only for the known
+// non-deterministic screens above) and no rendering change was intended,
+// revert the images and use `--update` (which rewrites only `sources_sha256`),
+// then state "再撮影で byte 一致 / 差分なし" in the PR body or commit message so
+// the next reader knows the images were not silently refreshed (#1008).
 
-import { chromium } from 'playwright';
+import { createRequire } from 'node:module';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
+
+// Resolve playwright from gui/node_modules (#1008). See the docstring above.
+const requireFromGui = createRequire(new URL('../gui/package.json', import.meta.url));
+let chromium;
+try {
+  ({ chromium } = requireFromGui('playwright'));
+} catch (err) {
+  console.error(
+    [
+      'playwright を gui/node_modules から解決できませんでした (#1008)。',
+      '  cd gui && npm install --no-save playwright && npx playwright install chromium',
+      `  (原因: ${err?.code ?? err?.message ?? err})`,
+    ].join('\n'),
+  );
+  process.exit(1);
+}
 const IMAGE_DIR = resolve(ROOT, 'image');
 mkdirSync(IMAGE_DIR, { recursive: true });
 
