@@ -211,7 +211,7 @@ def test_code_change_after_comment_still_changes_digest(tmp_path: Path) -> None:
 
 
 def test_inline_block_comment_like_string_is_not_stripped(tmp_path: Path) -> None:
-    """行中に現れる `/*` は触らない (glob 文字列を消して差分を隱さない)。
+    """行中に現れる `/*` は触らない (glob 文字列を消して差分を隠さない)。
 
     `"**/*.css"` をコメントとして剔除すると、その文字列の変更を検出できなくなる。
     """

@@ -28,20 +28,25 @@
 // resolver at gui/package.json is what makes the documented command work; if
 // you move this script, keep the anchor pointing at gui/.
 //
-// NOTE (2026-08-20 実測): capture is not byte-deterministic for every screen.
-// 01 / 03 / 05 reproduce byte-identically, but 02-detecting and 04-preview
-// differ on every run (progress rendering and the video pane settle at
-// slightly different times). Commit only the screenshots that actually
-// changed for a reason; the freshness gate hashes GUI *sources*, not images,
-// precisely because image hashes are not a usable contract here.
+// NOTE (2026-08-20 実測): capture is not byte-deterministic. 02-detecting and
+// 04-preview differ on every run (progress rendering and the video pane settle
+// at slightly different times), and **any** screen can drift when the rendering
+// environment differs (font / viewport / GPU / OS). "The PNG came back
+// identical" is therefore not a criterion for anything. The freshness gate's
+// *drift contract* is GUI sources; the per-image digests it records exist only
+// to catch images swapped after the record, not to promise determinism.
 //
-// Recording convention when a re-capture was only needed to clear the gate:
-// if the images come back byte-identical (or differ only for the known
-// non-deterministic screens above) and no rendering change was intended,
-// revert the images and use `--update` (it rewrites the recorded digests, so it
-// has to be the last step after the images are final), then state "再撮影で
-// byte 一致 / 差分なし" in the PR body or commit message so
-// the next reader knows the images were not silently refreshed (#1008).
+// Recording convention when a re-capture was only needed to clear the gate
+// (#1008):
+//   1. Decide whether a rendering change was intended. If not, revert the
+//      images (`git checkout -- image/`) and run
+//      `python scripts/check_screenshot_freshness.py --update` (it rewrites
+//      the recorded digests: sources_sha256 AND each PNG sha256, so it must be
+//      the last step, after the images are final).
+//   2. If the capture failed midway, the PNGs are partially overwritten.
+//      Revert them first and never run `--update` on a mixed set.
+//   3. Record "描画変更なし / 画像は revert" in the PR body or commit message so
+//      the next reader knows the images were not silently refreshed.
 
 import { createRequire } from 'node:module';
 import { mkdirSync, readFileSync } from 'node:fs';

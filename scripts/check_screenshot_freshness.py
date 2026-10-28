@@ -42,7 +42,7 @@ exit code:
 * `sources` / `source_exclude` -- スクショの見た目を決める source の glob。
 * `sources_sha256` -- 上記 source 集合の内容ハッシュ。**改行と行頭コメントは
   正規化して落とす** (#1008): コメントだけの変更で「撮り直し」を要求しないため。
-  行中に現れる `/* ... */` は対象外 (glob 文字列を消して本物の差分を隱さないため)。
+  行中に現れる `/* ... */` は対象外 (glob 文字列を消して本物の差分を隠さないため)。
   コメント除去を変えたときは一度だけ `--update` で再 baseline する。
 
 CI は `sources` を解決して内容ハッシュを再計算し、`sources_sha256` と突合する。
@@ -266,7 +266,7 @@ def _strip_comment_lines(text: str, suffix: str) -> str:
     """**行頭のコメントだけ**を落とす (#1008)。
 
     インラインの `/*` は触らない。glob 文字列 (`**/*.css`) や文字列リテラルに
-    現れうるため、素朴に除去すると **コードごと消して本物の差分を隱す**。
+    現れうるため、素朴に除去すると **コードごと消して本物の差分を隠す**。
     対象は次の 3 種のみ:
 
     * 行頭 (空白のみ前置) の `//` 行
@@ -280,7 +280,7 @@ def _strip_comment_lines(text: str, suffix: str) -> str:
     ## false-green を避けるための 2 つの退避
 
     1. **template literal 内の行は触らない** — `` const s = `\n// not a comment\n` ``
-       の行頭 `//` は文字列の一部で、消すと実変更を隱す。
+       の行頭 `//` は文字列の一部で、消すと実変更を隠す。
     2. **閉じ忘れの block comment は strip を諦める** — どこまでがコメントか
        決められない以上、生テキストで比較する方が安全 (fail-closed)。
     """
@@ -517,11 +517,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  manifest の sources_sha256: {recorded}", file=sys.stderr)
         print(f"  現在の source から再計算    : {actual}", file=sys.stderr)
         print(
-            "\n撮り直し手順:"
-            "\n  1. cd gui && npm run dev            (別ターミナルで起動したまま)"
-            "\n  2. npm install --no-save playwright && npx playwright install chromium"
-            "\n  3. node scripts/capture-readme-screens.mjs"
-            "\n  4. python scripts/check_screenshot_freshness.py --update"
+            "\n撮り直し手順は scripts/capture-readme-screens.mjs の docstring が正"
+            " (playwright は gui/ で `npm install --no-save playwright` する点、"
+            "解決が gui/package.json 起点である点もそちらを参照)。"
             f"\n\n契約の詳細は scripts/{Path(__file__).name} の docstring を参照。",
             file=sys.stderr,
         )
