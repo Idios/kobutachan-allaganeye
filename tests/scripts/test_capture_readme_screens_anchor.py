@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "capture-readme-screens.mjs"
 
 _ANCHOR_RE = re.compile(
-    r"createRequire\(\s*new URL\(\s*'(?P<anchor>[^']+)'\s*,\s*import\.meta\.url\s*\)\s*\)"
+    r"createRequire\(\s*new URL\(\s*['\"](?P<anchor>[^'\"]+)['\"]\s*,\s*import\.meta\.url\s*\)\s*\)"
 )
 
 
@@ -37,6 +37,7 @@ def test_anchor_resolves_into_gui() -> None:
 def test_no_bare_playwright_import() -> None:
     """A bare playwright import would re-introduce the #1008 failure."""
     src = SCRIPT.read_text(encoding="utf-8")
-    assert not re.search(
-        r"^\s*import\s+[^;]*['\"]playwright['\"]", src, re.MULTILINE
-    ), "bare playwright import re-introduced (#1008)"
+    static = re.search(r"^\s*import\s+[^;]*['\"]playwright['\"]", src, re.MULTILINE)
+    dynamic = re.search(r"\bimport\s*\(\s*['\"]playwright['\"]", src)
+    assert static is None, f"bare static playwright import re-introduced: {static}"
+    assert dynamic is None, f"dynamic playwright import re-introduced: {dynamic}"

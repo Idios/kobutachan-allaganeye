@@ -16,7 +16,8 @@
 //
 //   cd gui && npm install --no-save playwright && npx playwright install chromium
 //
-// Then, with `npm run dev` up in another terminal, run from the repo root:
+// Then, with `cd gui && npm run dev` up in another terminal, run from the repo
+// root:
 //
 //   node scripts/capture-readme-screens.mjs
 //   python scripts/check_screenshot_freshness.py --update
