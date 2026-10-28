@@ -131,18 +131,22 @@ def make_claude_branch(tmp_repo: Path) -> Callable[..., str]:
     """Create a `claude/<slug>` branch with controllable merged / age properties.
 
     Args of the returned callable:
-      slug: branch name suffix after `claude/`
+      slug: branch name suffix after `claude/` (used as the temp file name)
       merged: if True, branch is merged into develop-0.2.0 (= is-ancestor true)
       age_seconds: forge committer date to `now - age_seconds`
+      name: full branch name override (default `claude/<slug>`). Used by the
+        #1067 Phase 2 tests, which need non-`claude/` and protected names.
 
-    Returns: full branch ref (`claude/<slug>`).
+    Returns: full branch ref (`claude/<slug>` unless `name` is given).
 
     Post-condition: HEAD is always on `develop-0.2.0` after the call,
     regardless of the `merged` param. Composable across multiple invocations.
     """
 
-    def _make(slug: str, *, merged: bool, age_seconds: int) -> str:
-        branch = f"claude/{slug}"
+    def _make(
+        slug: str, *, merged: bool, age_seconds: int, name: str | None = None
+    ) -> str:
+        branch = name or f"claude/{slug}"
         # Create branch from develop-0.2.0
         subprocess.run(
             ["git", "checkout", "-q", "-b", branch], cwd=tmp_repo, check=True
