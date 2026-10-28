@@ -42,7 +42,7 @@ exit code:
 * `sources` / `source_exclude` -- スクショの見た目を決める source の glob。
 * `sources_sha256` -- 上記 source 集合の内容ハッシュ。**改行と行頭コメントは
   正規化して落とす** (#1008): コメントだけの変更で「撮り直し」を要求しないため。
-  行中に現れる `/* ... */` は対象外 (glob 文字列を消して本物の差分を隱さないため)。
+  行中に現れる `/* ... */` は対象外 (glob 文字列を消して本物の差分を隠さないため)。
   コメント除去を変えたときは一度だけ `--update` で再 baseline する。
 
 CI は `sources` を解決して内容ハッシュを再計算し、`sources_sha256` と突合する。
@@ -80,10 +80,11 @@ CI は `sources` を解決して内容ハッシュを再計算し、`sources_sha
   `02-detecting.png` と `04-preview.png` は **毎回変わった** (進捗表示と
   video pane の描画タイミング依存)。画像ハッシュを契約にすると常時赤になる。
 * **粒度が repo 全体である。** どの source がどのスクショに効くかは区別せず、
-  `gui` 配下が 1 文字でも変われば **全スクショが赤**になる。意図的な選択で、
+  `gui` 配下の実コードが 1 箇所でも変われば **全スクショが赤**になる (行頭コメントだけの
+  変更は `sources_sha256` の正規化で吸収される。§契約 #1008 / #1086)。意図的な選択で、
   per-screenshot の依存表は「子コンポーネントの変更を依存に入れ忘れる」穴
   (#944 が既知の限界として挙げた形) を必ず作るため、穴を作らない側に倒した。
-  代償として GUI を触る PR は毎回 5 枚の撮り直しを要求される。
+  代償として GUI の実コードを触る PR は毎回 6 枚の撮り直しを要求される。
 * **GUI 以外に起因する見た目の変化** -- フォント・OS・ブラウザ版・画面解像度は
   source に現れないため検知できない。
 * **同梱 README.txt / docs 側の画像** -- 対象は `image/` 直下の連番 PNG のみ。
@@ -266,7 +267,7 @@ def _strip_comment_lines(text: str, suffix: str) -> str:
     """**行頭のコメントだけ**を落とす (#1008)。
 
     インラインの `/*` は触らない。glob 文字列 (`**/*.css`) や文字列リテラルに
-    現れうるため、素朴に除去すると **コードごと消して本物の差分を隱す**。
+    現れうるため、素朴に除去すると **コードごと消して本物の差分を隠す**。
     対象は次の 3 種のみ:
 
     * 行頭 (空白のみ前置) の `//` 行
@@ -280,7 +281,7 @@ def _strip_comment_lines(text: str, suffix: str) -> str:
     ## false-green を避けるための 2 つの退避
 
     1. **template literal 内の行は触らない** — `` const s = `\n// not a comment\n` ``
-       の行頭 `//` は文字列の一部で、消すと実変更を隱す。
+       の行頭 `//` は文字列の一部で、消すと実変更を隠す。
     2. **閉じ忘れの block comment は strip を諦める** — どこまでがコメントか
        決められない以上、生テキストで比較する方が安全 (fail-closed)。
     """
@@ -517,11 +518,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  manifest の sources_sha256: {recorded}", file=sys.stderr)
         print(f"  現在の source から再計算    : {actual}", file=sys.stderr)
         print(
-            "\n撮り直し手順:"
-            "\n  1. cd gui && npm run dev            (別ターミナルで起動したまま)"
-            "\n  2. npm install --no-save playwright && npx playwright install chromium"
-            "\n  3. node scripts/capture-readme-screens.mjs"
-            "\n  4. python scripts/check_screenshot_freshness.py --update"
+            "\n撮り直し手順は scripts/capture-readme-screens.mjs の docstring が正"
+            " (playwright は gui/ で `npm install --no-save playwright` する点、"
+            "解決が gui/package.json 起点である点もそちらを参照)。"
             f"\n\n契約の詳細は scripts/{Path(__file__).name} の docstring を参照。",
             file=sys.stderr,
         )

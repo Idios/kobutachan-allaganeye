@@ -211,9 +211,9 @@ def test_code_change_after_comment_still_changes_digest(tmp_path: Path) -> None:
 
 
 def test_inline_block_comment_like_string_is_not_stripped(tmp_path: Path) -> None:
-    """行中に現れる `/*` は触らない (glob 文字列を消して差分を隱さない)。
+    """行中に現れる `/*` は触らない (glob 文字列を消して差分を隠さない)。
 
-    `"**/*.css"` をコメントとして剔除すると、その文字列の変更を検出できなくなる。
+    `"**/*.css"` をコメントとして除去すると、その文字列の変更を検出できなくなる。
     """
     before, after = _digest_after_edit(
         tmp_path,
@@ -394,6 +394,22 @@ def test_changing_a_gui_source_turns_the_guard_red(tmp_path: Path) -> None:
     )
     result = _run(root)
     assert result.returncode == 1, f"stdout={result.stdout}\nstderr={result.stderr}"
+
+
+def test_drift_message_points_at_the_capture_docstring(tmp_path: Path) -> None:
+    """drift 時の案内は撮影手順の SSoT を指す (#1008)。
+
+    Round 1 で「checker 側に複製された手順が `cd gui` を欠いていた」実害が出たため、
+    メッセージが script の docstring を指し、番号付きの手順複製を持たないことを pin する。
+    """
+    root = _build_repo(tmp_path)
+    (root / "gui" / "src" / "App.tsx").write_text(
+        "export const A = 999;\n", encoding="utf-8"
+    )
+    result = _run(root)
+    assert result.returncode == 1
+    assert "capture-readme-screens.mjs の docstring が正" in result.stderr
+    assert "1. cd gui && npm run dev" not in result.stderr
 
 
 def test_editing_a_committed_screenshot_without_update_turns_the_guard_red(

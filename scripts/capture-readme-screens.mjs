@@ -11,30 +11,70 @@
 // freshness gate's scope (#944).
 //
 // Playwright is a maintainer-only one-shot dependency and is deliberately NOT
-// declared in gui/package.json: the `playwright` package downloads a browser
-// on install, which would land on every CI `npm ci`. Install it transiently:
+// declared in gui/package.json: CI does not need it, and anyone running the
+// capture still has to fetch the browser explicitly with
+// `npx playwright install chromium` (which pulls both the full chromium and the
+// headless shell build). Install it transiently:
 //
 //   cd gui && npm install --no-save playwright && npx playwright install chromium
 //
-// Then, with `npm run dev` up in another terminal, run from the repo root:
+// Then, with `cd gui && npm run dev` up in another terminal, run from the repo
+// root:
 //
 //   node scripts/capture-readme-screens.mjs
 //   python scripts/check_screenshot_freshness.py --update
 //
-// NOTE (2026-08-20 実測): capture is not byte-deterministic for every screen.
-// 01 / 03 / 05 reproduce byte-identically, but 02-detecting and 04-preview
-// differ on every run (progress rendering and the video pane settle at
-// slightly different times). Commit only the screenshots that actually
-// changed for a reason; the freshness gate hashes GUI *sources*, not images,
-// precisely because image hashes are not a usable contract here.
+// NOTE (#1008): the import below resolves playwright **from gui/**, not from
+// this file's directory. A bare `import 'playwright'` would walk
+// scripts/ -> <repo root>/node_modules (neither exists) and fail with
+// ERR_MODULE_NOT_FOUND, even though the install above succeeded. Anchoring the
+// resolver at gui/package.json is what makes the documented command work; if
+// you move this script, keep the anchor pointing at gui/.
+//
+// NOTE (2026-08-20 / 2026-10-28 実測): capture is not byte-deterministic.
+// 2026-08-20 の同一環境での 2 連続撮影では 02-detecting と 04-preview が毎回
+// 変わり、01/03/05 は byte 一致だった。しかし 2026-10-28 には source を変えて
+// いないのに 01-drop が差分になった (環境差)。つまり **どの screen も環境が
+// 変われば drift しうる** ので、"PNG が byte 一致した" を判定基準にしない。
+// The freshness gate's *drift contract* is GUI sources; the per-image digests it
+// records exist only to catch images swapped after the record, not to promise
+// determinism.
+//
+// Recording convention when a re-capture was only needed to clear the gate
+// (#1008):
+//   1. Decide whether a rendering change was intended. If not, revert the
+//      images (`git checkout -- image/`) and run
+//      `python scripts/check_screenshot_freshness.py --update` (it rewrites
+//      the recorded digests: sources_sha256 AND each PNG sha256, so it must be
+//      the last step, after the images are final).
+//   2. If the capture failed midway, the PNGs are partially overwritten.
+//      Revert them first and never run `--update` on a mixed set.
+//   3. Record "描画変更なし / 画像は revert" in the PR body or commit message so
+//      the next reader knows the images were not silently refreshed.
 
-import { chromium } from 'playwright';
+import { createRequire } from 'node:module';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
+
+// Resolve playwright from gui/node_modules (#1008). See the docstring above.
+const requireFromGui = createRequire(new URL('../gui/package.json', import.meta.url));
+let chromium;
+try {
+  ({ chromium } = requireFromGui('playwright'));
+} catch (err) {
+  console.error(
+    [
+      'playwright を gui/node_modules から解決できませんでした (#1008)。',
+      '  cd gui && npm install --no-save playwright && npx playwright install chromium',
+      `  (原因: ${err?.code ?? err?.message ?? err})`,
+    ].join('\n'),
+  );
+  process.exit(1);
+}
 const IMAGE_DIR = resolve(ROOT, 'image');
 mkdirSync(IMAGE_DIR, { recursive: true });
 
