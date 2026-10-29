@@ -180,11 +180,11 @@ gh pr checks <PR番号>
 
 ### 5. ロジック / ドキュメントレビュー
 
-PR の変更種別に応じて以下を確認する。**code quality (logic / architecture / security) 部分は plugin subagent に委譲し、project 固有の doc 整合性確認のみを本 skill で実施する**。
+PR の変更種別に応じて以下を確認する。**code quality (logic / architecture / security) 部分は `spawn_agent` subagent に委譲し、project 固有の doc 整合性確認のみを本 skill で実施する**。
 
 #### 5.0 subagent による code quality review
 
-spawn_agent による code quality レビュー に code quality 観点 (logic correctness / architecture / security / code smell / best practices) のレビューを委譲する。subagent は本 skill の責務外の項目 (受け入れ条件 / base sync / 並行 PR / project doc 整合 / マージ後 handoff) には介入しない。
+spawn_agent による subagent に code quality 観点 (logic correctness / architecture / security / code smell / best practices) のレビューを委譲する。subagent は本 skill の責務外の項目 (受け入れ条件 / base sync / 並行 PR / project doc 整合 / マージ後 handoff) には介入しない。
 
 **起動条件**: **原則すべての PR で起動する。非起動は 1 条件だけ** — 変更ファイルが **すべて** `docs/**` または `*.md` (= documentation のみ) の場合に限り起動しない。委譲先の観点 (logic / architecture / security / code smell) は code diff を前提としており、documentation しか無い PR では no-op review にしかならないため。
 
@@ -449,6 +449,14 @@ Codex review 起動: 判定不能 (理由: 変更ファイル一覧の取得が�
 どちらかを書いてはいけない — `touched <N> file` も `該当 <J> 件` も同じ一覧に由来するため、
 部分リストで埋めた数値は実測値ではない。
 
+> **この 2 分岐 (`非対象` / `判定不能`) は、§「Codex 出力の読み取り」の `非起動` 行に折られる** (#1063)。
+> 読み取り行の状態は 3 つ (成功 / 失敗 / 非起動) のままで、どちらを折ったかは理由の形で区別する。
+>
+> **`判定不能` のときに記録行を書くのはいつか**: 通常は「起動せず job 再実行へ戻る」ので最終報告に到らない。
+> しかし **`iterate-review` の subagent mode では、再実行を依頼する return でも 5 セクションを揃える必要がある**
+> (揃わない return は controller の Step 2.2 で parse error になり、**理由ごと失われる**)。その場合は
+> `非起動 (理由: 判定不能 ...)` を書いてから返す。黙って `非対象` に寄せてはいけない。
+
 **なぜ非対象分岐と同じく 3 条件すべてを書くのか**: 片側だけ全条件列挙にすると、
 > 事後監査の対称性が崩れる (非対象は 3 条件ぶんの根拠が残るのに、対象は 1 条件しか残らない)。
 > 「記録義務は分岐を網羅する」の系として、**記録の粒度も分岐を跨いで揃える**。
@@ -469,14 +477,19 @@ Codex review 起動: 判定不能 (理由: 変更ファイル一覧の取得が�
 
 Codex review が exit 0 で完了したら、**finding を stdout から拾う**。`codex` CLI は非対話で stdout に直接結果を出して終了する (旧 companion script の job 追跡機構 `status` / `result` / job id は廃止済)。契約の正は [`docs/l2-workflow.md` §「Codex 出力の読み取り」](../../../docs/l2-workflow.md) で、本 step はその適用にあたる。
 
-1. review を実行した worktree の cwd で `codex review --base <base> "<focus>"` を実行し、**stdout をそのまま finding の入力にする**:
+1. review を実行した worktree の cwd で `codex review "<focus + diff 指示>"` を実行し、**stdout をそのまま finding の入力にする**:
 
    ```bash
    cd "<review を実行した worktree の絶対パス>"   # cwd は turn 境界で main repo へドリフトしうる。明示する
-   codex review --base <base> "<focus>"
+   codex review "Review the diff against <base> (run: git diff <base>...HEAD). Focus: <focus>"
    #   → finding は stdout に出る。exit code 0 = 成功 / 非ゼロ = 失敗 (§Codex fallback)
    ```
 
+   > **`--base` と `[PROMPT]` は併用できない** (2026-10-22 実測、codex-cli 0.163.0)。
+   > `--base` を付けると focus を渡せないため、**focus を渡す場合は `--base` を外し、prompt 内で
+   > `git diff <base>...HEAD` を指示する** (この形は同日の実測で成功)。以下の説明で `--base` と
+   > あるのは「base 比較」の意で読む。
+   >
    > **`cd` を省略しない。** 本 repo では turn 境界や background task の後に Bash の cwd が
    > worktree から main repo へドリフトする事象が観測されている。`--base` で指定した base に
    > 対する diff を取れるのは review を実行した worktree のみ
@@ -489,13 +502,17 @@ Codex review が exit 0 で完了したら、**finding を stdout から拾う**
    >
    > `Codex 出力読み取り: 失敗 (理由: <stderr の先頭 1 行。stderr が空/無益なら「stdout 空 / parse 不能」と記す>)。stdout に見えた範囲のみで triage した`
    >
-   > `Codex 出力読み取り: 非起動 (理由: <上記「起動記録」の非対象行と同じ理由>)`
+   > `Codex 出力読み取り: 非起動 (理由: 条件1 touched <N> file / <M> lines・条件2 再発 root cause <K> 件・条件3 core 変更対象ファイル 該当 0)`
+   >
+   > `Codex 出力読み取り: 非起動 (理由: 変更ファイル一覧の取得が打ち切られ起動判定ができない — 起動記録の判定不能 (fail-closed) と同じ)`
+
+   **`非起動` は起動記録の 2 分岐を折る** (#1063): 起動記録の `非対象` と `判定不能` は、どちらも「Codex を起動していない」という同じ観測値になる。読み取り行は **3 状態のまま**（状態を増やさない）で、**理由の形でどちらを折ったかを区別する**。理由が 3 条件の実測値なら `非対象`、打ち切り (fail-closed) なら `判定不能`。混ぜない — `非対象` の理由に「判定不能」と書くと、3 条件を実測したのか打ち切ったのかが事後に読めなくなる
 
    `失敗` は **fallback ではない**ので Codex fallback notice とは別物。exit 0 でも stdout 空/parse 不能は「応答異常」として `失敗 (理由: stdout 空 / parse 不能)` に**落とし込む**。「応答異常」は §Codex fallback の検出ラベルであり、記録行としては `失敗` の 1 状態に集約する (別状態を新設しない)。この 1 行が無いと「全文を読んだ」「読めなかった」「そもそも起動していない」が事後に区別できない ([`docs/l2-workflow.md` §「規約・ガード導入の 3 点セット」](../../../docs/l2-workflow.md) ②)
 
    **読み取りが失敗したときの再試行・原因診断は任意**。1 行記録して先へ進んでよい (原因診断は本 step の責務ではない)。ただし cwd が review 実行時の worktree と違っていた場合だけは、cwd を直して 1 度だけやり直す — これは診断ではなく手順ミスの訂正である
 
-   > **`iterate-review` の subagent mode で実行している場合**、この 1 行は Step 6 レビュー報告ではなく final message の `## meta` に同名で書く (controller が Step 4 Final summary へ転記する)。`非起動` を選んだときは、上記「起動記録」の非対象行を**この行の理由として畳んでよい** (固定 5 セクションに専用スロットを増やさない)
+   > **`iterate-review` の subagent mode で実行している場合**、この 1 行は Step 6 レビュー報告ではなく final message の `## meta` に同名で書く (controller が Step 4 Final summary へ転記する)。`非起動` を選んだときは、上記「起動記録」の**非対象行または判定不能行**をこの行の理由として畳んでよい (#1063。どちらを畳んだかは理由の形で区別する) (固定 5 セクションに専用スロットを増やさない)
 
 長時間 review を非同期化したい場合は、tool が背景実行 (Bash の `run_in_background: true` / Zed の terminal 等) を提供していればそれを使う。
 
@@ -503,7 +520,7 @@ Codex の finding は Step 5b トリアージ表に「出所 = codex review」�
 
 #### Codex fail 時の fallback 手順 (C6、L-β β-5 で追加)
 
-Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback) の検出条件 table に従い:
+Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback-c6codex-token-枯渇--failure-時) の検出条件 table に従い:
 
 > **step の優先順 (逐語、#856 item2)**: step 1 の分類後、**必ず step 2 の重要 PR 判定を先に評価する**。重要 PR に該当したら step 2 の AskUserQuestion で確定させ、**step 3 / 4 は評価しない (短絡)**。step 3 / 4 は「重要 PR に該当しなかった場合」にのみ到達する分岐であり、step 2 と並列の選択肢ではない。判定順は `1 → 2 → (2 に該当すれば終了) → 3 または 4` である。
 
@@ -515,10 +532,10 @@ Codex CLI が exit code 非ゼロを返した場合、[`docs/l2-workflow.md` §C
 
    AskUserQuestion 3 択 (Recommended 順):
    - (A) Codex 復旧待ち (本 PR 一時 abort、Codex 復旧後に再 invoke) [Recommended]
-   - (B) Claude fallback で push (subagent レビュー (spawn_agent) fallback)
+   - (B) DeepSeek 直接レビューで push (レビューを実行している agent 自身が直接レビューする。別 subagent は spawn しない)
    - (C) abort (本 PR 全体停止、user 手動判断)
-3. **明確な failure (重要 PR でない)** → 自動 fallback: subagent レビュー (spawn_agent) を起動する。**focus の渡し方 (#856 item4)**: tier 1 の `codex CLI review` は **focus positional を受け付けない**ため「Codex に渡した focus 文字列」は**存在しない**。「流用」できる文字列は無いので、fallback subagent には [`docs/l2-workflow.md` §「Step 5 の focus 導出手順」](../../../docs/l2-workflow.md) で**導出した focus を渡す** (project 固有 focus を Codex 側へ渡す場合に `adversarial-review` subcommand で使うはずだったものと同じ導出結果)
-4. **曖昧 (重要 PR でない)** → user に AskUserQuestion (再試行 / Claude fallback / abort) 3 択
+3. **明確な failure (重要 PR でない)** → 自動 fallback: **レビューを実行している agent 自身** (主エージェント。`iterate-review` から dispatch されている場合はその subagent) が直接レビューする。**別 subagent は spawn しない** (同一 model で bias が変わらず、入れ子 dispatch は実行環境依存)。**focus の使い方 (#856 item4 / #1068)**: tier 1 に渡した focus (PROMPT 形式) と同じ導出結果を、fallback の直接レビューでも用いる。focus を渡さない `--base` 単独で実行した場合は focus が存在しないため、[`docs/l2-workflow.md` §「Step 5 の focus 導出手順」](../../../docs/l2-workflow.md) で導出する
+4. **曖昧 (重要 PR でない)** → user に AskUserQuestion (再試行 / DeepSeek 直接レビュー / abort) 3 択
 5. fallback 実行時は **Step 6 レビュー報告に「Codex fallback notice」を必須記載** (Iron Law 5 整合、template は docs/l2-workflow.md §Codex fallback 参照)
 
 詳細運用は `AGENTS.md` §Codex 運用 を参照。
@@ -705,8 +722,8 @@ Step 5b のトリアージ表を前提に、以下のテンプレート構造で
 - Fable 俯瞰レビュー: <実施 (finding N 件 / 消化 M 件 / 残 K 件) / 非実施 (理由: ...)>
 - 外部依存規約: <該当 (...) / 非該当 (理由: 本 PR に外部依存の DL / 取得なし)>
 - パス契約: <該当 (...) / 非該当 (理由: パスの生成点・表示点に変更なし)>
-- Codex review 起動: <対象 (理由: ...) / 非対象 (理由: ...)>
-- Codex 出力読み取り: <成功 (stdout の finding を入力にした) / 失敗 (理由: ...) / 非起動 (理由: ...)>
+- Codex review 起動: <対象 (理由: ...) / 非対象 (理由: ...) / 判定不能 (理由: 打ち切り、fail-closed)>
+- Codex 出力読み取り: <成功 (stdout の finding を入力にした) / 失敗 (理由: ...) / 非起動 (理由: <非対象 (3 条件の実測値) / 判定不能 (fail-closed)>)>
 - Codex fallback notice: <なし / 本文は docs/l2-workflow.md §Codex fallback の template>
 
 ## 検証推奨
@@ -899,7 +916,7 @@ final message に以下のセクションを順序固定で含める:
 review-pr 443
 ```
 
-ユーザーが PR 番号を指定して呼び出す。Claude は自動的に段階を進め、要所で `AskUserQuestion` により判断を仰ぐ。
+ユーザーが PR 番号を指定して呼び出す。主エージェントは自動的に段階を進め、要所で `AskUserQuestion` により判断を仰ぐ。
 
 ## Red flags (レビュー中に浮かんだら STOP)
 

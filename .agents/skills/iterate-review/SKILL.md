@@ -59,7 +59,7 @@ base 最新化 + 直近マージ PR + 並行 worktree PR 重複確認は `review
 
 > **subagent 起動規約**: 本 dispatch は [`docs/l2-workflow.md` §subagent 起動規約](../../../docs/l2-workflow.md#subagent-起動規約-746-phase-c--741-task-5-教訓) に準拠する。`__ITERATE_REVIEW_SUBAGENT_MODE__` marker + `(A)*` / ambiguous_judgments の自己申告 (下記 prompt template の item 6 / 7) で HARD-GATE (Stop conditions / 独断 fix 禁止) を担保する。controller (本 skill) が Step 2.2 validation で「無視 / 観察のみ / スコープ対象外」キーワード単独行を parse error とすることで、subagent の独断 fix 倍数を 0 に抑える。F6 / F7 と同型の事象を再発させない。
 >
-> **Codex fallback (C6)**: subagent が `review-pr` 内で Codex review (tier 1 = `codex` CLI 直接呼び出し `codex review --base develop-X.Y.Z` の Bash 実行。§Codex 運用、`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照) を実行して fail した場合は [`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback) の手順に従い subagent レビュー (spawn_agent) を fallback として起動する。Final summary comment (Step 4) に「Codex fallback notice」を必須記載 (Iron Law 5 整合)。**Step 2.3 の per-round Round summary AskUserQuestion ではなく、収束時に 1 回投稿する Step 4 の summary comment を指す。**
+> **Codex fallback (C6)**: subagent が `review-pr` 内で Codex review (tier 1 = `codex` CLI 直接呼び出し `codex review "<focus + diff 指示>"`。§Codex 運用、`docs/l2-workflow.md` §Step 5 の invocation path (3-tier、#795) 参照) を実行して fail した場合は [`docs/l2-workflow.md` §Codex fallback](../../../docs/l2-workflow.md#codex-fallback-c6codex-token-枯渇--failure-時) の手順に従い、**レビューを実行している subagent 自身が直接レビューする**（別 subagent は spawn しない。同一 model で bias が変わらず、入れ子 dispatch は実行環境依存のため）。Final summary comment (Step 4) に「Codex fallback notice」を必須記載 (Iron Law 5 整合)。**Step 2.3 の per-round Round summary AskUserQuestion ではなく、収束時に 1 回投稿する Step 4 の summary comment を指す。**
 >
 > **Codex 出力の読み取り (#949→#1043 で `codex` CLI に統合)**: Codex review が exit 0 で完了した場合、subagent は `review-pr` §「Codex 出力の読み取り」に従い **`codex review` の stdout を finding として読む** (旧 companion script の `status` / `result` / job id 追跡機構は廃止済)。stdout に見えた分だけ triage するのではなく、stdout 全体を読む。exit 0 でも stdout が空 / parse 不能なら「応答異常」として fallback 手順に従う。subagent は下記 prompt template item 7 の `## meta` に `Codex 出力読み取り` 行として申告し、controller はそれを Step 4 の Final summary へ転記する。**fallback ではないので Codex fallback notice とは別行**。
 
@@ -133,12 +133,13 @@ PR #<N> を review してください。`review-pr` skill を invoke します�
    - mergeStateStatus: <CLEAN/BEHIND/...>
    - 並行 PR: <検出ゼロ / [#X handled]>
    - CI status: <green/failing/pending>
-   - Codex 出力読み取り: <成功 (job <job-id> の result 全文を finding の入力にした) / 失敗 (理由: <1 行>、stdout の範囲のみで triage) / 非起動 (理由: <起動条件のどれに不該当か>)>
+   - Codex 出力読み取り: <成功 (job <job-id> の result 全文を finding の入力にした) / 失敗 (理由: <1 行>、stdout の範囲のみで triage) / 非起動 (理由: <起動記録の非対象 (3 条件の実測値) または 判定不能 (fail-closed)>)>
      <非起動 の理由は `review-pr` を読まずとも書けるよう、代表形をここに置く:
-      `条件1 touched <N> file / <M> lines・条件2 再発 root cause <K> 件・条件3 core 変更対象ファイル 該当 0`>
+      `条件1 touched <N> file / <M> lines・条件2 再発 root cause <K> 件・条件3 core 変更対象ファイル 該当 0`
+      (判定不能 由来なら `変更ファイル一覧の取得が打ち切られ起動判定ができない`)>
    ```
 
-8. **Codex review を起動した場合は、finding を `review-pr` §「Codex 出力の読み取り」の手順で保存済み全文から取り込む。** stdout に見えた分だけで triage しない。`## meta` の `Codex 出力読み取り` 行は**省略不可**で、`失敗` と `非起動` は**理由も必須** (省略はいずれも parse error)。`非起動` の理由には `review-pr` の「起動記録 (該当時 / 不該当時とも必須)」の非対象行の内容を畳んでよい — **この行以外に Codex 関連の slot を新設しない**
+8. **Codex review を起動した場合は、finding を `review-pr` §「Codex 出力の読み取り」の手順で保存済み全文から取り込む。** stdout に見えた分だけで triage しない。`## meta` の `Codex 出力読み取り` 行は**省略不可**で、`失敗` と `非起動` は**理由も必須** (省略はいずれも parse error)。`非起動` の理由には `review-pr` の「起動記録 (該当時 / 不該当時とも必須)」の**非対象行または判定不能行**の内容を畳んでよい (#1063。どちらを畳んだかは理由の形で区別する) — **この行以外に Codex 関連の slot を新設しない**
 ````
 
 #### Step 2.2 Findings parse + 握り潰し防止 validation
@@ -230,10 +231,11 @@ return に echo しない** (marker は入力側の契約)。
    Step 3.1 の収束判定から**構造的に見えない**。ゼロ件記法を整備したことで、この経路は
    「正しく見える return」として通りやすくなっている
 6. **(A) 強優先方針違反検出**: `latent issue / CI failure / 隣接ファイル lint 違反 / 古い API 残存 / 古い doc 記述` 等の典型 (A) trigger を含む finding が (A) 以外 ((A)* / (B) / (C)) に分類されている場合は **parse error**
-7. **`## meta` に `Codex 出力読み取り` 行がある** (#949): `成功` / `失敗 (理由: ...)` / `非起動 (理由: ...)` のいずれかで始まること。行の不在は **parse error**。**`失敗` と `非起動` はどちらも理由が必須**で、理由括弧を欠いたものは parse error (根拠は「読んだ」「読めなかった」「起動していない」を事後に区別できなくすることであり、この理屈は 2 分岐に等しく効く。片方だけを名指しすると、名指しされていない側が緩いと読める抜け道になる)。`非起動` の理由は `review-pr` Step 5a §「起動記録 (該当時 / 不該当時とも必須)」の非対象行と同一内容でよい (**同 record の専用スロットは増やさず本行に畳む**)。畳んだ完成形の例:
+7. **`## meta` に `Codex 出力読み取り` 行がある** (#949): `成功` / `失敗 (理由: ...)` / `非起動 (理由: ...)` のいずれかで始まること。行の不在は **parse error**。**`失敗` と `非起動` はどちらも理由が必須**で、理由括弧を欠いたものは parse error (根拠は「読んだ」「読めなかった」「起動していない」を事後に区別できなくすることであり、この理屈は 2 分岐に等しく効く。片方だけを名指しすると、名指しされていない側が緩いと読める抜け道になる)。`非起動` の理由は `review-pr` Step 5a §「起動記録 (該当時 / 不該当時とも必須)」の非対象行または判定不能行と同一内容でよい (**同 record の専用スロットは増やさず本行に畳む**)。畳んだ完成形の例:
 
    ```text
    - Codex 出力読み取り: 非起動 (理由: 条件1 touched 4 file / 210 lines・条件2 再発 root cause 1 件・条件3 core 変更対象ファイル 該当 0)
+   - Codex 出力読み取り: 非起動 (理由: 変更ファイル一覧の取得が打ち切られ起動判定ができない — 起動記録の判定不能 (fail-closed) と同じ)
    ```
 
    > **理由の literal の正は prompt template 側 (Step 2.1 の `## meta` に置いた代表形) 1 箇所**で、

@@ -40,7 +40,10 @@ exit code:
 * `screenshots` -- 撮影対象の一覧 (`file` と `screen`)。
   `scripts/capture-readme-screens.mjs` が**同じ表**を読んで撮影する。
 * `sources` / `source_exclude` -- スクショの見た目を決める source の glob。
-* `sources_sha256` -- 上記 source 集合の内容ハッシュ。
+* `sources_sha256` -- 上記 source 集合の内容ハッシュ。**改行と行頭コメントは
+  正規化して落とす** (#1008): コメントだけの変更で「撮り直し」を要求しないため。
+  行中に現れる `/* ... */` は対象外 (glob 文字列を消して本物の差分を隠さないため)。
+  コメント除去を変えたときは一度だけ `--update` で再 baseline する。
 
 CI は `sources` を解決して内容ハッシュを再計算し、`sources_sha256` と突合する。
 不一致 = 「GUI を変えたのにスクショを撮り直していない」。
@@ -77,10 +80,11 @@ CI は `sources` を解決して内容ハッシュを再計算し、`sources_sha
   `02-detecting.png` と `04-preview.png` は **毎回変わった** (進捗表示と
   video pane の描画タイミング依存)。画像ハッシュを契約にすると常時赤になる。
 * **粒度が repo 全体である。** どの source がどのスクショに効くかは区別せず、
-  `gui` 配下が 1 文字でも変われば **全スクショが赤**になる。意図的な選択で、
+  `gui` 配下の実コードが 1 箇所でも変われば **全スクショが赤**になる (行頭コメントだけの
+  変更は `sources_sha256` の正規化で吸収される。§契約 #1008 / #1086)。意図的な選択で、
   per-screenshot の依存表は「子コンポーネントの変更を依存に入れ忘れる」穴
   (#944 が既知の限界として挙げた形) を必ず作るため、穴を作らない側に倒した。
-  代償として GUI を触る PR は毎回 5 枚の撮り直しを要求される。
+  代償として GUI の実コードを触る PR は毎回 6 枚の撮り直しを要求される。
 * **GUI 以外に起因する見た目の変化** -- フォント・OS・ブラウザ版・画面解像度は
   source に現れないため検知できない。
 * **同梱 README.txt / docs 側の画像** -- 対象は `image/` 直下の連番 PNG のみ。
@@ -234,6 +238,122 @@ def _normalize_newlines(data: bytes) -> bytes:
     return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
+# コメントだけの変更で digest を変えない (#1008)。生バイトを hash すると、
+# `//` や doc comment の修正だけで「撮り直しが必要」になり、コメントのみの PR が
+# 恒久的に赤になる (実例: PR #1085)。
+_COMMENT_STRIPPED_SUFFIXES = {".ts", ".tsx", ".css", ".html", ".js", ".mjs"}
+
+
+def _template_open_after(line: str, in_template: bool) -> bool:
+    """template literal (`...`) の開閉状態を行単位で追う。
+
+    `\\` でエスケープされた backtick は数えない。文字列リテラル内の backtick で
+    誤って toggle した場合は「テンプレート内」と見なして**strip を止める**側に
+    倒れる (false-red 方向。false-green より安全)。
+    """
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "`":
+            in_template = not in_template
+        index += 1
+    return in_template
+
+
+def _strip_comment_lines(text: str, suffix: str) -> str:
+    """**行頭のコメントだけ**を落とす (#1008)。
+
+    インラインの `/*` は触らない。glob 文字列 (`**/*.css`) や文字列リテラルに
+    現れうるため、素朴に除去すると **コードごと消して本物の差分を隠す**。
+    対象は次の 3 種のみ:
+
+    * 行頭 (空白のみ前置) の `//` 行
+    * 行頭の `/*` から始まるブロック (doc comment を含む)
+    * `.html` の行頭 `<!--` ブロック
+
+    **閉じ記号の後ろに残るコードは保存する。** 行ごと捨てると
+    `/* theme */ .a { color: red; }` の red -> blue のような実変更まで
+    見逃す (Codex adversarial-review [P2])。
+
+    ## false-green を避けるための 2 つの退避
+
+    1. **template literal 内の行は触らない** — `` const s = `\n// not a comment\n` ``
+       の行頭 `//` は文字列の一部で、消すと実変更を隠す。
+    2. **閉じ忘れの block comment は strip を諦める** — どこまでがコメントか
+       決められない以上、生テキストで比較する方が安全 (fail-closed)。
+    """
+    if suffix not in _COMMENT_STRIPPED_SUFFIXES:
+        return text
+    track_templates = suffix in {".ts", ".tsx", ".js", ".mjs"}
+    out: list[str] = []
+    block_end = ""
+    in_template = False
+    for line in text.split("\n"):
+        if in_template:
+            out.append(line)
+            in_template = _template_open_after(line, True)
+            continue
+        rest = line
+        while True:
+            stripped = rest.lstrip()
+            if block_end:
+                index = rest.find(block_end)
+                if index == -1:
+                    rest = ""
+                    break
+                rest = rest[index + len(block_end) :]
+                block_end = ""
+                continue
+            if stripped.startswith("/*"):
+                index = rest.find("*/", rest.find("/*") + 2)
+                if index == -1:
+                    block_end = "*/"
+                    rest = ""
+                    break
+                rest = rest[index + 2 :]
+                continue
+            if stripped.startswith("//"):
+                rest = ""
+                break
+            if suffix == ".html" and stripped.startswith("<!--"):
+                index = rest.find("-->", rest.find("<!--") + 4)
+                if index == -1:
+                    block_end = "-->"
+                    rest = ""
+                    break
+                rest = rest[index + 3 :]
+                continue
+            break
+        if rest.strip() == "" and line.strip() != "":
+            # 行全体がコメントだった行は落とす (空白行は保存する)。
+            continue
+        out.append(rest)
+        if track_templates:
+            in_template = _template_open_after(rest, False)
+    if block_end:
+        # 閉じ忘れ: どこまでがコメントか決められない。生テキストで比較する。
+        return text
+    return "\n".join(out)
+
+
+def _digestable_bytes(path: Path) -> bytes:
+    """hash 対象の正規化済みバイト列 (改行 + コメント)。"""
+    raw = _normalize_newlines(path.read_bytes())
+    suffix = path.suffix.lower()
+    if suffix not in _COMMENT_STRIPPED_SUFFIXES:
+        return raw
+    text = raw.decode("utf-8", errors="surrogateescape")
+    return _strip_comment_lines(text, suffix).encode("utf-8", errors="surrogateescape")
+
+
+def _file_digest(path: Path) -> str:
+    """1 file 分の digest。`compute_digest` と test が同じ関数を使う。"""
+    return hashlib.sha256(_digestable_bytes(path)).hexdigest()
+
+
 def compute_digest(repo_root: Path, paths: Sequence[Path]) -> str:
     """path と内容の両方を含む安定ハッシュ。rename でも変わる。
 
@@ -249,8 +369,7 @@ def compute_digest(repo_root: Path, paths: Sequence[Path]) -> str:
     outer = hashlib.sha256()
     by_rel = sorted((path.relative_to(repo_root).as_posix(), path) for path in paths)
     for rel, path in by_rel:
-        inner = hashlib.sha256(_normalize_newlines(path.read_bytes())).hexdigest()
-        outer.update(f"{rel}\0{inner}\n".encode())
+        outer.update(f"{rel}\0{_file_digest(path)}\n".encode())
     return outer.hexdigest()
 
 
@@ -399,11 +518,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  manifest の sources_sha256: {recorded}", file=sys.stderr)
         print(f"  現在の source から再計算    : {actual}", file=sys.stderr)
         print(
-            "\n撮り直し手順:"
-            "\n  1. cd gui && npm run dev            (別ターミナルで起動したまま)"
-            "\n  2. npm install --no-save playwright && npx playwright install chromium"
-            "\n  3. node scripts/capture-readme-screens.mjs"
-            "\n  4. python scripts/check_screenshot_freshness.py --update"
+            "\n撮り直し手順は scripts/capture-readme-screens.mjs の docstring が正"
+            " (playwright は gui/ で `npm install --no-save playwright` する点、"
+            "解決が gui/package.json 起点である点もそちらを参照)。"
             f"\n\n契約の詳細は scripts/{Path(__file__).name} の docstring を参照。",
             file=sys.stderr,
         )

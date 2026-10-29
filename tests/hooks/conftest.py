@@ -119,6 +119,8 @@ def tmp_repo(tmp_path: Path) -> Path:
 
     # Wire in real scripts/ + .claude/hooks/ via symlink (fallback: copy).
     _symlink_or_copy(PROJECT_ROOT / "scripts", repo / "scripts")
+    # session-start.sh は AGENTS.md から Iron Law を実行時抽出する (#1079 Phase 3)。
+    _symlink_or_copy(PROJECT_ROOT / "AGENTS.md", repo / "AGENTS.md")
     (repo / ".claude").mkdir()
     _symlink_or_copy(PROJECT_ROOT / ".claude" / "hooks", repo / ".claude" / "hooks")
     return repo
@@ -129,18 +131,22 @@ def make_claude_branch(tmp_repo: Path) -> Callable[..., str]:
     """Create a `claude/<slug>` branch with controllable merged / age properties.
 
     Args of the returned callable:
-      slug: branch name suffix after `claude/`
+      slug: branch name suffix after `claude/` (used as the temp file name)
       merged: if True, branch is merged into develop-0.2.0 (= is-ancestor true)
       age_seconds: forge committer date to `now - age_seconds`
+      name: full branch name override (default `claude/<slug>`). Used by the
+        #1067 Phase 2 tests, which need non-`claude/` and protected names.
 
-    Returns: full branch ref (`claude/<slug>`).
+    Returns: full branch ref (`claude/<slug>` unless `name` is given).
 
     Post-condition: HEAD is always on `develop-0.2.0` after the call,
     regardless of the `merged` param. Composable across multiple invocations.
     """
 
-    def _make(slug: str, *, merged: bool, age_seconds: int) -> str:
-        branch = f"claude/{slug}"
+    def _make(
+        slug: str, *, merged: bool, age_seconds: int, name: str | None = None
+    ) -> str:
+        branch = name or f"claude/{slug}"
         # Create branch from develop-0.2.0
         subprocess.run(
             ["git", "checkout", "-q", "-b", branch], cwd=tmp_repo, check=True

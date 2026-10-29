@@ -352,13 +352,44 @@ jobs:
       - uses: actions/checkout@v4
 
       # agent migration (#1041/#1042) の用語 sweep 完全性 gate。
-      # 旧用語 (slash command / `.claude/skills` / `CLAUDE.md`) が living doc に
-      # 残ると fail する (Round 4/5 で session-start.sh / versioning.md の残存を
-      # 個別に拾った事象の再発防止)。標準ライブラリのみで動く。
-      # exit 1 = 旧用語残存 / exit 2 = 検査自体が壊れている。
+      # 旧用語 (slash command / 旧 path・旧 filename / 主エージェント=Claude 表記 /
+      # Codex 旧 invocation 契約 (#1043) / Claude Code plugin 旧表記 (#1064)) が
+      # living doc に残ると fail する (Round 4/5 で
+      # session-start.sh / versioning.md の残存を個別に拾った事象の再発防止)。
+      # 検出 class の実装は `scripts/check_agent_migration_sweep.py` の各 regex /
+      # literal list を正とする。標準ライブラリのみで動く。
+      # exit 1 = 旧用語残存 または 検査不能 (fail-closed) / exit 2 = 検査自体が壊れている。
       - name: Check agent migration sweep completeness
         shell: bash
         run: python scripts/check_agent_migration_sweep.py
+
+  doc-declaration-catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.9"
+          cache: "pip"
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
+
+      # `cli-options` gate は typer runtime registry (実際に登録された click
+      # command) を読むため、`doc-code-refs` と違い CLI を import できる状態が要る
+      # (`check_feature_announcement.py` と同じ理由)。残りの gate は stdlib のみ。
+      - name: Install allaganeye (CLI registry を読むため)
+        run: pip install -e . -c constraints.txt
+
+      # 宣言カタログ (#1079) の自己整合 gate。台帳 (docs/declaration-catalog.md) が
+      # 実 tree と食い違うと fail する。
+      # exit 1 = 台帳と実 tree の食い違い / exit 2 = 台帳の構造破壊。
+      # 行の削除は本 job では検出できない (未登録クラスは drift ではないため)。
+      # id 集合の消失は tests/scripts/test_check_declarations.py が pin する。
+      - name: Check declaration catalog self-consistency
+        shell: bash
+        run: python scripts/check_declarations.py
 
   feature-announcement:
     runs-on: ubuntu-latest

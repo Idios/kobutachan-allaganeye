@@ -2,7 +2,7 @@
 
 GUI プロトタイプ 5 画面 (drop / detecting / complete / preview / export) のスクリーンショット。
 
-> **実装は 6 画面**である (`minimap` が [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) で追加)。本ディレクトリは **handoff bundle 由来のプロトタイプ**を保持する場所で、`minimap` はプロトタイプが存在しない (bundle より後に設計された) ため 5 枚のままである。**実装された 6 画面のスクリーンショットは `image/` 配下** (`01-drop.png` 〜 `06-minimap.png`) を参照。
+> **実装は 6 画面**である (`minimap` が [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) で追加)。本ディレクトリは **handoff bundle 由来のプロトタイプ**を保持する場所で、`minimap` はプロトタイプが存在しない (bundle より後に設計された) ため 5 枚のままである。**実装された 6 画面のスクリーンショットはリポジトリ直下の `image/` 配下** (`01-drop.png` 〜 `06-minimap.png`) を参照。
 
 ## ファイル一覧
 
@@ -26,4 +26,4 @@ GUI プロトタイプ 5 画面 (drop / detecting / complete / preview / export)
 
 - **FF14 ゲーム画面のスクリーンショットは含めない** (Square Enix 権利物、GitHub 登録不可)
 - 本ディレクトリ内は**プロトタイプ UI のスクリーンショットのみ**
-- プロトタイプに変更があった場合は、Idios が手動で再取得して差し替える (handoff bundle README の指示により Claude はブラウザ描画・スクショ取得を行わない)
+- プロトタイプに変更があった場合は、Idios が手動で再取得して差し替える (handoff bundle README の指示により、エージェント（主エージェント・subagent を問わず）はブラウザ描画・スクショ取得を行わない)

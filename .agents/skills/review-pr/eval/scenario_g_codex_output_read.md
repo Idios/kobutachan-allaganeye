@@ -2,7 +2,7 @@
 
 `/review-pr` Step 5a の §「Codex 出力の読み取り」を対象とする EPT シナリオ。
 第 1043 号 (`#1043`) で旧 companion script の job 追跡機構 (`status` / `result` / job id) を廃止し、
-`codex` CLI 直呼び (`codex review --base <base> "<focus>"`、stdout 直読) に統合したため、
+`codex` CLI 直呼び (`codex review "<focus + diff 指示>"`、stdout 直読) に統合したため、
 本シナリオはその新契約を検証する。iterate-review 側は
 [`../../iterate-review/eval/scenario_g_codex_output_read.md`](../../iterate-review/eval/scenario_g_codex_output_read.md) を参照。
 
@@ -12,7 +12,7 @@
 
 PR `#<N>` は `allaganeye/video/detector.py` の core ロジック変更を含み、`/review-pr` Step 5a の
 Codex review 起動条件の条件 3 (§「core 変更対象ファイル」の表に該当) を満たす。tier 1 = `codex` CLI 直接呼び出しで
-`codex review --base develop-0.4.0 "<focus>"` を Bash 実行し、**exit code 0 で完了した**。
+`codex review "Review the diff against develop-0.4.0 (run: git diff develop-0.4.0...HEAD). Focus: <focus>"` を Bash 実行し、**exit code 0 で完了した**。
 executor は Step 5b トリアージ表へ finding を統合する直前の地点にいる。
 
 ### 期待挙動
@@ -31,7 +31,7 @@ executor は Step 5b トリアージ表へ finding を統合する直前の地�
 
 ### 想定状況
 
-G-1 と同じ状況だが、`codex review --base develop-0.4.0 "<focus>"` が **exit code 0** で完了したものの
+G-1 と同じ状況だが、`codex review "Review the diff against develop-0.4.0 (run: git diff develop-0.4.0...HEAD). Focus: <focus>"` が **exit code 0** で完了したものの
 stdout が空 (または finding として parse できない) だった。stderr には error らしきものは出ていない。
 
 ### 期待挙動
@@ -53,7 +53,7 @@ exit 0 でも stdout が空 / parse 不能は「応答異常」として扱い�
 
 ### 想定状況
 
-PR 作成直前の Iron Law 6 Pre-flight Step 5 で `codex review --base develop-0.4.0 "<focus>"` を
+PR 作成直前の Iron Law 6 Pre-flight Step 5 で `codex review "Review the diff against develop-0.4.0 (run: git diff develop-0.4.0...HEAD). Focus: <focus>"` を
 実行し exit 0 で完了した。executor は finding を triage して PR 本文へ反映する直前にいる。
 
 ### 要件チェックリスト

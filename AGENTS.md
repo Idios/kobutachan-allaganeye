@@ -184,7 +184,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `gui/src/styles/tokens.css` | `aetherTheme` の CSS 変数定義 (#464 で追加) |
 | `gui/src/styles/path-display.module.css` | 5 画面横断のファイルパス表示 CSS Module (`.pathDisplay` container / `.pathSecondary` parent dir 行 RTL ellipsis truncate)、#676 で追加 (`docs/ui-interaction-spec.md §1.6` 参照) |
 | `gui/src/utils/path.ts` | Windows / POSIX path 操作 utility。`stripExtendedPathPrefix` (Windows `\\?\` prefix 除去) / `joinPath` (OS-appropriate separator) / `splitPath` (fileName + parentDir 分解、#676 で追加) |
-| `gui/src-tauri/` | Tauri 2 Rust バックエンド (`load_metadata` / `apply_changes` / `restore_from_original` / `check_backup_exists` / `get_metadata_mtime` / `start_export` / `enumerate_h264_encoders` (#761) / `start_minimap` (#893) / `read_recent` / `add_recent` / `clear_recent` (#571) command、axum/tower-http による動画配信は #465 で実装)。`start_export` は Python subprocess を起動して JSON Lines で進捗を受け取り、`enumerate_h264_encoders` は GPU SKU table から利用可能エンコーダスロット一覧を返す (#761)。`start_minimap` は `allaganeye minimap` subprocess を起動し `minimap-progress` イベントで進捗を emit する (#893)。GUI → CLI 呼び出し口と argv の正は [`docs/system-architecture.md`](docs/system-architecture.md) §2.3 |
+| `gui/src-tauri/` | Tauri 2 Rust バックエンド。**command 一覧の正は [`docs/tauri-commands.md`](docs/tauri-commands.md)** (本表では列挙しない)。axum/tower-http による動画配信は #465 で実装。`start_export` は Python subprocess を起動して JSON Lines で進捗を受け取り、`enumerate_h264_encoders` は GPU SKU table から利用可能エンコーダスロット一覧を返す (#761)。`start_minimap` は `allaganeye minimap` subprocess を起動し `minimap-progress` イベントで進捗を emit する (#893)。GUI → CLI 呼び出し口と argv の正は [`docs/system-architecture.md`](docs/system-architecture.md) §2.3 |
 
 ### 検知アルゴリズム（detector.py）
 
@@ -299,7 +299,7 @@ Python 依存は 2 層構成 (#916)。`pyproject.toml` = **外部への互換範
 
 ## セキュリティ検査（allaganeye-guard 運用連携）
 
-外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、エージェント (= Claude + 人間メンテナ Idios) が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。詳細は [`docs/guard-integration.md`](docs/guard-integration.md)、外部ユーザー向けバグ報告案内は [`docs/bug-report-guide.md`](docs/bug-report-guide.md) を参照。
+外部ユーザーから受領した動画ファイルを処理する前に、独立ツール `allaganeye-guard` でセキュリティ検査を行う。**プログラムレベルでの結合は行わず**、主エージェント (Zed + DeepSeek) + 人間メンテナ Idios が手動で `allaganeye-guard verify` を実行する運用ルールとする (2026-04-21 方針確定、#454 参照)。詳細は [`docs/guard-integration.md`](docs/guard-integration.md)、外部ユーザー向けバグ報告案内は [`docs/bug-report-guide.md`](docs/bug-report-guide.md) を参照。
 
 - **リポジトリ**: [Idios/kobutachan-allaganeye-guard](https://github.com/Idios/kobutachan-allaganeye-guard) (独立パッケージ)
 - **運用**: `allaganeye-guard verify <file>` → PASS (exit 0 / 1) 後に `allaganeye split` で処理
@@ -319,6 +319,7 @@ L2 からは**単一ワークツリー + skill ベースディスパッチ**を�
 - ユーザー (Idios) が戦略・方針を判断し、主エージェント (DeepSeek) は選択肢提示と実装を担う
 - skill (`.agents/skills/*/SKILL.md`) 改修 PR は mizchi `empirical-prompt-tuning` protocol に従う。詳細は [`docs/l2-workflow.md` §skill 改修ワークフロー](docs/l2-workflow.md#skill-改修ワークフロー-empirical-prompt-tuning) を参照
 - 規約 / ガード / チェックを**新設**する PR は **3 点セット** (①発火点をファイルと行で指定 ②非実施時の 1 行記録義務 ③発火側の red 実証) を必ず揃える。詳細は [`docs/l2-workflow.md` §規約・ガード導入の 3 点セット](docs/l2-workflow.md) を参照
+- 同じ事実を 2 spot 以上に書く場合は [`docs/declaration-catalog.md`](docs/declaration-catalog.md) に 1 行登録する (SSoT / 複製 spot / mode / gate)。台帳の自己整合は `scripts/check_declarations.py`、id 集合の消失は `tests/scripts/test_check_declarations.py` が検出する (#1079)
 
 ### `iterate-review` workflow と (A) 強優先方針
 
@@ -328,11 +329,11 @@ PR 作成後は `iterate-review` skill (<PR#>) で review-fix ループを自走
 
 プロジェクト基本ルールは本ファイル (AGENTS.md) §Iron Law (6 条 + Red Flags 表) に記される。条文と Red Flags の正は同節。違反が 1% でも疑われる状況では STOP し `AskUserQuestion` でユーザー確認する。
 
-強制メカニズム (7 層) の詳細は [docs/l2-workflow.md](docs/l2-workflow.md) §強制メカニズム を参照。
+強制メカニズム (7 層) の詳細は [docs/l2-workflow.md](docs/l2-workflow.md) §強制メカニズム を参照。**Zed 期の強制力 (どの hook / 機構が発火し、何が代替か) の正は同 doc §Zed 期の強制・継続機構** (#1067)。
 
 ### Memory 活用 (ユーザー訂正の蓄積)
 
-ユーザーが Claude の判断を訂正した場合、訂正内容を `feedback_*.md` 形式でメモリに蓄積する。蓄積対象の例:
+ユーザーが主エージェントの判断を訂正した場合、訂正内容を `feedback_*.md` 形式でメモリに蓄積する (蓄積先 `~/.claude/projects/<project>/memory/` は Claude Code の auto-memory。Zed + DeepSeek では自動注入されないため、必要時に直接 read して参照する — 詳細は [docs/l2-workflow.md](docs/l2-workflow.md) §Memory 階層化)。蓄積対象の例:
 
 - 優先度判定基準の訂正 (「この観点は P1」「このレベルの UX 品質は P3」等)
 - ラベル振り分け基準の訂正 (`deferred` / スコープラベル判定の根拠)
@@ -365,11 +366,28 @@ subprocess / IPC / OS API を介した encoding fix を行うときは、**以�
 
 ## 用語 sweep 完全性 checklist (#1041/#1042 教訓)
 
-repo 全域の用語 sweep (slash command の skill 名化、旧 path / 旧 filename の置換) を含む PR は、**「まとめて置換」だけでは漏れる** (PR #1051 は Round 4/5 まで session-start.sh / versioning.md の残存を個別に拾った)。
+repo 全域の用語 sweep (slash command の skill 名化、旧 path / 旧 filename の置換、主エージェント表記の反転 (#1043)、Codex invocation 契約の一本化、Claude Code plugin 旧表記の置換 (#1064)) を含む PR は、**「まとめて置換」だけでは漏れる** (PR #1051 は Round 4/5 まで session-start.sh / versioning.md の残存を個別に拾った)。
 
-sweep の完全性は [`scripts/check_agent_migration_sweep.py`](scripts/check_agent_migration_sweep.py) が living doc (`.md` / `.sh` の doc / skill / hook) の旧用語残存を検出し、CI job `doc-agent-migration-sweep` が gate する。将来の sweep では、**先に check の旧用語リストを更新してから sweep を実行**し、CI green で完全性を実証すること。
+sweep の完全性は [`scripts/check_agent_migration_sweep.py`](scripts/check_agent_migration_sweep.py) が living doc (`.md` / `.sh` の doc / skill / hook) の旧用語残存を検出し、CI job `doc-agent-migration-sweep` が gate する。本 checklist の対象は、この check が検出する **5 class** — slash command / 旧 path・旧 filename / 主エージェント=Claude 表記 / Codex 旧 invocation 契約 / Claude Code plugin 旧表記 — である。
 
-コードファイル / CHANGELOG / eval レポート / dated plans・specs の旧参照は歴史記録 (棚卸 #1044) として対象外。
+sweep は **「旧用語リスト更新 → sweep 前の実 tree で red を確認 → sweep → CI green で完全性を実証」** の順で行う。red を確認せず green だけを見ると、追加した class が実際に発火することを示せない。
+
+**検出 class を追加する際は positive / negative 両 fixture を必須とする。** ここで **positive = 検出すべき入力**、**negative = 検出してはならない維持対象** を指す (fixture の命名もこの向きに揃える)。片側だけだと誤検出 / 取り逃しのどちらかが pin されず、後続の変更で silent に壊れる。fixture の置き場は [`tests/scripts/test_check_agent_migration_sweep.py`](tests/scripts/test_check_agent_migration_sweep.py)。
+
+> **向きの注記**: [`.agents/skills/iterate-review/SKILL.md`](.agents/skills/iterate-review/SKILL.md) は positive / negative を逆の向き (positive = 正しい literal で緑) で使っている。**本 checklist の向きを正**とし、skill 側の向き統一は #1075 で「範囲外」とされて未着手のまま (現状は差異を許容する)。
+>
+> **適用範囲 (機械検査あり)**: #1075 で meta-test が入り、`scripts/check_agent_migration_sweep.py` の各 regex 分岐 (「分岐を外すと検出されなくなること」) と、各 literal list の語 (「positive fixture を持つこと」/「negative fixture を誤検出しないこと」) を [`tests/scripts/test_check_agent_migration_sweep.py`](tests/scripts/test_check_agent_migration_sweep.py) が検査する。**class を追加するときは list に語を足すだけでなく positive / negative fixture も同時に更新する** (positive は「fixture 集合 = list 集合」、negative は「class ごとに 1 件以上」を test が要求するため、どちらかが欠けると red になる)。本ルールは [`docs/l2-workflow.md`](docs/l2-workflow.md) §「規約・ガード導入の 3 点セット」の適用対象である。
+
+### 検査対象外 (SSoT は実装)
+
+除外の正は `scripts/check_agent_migration_sweep.py` の `_SCAN_EXTS` (走査拡張子の allowlist) / `_EXCLUDED_GLOBS` (path glob) / `_SKIP_DIRS` (任意階層のディレクトリ名) であり、本節はその要約である。逸脱時は実装を正とする。
+
+- **コードファイル** (`.py` / `.js` / `.ts` / `.tsx` / `.rs` / `.ps1` / `.yml` 等): 対象外。コードコメントの旧参照は本 sweep ではなく #1076 で棚卸した (2026-10 実測で残置 0 件)。棚卸 #1044 は未参照ファイルの削除が範囲で、コードコメントの修正は含まない。
+- **履歴記録**: `CHANGELOG.md` / `docs/superpowers/**` (dated plans・specs に限らず、同 dir 配下の非 dated 記録も含む) / `docs/archive/**` / `docs/audits/**`。
+- **eval fixture** (`.agents/skills/**/eval/**`): 特定時点の評価基準・シナリオを固定する記録なので遡及置換しない。ただし **skill の契約自体が変わった場合は、eval の妥当性を保つため fixture の期待値を更新する** (PR #1071 に前例)。**未更新の残置は歴史記録として保持し、追跡しない** (#1044 で確定。2026-10 時点の残存は `eval/reports/**` と sweep 系 scenario の旧 invocation 契約で、いずれも当時の実行記録)。
+- **`gui/**`**: GUI ソースのため `.md` でも対象外 (screenshot-freshness 回避)。
+- **`build-cache/`**: Portable ZIP の build キャッシュ置き場 (`.gitignore` 済)。`.md` が混ざっても検査しない。red 実証の一時展開先には使わず repo 外に置くこと (#1066)。
+- **`.claude/agents/**`**: Claude Code 用のロール定義。frontmatter の `model:` は Claude エイリアスのみだが、**本文はモデル非依存で fallback 時に DeepSeek も読む**ため「Claude 専用だから除外」は理由にならない。現状は**暫定的な除外**で、本文の旧 invocation 契約は #1068 で修正済み（残置は 0 件）。
 
 ## destructive write boundary audit checklist (#930 教訓)
 
@@ -421,9 +439,9 @@ Codex を Iron Law 3 / 5 と衝突しない形で workflow に統合する。設
 
 ### Token 枯渇時の fallback (C6)
 
-Codex CLI が rate-limit / quota / network / auth 等で fail した場合、主エージェント (DeepSeek) が直接レビューを fallback として実行する。**fallback 実行時は skill report に「Codex fallback notice」を必須記載** (Iron Law 5 整合、Codex review 済との誤認防止)。
+Codex CLI が rate-limit / quota / network / auth 等で fail した場合、**レビューを実行している agent 自身**（主エージェント。`review-pr` が subagent として dispatch されている場合はその subagent）が直接レビューを fallback として実行する（別 subagent は spawn しない。同一 model で bias が変わらないため）。**fallback 実行時は skill report に「Codex fallback notice」を必須記載** (Iron Law 5 整合、Codex review 済との誤認防止)。
 
-詳細 (検出条件 / 戦略 / 擬似コード example) は [`docs/l2-workflow.md` §Codex fallback](docs/l2-workflow.md#codex-fallback) を参照。
+詳細 (検出条件 / 戦略 / 擬似コード example) は [`docs/l2-workflow.md` §Codex fallback](docs/l2-workflow.md#codex-fallback-c6codex-token-枯渇--failure-時) を参照。
 
 ### subagent + Codex 直列構成 (C5)
 
@@ -433,7 +451,7 @@ Codex CLI が rate-limit / quota / network / auth 等で fail した場合、主
 
 ## モデルルーティング（用途別モデル使い分け）
 
-開発時のサブエージェント/レビューを用途別のモデルへ振り分ける。**本ツールの実行時依存ではなく開発運用のみ**（CLI/GUI の挙動・出力は変わらない）。**主エージェントは Zed + DeepSeek V4 Pro**。Claude Code / Codex / Fable / Kimi Code はレビュー・相談専用（別途セッション起動）。設計 spec は [`docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md`](docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md) を参照。
+開発時のサブエージェント/レビューを用途別のモデルへ振り分ける。**本ツールの実行時依存ではなく開発運用のみ**（CLI/GUI の挙動・出力は変わらない）。**主エージェントは Zed + DeepSeek V4 Pro**。Claude Code / Codex / Fable / Kimi Code はレビュー・相談専用（別途セッション起動）。設計 spec (Superseded / 履歴) は [`docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md`](docs/superpowers/specs/2026-08-28-model-routing-deepseek-fallback-design.md) を参照。
 
 ルーティングは**アドバイザリ**（hook 強制はしない）。担保は本節のガイダンスと主エージェントの規律。
 
@@ -474,12 +492,12 @@ Claude Code / Fable / Kimi Code は **Zed セッション内からは起動不�
 **正直な制約**:
 
 - **DeepSeek は Claude Code の subagent になれない**（`.claude/agents/*.md` の `model:` は Claude エイリアスのみ）。委譲先モデルは Idios が手動で選ぶ。
-- skill 実行は **DeepSeek が `.agents/skills/*/SKILL.md` を read して手順を手動追従**する形。Claude Code のスラッシュコマンドは DeepSeek から invoke 不可。`Agent` subagent / `AskUserQuestion` / superpowers plugin skill は Zed 等価物（`spawn_agent` / 散文での確認 / 直接レビュー）へ置換する。
+- skill 実行は **DeepSeek が `.agents/skills/*/SKILL.md` を read して手順を手動追従**する形。Claude Code のスラッシュコマンドは DeepSeek から invoke 不可。`Agent` subagent / `AskUserQuestion` / superpowers plugin skill は Zed 等価物（`spawn_agent` / 散文 N 択の確認 / 直接レビュー）で**読み替える**（**skill 本文の tool 名は可搬性のため置換しない**。択数・書式・停止条件は [`docs/l2-workflow.md`](docs/l2-workflow.md) §Zed 期の強制・継続機構 §AskUserQuestion の等価物 を参照）。
 - **Codex を DeepSeek から呼べるかは terminal 権限に依存**する。権限があれば `codex` CLI を直接実行できる（Codex 本体は Claude と独立）。無い場合は Idios 手動 invoke に落ちる。
 
 **fallback notice（記録義務、C6 同型）**: Claude レビューが使えない状況で DeepSeek がレビューを代行した成果物には、Claude/Opus/Fable レビュー済との誤認を防ぐため以下を明示する。
 
-> **Claude fallback notice**: 本成果物は Claude usage limit のため DeepSeek <V4 Pro | V4 Flash> で作成しました。Claude 復旧後の再レビューを推奨します。
+> **Claude fallback notice**: 本成果物のレビューは Claude 不可（usage limit 等）のため DeepSeek <V4 Pro | V4 Flash> が代行しました。Claude 復旧後の再レビューを推奨します。
 
 ## AGENTS.md 継続改善
 

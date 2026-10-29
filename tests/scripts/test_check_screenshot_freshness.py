@@ -163,12 +163,187 @@ def test_digest_uses_case_sensitive_posix_ordering(tmp_path: Path) -> None:
     # 契約: relative posix 文字列の case-sensitive 昇順で連結する。
     expected = hashlib.sha256()
     for rel in sorted(p.relative_to(root).as_posix() for p in resolved):
-        inner = hashlib.sha256(
-            guard._normalize_newlines((root / rel).read_bytes())
-        ).hexdigest()
+        inner = guard._file_digest(root / rel)
         expected.update(f"{rel}\0{inner}\n".encode())
 
     assert guard.compute_digest(root, resolved) == expected.hexdigest()
+
+
+# --------------------------------------------------------------------------
+# コメントだけの変更は digest を変えない (#1008)
+# --------------------------------------------------------------------------
+
+
+def _digest_after_edit(tmp_path: Path, rel: str, new_text: str) -> tuple[str, str]:
+    root = _build_repo(tmp_path, sources={rel: "export const A = 1;\n"})
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / rel).write_text(new_text, encoding="utf-8")
+    return before, guard.compute_digest(root, resolved)
+
+
+def test_line_comment_only_change_keeps_digest(tmp_path: Path) -> None:
+    """関数の中の行頭 `//` コメントを変えても撮り直しを要求しない。"""
+    before, after = _digest_after_edit(
+        tmp_path, "gui/src/App.tsx", "// note changed\nexport const A = 1;\n"
+    )
+    assert before == after
+
+
+def test_block_comment_change_keeps_digest(tmp_path: Path) -> None:
+    """doc comment (`/** ... */`) の文面変更も digest を変えない。"""
+    before, after = _digest_after_edit(
+        tmp_path,
+        "gui/src/App.tsx",
+        "/**\n * The current platform is Windows-only (see AGENTS.md).\n */\nexport const A = 1;\n",
+    )
+    assert before == after
+
+
+def test_code_change_after_comment_still_changes_digest(tmp_path: Path) -> None:
+    """コメントを落としても、コードの実変更は digest に現れる。"""
+    before, after = _digest_after_edit(
+        tmp_path,
+        "gui/src/App.tsx",
+        "// note\nexport const A = 2;\n",
+    )
+    assert before != after
+
+
+def test_inline_block_comment_like_string_is_not_stripped(tmp_path: Path) -> None:
+    """行中に現れる `/*` は触らない (glob 文字列を消して差分を隠さない)。
+
+    `"**/*.css"` をコメントとして除去すると、その文字列の変更を検出できなくなる。
+    """
+    before, after = _digest_after_edit(
+        tmp_path,
+        "gui/src/App.tsx",
+        'const glob = "**/*.css";\nexport const A = 1;\n',
+    )
+    assert before != after
+
+
+def test_template_literal_line_start_slashes_are_not_stripped(tmp_path: Path) -> None:
+    """template literal 内の行頭 `//` は文字列の一部 (#1008 の敵対的 fixture)。
+
+    これをコメントとして消すと、テンプレートの中身の変更が見逃される。
+    """
+    root = _build_repo(
+        tmp_path,
+        sources={
+            "gui/src/App.tsx": "const s = `\n// keep me A\n`;\nexport const A = 1;\n"
+        },
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.tsx").write_text(
+        "const s = `\n// keep me B\n`;\nexport const A = 1;\n", encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) != before
+
+
+def test_unclosed_block_comment_falls_back_to_raw(tmp_path: Path) -> None:
+    """閉じ忘れの block comment では strip を諦める (fail-closed)。
+
+    どこまでがコメントか決められない以上、生テキストで比較する方が安全。
+    """
+    root = _build_repo(
+        tmp_path,
+        sources={"gui/src/App.css": "/* never closed\n.a { color: red; }\n"},
+        source_globs=["gui/src/**/*.css"],
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.css").write_text(
+        "/* never closed\n.a { color: blue; }\n", encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) != before
+
+
+def test_double_slash_inside_string_is_not_stripped(tmp_path: Path) -> None:
+    before, after = _digest_after_edit(
+        tmp_path,
+        "gui/src/App.tsx",
+        'const url = "http://example.com/b";\nexport const A = 1;\n',
+    )
+    assert before != after
+
+
+def test_css_comment_only_change_keeps_digest(tmp_path: Path) -> None:
+    root = _build_repo(
+        tmp_path,
+        sources={"gui/src/App.css": ".a { color: red; }\n"},
+        source_globs=["gui/src/**/*.css"],
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.css").write_text(
+        "/* note */\n.a { color: red; }\n", encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) == before
+
+
+def test_code_after_closing_delimiter_still_affects_digest(tmp_path: Path) -> None:
+    """閉じ記号の後ろのコードを捨てない (Codex adversarial-review [P2])。
+
+    `/* theme */ .a { color: red; }` と `... color: blue; }` が同じ digest に
+    なると、意図しない見た目の変更が撮り直しなしで通る。
+    """
+    root = _build_repo(
+        tmp_path,
+        sources={"gui/src/App.css": "/* theme */ .a { color: red; }\n"},
+        source_globs=["gui/src/**/*.css"],
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.css").write_text(
+        "/* theme */ .a { color: blue; }\n", encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) != before
+
+
+def test_code_after_multiline_comment_close_still_affects_digest(
+    tmp_path: Path,
+) -> None:
+    root = _build_repo(
+        tmp_path,
+        sources={"gui/src/App.css": "/*\n theme\n*/ .a { color: red; }\n"},
+        source_globs=["gui/src/**/*.css"],
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.css").write_text(
+        "/*\n theme\n*/ .a { color: blue; }\n", encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) != before
+
+
+def test_html_comment_only_change_keeps_digest(tmp_path: Path) -> None:
+    root = _build_repo(
+        tmp_path,
+        sources={"gui/src/App.html": '<div id="a"></div>\n'},
+        source_globs=["gui/src/**/*.html"],
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.html").write_text(
+        '<!-- note -->\n<div id="a"></div>\n', encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) == before
+
+
+def test_html_code_after_comment_still_affects_digest(tmp_path: Path) -> None:
+    root = _build_repo(
+        tmp_path,
+        sources={"gui/src/App.html": '<!-- note --><div class="a"></div>\n'},
+        source_globs=["gui/src/**/*.html"],
+    )
+    resolved = guard.resolve_sources(root, guard.load_manifest(root))
+    before = guard.compute_digest(root, resolved)
+    (root / "gui/src/App.html").write_text(
+        '<!-- note --><div class="b"></div>\n', encoding="utf-8"
+    )
+    assert guard.compute_digest(root, resolved) != before
 
 
 def test_digest_changes_when_a_source_file_is_renamed(tmp_path: Path) -> None:
@@ -219,6 +394,22 @@ def test_changing_a_gui_source_turns_the_guard_red(tmp_path: Path) -> None:
     )
     result = _run(root)
     assert result.returncode == 1, f"stdout={result.stdout}\nstderr={result.stderr}"
+
+
+def test_drift_message_points_at_the_capture_docstring(tmp_path: Path) -> None:
+    """drift 時の案内は撮影手順の SSoT を指す (#1008)。
+
+    Round 1 で「checker 側に複製された手順が `cd gui` を欠いていた」実害が出たため、
+    メッセージが script の docstring を指し、番号付きの手順複製を持たないことを pin する。
+    """
+    root = _build_repo(tmp_path)
+    (root / "gui" / "src" / "App.tsx").write_text(
+        "export const A = 999;\n", encoding="utf-8"
+    )
+    result = _run(root)
+    assert result.returncode == 1
+    assert "capture-readme-screens.mjs の docstring が正" in result.stderr
+    assert "1. cd gui && npm run dev" not in result.stderr
 
 
 def test_editing_a_committed_screenshot_without_update_turns_the_guard_red(

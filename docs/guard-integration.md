@@ -6,7 +6,7 @@
 
 ### 運用原則 (2026-04-21 確定)
 
-allaganeye と allaganeye-guard は**プログラムレベルでの結合を行わない**。両ツールは独立した CLI として存在し、エージェント (= Claude Code セッションで動くこのアシスタント + 人間メンテナ Idios の両方) が外部から受け取った動画データを扱う際に、allaganeye で処理する前に `allaganeye-guard verify` を**手動で実行する**運用に一本化する。
+allaganeye と allaganeye-guard は**プログラムレベルでの結合を行わない**。両ツールは独立した CLI として存在し、主エージェント (Zed + DeepSeek) + 人間メンテナ Idios が外部から受け取った動画データを扱う際に、allaganeye で処理する前に `allaganeye-guard verify` を**手動で実行する**運用に一本化する。
 
 ### なぜ結合しないか
 
@@ -87,7 +87,7 @@ allaganeye (動画処理 CLI)
 
 ## 4. 使用方法
 
-外部から受領したファイルを処理する前に、エージェント (Claude + 人間メンテナ Idios の両方) が手動で検査する。
+外部から受領したファイルを処理する前に、主エージェント (Zed + DeepSeek) + 人間メンテナ Idios が手動で検査する。
 
 ```bash
 # 検査
@@ -154,7 +154,7 @@ GitHub の issue・PR に添付またはリンクされた動画ファイルに�
 
 外部ユーザー向けドキュメント (`.github/ISSUE_TEMPLATE/bug_report.yml`、`docs/bug-report-guide.md` 等) では **allaganeye-guard の存在・運用方法を露出させない**。報告者にはプライバシー・機密情報の確認のみを依頼する形を取る。
 
-**Why**: 2026-04-21、PR #497 インラインコメント (`bug_report.yml:13`) で Idios が明示: 「報告者は allaganeye-guard の存在は知らない前提。プライバシーと機密情報の確認だけ依頼する形」。guard の存在・運用ルールはメンテナ側の責務として本ドキュメントに集約されている。報告者が guard を知らなくてもバグ報告できる設計を優先。
+**Why**: 2026-04-21、PR #497 インラインコメント (`bug_report.yml`) で Idios が明示: 「報告者は allaganeye-guard の存在は知らない前提。プライバシーと機密情報の確認だけ依頼する形」。guard の存在・運用ルールはメンテナ側の責務として本ドキュメントに集約されている。報告者が guard を知らなくてもバグ報告できる設計を優先。
 
 **How to apply**:
 
@@ -176,7 +176,7 @@ GitHub の issue・PR に添付またはリンクされた動画ファイルに�
 
 1. Issue Template (`.github/ISSUE_TEMPLATE/bug_report.yml`) の同意チェックボックスが全てチェック済みであることを確認
 2. ファイルをダウンロードし、隔離ディレクトリに保存
-3. **エージェント (Claude + Idios) が `allaganeye-guard verify` を実行**。PASS するまで allaganeye で処理しない
+3. **主エージェント (Zed + DeepSeek) + 人間メンテナ Idios が `allaganeye-guard verify` を実行**。PASS するまで allaganeye で処理しない
 4. 調査完了後、ローカルデータを削除し Issue にコメントで報告
 
 ### プライバシー同意
@@ -193,6 +193,6 @@ GitHub の issue・PR に添付またはリンクされた動画ファイルに�
 
 ## 参考: 過去の program-integration 計画について
 
-2026-04-21 以前、本ドキュメントには allaganeye 側に `--verify` CLI オプション、`allaganeye/guard.py` subprocess ラッパー、exit code 6 (SecurityVerificationError)、`pyproject.toml` の `[guard]` optional-deps、`tests/test_guard_integration.py` 統合テスト等を追加する program-integration 計画が含まれていた (旧 §4.2 / §5 / §6 / §7 / §10 / §11)。
+2026-04-21 以前、本ドキュメントには allaganeye 側に guard 用の `--verify` CLI オプション、subprocess ラッパー、専用 exit code 6、`pyproject.toml` の `[guard]` optional-deps、統合テスト等を追加する program-integration 計画が含まれていた (旧 §4.2 / §5 / §6 / §7 / §10 / §11)。
 
 本方針転換によりこれらの構想は全て破棄し、本ドキュメントからも削除した。関連 issue (#454 / #455 / #456 / #457 / #460) と PR #488 はクローズ済み。復活が必要になった場合は本 §1 「運用原則」を先に見直すこと。
