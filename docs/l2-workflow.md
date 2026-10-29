@@ -580,7 +580,7 @@ issue ref がある PR も、期待値 / 現状 は PR 本文に **簡潔に inl
 - 例外: スコープ逸脱が明らかに大きい (別レイヤー実装変更 / GPU 統合等で工数 1 セッション超 / 別担当領域) 場合のみ (B) を提案。その場合も `AskUserQuestion` で「(A) 本 PR 拡大 / (B) 別 issue」の選択肢を提示し、ユーザーに判断を委ねる
 - `AskUserQuestion` で (A) only / (A)+(B) 混合 / 個別調整 の選択肢を提示する場合、(A) only を **「Recommended」** として提示する
 - 例外的に (B) になる典型: 別 issue が既に存在し、まだクローズされていない場合 (重複防止) / scope-guard skill が「同 PR で対応すると Iron Law 3 違反」と判定した場合
-- 指摘の対象が**前ラウンドの修正で新しく書いた文そのもの**である場合、第一候補は reword (言い換え) ではなく **削除 / SSoT へのポインタ化**にする。直した文は次のラウンドで新規の未レビュー文として審査されるため、reword は指摘を再生産する (実例: #1093 の iterate-review で過大記述 → 過少記述 → symbol 名の誤りと 3 ラウンド連続)。この規約に従わず reword を選んだ場合は、その理由を PR 本文の Self-Test Report 節に 1 行残す
+- 指摘の対象が**前ラウンドの修正で新しく書いた文そのもの**である場合、第一候補は reword (言い換え) ではなく **削除 / SSoT へのポインタ化**にする。直した文は次のラウンドで新規の未レビュー文として審査されるため、reword は指摘を再生産する (実例: #1093 の iterate-review で過大記述 → 過少記述 → symbol 名の誤りと 3 ラウンド連続)。この規約に従わず reword を選んだ場合は、その理由を PR 本文の Self-Test Report「実機検証 (machine-unverifiable)」節に plain bullet で 1 行残す
 
 ## PR 規約 (develop ベース / Closes 禁止 / exit_code 衝突 / 1 PR = 1 scope / session-id)
 
