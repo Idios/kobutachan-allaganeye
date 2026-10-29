@@ -3,7 +3,7 @@
 - **日付**: 2026-09-10
 - **状態**: Design（issue #1048 対応。Track 2 Phase 0）
 - **対象**: allaganeye 0.4.0（L4/L5/L6 統合）の「自プレイヤーの活躍検出→切り抜き」機能の信号モデル
-- **前提 doc**: [`2026-09-04-v040-roadmap.md`](./2026-09-04-v040-roadmap.md) §1.2
+- **前提 doc**: [`2026-09-04-v040-roadmap.md`](../plans/2026-09-04-v040-roadmap.md) §1.2
 - **関連 issue**: #1048（本 spec）/ #1047（自プレイヤー識別方式比較）/ #1046（採用技術選定）/ #1049（rule-based ストリークスコアリング）/ #1050（ハイライト範囲 UI）
 
 ## 1. 背景・目的
@@ -55,7 +55,7 @@
 
 各信号は単一の「活躍の兆候」を検出し、タイムスタンプ付きスコアを返す。将来の追加は Signal 実装を足すだけにする。
 
-```
+```text
 Signal.detect(frames) -> list[HighlightEvent]
 HighlightEvent:
   signal_id      # 信号識別子 (例: "ko_assist_indicator")
