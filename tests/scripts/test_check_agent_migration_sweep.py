@@ -12,9 +12,9 @@
   archive、audits は対象外 (#1044)。
 - GUI ソースは screenshot-freshness 回避のため対象外。
 - `build-cache/` は build キャッシュ置き場のため対象外 (#1066)。
-- コードコメントの旧参照は #1076 で追跡する (#1044 は未参照ファイルの削除が範囲)。
+- コードコメントの旧参照は #1076 で棚卸済み (残置 0 件)。#1044 は未参照ファイルの削除が範囲。
 - `.claude/agents/**` は Claude Code 用のロール定義 (`model:` frontmatter が Claude
-  エイリアスのみ) のため対象外 (旧 invocation 契約は #1068)。
+  エイリアスのみ) のため対象外 (旧 invocation 契約は #1068 で修正済み、残置 0 件)。
 - slash command の正規表現は path / branch 名の `/release` 等を誤検出しない
   (`(?<![a-z0-9._-])` + `(?![a-z0-9._-])` の前後境界)。
 """
@@ -525,7 +525,7 @@ def test_runtime_messages_are_pinned(tmp_path: Path) -> None:
     assert (
         "`build-cache/` は build キャッシュ置き場のため対象外 (#1066)" in result.stderr
     )
-    assert "コードコメントの旧参照は #1076 で追跡する" in result.stderr
+    assert "コードコメントの旧参照は #1076 で棚卸済み" in result.stderr
     assert "「独立 model」へ置換すること (#1064)" in result.stderr
 
 
@@ -814,7 +814,7 @@ def test_changelog_is_excluded(tmp_path: Path) -> None:
 
 
 def test_code_file_is_excluded(tmp_path: Path) -> None:
-    """コードファイルのコメント旧参照は #1076 で追跡するため対象外。"""
+    """コードファイルのコメント旧参照は #1076 で棚卸済みのため対象外。"""
     _make_repo(tmp_path)
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts" / "check_version_consistency.py").write_text(
@@ -892,7 +892,7 @@ def test_claude_agents_dir_is_excluded(tmp_path: Path) -> None:
 def test_eval_report_is_excluded(tmp_path: Path) -> None:
     """skill eval fixture の `.claude/skills` 参照は eval fixture 全体の除外により対象外。
 
-    残置の追跡先は #1068。
+    残置は歴史記録として保持し追跡しない (#1044 で確定)。
     """
     _make_repo(tmp_path)
     (tmp_path / ".agents" / "skills" / "review-pr" / "eval" / "reports").mkdir(

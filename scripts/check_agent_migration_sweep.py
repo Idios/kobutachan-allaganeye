@@ -17,7 +17,7 @@ Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を個別に拾
   - 拡張子 `.md` / `.sh` のファイル (docs / skill / hook / AGENTS.md / README)。
   - コードファイル (`.py` / `.js` / `.ts` / `.rs` / `.ps1` / `.yml` 等) は対象外。
     コードコメントの旧参照 (GUI ソースの `CLAUDE.md` / `// … /iterate-review Round N`
-    等) は #1076 で追跡する (棚卸 #1044 は未参照ファイルの削除が範囲で、
+    等) は #1076 で棚卸した (2026-10 実測で残置 0 件。棚卸 #1044 は未参照ファイルの削除が範囲で、
     コードコメントの修正を含まない)。
   - 履歴記録 (`CHANGELOG.md` / eval fixture (`.agents/skills/**/eval/**`) /
     `docs/superpowers/**` (dated 以外の記録も含む) / `docs/archive/**` /
@@ -27,7 +27,7 @@ Round 4/5 (session-start.sh / docs/versioning.md に slash 残存を個別に拾
     ため対象外 (#1066)。
   - `.claude/agents/**` は Claude Code 用のロール定義 (frontmatter の `model:` が
     Claude エイリアスのみ) で用語 sweep の対象外。旧 Codex invocation 契約は
-    #1068 で追跡する。
+    #1068 で修正済み (残置 0 件)。
 
 exit code: 0 = clean / 1 = 旧用語残存 (sweep 未完了) または 検査不能 (fail-closed)
          / 2 = 検査自体が壊れている。
@@ -195,7 +195,7 @@ _CLAUDE_AGENT_RE = re.compile(
 # 検査対象と除外
 # --------------------------------------------------------------------------
 
-# living doc = doc / skill / hook のみ (コードファイルの旧参照は #1076 へ)
+# living doc = doc / skill / hook のみ (コードファイルの旧参照は #1076 で棚卸済み)
 _SCAN_EXTS = {".md", ".sh"}
 
 _SKIP_DIRS = {
@@ -221,7 +221,7 @@ _SKIP_DIRS = {
 # 遡及置換しない)。ただし **skill の契約自体が変わった場合は eval の妥当性を保つため
 # fixture の期待値を更新する** (例: PR #1071 で `review-pr/eval/requirements.md` の I-5 を
 # 「Claude fallback」→「DeepSeek fallback / abort」へ更新)。fixture 内に残る旧 Codex 契約
-# 等の残置は #1068 / #1069 で別途追跡する。
+# 等の残置は歴史記録として保持し追跡しない (#1044 で確定)。
 _EXCLUDED_GLOBS = [
     "CHANGELOG.md",
     ".claude/agents/**",
@@ -341,9 +341,9 @@ def main(argv: list[str] | None = None) -> int:
             "走査するため)。CHANGELOG / eval fixture / `docs/superpowers/**` / "
             "archive / audits は対象外 (#1044)。`gui/**` は GUI ソースのため対象外 "
             "(screenshot-freshness 回避)。`build-cache/` は build キャッシュ置き場の"
-            "ため対象外 (#1066)。コードコメントの旧参照は #1076 で追跡する。\n"
+            "ため対象外 (#1066)。コードコメントの旧参照は #1076 で棚卸済み。\n"
             "`.claude/agents/**` は Claude Code 用ロール定義のため対象外 "
-            "(旧 invocation 契約は #1068)。",
+            "(旧 invocation 契約は #1068 で修正済み、残置 0 件)。",
             file=sys.stderr,
         )
         return EXIT_DRIFT
