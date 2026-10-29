@@ -382,9 +382,9 @@ sweep は **「旧用語リスト更新 → sweep 前の実 tree で red を確�
 
 除外の正は `scripts/check_agent_migration_sweep.py` の `_SCAN_EXTS` (走査拡張子の allowlist) / `_EXCLUDED_GLOBS` (path glob) / `_SKIP_DIRS` (任意階層のディレクトリ名) であり、本節はその要約である。逸脱時は実装を正とする。
 
-- **コードファイル** (`.py` / `.js` / `.ts` / `.tsx` / `.rs` / `.ps1` / `.yml` 等): 対象外。コードコメントの旧参照は本 sweep ではなく #1076 で追跡する (棚卸 #1044 は未参照ファイルの削除が範囲で、コードコメントの修正は含まない)。
+- **コードファイル** (`.py` / `.js` / `.ts` / `.tsx` / `.rs` / `.ps1` / `.yml` 等): 対象外。コードコメントの旧参照は本 sweep ではなく #1076 で棚卸した (2026-10 実測で残置 0 件)。棚卸 #1044 は未参照ファイルの削除が範囲で、コードコメントの修正は含まない。
 - **履歴記録**: `CHANGELOG.md` / `docs/superpowers/**` (dated plans・specs に限らず、同 dir 配下の非 dated 記録も含む) / `docs/archive/**` / `docs/audits/**`。
-- **eval fixture** (`.agents/skills/**/eval/**`): 特定時点の評価基準・シナリオを固定する記録なので遡及置換しない。ただし **skill の契約自体が変わった場合は、eval の妥当性を保つため fixture の期待値を更新する** (PR #1071 に前例)。未更新の残置は #1068 で追跡中。
+- **eval fixture** (`.agents/skills/**/eval/**`): 特定時点の評価基準・シナリオを固定する記録なので遡及置換しない。ただし **skill の契約自体が変わった場合は、eval の妥当性を保つため fixture の期待値を更新する** (PR #1071 に前例)。**未更新の残置は歴史記録として保持し、追跡しない** (#1044 で確定。2026-10 時点の残存は `eval/reports/**` と sweep 系 scenario の旧 invocation 契約で、いずれも当時の実行記録)。
 - **`gui/**`**: GUI ソースのため `.md` でも対象外 (screenshot-freshness 回避)。
 - **`build-cache/`**: Portable ZIP の build キャッシュ置き場 (`.gitignore` 済)。`.md` が混ざっても検査しない。red 実証の一時展開先には使わず repo 外に置くこと (#1066)。
 - **`.claude/agents/**`**: Claude Code 用のロール定義。frontmatter の `model:` は Claude エイリアスのみだが、**本文はモデル非依存で fallback 時に DeepSeek も読む**ため「Claude 専用だから除外」は理由にならない。現状は**暫定的な除外**で、本文の旧 invocation 契約は #1068 で修正済み（残置は 0 件）。
