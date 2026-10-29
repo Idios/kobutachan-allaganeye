@@ -53,6 +53,7 @@ EXPECTED_IDS = {
     "codex-invocation",
     "sweep-classes",
     "sweep-exclusions",
+    "prose-not-restatement",
     "zed-hook-fallbacks",
 }
 
