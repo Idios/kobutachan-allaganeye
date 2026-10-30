@@ -67,7 +67,7 @@ dependencies = [
     # (2026-07-29 リリース) に解決し、bit-exact baseline を取得した 4.13.0.92
     # とは別実装になる。repo 内の再現は constraints.txt の exact pin が担う。
     # 本行は「PyPI から install する第三者が満たすべき互換範囲」の宣言。
-    "opencv-python-headless>=4.8,<5",
+    "opencv-python-headless>=4.8,<6",
 ]
 
 [project.scripts]
