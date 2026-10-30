@@ -242,7 +242,7 @@ jobs:
           workspaces: gui/src-tauri
 
       - name: Cache FFmpeg archive
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/build-cache
           key: btbn-ffmpeg-win64-lgpl-shared-8.1-e27598e612078f25d3e9cf245ce5042990f2602146e5a6f8287b143b0dce0e95

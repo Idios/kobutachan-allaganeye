@@ -52,7 +52,7 @@ jobs:
 
       - name: Cache FFmpeg archive
         id: cache-ffmpeg
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /tmp/ffmpeg.tar.xz
           key: btbn-ffmpeg-linux64-lgpl-shared-8.1-b31223cb8074205dd9f908aa032f68826adaefbaee40fcb6be8e34f9b8cb72c4
