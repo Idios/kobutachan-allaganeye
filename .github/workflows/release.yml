@@ -105,7 +105,7 @@ jobs:
       # 自体は別途実測済み (run 33528826207: `refs/tags/v0.3.1 commit` = lightweight)。
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11.9'
 
@@ -217,7 +217,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11.9'
 
@@ -488,7 +488,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11.9'
 
