@@ -67,7 +67,7 @@ scipy==1.17.1
 # datamodel-code-generator は pyproject.toml の dev extras で >=0.25 として宣言済み
 # なので、ここでは範囲内の exact 値を与えるだけ。
 datamodel-code-generator==0.76.0
-black==26.5.1
+black==26.10.1
 isort==8.0.1
 
 # --- CLI 出力の整形に効く transitive ---
