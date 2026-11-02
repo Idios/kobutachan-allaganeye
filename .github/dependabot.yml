@@ -26,6 +26,13 @@
 #   だけでは完結せず、`security-audit.yml` の pip-audit job が実環境を監査する
 #   ことで補う。
 version: 2
+
+# `target-branch` を全 ecosystem で開発ブランチに固定している理由 (2026-10-30):
+#   `main` は保護ブランチで、リリース時の `release/vX.Y.Z → main` マージでしか
+#   更新されない (docs/release-process.md §ブランチ戦略)。既定のまま `main` 向けに
+#   出すと、bump が開発ブランチに入らず main と develop-* でバージョンが割れ、
+#   次のリリース PR で古い値に戻る。2026-10 の dependabot PR 10 件の棚卸で判明。
+#   **開発ブランチを切り替えたときは本ファイルも更新する**。
 updates:
   # GitHub Actions の version pin は「外部依存の版固定規約」で手動 bump が原則
   # だが、追従忘れが起きやすい (dependency-review-action@v5.0.0 のように moving
@@ -33,6 +40,7 @@ updates:
   # 費用対効果が高い。
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "develop-0.4.0"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
@@ -41,6 +49,7 @@ updates:
 
   - package-ecosystem: "npm"
     directory: "/gui"
+    target-branch: "develop-0.4.0"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
@@ -53,6 +62,7 @@ updates:
   # bit-exact baseline の provenance なので、動かすと baseline 再取得が要る。
   - package-ecosystem: "pip"
     directory: "/"
+    target-branch: "develop-0.4.0"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
