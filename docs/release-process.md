@@ -76,7 +76,8 @@ claude/<scope>-* → 実機検証 → PR → review-pr (受け入れ条件チェ
   - 機械検査は [`scripts/check_version_consistency.py`](../scripts/check_version_consistency.py) の `--tag` 指定時のみ発火する。基準日は **annotated tag の `taggerdate` のみ**を `--changelog-date-from` で渡す。`head_commit.timestamp` へ fallback しない — あれは「タグが指す commit の日時」であってタグを打った日時ではなく、commit とタグ push が日を跨ぐと規約とズレた値を「正」として通してしまうため。`taggerdate` が取れない場合 (lightweight tag) は fail させ、`git tag -a` で打ち直す
   - **検査対象外の集合**は同スクリプトの `check_changelog_heading()` docstring に列挙してある
 - コマンド: `git tag -a v0.x.0 -m "Release v0.x.0: <レイヤー名>"` (**annotated tag**。`taggerdate` が日付検査の**唯一の基準**になるため lightweight tag は使わない (取れなければ fail し、commit 日時へは fallback しない))
-- `git push origin v0.x.0` すると [`.github/workflows/release.yml`](../.github/workflows/release.yml) が発火し、Windows Portable ZIP (`allaganeye-v<version>-windows.zip`) のビルドと GitHub Release への成果物自動添付を実行する (#461)
+- `git push origin v0.x.0` すると [`.github/workflows/release-publish.yml`](../.github/workflows/release-publish.yml) が発火し、Windows Portable ZIP (`allaganeye-v<version>-windows.zip`) のビルドと GitHub Release への成果物自動添付を実行する (#461)
+  - ビルドと version 整合検査の実体は reusable workflow [`.github/workflows/release-build.yml`](../.github/workflows/release-build.yml) にある (`workflow_call`)。**タグ push 専用の公開 job を `release.yml` に戻してはいけない** — PR / ブランチ push の run に skipped job が現れ、マージ欄が赤く描画されるため (#1103)
   - ビルドは [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) で PyInstaller `--onedir` により Python interpreter + 全依存 (numpy / scipy / opencv-python-headless / typer / allaganeye 本体) を frozen application 化 (`scripts/installer/requirements-pyinstaller.txt` で pyinstaller / hooks-contrib version pin、CI `actions/setup-python@v5` で Python 3.11.9 pin) し、FFmpeg LGPLv3 shared (BtbN FFmpeg-Builds win64-lgpl-shared、libdav1d 入り) を同梱する (#752)
     - ダウンロードする外部バイナリ (FFmpeg) はスクリプト内に **SHA256 ダイジェストをハードコードして検証** する。ダイジェスト不一致時はビルドを fail。FFmpeg は BtbN の **monthly snapshot タグ** (`autobuild-YYYY-MM-{28,29,30,31}-*`、~24 ヶ月 retention) と特定アセット名を URL にピン留めして再現性を確保する (`latest` タグは日次更新の可動ポインタなので不可、daily 中間タグは ~14 日で GC されるため不可。詳細 #705)
       - PyInstaller bundle の bump 手順は [`docs/developer-setup.md` §「PyInstaller フローでの version pin (#752 以降)」](developer-setup.md) を参照
@@ -86,10 +87,10 @@ claude/<scope>-* → 実機検証 → PR → review-pr (受け入れ条件チェ
   - 同 job は tag push 時に **CHANGELOG 見出し日付**と**バンプ方向** (直前のリリースより新しいこと) も検査する (#948 / #918)。いずれも `--tag` 指定時のみ発火するため、**PR / `workflow_dispatch` / branch push では 1 度も走らない**
 - Actions タブから `Release` workflow を `workflow_dispatch` で起動すると、**ビルド + smoke test の検証**ができる。**Release も ZIP artifact も生成されない** (#922)
   - dispatch でも走るのは build に加えて baseline 計測 / launcher `--version` smoke / fixture への detect smoke / integrity fall-through (exit 7) の 4 step (それぞれ `|| github.event_name == 'workflow_dispatch'` を持つ)。「build が通るか」だけではない
-  - `actions/upload-artifact@v4` の 2 step はいずれも `if: matrix.shell == 'pwsh' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))` で gate されており、`workflow_dispatch` はどちらの条件にも該当しない (`.github/workflows/release.yml`)。build 自体は走るが成果物は upload されない
+  - `actions/upload-artifact@v4` の 2 step はいずれも `if: matrix.shell == 'pwsh' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))` で gate されており、`workflow_dispatch` はどちらの条件にも該当しない (`.github/workflows/release-build.yml`)。build 自体は走るが成果物は upload されない
   - **Portable ZIP を実際に手に入れたい場合の経路は 3 つ**:
     1. **ローカルで作る** — §手動リリース手順 (CI 迂回) の [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) を直接実行する
-    2. **リリース PR の CI から取る** — `release.yml` の `pull_request` trigger は base…head の全 diff で評価されるため、リリース PR では起動し `upload-artifact` の `pull_request` 分岐が成立する (実測: PR #924 の `build-windows (pwsh)` job)。取るのは `allaganeye-windows-v<version>` の方 (同時に上がる `allaganeye-baseline-v<version>` は `baseline.json` のみ)。**ただしこの artifact は展開済み payload で、1 / 3 の ZIP が持つ最上位 `allaganeye-v<version>/` ディレクトリを含まない** — 「展開 = インストール」の確認に使うときは形が違う点に注意 (`release` job が再 zip して wrapper を復元している)
+    2. **リリース PR の CI から取る** — `release.yml` の `pull_request` trigger は base…head の全 diff で評価されるため、リリース PR では起動し `upload-artifact` の `pull_request` 分岐が成立する (実測: PR #924 の `build / build-windows (pwsh)` job。job 名は reusable workflow 化 (#1103) により `<呼び出し job id> / <job 名>` の形で表示される)。取るのは `allaganeye-windows-v<version>` の方 (同時に上がる `allaganeye-baseline-v<version>` は `baseline.json` のみ)。**ただしこの artifact は展開済み payload で、1 / 3 の ZIP が持つ最上位 `allaganeye-v<version>/` ディレクトリを含まない** — 「展開 = インストール」の確認に使うときは形が違う点に注意 (`release` job が再 zip して wrapper を復元している)
     3. **タグ push 後の Release 添付から取る** — `refs/tags/v*` の push で自動作成される GitHub Release に添付される
 - **タグ push 後に `version-check` が落ちた場合の打ち直し手順**は [`.agents/skills/release/SKILL.md`](../.agents/skills/release/SKILL.md) §タグ push 後に `version-check` が落ちた場合の打ち直し にある (旧タグ削除 / ルール 5 経由の main PR / 日付再更新の再帰)
 - `release` スキルは develop → main PR 作成・CHANGELOG 更新の支援に使う (Release 作成自体は上記 workflow が担う)
@@ -314,13 +315,13 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 1. **§レイヤーリリース受け入れゲート** のチェックリストを全件達成 (共通項目 + 当該レイヤー固有項目)
 2. `develop-x.x.0` から `release/vX.Y.Z` を切り、`release/vX.Y.Z → main` のリリース PR を作成・マージ
 3. `main` にタグを打つ (`v0.x.0`)
-4. GitHub Release を作成（変更内容サマリ付き、`release.yml` 自動 or `docs/release-process.md` §手動リリース手順）
+4. GitHub Release を作成（変更内容サマリ付き、`release-publish.yml` 自動 or `docs/release-process.md` §手動リリース手順）
 5. `main` から次バージョンの `develop-x.x.0` ブランチを作成し、その時点で[バージョン保持箇所](versioning.md#バージョン管理場所)を**全箇所**まとめて `x.y.0` に更新（`.dev` 等の pre-release 識別子は付けない。PyPI 未公開のため不要）。更新後に `python scripts/check_version_consistency.py` で全箇所一致を確認する
 6. 次レイヤーの Issue を作成し、作業開始
 
 ## 手動リリース手順 (CI 迂回)
 
-通常のリリースは `git push origin v<x.y.z>` をトリガーに [`.github/workflows/release.yml`](../.github/workflows/release.yml) が自動実行する (上記 §タグ運用 参照)。本節は CI が一時的に使えない場合 (GitHub Actions 障害、`release.yml` 自体の不具合など) の代替手順として、手動でビルド + Release 作成を行う方法を記載する (#461)。
+通常のリリースは `git push origin v<x.y.z>` をトリガーに [`.github/workflows/release-publish.yml`](../.github/workflows/release-publish.yml) が自動実行する (上記 §タグ運用 参照)。本節は CI が一時的に使えない場合 (GitHub Actions 障害、`release-publish.yml` / `release-build.yml` 自体の不具合など) の代替手順として、手動でビルド + Release 作成を行う方法を記載する (#461)。
 
 ### 前提
 
@@ -351,7 +352,7 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
    python scripts/extract_release_notes.py x.y.z release-notes.md
    ```
 
-1. **タグ push 時に `release.yml` が誤発火しないよう Actions を一時無効化**:
+1. **タグ push 時に `release-publish.yml` が誤発火しないよう Actions を一時無効化**:
    GitHub Web UI: `Settings > Actions > General > Actions permissions` → `Disable actions`。自動 Release 作成と手動 Release 作成の重複を防ぐため。
 
 1. **タグを打って push**:
@@ -374,9 +375,9 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 
 ### 注意事項
 
-- 手動リリース後、次回の通常 push で `release.yml` の `pull_request` トリガーや `version-check` / `build-windows` ジョブが正常動作するか確認する (Actions タブから `Release` workflow を `workflow_dispatch` で dry-run 起動すると **ビルドの通過だけ**を確認できる。artifact は上がらない — §タグ運用 参照)
+- 手動リリース後、次回の通常 push で `release.yml` の `pull_request` トリガーと `release-build.yml` の `version-check` / `build-windows` ジョブが正常動作するか確認する (Actions タブから `Release` workflow を `workflow_dispatch` で dry-run 起動すると **ビルドの通過だけ**を確認できる。artifact は上がらない — §タグ運用 参照)
 - 同梱バイナリ (Python / FFmpeg) の更新は手動ビルドでも自動ビルドでも更新箇所が同じ ([`docs/developer-setup.md` §9](developer-setup.md) のチェックリストに従う)
-- 手動 Release は通常時は不要。CI 復旧後は `release.yml` 経由に戻す
+- 手動 Release は通常時は不要。CI 復旧後は `release-publish.yml` 経由に戻す
 
 ## Patch release の Track 構造
 

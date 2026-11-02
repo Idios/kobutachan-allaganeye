@@ -1150,18 +1150,35 @@ def test_missing_changelog_file_returns_2(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------
-# 発火点の配線 (release.yml がガードを実際に呼んでいること)
+# 発火点の配線 (workflow がガードを実際に呼んでいること)
+#
+# #1103 で workflow を 3 本に分割した。job 本体は `release-build.yml` (reusable) に
+# あり、`release.yml` はブランチ push / PR の呼び出し側、`release-publish.yml` は
+# タグ push 専用の公開側である。配線 pin は**実体側** (`release-build.yml`) を見る。
 # --------------------------------------------------------------------------
 
 
+def _workflow(name: str) -> str:
+    return (REPO_ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+
+
 def _release_workflow() -> str:
-    return (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(
-        encoding="utf-8"
-    )
+    """ブランチ push / PR validation 側 (`release.yml`)。"""
+    return _workflow("release.yml")
 
 
-def _release_workflow_effective() -> str:
-    """`release.yml` から comment 行を除いた**実際に評価される**部分だけを返す。
+def _release_build_workflow() -> str:
+    """version 検査と build の実体 (`release-build.yml`, `workflow_call`)。"""
+    return _workflow("release-build.yml")
+
+
+def _release_publish_workflow() -> str:
+    """タグ push 専用の公開側 (`release-publish.yml`)。"""
+    return _workflow("release-publish.yml")
+
+
+def _effective(text: str) -> str:
+    """workflow から comment 行を除いた**実際に評価される**部分だけを返す。
 
     comment を含めて検査すると両方向に壊れる:
 
@@ -1174,19 +1191,23 @@ def _release_workflow_effective() -> str:
     """
     return "\n".join(
         line
-        for line in _release_workflow().splitlines()
+        for line in text.splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     )
 
 
+def _release_build_workflow_effective() -> str:
+    return _effective(_release_build_workflow())
+
+
 def test_release_workflow_passes_reference_date_on_tag_push() -> None:
-    """`release.yml` が `--tag` と一緒に `--changelog-date-from` を渡していること。
+    """`release-build.yml` が `--tag` と一緒に `--changelog-date-from` を渡していること。
 
     日付検査は基準日を渡された時だけ値を比較する。workflow が渡さなくなると
     スクリプト側の test は全部緑のまま **CI では構造チェックしか走らない** という
     false-green になるので、呼び出し口を pin する (G1-1 3 点セットの 1 番目「発火点」)。
     """
-    workflow = _release_workflow_effective()
+    workflow = _release_build_workflow_effective()
     assert "--changelog-date-from" in workflow
     # 基準日は annotated tag の taggerdate のみ。
     assert "taggerdate" in workflow
@@ -1204,7 +1225,7 @@ def test_release_workflow_does_not_fall_back_to_commit_timestamp() -> None:
     2026-08-07 JST に push、CHANGELOG 見出しが `2026-08-06` の場合、fallback があると
     これが通る。
     """
-    assert "head_commit" not in _release_workflow_effective()
+    assert "head_commit" not in _release_build_workflow_effective()
 
 
 def test_release_workflow_still_triggers_on_constraints_change() -> None:
@@ -1226,6 +1247,26 @@ def test_release_workflow_fetches_tag_object_by_explicit_refspec() -> None:
 
     この test は**文字列 pin であって挙動保証ではない** (挙動は tag push でしか観測できない)。
     """
-    workflow = _release_workflow_effective()
+    workflow = _release_build_workflow_effective()
     assert "refs/tags/${TAG}:refs/tags/${TAG}" in workflow
     assert "fetch-tags: true" not in workflow
+
+
+def test_publication_job_is_separated_from_the_pr_facing_workflow() -> None:
+    """#1103: タグ専用の公開 job と tags trigger が PR 側 workflow に戻っていないこと。
+
+    戻すと PR / ブランチ push の run に `release` が skipped として現れ、
+    マージ欄が「1 skipped」を抱えて赤く描画される (機能上のブロックではないが、
+    CI エラーと誤認させる)。実行はタグ push でしか起きないため、崩れても
+    PR の CI では検知できない — よって文字列 pin で固定する。
+    """
+    pr_facing = _effective(_release_workflow())
+    assert "  release:" not in pr_facing, "公開 job を PR 側 workflow に戻さない"
+    assert "\ntags:" not in pr_facing, "タグ trigger を PR 側 workflow に戻さない"
+    assert "uses: ./.github/workflows/release-build.yml" in pr_facing
+
+    publish = _effective(_release_publish_workflow())
+    assert "tags:" in publish, "公開側はタグ push でのみ起動する"
+    assert "  release:" in publish
+    assert "needs: [build]" in publish
+    assert "uses: ./.github/workflows/release-build.yml" in publish
