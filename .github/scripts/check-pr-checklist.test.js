@@ -38,7 +38,16 @@ const DEFAULT_FILES = [{ filename: 'allaganeye/x.py', status: 'modified' }];
 const listFiles = process.env.PR_FAIL_LIST_FILES
   ? async () => { throw new Error('simulated API failure'); }
   : async () => ({ data: process.env.PR_FILES ? JSON.parse(process.env.PR_FILES) : DEFAULT_FILES });
-const github = { rest: { pulls: { listFiles } } };
+// #1102: PR 本文は API から最新を読む。未指定なら payload と同じ本文を返し、既存テストの
+// 意味 (payload の body を見る) を変えない。
+const get = process.env.PR_FAIL_GET
+  ? async () => { throw new Error('simulated pulls.get failure'); }
+  : async () => ({
+      data: {
+        body: process.env.PR_API_BODY !== undefined ? process.env.PR_API_BODY : process.env.PR_BODY,
+      },
+    });
+const github = { rest: { pulls: { listFiles, get } } };
 checker({ github, context, core }).catch((e) => {
   process.stdout.write('[throw] ' + e.message + '\\n');
   process.exitCode = 2;
@@ -53,6 +62,10 @@ function runCheckerProcess(body, userType, files, opts) {
   else delete env.PR_FILES;
   if (opts && opts.failListFiles) env.PR_FAIL_LIST_FILES = '1';
   else delete env.PR_FAIL_LIST_FILES;
+  if (opts && opts.apiBody !== undefined) env.PR_API_BODY = opts.apiBody;
+  else delete env.PR_API_BODY;
+  if (opts && opts.failGet) env.PR_FAIL_GET = '1';
+  else delete env.PR_FAIL_GET;
   const result = spawnSync(process.execPath, ['-e', CHILD_SOURCE], { env, encoding: 'utf8' });
   return { status: result.status, stdout: result.stdout || '', stderr: result.stderr || '' };
 }
@@ -1262,6 +1275,46 @@ test('#945 regression: 人間 PR は listFiles 失敗で red (fail-closed が効
   const r = runCheckerProcess(body, undefined, undefined, { failListFiles: true });
   assert.equal(r.status, 1);
   assert.match(r.stdout, /取得できませんでした/);
+});
+
+// ---------------------------------------------------------------------------
+// #1102: PR 本文は event payload のスナップショットではなく最新を読む
+//
+// payload の body はイベント発生時点の内容で、rerun では更新されない。本文を直してから
+// rerun すると同じ理由で red のままになり「CI エラーでマージできない」と誤認させる
+// (実例: PR #1087 の run 40429109702 は attempt 2 でも未チェック 1 件で failure。
+//  同時点の本文は未チェック 0 件)。よって API の最新本文を正とする。
+// ---------------------------------------------------------------------------
+
+test('#1102: payload が未チェックでも最新本文が clean なら green (stale payload の false-red 解消)', () => {
+  const staleBody = templateShapedBody('- [ ] pytest');
+  const freshBody = templateShapedBody('- [x] pytest');
+  const r = runCheckerProcess(staleBody, undefined, undefined, { apiBody: freshBody });
+  assert.equal(r.status, 0, `stdout:\n${r.stdout}`);
+});
+
+test('#1102: payload が clean でも最新本文に未チェックがあれば red (false-green 防止)', () => {
+  const staleBody = templateShapedBody('- [x] pytest');
+  const freshBody = templateShapedBody('- [ ] pytest');
+  const r = runCheckerProcess(staleBody, undefined, undefined, { apiBody: freshBody });
+  assert.equal(r.status, 1, `stdout:\n${r.stdout}`);
+  assert.match(r.stdout, /unchecked item/);
+});
+
+test('#1102: 最新本文の取得に失敗したら payload へ fallback して評価する (bot PR を落とさない)', () => {
+  // fallback は「修正前と同じ挙動」なので現状より悪化しない。fail-closed にすると
+  // GitHub API の一時障害で全 PR (Dependabot 含む) が red になる。
+  const body = templateShapedBody('- [x] pytest');
+  const r = runCheckerProcess(body, undefined, undefined, { failGet: true });
+  assert.equal(r.status, 0, `stdout:\n${r.stdout}`);
+  assert.match(r.stdout, /最新取得に失敗/);
+});
+
+test('#1102: 取得失敗時でも bot PR は緑のまま (fallback が bot 例外より前で死なない)', () => {
+  const body = '## 受け入れ条件\n\n- [x] ok\n';
+  const r = runCheckerProcess(body, 'Bot', undefined, { failGet: true });
+  assert.equal(r.status, 0, `stdout:\n${r.stdout}`);
+  assert.match(r.stdout, /Bot-authored PR/);
 });
 
 // ---------------------------------------------------------------------------
