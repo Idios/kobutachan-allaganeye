@@ -30,7 +30,7 @@
 | `gui/package-lock.json` | `version` と `packages[""].version` の**両方** | npm が `package.json` から同期 |
 | `gui/src-tauri/Cargo.lock` | `package[name=allaganeye-gui].version` | cargo が `Cargo.toml` から同期 |
 
-タグ push 時は [`.github/workflows/release.yml`](../.github/workflows/release.yml) の `version-check` job が
+タグ push 時は [`.github/workflows/release-build.yml`](../.github/workflows/release-build.yml) の `version-check` job が
 全箇所と tag の一致を検証し、1 つでも不一致なら fail する (#911)。
 
 ## リリースフロー

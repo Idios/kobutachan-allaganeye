@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """全バージョン保持箇所の一致を検証する (#911)。
 
-`.github/workflows/release.yml` の `version-check` job から呼ばれる。tag push 時は
+`.github/workflows/release-build.yml` の `version-check` job から呼ばれる。tag push 時は
 `--tag` で tag との突合も行う。
 
     python scripts/check_version_consistency.py [--tag vX.Y.Z] [--github-output]
@@ -171,8 +171,8 @@ def mask_fenced_blocks(text: str) -> str:
     架空の 9.9.9 混入と Release 本文の途中切れを再現済み)。閉じ行に info string
     は付けられない、も規則どおり。
 
-    **markdown parser を使わない理由** (2026-08-08 Idios 判断): `release.yml` の
-    `version-check` / `release` は checkout + setup-python だけで動いており、
+    **markdown parser を使わない理由** (2026-08-08 Idios 判断): `release-build.yml` の
+    `version-check` と `release-publish.yml` の `release` は checkout + setup-python だけで動いており、
     **pip install を 1 行も持たない** (実測)。parser を導入すると
     「リリース当日の critical path に pip install step を新設する」ことになり、
     最も失敗させたくない経路へ新しい失敗モードを持ち込む。fenced code block の
@@ -300,12 +300,12 @@ def check_changelog_heading(
     **この検査が見ていない集合** (spec §5.2 G2-0 の共通処方。列挙できない検査は
     「網羅している」と誤読されるため入れない):
 
-    * **`--tag` 指定時しか発火しない。** `release.yml` は tag push でのみ `--tag`
+    * **`--tag` 指定時しか発火しない。** `release-build.yml` は tag push でのみ `--tag`
       を付けるため、PR / `workflow_dispatch` / branch push では 1 度も走らない。
       Track D の PR 段階は緑のままで、タグ push で初めて赤になる
     * **`--changelog-date-from` を渡さなければ日付の値は見ない。** 呼び出し側が
       引数を落とすと構造チェックまで縮退する。退化の検知は
-      `tests/scripts/test_check_version_consistency.py` の release.yml 配線 pin
+      `tests/scripts/test_check_version_consistency.py` の release-build.yml 配線 pin
       に依存しており、本関数自身は検知できない
     * **基準日は呼び出し側が渡した値でしかない。** `release.yml` は annotated tag
       の `taggerdate` (= タグを打った時刻) を渡すが、本関数はそれが本当にタグ

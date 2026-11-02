@@ -1,0 +1,57 @@
+name: Release Publish
+
+# タグ push (`v*.*.*`) 専用の公開 workflow (#1103)。
+#
+# **PR / ブランチ push では起動しない**ため、PR のマージ欄に `skipped` の job が
+# 現れない。build は `release-build.yml` を再利用するので二重管理にならない。
+# artifact は同一 workflow run 内で共有されるため、`release` job は従来どおり
+# `download-artifact` で取得できる。
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    uses: ./.github/workflows/release-build.yml
+
+  release:
+    needs: [build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.9'
+
+      # #1019: upload-artifact を v7 へ上げたため download も v7 に揃える
+      # (v4 は v5+ の artifact backend を読めない)。upload と download の
+      # major を一致させること。
+      - uses: actions/download-artifact@v7
+        with:
+          name: allaganeye-windows-v${{ needs.build.outputs.version }}
+          path: dist/allaganeye-v${{ needs.build.outputs.version }}
+
+      # Re-create the single release archive from the payload folder. Keeping
+      # the top-level allaganeye-v<version>/ directory inside the zip preserves
+      # the extraction layout users have relied on since v0.1.0.
+      - name: Create release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          zip -r "allaganeye-v${{ needs.build.outputs.version }}-windows.zip" "allaganeye-v${{ needs.build.outputs.version }}"
+
+      - name: Extract release notes from CHANGELOG
+        shell: bash
+        run: python scripts/extract_release_notes.py '${{ needs.build.outputs.version }}' release-notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/allaganeye-v*-windows.zip
+          body_path: release-notes.md
+          generate_release_notes: false
