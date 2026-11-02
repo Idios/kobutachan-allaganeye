@@ -1258,7 +1258,7 @@ def test_publication_job_is_separated_from_the_pr_facing_workflow() -> None:
     戻すと PR / ブランチ push の run に `release` が skipped として現れ、
     マージ欄が「1 skipped」を抱えて赤く描画される (機能上のブロックではないが、
     CI エラーと誤認させる)。実行はタグ push でしか起きないため、崩れても
-    PR の CI では検知できない — よって文字列 pin で固定する。
+    PR の CI では検知できない -- よって文字列 pin で固定する。
     """
     pr_facing = _effective(_release_workflow())
     assert "  release:" not in pr_facing, "公開 job を PR 側 workflow に戻さない"
