@@ -535,7 +535,35 @@ function validateFableRow(selfTestRows, files) {
 // 互換のため維持。内部に await はないが、yml 側 `await` を可能にするため Promise 返却が必要。
 async function checkPrChecklist({ github, context, core }) {
   const pr = context.payload.pull_request;
-  const body = pr.body || '';
+  // #1102: PR 本文は **event payload のスナップショットではなく API の最新**を読む。
+  // rerun は元イベントの payload を再生するため、本文を直した後の再実行が古い内容で
+  // 評価され、同じ理由で永久に red のままになる (実例: PR #1087 の run 40429109702 は
+  // attempt 2 でも未チェック 1 件で failure。同時点の本文は未チェック 0 件)。
+  // 取得に失敗した場合は payload に fallback する — fallback 先は修正前と同じ挙動であり、
+  // fail-closed にすると GitHub API の一時障害で全 PR (Dependabot 含む) が red になる。
+  let body = pr.body || '';
+  try {
+    const canFetch =
+      github &&
+      github.rest &&
+      github.rest.pulls &&
+      typeof github.rest.pulls.get === 'function' &&
+      context.repo &&
+      pr.number;
+    if (canFetch) {
+      const res = await github.rest.pulls.get({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        pull_number: pr.number,
+      });
+      const fresh = res && res.data ? res.data.body : undefined;
+      if (typeof fresh === 'string' || fresh === null) body = fresh || '';
+    }
+  } catch (e) {
+    core.info(
+      `PR 本文の最新取得に失敗したため event payload の本文で評価します: ${e.message}`
+    );
+  }
   const isBot = Boolean(pr.user && pr.user.type === 'Bot');
   const { unchecked, checked, hasSelfTestSection, selfTestItems, selfTestRows } =
     countAcceptanceCriteriaCheckboxes(body);
