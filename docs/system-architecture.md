@@ -125,7 +125,7 @@ Portable ZIP 内の `integrity-manifest.json` を起動時に読み、同梱物
 - **log**: `<install dir>/logs/error-YYYYMMDD.log` (plain text、append、
   Python / Rust で同 record format)。書込み失敗は silent fail (modal /
   exit code が primary channel)。
-- **CI 担保**: `.github/workflows/release.yml` build-windows job で payload
+- **CI 担保**: `.github/workflows/release-build.yml` の build-windows job で payload
   を copy → 1 file 削除 → `allaganeye.bat --version` → exit code 7 を
   assert する E2E step。
 
