@@ -53,11 +53,14 @@ v0.3.0 (= 新 L3) work では **新規 layer label を追加しない**。issue 
 
 ```text
 [type] L3: <要約>                                    ← 新 L3 (minimap+masked+perf+VTuber。VTuber は 2026-07-17 再開 #895)
-[type] L4 (former L3): <要約>                        ← 旧 L3 (OCR/Whisper), L4 にスライド
-[type] L5 (former L4): <要約>                        ← 旧 L4 (ML)
-[type] L6 (former L5): <要約>                        ← 旧 L5 (auto edit)
-[type] L7 (former L6): <要約>                        ← 旧 L6 (privacy)
+[type] L4 (former L3): <要約>                        ← 旧 L3 (メタデータ化。初期信号は KO/ASSIST インジケータ)
+[type] L5: <要約>                                    ← OBS プラグイン統合 (2026-11-10 に挿入、0.5.0)
+[type] L6 (former L4): <要約>                        ← 旧 L4 (価値評価。初期は rule-based)
+[type] L7 (former L5): <要約>                        ← 旧 L5 (自動編集)
+[type] L8 (former L6): <要約>                        ← 旧 L6 (privacy)
 ```
+
+> `(former X)` は **2026-09 以前の元番号**を指す（直前の番号とは別系列。直前番号との対応は `AGENTS.md` §段階的アーキテクチャの注記を参照）。
 
 詳細は [`docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md`](superpowers/specs/2026-05-18-v030-l3-redefinition-design.md) §5 を参照。
 
