@@ -1,6 +1,6 @@
 # システム設計概要 (レイヤ構造)
 
-> **スコープ**: 本 doc はレイヤ (L1〜L7) の役割と段階的ロードマップを扱う。現時点での CLI / GUI / installer の組み合わせ構成と起動経路は [system-architecture.md](system-architecture.md) を参照。
+> **スコープ**: 本 doc はレイヤ (L1〜L8) の役割と段階的ロードマップを扱う。リリース割当の正は [`release-process.md`](release-process.md) のバージョンマトリクス。現時点での CLI / GUI / installer の組み合わせ構成と起動経路は [system-architecture.md](system-architecture.md) を参照。
 
 ## 概要
 
@@ -31,7 +31,7 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 │  処理: KO / ASSIST インジケータ検出（初期信号）      │
 │  出力: タイムスタンプ付きイベントデータ              │
 ├─────────────────────────────────────────────────┤
-│  L5: OBS プラグイン統合（将来 0.5.0）                │
+│  L5: OBS プラグイン統合（将来）                │
 │  目的: OBS 上で作業を完結（GUI / CLI は継続）        │
 │  処理: 分割・書き出し等を OBS から操作              │
 ├─────────────────────────────────────────────────┤
@@ -209,6 +209,6 @@ Allagan Eye は FF14 フロントラインの長時間録画動画を段階的�
 
 詳細は `docs/guard-integration.md` を参照。
 
-## ML モデル対応（将来: L5 (former L4)）
+## 価値評価（将来: L6 (former L4)）
 
-ローカル ML（scikit-learn 等）による投稿価値の評価を予定。具体的な技術選定は L5 (former L4) 着手時に再検討する。
+L6 は投稿価値の評価を担う。MVP は rule-based（ストリークスコアリング）とし、ML（scikit-learn 等）は精度検証後に追加する。具体的な技術選定は [#1046](https://github.com/Idios/kobutachan-allaganeye/issues/1046) の候補→試行→評価で決める（**確定技術ではない**）。
