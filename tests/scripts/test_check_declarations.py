@@ -55,6 +55,7 @@ EXPECTED_IDS = {
     "sweep-exclusions",
     "prose-not-restatement",
     "zed-hook-fallbacks",
+    "layer-model",
 }
 
 

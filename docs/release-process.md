@@ -2,9 +2,9 @@
 
 ## バージョニング
 
-SemVer に従い、各レイヤーを minor バージョンで区切る。
+SemVer に従い、各レイヤーを minor バージョンで区切る（**原則**）。例外として **0.4.0 はハイライト機能（L4 + L6 + L7）を 1 minor にまとめる**（**2026-09-04 のロードマップ Q2.5** で決定。2026-11-10 に本マトリクスをそれに追随させた。§コアレイヤーの表を参照）。
 
-### コアレイヤー（L1〜L6）
+### コアレイヤー（L1〜L7）
 
 | レイヤー | バージョン | タグ | 目標日 |
 | --- | --- | --- | --- |
@@ -12,8 +12,15 @@ SemVer に従い、各レイヤーを minor バージョンで区切る。
 | L2: 配布・統合 | 0.2.0 | `v0.2.0` | 2026-04-26 |
 | L3 (new): 配信形式対応 + 性能改善 | 0.3.0 | `v0.3.0` | TBD |
 | L4 (former L3): メタデータ化 | 0.4.0 | `v0.4.0` | TBD |
-| L5 (former L4): 価値評価 | 0.5.0 | `v0.5.0` | TBD |
-| L6 (former L5): 自動編集 | 0.6.0 | `v0.6.0` | TBD |
+| L6 (former L4): 価値評価 | 0.4.0 | `v0.4.0` | TBD（L4 と同時） |
+| L7 (former L5): 自動編集 | 0.4.0 | `v0.4.0` | TBD（同上） |
+| L5: OBS プラグイン統合 | 0.5.0 | `v0.5.0` | TBD |
+
+> **本表がリリース割当の SSoT**。**割当を変えるときは本表を先に更新する**。他の doc（`AGENTS.md` / ロードマップ / `design-overview.md`）が割当に触れるときは本表と一致させ、食い違ったら本表が正とする。行の並びはリリース順である（番号順とは一致しない — 0.4.0 に L4/L6/L7 をまとめるため）。
+>
+> **レイヤー番号の変遷 (2026-11-10)**: L5（OBS プラグイン統合）を L4 と**2026-05-18〜11-10 の L5**の間に挿入した。これに伴い **2026-05-18〜11-10 の L5 → L6 / 同 L6 → L7 / 同 L7 → L8** に繰り下げた（遡って読むときは「その時点の番号」で読み替える。対応表は `AGENTS.md` §段階的アーキテクチャに 1 箇所だけ置く）。
+>
+> **0.4.0 = ハイライト機能**（L4 メタデータ化 + L6 価値評価 + L7 自動編集）を 1 リリースにまとめる。**0.5.0 = L5（OBS プラグイン）**。
 
 L2 は以下のスコープを 1 リリースに統合する:
 
@@ -22,15 +29,15 @@ L2 は以下のスコープを 1 リリースに統合する:
 - 開発プロセス刷新 (L2-0: ハイブリッド skill 方式への移行、レビュープロセス改善)
 - allaganeye-guard の運用連携ドキュメント整備 (#458 / #459 — プログラム結合は行わない、`docs/guard-integration.md` 参照)
 
-### 拡張レイヤー（L7）
+### 拡張レイヤー（L8）
 
-L2 完了後の拡張フェーズ。L3 (new)〜L6 (former L5) の開発で新たな課題が判明した場合、スコープを見直す。
+L2 完了後の拡張フェーズ。L3 (new)〜L7 (former L5) の開発で新たな課題が判明した場合、スコープを見直す。
 
 | レイヤー | バージョン | タグ | 目標日 | 主な内容 |
 | --- | --- | --- | --- | --- |
-| L7 (former L6): プライバシー・精密分割 | 0.7.0 | `v0.7.0` | TBD | プレイヤー名ぼかし (#63)、再エンコード分割 (#28) |
+| L8 (former L6): プライバシー・精密分割 | 0.6.0 | `v0.6.0` | TBD | プレイヤー名ぼかし (#63)、再エンコード分割 (#28) |
 
-> L7 (former L6) は暫定計画。L6 (former L5) リリース時に deferred issue を全件レビューし、スコープを確定する。
+> L8 (former L6) は暫定計画。**L5（OBS、0.5.0）リリース時に** deferred issue を全件レビューし、スコープを確定する。
 
 パッチ（バグ修正）は `0.x.1`, `0.x.2` で対応。
 
@@ -271,11 +278,11 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 
 - [ ] 2026-06-10 full audit の監査 P1 対応 ([audit-remediation spec](./superpowers/specs/2026-06-10-audit-remediation-design.md) Wave 1) が全クローズ: [#812](https://github.com/Idios/kobutachan-allaganeye/issues/812) / [#813](https://github.com/Idios/kobutachan-allaganeye/issues/813) / [#814](https://github.com/Idios/kobutachan-allaganeye/issues/814) / [#815](https://github.com/Idios/kobutachan-allaganeye/issues/815) / [#816](https://github.com/Idios/kobutachan-allaganeye/issues/816) / [#817](https://github.com/Idios/kobutachan-allaganeye/issues/817) / [#818](https://github.com/Idios/kobutachan-allaganeye/issues/818)。G4 は [#805](https://github.com/Idios/kobutachan-allaganeye/issues/805) の段階1 (metadata 痕跡) で消化済みのため、#805 自体の close は本ゲートの対象外 (残 scope は #805 を参照)
 
-§v0.3.0 以降のレイヤー固有ゲート枠組み の表が挙げていた v0.3.0 の想定ゲート項目を、リリース PR [#924](https://github.com/Idios/kobutachan-allaganeye/pull/924) で以下のとおり確定した (同節末尾の「確定後は本 doc に追記して恒久化する」に従う)。
+§v0.3.0 以降のバージョン固有ゲート枠組み の表が挙げていた v0.3.0 の想定ゲート項目を、リリース PR [#924](https://github.com/Idios/kobutachan-allaganeye/pull/924) で以下のとおり確定した (同節末尾の「確定後は本 doc に追記して恒久化する」に従う)。
 
 **自動ゲート (G)** — リリース PR の HEAD を独立ワークツリーに checkout して実行する。実行前後で `HEAD` が一致することを guard で確認し、実行中に flip した場合は結果を無効として再実行する ([worktree の branch flip は長時間ゲートを silent に無効化する](l2-workflow.md))。各ゲートは **collect 件数が 0 でないこと**も確認する (`pyproject.toml` の `addopts = "-m 'not slow and not baseline_regen'"` により、marker 指定を省いたコマンドは全件 deselect されて「0 件実行のまま緑」になる)。
 
-- [ ] **G1: OBS baseline bit-exact 回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_v030_baseline_regression.py`。5 本の OBS 録画 (obs-20260116 / 118 / 119 / 127 / 209) の検知結果が pin 済み baseline と一致すること。**本ゲートに masked / VTuber の動画は含まれない** (`_CLASS_A_BASELINES` は OBS のみ)。§v0.3.0 以降のレイヤー固有ゲート枠組み の表にある「masked baseline 検知 ground truth 一致」という当初想定の表現は実態と異なるため、masked の根拠は下記の注記を参照
+- [ ] **G1: OBS baseline bit-exact 回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_v030_baseline_regression.py`。5 本の OBS 録画 (obs-20260116 / 118 / 119 / 127 / 209) の検知結果が pin 済み baseline と一致すること。**本ゲートに masked / VTuber の動画は含まれない** (`_CLASS_A_BASELINES` は OBS のみ)。§v0.3.0 以降のバージョン固有ゲート枠組み の表にある「masked baseline 検知 ground truth 一致」という当初想定の表現は実態と異なるため、masked の根拠は下記の注記を参照
 - [ ] **G2: minimap 領域提案の回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_areamap_slow.py`。エリアマップ window の seed 検出と per-match consensus の提案精度を検証する。**crop / encode 経路は対象外**で、切り抜き映像そのものの妥当性は M3 で目視確認する。**9 件が collect され、SKIP ゼロで PASS することを確認する** (marker を省くと `pyproject.toml` の `addopts = "-m 'not slow and not baseline_regen'"` により全件 deselect され、無検証のままゲートが通る)。GT 動画が実機から欠けている場合、該当ケースは hard fail ではなく SKIP になる ([#992](https://github.com/Idios/kobutachan-allaganeye/issues/992))。SKIP が出たときは検証されていない GT があるということなので、`tests/baselines/source-videos.sha256.json` の台帳から動画を復元して再実行する (§サンプル動画/GT データの保全 は [`docs/testing-guide.md`](testing-guide.md) 参照)。欠落を許容する判断をした場合のみ `tests/test_areamap_slow.py` の `_KNOWN_MISSING_GT_IDS` に理由付きで記録し、その旨をリリース PR 本文に残す
 - [ ] **G3: VTuber timeline GT 回帰** — `pytest -m "slow_detect and not baseline_regen" tests/test_vtuber_gt_regression.py`。6 配信者 / GT 67 試合に対する recall と spurious を検証する。`--vtuber` を当該リリースで公開扱いにする場合は必須 (`release` Step 0c で判断)。**検出ロジック / GT データ / ハーネスのいずれかを触った commit の後は再実行する**。`allaganeye/commands/split_matches.py` の `_VTUBER_ALGO_VERSION` の bump が再実行要否の目印になる
 
@@ -295,29 +302,29 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 - [ ] **M2: Portable ZIP 起動回帰** — 配布 ZIP を展開し、`allaganeye.bat` の引数なしダブルクリック (GUI 起動) と `allaganeye.bat --version` (CLI 起動) の両方を確認する。タグ push 前はリリース PR の CI artifact、タグ push 後は Release 添付の本番 ZIP で二段確認する
 - [ ] **M3: minimap crop の目視確認** — `minimap --region` で切り抜いた MP4 を再生し、エリアマップが意図した領域に収まっていることを確認する (G2 は提案モードのみを検証するため、crop 経路はここでしか担保されない)
 
-### v0.3.0 以降のレイヤー固有ゲート枠組み
+### v0.3.0 以降のバージョン固有ゲート枠組み
 
-各レイヤー固有のチェックリストは「v0.x.0 (L?) 固有項目」節として §レイヤーリリース受け入れゲート 配下に追加していく。各レイヤー特有の品質ゲートを当該リリース直前のレビューで確定する。
+各バージョン固有のチェックリストは「v0.x.0 (L?) 固有項目」節として §レイヤーリリース受け入れゲート 配下に追加していく（見出しは `release` skill が検索する `v0.x.0 (L?)` の形に揃える。0.4.0 なら `v0.4.0 (L4 + L6 + L7) 固有項目`）。リリース単位の品質ゲートを当該リリース直前のレビューで確定する。
 
-| バージョン | レイヤー | 想定ゲート項目 |
+| バージョン | 対象 | 想定ゲート項目 |
 | --- | --- | --- |
 | v0.3.0 | L3 (new): 配信形式対応 + 性能改善 | **確定済 → 前節「v0.3.0 (L3) 固有項目」の G1-G3 / M1-M3 を参照**。当初の想定は「masked baseline 検知 ground truth 一致 + minimap 切抜き検証 + export 並列で encoder 出力 visual spot check + Portable ZIP 起動回帰」だったが、確定時に masked baseline が未整備であること (→ [#925](https://github.com/Idios/kobutachan-allaganeye/issues/925)) と minimap の自動ゲートが提案モードのみを覆うことが判明し、実態に合わせて再定義した |
-| v0.4.0 | L4 (former L3): メタデータ化 | キルログ OCR / 音声認識統合の精度ベンチ、metadata schema 拡張の互換性検証 |
-| v0.5.0 | L5 (former L4): 価値評価 | ローカル ML model 評価指標、サンプル動画群での評価分布 |
-| v0.6.0 | L6 (former L5): 自動編集 | クリップ生成成功率、投稿提案の妥当性レビュー |
+| v0.4.0 | L4 + L6 + L7（ハイライト機能） | KO / ASSIST 検出の recall / precision（GT 突合）、rule-based スコアの GT 検証、clip 生成成功率と範囲指定 UI の妥当性 |
+| v0.5.0 | L5: OBS プラグイン統合 | OBS 上での完結性（split / export が OBS から実行できる）、GUI / CLI との設定・出力同一性。**Portable ZIP 哲学は評価軸**であり合否条件にはしない（例外を採る場合は理由を明記する） |
+| v0.6.0 | L8 (former L6): プライバシー・精密分割 | ぼかし品質、再エンコード分割の互換性 |
 
-各レイヤー固有のゲート項目は、当該リリース PR の PR 本文または「v0.x.0 (L?) 固有項目」節で確定する。確定後は本 doc に追記して恒久化する。
+各バージョン固有のゲート項目は、当該リリース PR の PR 本文または「v0.x.0 (L?) 固有項目」節で確定する。確定後は本 doc に追記して恒久化する。
 
 ## レイヤー間の移行手順
 
-各レイヤー完了時:
+各リリース完了時:
 
-1. **§レイヤーリリース受け入れゲート** のチェックリストを全件達成 (共通項目 + 当該レイヤー固有項目)
+1. **§レイヤーリリース受け入れゲート** のチェックリストを全件達成 (共通項目 + 当該バージョンの固有項目)
 2. `develop-x.x.0` から `release/vX.Y.Z` を切り、`release/vX.Y.Z → main` のリリース PR を作成・マージ
 3. `main` にタグを打つ (`v0.x.0`)
 4. GitHub Release を作成（変更内容サマリ付き、`release-publish.yml` 自動 or `docs/release-process.md` §手動リリース手順）
 5. `main` から次バージョンの `develop-x.x.0` ブランチを作成し、その時点で[バージョン保持箇所](versioning.md#バージョン管理場所)を**全箇所**まとめて `x.y.0` に更新（`.dev` 等の pre-release 識別子は付けない。PyPI 未公開のため不要）。更新後に `python scripts/check_version_consistency.py` で全箇所一致を確認する
-6. 次レイヤーの Issue を作成し、作業開始
+6. 次バージョンで対象となるレイヤー / 機能の Issue を作成し、作業開始（0.4.0 は L4 + L6 + L7 の 3 層が対象）
 
 ## 手動リリース手順 (CI 迂回)
 

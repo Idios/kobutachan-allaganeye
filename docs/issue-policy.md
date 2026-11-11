@@ -45,19 +45,24 @@
 
 > `l2c-guard` ラベルは 2026-04-21 廃止 (guard との program integration 構想を破棄、#454 参照)。関連 doc 整備は `l2-workflow` で追跡。
 
-L3 以降のレイヤーは着手時に運用ルールを判断する。v0.3.0 (新 L3) は新規ラベルを追加せず title prefix で識別する (詳細は下の §v0.3.0 新 L3 work の title prefix 規約 参照)。
+L3 以降のレイヤーは着手時に運用ルールを判断する。v0.3.0 (新 L3) 以降、新規レイヤー label は追加せず title prefix で識別する (詳細は下の §レイヤー番号を含む title prefix 規約 参照)。
 
-#### v0.3.0 新 L3 work の title prefix 規約
+#### レイヤー番号を含む title prefix 規約
 
-v0.3.0 (= 新 L3) work では **新規 layer label を追加しない**。issue title prefix で識別する:
+**新規レイヤー label は追加せず**、issue title prefix で識別する。以下は 2026-11-10（L5 = OBS プラグイン統合の挿入）時点の現在形:
 
 ```text
-[type] L3: <要約>                                    ← 新 L3 (minimap+masked+perf+VTuber。VTuber は 2026-07-17 再開 #895)
-[type] L4 (former L3): <要約>                        ← 旧 L3 (OCR/Whisper), L4 にスライド
-[type] L5 (former L4): <要約>                        ← 旧 L4 (ML)
-[type] L6 (former L5): <要約>                        ← 旧 L5 (auto edit)
-[type] L7 (former L6): <要約>                        ← 旧 L6 (privacy)
+[type] L3: <要約>                                    ← L3 (minimap+masked+perf+VTuber。VTuber は 2026-07-17 再開 #895)
+[type] L4 (former L3): <要約>                        ← L4 メタデータ化 (初期信号は KO/ASSIST インジケータ)
+[type] L5: <要約>                                    ← L5 OBS プラグイン統合 (2026-11-10 に挿入)
+[type] L6 (former L4): <要約>                        ← L6 価値評価 (初期は rule-based)
+[type] L7 (former L5): <要約>                        ← L7 自動編集
+[type] L8 (former L6): <要約>                        ← L8 privacy
 ```
+
+> `(former X)` は **2026-05-18 の L3 再定義より前**の番号（当時の番号体系）を指す。2026-11-10 の挿入で繰り下がった直前の番号（例: 価値評価は 2026-05-18〜11-10 では L5）とは別系列。対応表は `AGENTS.md` §段階的アーキテクチャに 1 箇所だけ置く。
+>
+> **rename の扱い (2026-11-10)**: 2026-05-18 の spec §4.1（「title rename 時は `[type] L4 (former L3): …` 形式で**1 回だけ** rename。以後の rename 連鎖は禁止」）を、L5 挿入に伴い**今回だけ上書き**した。**現番号の部分だけ**を rename し（`former` 部分は変えない）、検索性を維持している。この上書きをここに記録する。
 
 詳細は [`docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md`](superpowers/specs/2026-05-18-v030-l3-redefinition-design.md) §5 を参照。
 
@@ -379,15 +384,25 @@ issue 本文に未チェックの項目（`- [ ]`）が残っている場合、�
 - **スコープに含める場合**: `deferred` を外し、適切なスコープラベル + 優先度ラベルに変更する
 - **引き続き先送りの場合**: そのまま残す
 
-#### v0.3.0 期間中の運用 (2026-05-18 以降)
+#### v0.3.0 期間中の運用 (2026-05-18 以降) — **履歴**
 
-**`deferred` ラベルを外す = v0.3.0 (新 L3) で必須対応** と扱う:
+> **2026-11-10 以降は直後の §現在の運用 を正とする。** 以下は当時の記録として残す。
+
+**`deferred` ラベルを外す = v0.3.0 (新 L3) で必須対応** と扱っていた:
 
 - v0.3.0 着手対象に選定された issue: `deferred` を外す
-- それ以外の issue (旧 L3 = L4 へ繰り下げ、旧 L4-L6 等): `deferred` を維持
+- それ以外の issue: `deferred` を維持
 - 検索: v0.3.0 アクティブセット = `is:open -label:deferred`
 
 詳細は [`docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md`](superpowers/specs/2026-05-18-v030-l3-redefinition-design.md) §5.2 を参照。
+
+#### 現在の運用 (2026-11-10 以降)
+
+**層番号ではなく「どのバージョンの対象か」で判定する**（L4〜L8 を一律に `deferred` 維持とはしない。v0.3.0 期の層番号ベースの規則は上の §履歴 に移した）。
+
+- 当該バージョンの対象に選定された issue: `deferred` を外す（例: 0.4.0 = L4 / L6 / L7 の実装 issue。→ ロードマップ §3.1）
+- 当該バージョンの対象外: `deferred` を維持（例: 0.5.0 = L5（OBS）の #1107、L8（0.6.0）の #28 / #63）
+- 検索: アクティブ集合は**バージョンごとに** `is:open -label:deferred`（同じ式をバージョンの文脈で読む）
 
 #### `l1-residual` + `deferred` dual-label 規約
 
