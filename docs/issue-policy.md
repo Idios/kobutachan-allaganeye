@@ -391,7 +391,7 @@ issue 本文に未チェックの項目（`- [ ]`）が残っている場合、�
 **`deferred` ラベルを外す = v0.3.0 (新 L3) で必須対応** と扱っていた:
 
 - v0.3.0 着手対象に選定された issue: `deferred` を外す
-- それ以外の issue (L3 再定義で L4 へ繰り下げられたもの、L4〜L8 等): `deferred` を維持
+- それ以外の issue: `deferred` を維持
 - 検索: v0.3.0 アクティブセット = `is:open -label:deferred`
 
 詳細は [`docs/superpowers/specs/2026-05-18-v030-l3-redefinition-design.md`](superpowers/specs/2026-05-18-v030-l3-redefinition-design.md) §5.2 を参照。
