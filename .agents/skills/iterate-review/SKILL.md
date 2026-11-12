@@ -400,6 +400,8 @@ Iron Law 3 と AGENTS.md plugin override 規約は「user の明示判断が最�
   - Round 1 (前 round 不在) の場合は counter 初期値 0 のまま
 - `counter == 3` (= 3 round 連続で減少なし) → user gate 2 択
 
+> **reword ループの遮断 (#1112)**: 前ラウンドの修正文そのものへの指摘は、reword ではなく **削除 / SSoT へのポインタ化** を第一候補とする ([`docs/l2-workflow.md` §(A) PR 内修正優先 規約](../../../docs/l2-workflow.md))。reword を選んだ場合は **PR 本文の Self-Test Report「実機検証 (machine-unverifiable)」節に理由を 1 行** 残す (規約本文の要求。本 summary で置き換えない)。Step 4 の Final summary には削除 / ポインタ化で処理した件数を 1 行残す。**本行が発火点**で、`tests/scripts/test_skill_reword_rule_refs.py` が存在を pin する。
+
 #### Step 3.3 ラウンドキャップ
 
 Round == 5 + 未収束 → user gate 2 択。
@@ -474,6 +476,7 @@ PR は <R> ラウンドの review-fix で収束。全 findings 解消完了。
 - CI: green (last commit `<SHA[:7]>`)
 - 受け入れ条件: 全 ○
 - (A) 残: 0 / (B) handoff: <#N1, #N2 or なし> / (C) handoff: <#M1 or なし>
+- reword ループ対策: 削除 / ポインタ化 <n> 件 / reword <n> 件 (reword の理由は PR 本文の Self-Test Report に記載済のためここには書かない)
 - 並行 PR: <検出ゼロ / [#X handled]>
 - base sync: <CLEAN / 取り込み済み>
 
