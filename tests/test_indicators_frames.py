@@ -61,3 +61,77 @@ def test_command_rejects_invalid_arguments(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         build_frame_command(tmp_path / "in.mp4", **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# デコーダ異常の検出 (Codex adversarial-review)
+# ---------------------------------------------------------------------------
+
+
+class _FakeStdout:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = list(chunks)
+
+    def read(self, _size: int) -> bytes:
+        return self._chunks.pop(0) if self._chunks else b""
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeProcess:
+    def __init__(self, chunks: list[bytes], returncode: int) -> None:
+        self.stdout = _FakeStdout(chunks)
+        self.returncode = returncode
+        self.killed = False
+
+    def poll(self) -> int | None:
+        return None if self.stdout._chunks else self.returncode
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def wait(self) -> int:
+        return self.returncode
+
+
+def _run_fake(monkeypatch: pytest.MonkeyPatch, proc: _FakeProcess):
+    from allaganeye.video import frames
+
+    monkeypatch.setattr(frames.subprocess, "Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(frames, "find_ffmpeg", lambda: "ffmpeg")
+    return list(frames.iter_gray_frames(Path("in.mp4"), fps=10.0, frame_size=(4, 2)))
+
+
+def test_iter_reports_decoder_failure_after_partial_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """途中まで読めた場合もデコーダ異常は握り潰さない。
+
+    ここを「0 フレームのときだけ raise」にすると、途中で死んだデコードが
+    「正常終了 + 途中までのイベント」として publish される。
+    """
+    from allaganeye.exceptions import VideoProcessingError
+
+    frame = bytes(8)
+    proc = _FakeProcess([frame, frame], returncode=1)
+    with pytest.raises(VideoProcessingError, match="ffmpeg"):
+        _run_fake(monkeypatch, proc)
+
+
+def test_iter_rejects_truncated_final_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """半端な最終フレームは捨てずにエラーにする (不完全なデータで成功と言わない)。"""
+    from allaganeye.exceptions import VideoProcessingError
+
+    proc = _FakeProcess([bytes(8), bytes(3)], returncode=0)
+    with pytest.raises(VideoProcessingError, match="truncated"):
+        _run_fake(monkeypatch, proc)
+
+
+def test_iter_accepts_clean_eof(monkeypatch: pytest.MonkeyPatch) -> None:
+    """通常の EOF (0 バイト + exit 0) はエラーにしない。"""
+    proc = _FakeProcess([bytes(8), bytes(8)], returncode=0)
+    frames = _run_fake(monkeypatch, proc)
+    assert [timestamp for timestamp, _ in frames] == [0.0, 0.1]
