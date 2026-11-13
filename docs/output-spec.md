@@ -286,6 +286,10 @@ Metadata: <metadata.json path>
 | `--recalibrate` | (なし) | 既存の `indicator_layout` を無視して再解決し、その結果で write-back する |
 | `--expected-mtime MS` | (なし) | write-back 前の CAS guard。不一致なら exit 6 |
 
+`-o` は**staging に書いてから `os.replace` で公開**する（既存ファイルを truncate しない）。
+metadata write-back より後に公開するので、CAS 衝突 (exit 6) のときは既存レポートが
+そのまま残る。書込み自体に失敗した場合は exit 1。
+
 `match_index` は `matches[].index` (1 始まり)。**どの試合区間にも入らない区間は `null`**
 （境界の丸め誤差などで試合外に落ちた場合。イベント自体は捨てない）。
 `score` はその区間内の最大マッチスコア、`samples` は連続ヒットしたサンプル数

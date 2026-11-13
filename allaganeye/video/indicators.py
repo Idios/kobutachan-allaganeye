@@ -684,10 +684,16 @@ def validate_layout_for_frame(
             f"frame={frame_width}x{frame_height})。"
             "--recalibrate で再解決するか、metadata.json の値を確認してください。"
         )
-    if round(band.width) < _MIN_BAND_PX or round(band.height) < _MIN_BAND_PX:
+    # 最小寸法は `detect_indicator` と同じ「端点を別々に丸めてから引く」で見る。
+    # 幅を丸めて比べると 1 px ずれ、走査の最初のフレームで ValueError になる
+    # (例: 高さ 15.53 は round で 16 だが、端点差は 15)。
+    width = round(band.x1) - round(band.x0)
+    height = round(band.y1) - round(band.y0)
+    if width < _MIN_BAND_PX or height < _MIN_BAND_PX:
         raise InputFileError(
             "indicator_layout から導出した探索領域が小さすぎます "
-            f"(band=({band.x0:.1f}, {band.y0:.1f}, {band.x1:.1f}, {band.y1:.1f}))。"
+            f"(band=({band.x0:.1f}, {band.y0:.1f}, {band.x1:.1f}, {band.y1:.1f}) "
+            f"= {width}x{height} px)。"
             "scale が小さすぎる可能性があります。"
         )
 
