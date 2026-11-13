@@ -60,6 +60,7 @@ export interface Metadata {
    * #481: per-match area-map crop region (normalized) actually used by `allaganeye minimap --region`. Missing entry for a match = not cropped. Field absent = minimap crop never ran.
    */
   minimap_regions?: MinimapRegionEntry[];
+  indicator_layout?: IndicatorLayout;
 }
 /**
  * Parameters used by the detector when this metadata.json was produced.
@@ -264,4 +265,33 @@ export interface RegionSegment {
 export interface MinimapRegionEntry {
   match_index: number;
   region: CaptureRegion;
+}
+/**
+ * KO / ASSIST インジケータ検出の探索領域 (#1106 作業項目 5; serialized allaganeye/video/indicators.py::IndicatorLayout via layout_to_payload / layout_from_payload). `anchor_*` はアンカーテンプレート (戦意値ゲージのバー左キャップ) の左上を正規化したもので、テキストバンドはこれと `scale` から一意に求まる (値を重複保存しない). `scale` は 1080p 参照レイアウトに対する倍率。Optional at the root: 未実行の metadata.json は持たない (次回再解決する).
+ */
+export interface IndicatorLayout {
+  /**
+   * Normalized x of the anchor template's top-left in [0,1] frame coordinates.
+   */
+  anchor_x: number;
+  /**
+   * Normalized y of the anchor template's top-left in [0,1] frame coordinates.
+   */
+  anchor_y: number;
+  /**
+   * HUD scale relative to the 1080p reference layout (1.0 = same HUD scale as the bundled templates).
+   */
+  scale: number;
+  /**
+   * Number of calibration frames that agreed on this position and scale.
+   */
+  support: number;
+  /**
+   * Mean template-match score of the agreeing frames, in [0,1].
+   */
+  confidence: number;
+  /**
+   * Where the layout came from. Documented values: "anchor" (auto-resolved from the always-visible battle-fervor gauge) and "user" (caller-supplied region). Free string: readers must accept unknown values (forward compat, same philosophy as CaptureRegion.source).
+   */
+  source: string;
 }

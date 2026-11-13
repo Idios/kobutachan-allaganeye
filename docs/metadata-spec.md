@@ -180,6 +180,38 @@ cache には `.detection_cache.json` top-level (`masked_fallback_used` と同型
 で保存される。GUI は読み取り時 zod `CaptureRegionsSchema` (optional) で検証し、`[適用]`
 (`normalizeForPersistence`) でも保持する (GUI 側 consumer は未実装、round-trip のみ)。
 
+### `indicator_layout` オブジェクト (#1106 作業項目 5)
+
+`allaganeye indicators` が解決した KO / ASSIST インジケータの探索領域
+(`allaganeye/video/indicators.py::IndicatorLayout` の serialize 形)。座標は
+`capture_regions` と同じ**正規化 `[0,1]`**。ここに保存した値がある限り、
+次回実行時のキャリブレーションを省略する。
+
+| フィールド | 型 | 必須 | 意味 |
+| --- | --- | --- | --- |
+| `anchor_x` | number [0,1] | ✓ | アンカーテンプレート（戦意値ゲージのバー左キャップ）左上の正規化 x |
+| `anchor_y` | number [0,1] | ✓ | 同 y |
+| `scale` | number > 0 | ✓ | 1080p 参照レイアウトに対する HUD 倍率（1.0 = 同梱テンプレートと同じスケール） |
+| `support` | integer >= 1 | ✓ | キャリブレーションで合意したフレーム数 |
+| `confidence` | number [0,1] | ✓ | 合意フレームの平均マッチスコア |
+| `source` | string | ✓ | 由来。文書化値: `"anchor"`（自動解決）/ `"user"`（将来のユーザー指定領域）。free string のため読み手は unknown 値を受容 |
+
+**テキスト帯（探索窓）は保存しない。** アンカー位置と `scale` から相対幾何で一意に決まる
+ため、値を重複保存すると片方だけ更新されてずれる（SSoT 違反）。導出は
+`IndicatorLayout.text_band()` が担う。
+
+**書き込みパス別の挙動**:
+
+| 経路 | 書き込み |
+| --- | --- |
+| `allaganeye indicators`（`--write`、既定） | ✓ 解決結果を書く（キャッシュ再利用時も同じ値を書き直す） |
+| `allaganeye indicators --no-write` | ✗ 書かない |
+| `allaganeye detect` / `split` | ✗ 書かない（L4 は検知パイプラインの外） |
+
+`--expected-mtime` による CAS guard は `capture_regions` と同じ（不一致なら exit 6）。
+不正な値（範囲外 / 型違い / キー欠落）は `InputFileError`（exit 2）で落とす。壊れた値を
+「それらしく」補正すると、探索窓が静かにずれたまま検出を続けるため。
+
 ### `Gap` オブジェクト (`gaps[]`)
 
 試合間の 5 分以上の空白 (5 分未満は含まれない、`min_gap=300.0` による)。

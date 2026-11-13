@@ -147,6 +147,9 @@ Allagan Eye は FF14 フロントラインの一般的な録画に合わせて�
     rem 提案された領域で切り抜く
     allaganeye.bat minimap "%USERPROFILE%\Desktop\matches\metadata.json" --region 1520,780,380,380
 
+    rem KO / ASSIST インジケータの発生時刻を検出する
+    allaganeye.bat indicators "%USERPROFILE%\Desktop\matches\metadata.json"
+
     rem フレーム輝度を CSV に出す（しきい値の調整用）
     allaganeye.bat debug-brightness "C:\Users\あなた\Videos\動画.mkv"
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from allaganeye.exceptions import InputFileError
 from allaganeye.video.indicators import (
     IndicatorEvent,
     IndicatorLayout,
@@ -21,9 +22,12 @@ from allaganeye.video.indicators import (
     classify_text,
     detect_indicator,
     group_detections,
+    layout_from_payload,
+    layout_to_payload,
     match_text,
     resolve_layout,
     scan_indicators,
+    validate_layout_for_frame,
 )
 from allaganeye.video.refs import load_templates
 
@@ -306,6 +310,59 @@ def test_detect_indicator_rejects_partially_clipped_band() -> None:
         detect_indicator(_noise(650, 640, seed=35), layout)
 
 
+def test_validate_layout_for_frame_accepts_resolved_layout() -> None:
+    """実測レイアウト (スケール 1.0 / 0.8) はどちらもフレームに収まる。"""
+    validate_layout_for_frame(
+        IndicatorLayout(scale=1.0, x=618.0, y=614.0),
+        frame_width=1920,
+        frame_height=1080,
+    )
+    validate_layout_for_frame(
+        IndicatorLayout(scale=0.8, x=621.0, y=289.0),
+        frame_width=1920,
+        frame_height=1080,
+    )
+
+
+def test_validate_layout_for_frame_rejects_out_of_frame_band() -> None:
+    """帯域がフレーム外へ出る layout は走査前に InputFileError で落とす。
+
+    `detect_indicator` は走査中に `ValueError` を投げるが、それは CLI の exit code
+    体系に乗らない traceback になる。
+    """
+    layout = IndicatorLayout(scale=1.0, x=0.0, y=0.0)
+    with pytest.raises(InputFileError, match="収まっていません"):
+        validate_layout_for_frame(layout, frame_width=1920, frame_height=1080)
+
+
+def test_validate_layout_for_frame_rejects_tiny_band() -> None:
+    """スケールが小さすぎて帯域が潰れる layout も拒否する。"""
+    layout = IndicatorLayout(scale=0.02, x=100.0, y=100.0)
+    with pytest.raises(InputFileError, match="小さすぎます"):
+        validate_layout_for_frame(layout, frame_width=1920, frame_height=1080)
+
+
+def test_validate_layout_for_frame_rejects_non_positive_frame_size() -> None:
+    layout = IndicatorLayout(scale=1.0, x=618.0, y=614.0)
+    with pytest.raises(ValueError):
+        validate_layout_for_frame(layout, frame_width=0, frame_height=1080)
+
+
+def test_validate_layout_for_frame_matches_the_real_crop_rounding() -> None:
+    """丸めた幅ではなく、実際の切り出し端点の差で最小寸法を判定する。
+
+    スケール 0.29 では band 高さが 15.53 なので `round(band.height)` は 16 で
+    通過するが、`detect_indicator` は端点を別々に丸めるため 15 px になる。
+    この 1 px 差を許すとキャリブレーション資産の検証をすり抜け、走査の最初の
+    フレームで `ValueError` になる。
+    """
+    layout = IndicatorLayout(scale=0.29, x=100.0, y=100.0)
+    with pytest.raises(InputFileError, match="小さすぎます"):
+        validate_layout_for_frame(layout, frame_width=1920, frame_height=1080)
+    with pytest.raises(ValueError):
+        detect_indicator(np.zeros((1080, 1920), dtype=np.uint8), layout)
+
+
 def test_detect_indicator_at_scaled_layout() -> None:
     """レイアウトが 0.8 倍でもバンド内のテキストを拾う。"""
     layout = IndicatorLayout(scale=0.8, x=621.0, y=289.0)
@@ -373,3 +430,153 @@ def test_scan_indicators_returns_events_from_frames() -> None:
     assert event.start == pytest.approx(0.5)
     assert event.end == pytest.approx(1.2)
     assert event.samples == 8
+
+
+# ---------------------------------------------------------------------------
+# metadata への永続化 (#1106 作業項目 5)
+# ---------------------------------------------------------------------------
+
+
+def test_layout_payload_round_trip() -> None:
+    """解決結果を metadata の payload にして戻すと同じ layout になる。"""
+    layout = IndicatorLayout(
+        scale=1.0, x=618.0, y=614.0, support=6, confidence=0.95, source="anchor"
+    )
+    payload = layout_to_payload(layout, frame_width=1920, frame_height=1080)
+    assert payload == {
+        "anchor_x": pytest.approx(618.0 / 1920),
+        "anchor_y": pytest.approx(614.0 / 1080),
+        "scale": 1.0,
+        "support": 6,
+        "confidence": 0.95,
+        "source": "anchor",
+    }
+    restored = layout_from_payload(payload, frame_width=1920, frame_height=1080)
+    assert restored == layout
+
+
+def test_layout_payload_is_normalised() -> None:
+    """保存は正規化座標 (capture_regions と同じ規約) で行う。"""
+    layout = IndicatorLayout(scale=2.0, x=1236.0, y=1228.0, support=5, confidence=0.8)
+    payload = layout_to_payload(layout, frame_width=3840, frame_height=2160)
+    assert payload["anchor_x"] == pytest.approx(1236.0 / 3840)
+    assert payload["anchor_y"] == pytest.approx(1228.0 / 2160)
+    assert payload["scale"] == pytest.approx(2.0)
+
+
+def test_layout_payload_scales_with_frame_size() -> None:
+    """同じ payload を別解像度のフレームに適用すると比例して配置される。"""
+    payload = layout_to_payload(
+        IndicatorLayout(scale=1.0, x=618.0, y=614.0),
+        frame_width=1920,
+        frame_height=1080,
+    )
+    restored = layout_from_payload(payload, frame_width=3840, frame_height=2160)
+    assert restored.x == pytest.approx(1236.0)
+    assert restored.y == pytest.approx(1228.0)
+    assert restored.scale == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("override", "field"),
+    [
+        ({"anchor_x": 1.5}, "anchor_x"),
+        ({"anchor_y": -0.1}, "anchor_y"),
+        ({"scale": 0.0}, "scale"),
+        ({"support": 0}, "support"),
+        ({"confidence": 1.5}, "confidence"),
+        ({"source": ""}, "source"),
+        ({"anchor_x": "0.3"}, "anchor_x"),
+        ({"support": 3.5}, "support"),
+    ],
+)
+def test_layout_payload_rejects_invalid_values(override: dict, field: str) -> None:
+    """壊れた payload はその場で落とす (黙って使わない)。"""
+    payload = layout_to_payload(
+        IndicatorLayout(scale=1.0, x=618.0, y=614.0),
+        frame_width=1920,
+        frame_height=1080,
+    )
+    payload.update(override)
+    with pytest.raises(InputFileError, match=field):
+        layout_from_payload(payload, frame_width=1920, frame_height=1080)
+
+
+@pytest.mark.parametrize("missing", ["anchor_x", "scale", "support", "source"])
+def test_layout_payload_requires_all_keys(missing: str) -> None:
+    payload = layout_to_payload(
+        IndicatorLayout(scale=1.0, x=618.0, y=614.0),
+        frame_width=1920,
+        frame_height=1080,
+    )
+    del payload[missing]
+    with pytest.raises(InputFileError, match=missing):
+        layout_from_payload(payload, frame_width=1920, frame_height=1080)
+
+
+def test_layout_payload_accepts_unknown_source() -> None:
+    """source は自由文字列 (未知値も読める = 前方互換)。"""
+    payload = layout_to_payload(
+        IndicatorLayout(scale=1.0, x=618.0, y=614.0, source="user"),
+        frame_width=1920,
+        frame_height=1080,
+    )
+    restored = layout_from_payload(payload, frame_width=1920, frame_height=1080)
+    assert restored.source == "user"
+
+
+def test_layout_payload_rejects_oversized_number() -> None:
+    """巨大な整数 (float に変換できない) は traceback ではなく InputFileError。
+
+    JSON の数値は桁数無制限なので、`float(value)` が `OverflowError` を投げる。
+    これは `AllaganEyeError` ではないため catch をすり抜ける。
+    """
+    payload = {
+        "anchor_x": 0.3,
+        "anchor_y": 0.5,
+        "scale": int("1" + "0" * 400),
+        "support": 6,
+        "confidence": 0.9,
+        "source": "anchor",
+    }
+    with pytest.raises(InputFileError, match="scale"):
+        layout_from_payload(payload, frame_width=1920, frame_height=1080)
+
+
+def test_layout_payload_rejects_non_mapping() -> None:
+    with pytest.raises(InputFileError):
+        layout_from_payload([], frame_width=1920, frame_height=1080)  # type: ignore[arg-type]
+
+
+def test_layout_payload_rejects_non_positive_frame_size() -> None:
+    with pytest.raises(ValueError):
+        layout_to_payload(
+            IndicatorLayout(scale=1.0, x=618.0, y=614.0),
+            frame_width=0,
+            frame_height=1080,
+        )
+
+
+@pytest.mark.parametrize(
+    ("override", "field"),
+    [
+        ({"anchor_x": float("nan")}, "anchor_x"),
+        ({"scale": float("inf")}, "scale"),
+        ({"confidence": float("nan")}, "confidence"),
+        ({"anchor_y": float("-inf")}, "anchor_y"),
+    ],
+)
+def test_layout_payload_rejects_non_finite(override: dict, field: str) -> None:
+    """NaN / inf は範囲比較をすり抜けるので有限性を先に検査する。
+
+    JSON の `NaN` / `Infinity` / `1e309` は Python の json が読めてしまい、
+    NaN は全ての比較が False になるため範囲チェックだけでは通ってしまう。
+    """
+    payload = layout_to_payload(
+        IndicatorLayout(scale=1.0, x=618.0, y=614.0),
+        frame_width=1920,
+        frame_height=1080,
+    )
+    payload.update(override)
+    with pytest.raises(InputFileError, match=field):
+        layout_from_payload(payload, frame_width=1920, frame_height=1080)
