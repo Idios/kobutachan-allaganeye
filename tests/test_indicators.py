@@ -299,6 +299,13 @@ def test_detect_indicator_rejects_incompatible_layout() -> None:
         detect_indicator(_noise(540, 960, seed=33), layout)
 
 
+def test_detect_indicator_rejects_partially_clipped_band() -> None:
+    """バンドの一部だけがフレーム外でもエラーにする (切り詰めて黙って続けない)。"""
+    layout = IndicatorLayout(scale=1.0, x=618.0, y=614.0)
+    with pytest.raises(ValueError):
+        detect_indicator(_noise(650, 640, seed=35), layout)
+
+
 def test_detect_indicator_at_scaled_layout() -> None:
     """レイアウトが 0.8 倍でもバンド内のテキストを拾う。"""
     layout = IndicatorLayout(scale=0.8, x=621.0, y=289.0)

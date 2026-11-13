@@ -401,15 +401,19 @@ def detect_indicator(
     """
     band = layout.text_band()
     height, width = frame_gray.shape[:2]
+    if band.x0 < 0 or band.y0 < 0 or band.x1 > width or band.y1 > height:
+        raise ValueError(
+            "テキストバンドがフレームに収まっていません "
+            f"(band={band}, frame={width}x{height})。"
+            "レイアウトの解決結果とフレームの解像度が食い違っています。"
+        )
     x0 = max(0, round(band.x0))
     y0 = max(0, round(band.y0))
     x1 = min(width, round(band.x1))
     y1 = min(height, round(band.y1))
     if (x1 - x0) < _MIN_BAND_PX or (y1 - y0) < _MIN_BAND_PX:
         raise ValueError(
-            "テキストバンドがフレームに収まっていません "
-            f"(band={band}, frame={width}x{height})。"
-            "レイアウトの解決結果とフレームの解像度が食い違っています。"
+            f"テキストバンドが小さすぎます (band={band}, frame={width}x{height})。"
         )
     kind, score = classify_text(frame_gray[y0:y1, x0:x1], templates, scale=layout.scale)
     if kind == "other":
