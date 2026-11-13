@@ -80,11 +80,20 @@ _HIGH_PASS_KERNEL = 11
 _PEAKS_PER_FRAME = 10
 _PEAK_NMS_PX = 16
 
+# テキストバンドの最小寸法。これ未満は「レイアウトとフレームの不整合」として扱う
+# (正しいレイアウトのバンドは 200x43 程度)。
+_MIN_BAND_PX = 16
+
 # 合意判定の許容幅。
 _CONSENSUS_DX = 10.0
 _CONSENSUS_DY = 6.0
 _CONSENSUS_DS = 0.08
 _MIN_SUPPORT = 2
+
+# 合意の受理下限 (平均スコア)。真のアンカーは 0.78-0.95、静止しているだけの別 UI は
+# 0.63 だったので 0.70 を境にする。ここを外すと、アンカーが写っていない動画で
+# 静止オーバーレイをアンカーと誤認し、「解決できたように見えて実は全滅」する。
+_MIN_CONFIDENCE = 0.70
 
 
 def _import_cv2() -> Any:
@@ -290,12 +299,19 @@ def match_text(
 
     `patch` はバンドを切り出した生画像。`scale` はアンカー由来のスケールで、
     パッチを参照サイズへ正規化するのに使う (テンプレートは参照サイズのまま)。
+
+    位置とスケールの選択は**明度ゲートを通った候補の中**で行う。NCC はコントラスト
+    不変なので、減光したコピーや暗い背景のほうが高スコアになりうる。ゲート通過後に
+    選ぶと本物を取り逃すため、通過候補が一つも無い場合だけ全体最良に落とす
+    (その場合は `bright_fraction` が基準未満になるので判定側で棄却される)。
     """
     tpls = templates if templates is not None else load_templates()
-    best = {
+    unset = {
         kind: TextMatch(kind=kind, score=-1.0, scale_factor=1.0, bright_fraction=0.0)
         for kind in _TEXT_KINDS
     }
+    bright_best: dict[str, TextMatch] = dict(unset)
+    overall_best: dict[str, TextMatch] = dict(unset)
     for factor in scale_factors:
         effective = scale * factor
         normalised = _resize(
@@ -306,9 +322,9 @@ def match_text(
         for kind in _TEXT_KINDS:
             tpl = tpls[kind]
             score, location = _masked_ncc(normalised, tpl, _glyph_mask(tpl))
-            if score <= best[kind].score:
+            if score <= -1.0:
                 continue
-            best[kind] = TextMatch(
+            match = TextMatch(
                 kind=kind,
                 score=score,
                 scale_factor=factor,
@@ -316,7 +332,19 @@ def match_text(
                     normalised, location, _glyph_core(tpl)
                 ),
             )
-    return best
+            if score > overall_best[kind].score:
+                overall_best[kind] = match
+            if (
+                match.bright_fraction >= _MIN_BRIGHT_FRACTION
+                and score > bright_best[kind].score
+            ):
+                bright_best[kind] = match
+    return {
+        kind: (
+            bright_best[kind] if bright_best[kind].score > -1.0 else overall_best[kind]
+        )
+        for kind in _TEXT_KINDS
+    }
 
 
 def classify_text(
@@ -348,15 +376,24 @@ def detect_indicator(
     layout: IndicatorLayout,
     templates: dict[str, np.ndarray] | None = None,
 ) -> IndicatorHit | None:
-    """1 フレームからインジケータを検出する。`other` は `None` を返す。"""
+    """1 フレームからインジケータを検出する。`other` は `None` を返す。
+
+    バンドがフレームに収まらない場合は `ValueError`。ここで `None` を返すと、
+    キャリブレーションの誤りが「インジケータが 1 回も出なかった」と区別できず、
+    黙ってイベント 0 件になる。
+    """
     band = layout.text_band()
     height, width = frame_gray.shape[:2]
     x0 = max(0, round(band.x0))
     y0 = max(0, round(band.y0))
     x1 = min(width, round(band.x1))
     y1 = min(height, round(band.y1))
-    if (x1 - x0) < 16 or (y1 - y0) < 16:
-        return None
+    if (x1 - x0) < _MIN_BAND_PX or (y1 - y0) < _MIN_BAND_PX:
+        raise ValueError(
+            "テキストバンドがフレームに収まっていません "
+            f"(band={band}, frame={width}x{height})。"
+            "レイアウトの解決結果とフレームの解像度が食い違っています。"
+        )
     kind, score = classify_text(frame_gray[y0:y1, x0:x1], templates, scale=layout.scale)
     if kind == "other":
         return None
@@ -418,13 +455,15 @@ def calibrate_layout(
     *,
     scales: Sequence[float] = _DEFAULT_SCALES,
     min_support: int = _MIN_SUPPORT,
+    min_confidence: float = _MIN_CONFIDENCE,
 ) -> IndicatorLayout | None:
     """複数フレームの合意からスケールとアンカー位置を解決する。
 
     1 フレームでも当たればよいのではなく、**同じ位置と同じスケールで複数フレームが
     一致すること**を要求する。合意の中では**平均スコアが最大のもの**を採る
     (配信オーバーレイのような「静止しているがアンカーではない」要素は、多くの
-    フレームで一致するがスコアが低い。実測 0.63 対 真のアンカー 0.78-0.92)。
+    フレームで一致するがスコアが低い。実測 0.63 対 真のアンカー 0.78-0.95)。
+    さらに `min_confidence` 未満の合意は棄却する。
 
     戻り値が `None` のときは「アンカーを解決できなかった」であり、検出ゼロとは
     区別して呼び出し側が警告すること。
@@ -467,6 +506,8 @@ def calibrate_layout(
             support=support,
             confidence=mean_score,
         )
+    if best is not None and best.confidence < min_confidence:
+        return None
     return best
 
 
@@ -476,6 +517,7 @@ def resolve_layout(
     *,
     scales: Sequence[float] = _DEFAULT_SCALES,
     min_support: int = _MIN_SUPPORT,
+    min_confidence: float = _MIN_CONFIDENCE,
 ) -> IndicatorLayout | None:
     """同梱テンプレートでキャリブレーションする (アンカー解決の入口)。"""
     return calibrate_layout(
@@ -483,6 +525,7 @@ def resolve_layout(
         templates,
         scales=scales,
         min_support=min_support,
+        min_confidence=min_confidence,
     )
 
 

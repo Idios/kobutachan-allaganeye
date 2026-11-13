@@ -145,6 +145,22 @@ def test_calibrate_ignores_inconsistent_positions() -> None:
     assert calibrate_layout(frames) is None
 
 
+def test_calibrate_rejects_low_confidence_consensus() -> None:
+    """同じ位置に静止しているがアンカーではない要素は採用しない。
+
+    配信オーバーレイのような「毎フレーム同じ位置にある」別 UI は合意条件 (同一位置 +
+    同一スケール) を満たしてしまう。真のアンカーはスコアが高い (実測 0.78-0.95 対
+    0.63) ので、信頼度の下限で棄却する。
+    """
+    other_ui = load_templates()["assist"][:20, :42]
+    frames = []
+    for seed in range(4):
+        frame = _noise(540, 960, seed=seed)
+        _paste(frame, other_ui, 500, 250)
+        frames.append(frame)
+    assert calibrate_layout(frames) is None
+
+
 def test_resolve_layout_uses_bundled_templates() -> None:
     """resolve_layout は同梱テンプレートで複数フレームから解決する。"""
     frames = [
@@ -199,6 +215,22 @@ def test_classify_works_on_bright_background() -> None:
     assert score >= 0.55
 
 
+def test_classify_prefers_bright_match_over_darker_higher_score() -> None:
+    """暗いが高スコアな候補ではなく、明るい合格候補を採る。
+
+    NCC はコントラスト不変なので、減光したコピーのほうがスコアが高くなりうる。
+    明度ゲートを通った候補の中から最良を選ばないと、本物のテキストを取り逃す。
+    """
+    patch = _noise(54, 252, seed=29)
+    tpl = load_templates()["assist"]
+    dimmed = (tpl.astype(np.float32) * 0.5).astype(np.uint8)
+    _paste(patch, dimmed, 10, 4)
+    _paste(patch, _scaled(tpl, 1.1), 60, 32)
+    kind, score = classify_text(patch)
+    assert kind == "assist"
+    assert score >= 0.55
+
+
 def test_classify_needs_bright_glyphs() -> None:
     """グリフが明るくない場合は採用しない (NCC がゲイン不変なことの裏返し)。"""
     patch = _band_patch(kind="assist", seed=23)
@@ -227,6 +259,17 @@ def test_detect_indicator_finds_text_in_band() -> None:
 def test_detect_indicator_returns_none_on_plain_frame() -> None:
     layout = IndicatorLayout(scale=1.0, x=618.0, y=614.0)
     assert detect_indicator(_noise(1080, 1920, seed=31), layout) is None
+
+
+def test_detect_indicator_rejects_incompatible_layout() -> None:
+    """レイアウトがフレームと整合しない場合は「検出なし」ではなくエラーにする。
+
+    黙って None ( = イベントなし ) にすると、キャリブレーション失敗が
+    「インジケータが 1 回も出なかった」と区別できなくなる。
+    """
+    layout = IndicatorLayout(scale=1.0, x=-5000.0, y=-5000.0)
+    with pytest.raises(ValueError):
+        detect_indicator(_noise(540, 960, seed=33), layout)
 
 
 def test_detect_indicator_at_scaled_layout() -> None:
