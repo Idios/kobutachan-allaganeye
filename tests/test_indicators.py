@@ -1,10 +1,11 @@
-"""KO / ASSIST インジケータ検出の単体テスト (#1106)。
+"""KO / ASSIST インジケータ検出の単体テスト (#1106 作業項目 2-3)。
 
 実測の正: `docs/superpowers/specs/2026-11-12-l4-ko-assist-indicator-appearance.md`
 
 合成フレームに同梱テンプレートを貼り付けて、
-キャリブレーション（スケール + 位置の解決）と分類（ko / assist / other）を検証する。
-実動画での検証は `test_indicators_slow.py`（slow マーカー）が担う。
+キャリブレーション (複数フレームの合意によるスケール + 位置の解決)、
+分類 (ko / assist / それ以外は無視)、イベントのグルーピングを検証する。
+実動画での検証は `test_indicators_slow.py` (slow マーカー) が担う。
 """
 
 from __future__ import annotations
@@ -13,12 +14,15 @@ import numpy as np
 import pytest
 
 from allaganeye.video.indicators import (
+    IndicatorEvent,
     IndicatorLayout,
     Rect,
     calibrate_layout,
     classify_text,
     detect_indicator,
+    group_detections,
     resolve_layout,
+    scan_indicators,
 )
 from allaganeye.video.refs import load_templates
 
@@ -33,120 +37,262 @@ def _paste(frame: np.ndarray, patch: np.ndarray, x: int, y: int) -> None:
     frame[y : y + h, x : x + w] = patch
 
 
-def test_text_band_follows_documented_geometry() -> None:
-    """band は実測値から導いた相対幾何（4-5）どおりに出る。"""
-    layout = IndicatorLayout(scale=1.0, bar=Rect(647.0, 775.0, 620.0, 630.0))
-    band = layout.text_band()
-    # w = 128 -> x0 = 647 - 64 = 583 / x1 = 775 + 19.2 = 794.2
-    #               y0 = 630 - 6.4 = 623.6 / y1 = 630 + 38.4 = 668.4
-    assert band.x0 == pytest.approx(583.0)
-    assert band.x1 == pytest.approx(794.2)
-    assert band.y0 == pytest.approx(623.6)
-    assert band.y1 == pytest.approx(668.4)
-
-
-@pytest.mark.parametrize("scale", [0.7, 1.0, 1.4])
-def test_calibrate_finds_scale_and_position(scale: float) -> None:
-    """別スケール・別位置に貼ったゲージからスケールと位置を復元できる。"""
+def _scaled(patch: np.ndarray, scale: float) -> np.ndarray:
     import cv2
 
+    return cv2.resize(
+        patch,
+        (max(8, round(patch.shape[1] * scale)), max(8, round(patch.shape[0] * scale))),
+        interpolation=cv2.INTER_AREA,
+    )
+
+
+def _frame_with_anchor(
+    scale: float, x: int, y: int, seed: int = 0, size: tuple[int, int] = (540, 960)
+) -> np.ndarray:
+    """アンカー (ゲージ左端) だけを貼った合成フレーム。"""
     templates = load_templates()
-    gauge = templates["gauge"]
-    tw = round(gauge.shape[1] * scale)
-    th = round(gauge.shape[0] * scale)
-    scaled = cv2.resize(gauge, (tw, th), interpolation=cv2.INTER_AREA)
-
-    frame = _noise(1080, 1920)
-    x, y = 900, 300
-    _paste(frame, scaled, x, y)
-
-    layout = calibrate_layout(frame, gauge)
-    assert layout is not None, "calibration should find the gauge"
-    assert layout.scale == pytest.approx(scale, abs=0.11)
-    # バー左端 = 貼り付け位置 + 62 * s
-    assert layout.bar.x0 == pytest.approx(x + 62.0 * scale, abs=6.0)
+    frame = _noise(size[0], size[1], seed=seed)
+    _paste(frame, _scaled(templates["anchor"], scale), x, y)
+    return frame
 
 
-def test_calibrate_returns_none_without_gauge() -> None:
-    """ゲージが無いフレームでは None を返す（誤検出しない）。"""
-    templates = load_templates()
-    frame = _noise(1080, 1920, seed=7)
-    assert calibrate_layout(frame, templates["gauge"]) is None
+def _band_patch(
+    scale: float = 1.0, kind: str | None = None, seed: int = 0
+) -> np.ndarray:
+    """バンドサイズの合成パッチ。`kind` を渡すとそのテキストを貼る。"""
+    layout = IndicatorLayout(scale=scale, x=618.0, y=614.0)
+    band = layout.text_band()
+    w = round(band.width / scale)
+    h = round(band.height / scale)
+    patch = _noise(h, w, seed=seed)
+    if kind is not None:
+        tpl = load_templates()[kind]
+        _paste(patch, tpl, 40, 12)
+    return patch
 
 
-@pytest.mark.parametrize(
-    ("key", "expected"),
-    [("ko", "ko"), ("assist", "assist")],
-)
+# ---------------------------------------------------------------------------
+# 幾何
+# ---------------------------------------------------------------------------
+
+
+def test_text_band_follows_measured_geometry() -> None:
+    """バンドは実測の相対幾何 (spec 4-5) どおりに出る。"""
+    layout = IndicatorLayout(scale=1.0, x=618.0, y=614.0)
+    band = layout.text_band()
+    # バー = x 626-779 / y 618-631 (w = 153) を参照に:
+    #   x0 = 626 - 0.5*153 = 549.5 / x1 = 779 + 0.15*153 = 801.95
+    #   y0 = 631 - 0.05*153 = 623.35 / y1 = 631 + 0.30*153 = 676.9
+    assert band.x0 == pytest.approx(549.5)
+    assert band.x1 == pytest.approx(801.95)
+    assert band.y0 == pytest.approx(623.35)
+    assert band.y1 == pytest.approx(676.9)
+
+
+def test_text_band_scales_with_layout() -> None:
+    """スケールが変わればバンドも同じ比率で拡縮する (絶対座標を使わない)。"""
+    base = IndicatorLayout(scale=1.0, x=618.0, y=614.0).text_band()
+    big = IndicatorLayout(scale=2.0, x=618.0, y=614.0).text_band()
+    assert big.width == pytest.approx(base.width * 2)
+    assert big.height == pytest.approx(base.height * 2)
+
+
+def test_rect_reports_size() -> None:
+    rect = Rect(10.0, 20.0, 40.0, 60.0)
+    assert rect.width == 30.0
+    assert rect.height == 40.0
+
+
+# ---------------------------------------------------------------------------
+# キャリブレーション (複数フレームの合意)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("scale", [0.8, 1.0, 1.4])
+def test_calibrate_recovers_scale_and_position(scale: float) -> None:
+    """同一位置にアンカーがある複数フレームからスケールと位置を復元できる。"""
+    frames = [_frame_with_anchor(scale, 500, 250, seed=i) for i in range(4)]
+    layout = calibrate_layout(frames)
+    assert layout is not None, "calibration should find the anchor"
+    assert layout.scale == pytest.approx(scale, abs=0.09)
+    assert layout.x == pytest.approx(500, abs=6)
+    assert layout.y == pytest.approx(250, abs=6)
+    assert layout.support == 4
+
+
+def test_calibrate_returns_none_without_anchor() -> None:
+    """アンカーが無いフレームでは None を返す (誤検出しない)。"""
+    frames = [_noise(540, 960, seed=i) for i in range(4)]
+    assert calibrate_layout(frames) is None
+
+
+def test_calibrate_requires_consensus_across_frames() -> None:
+    """1 フレームだけの一致では採用しない (背景の偶発一致を捨てる)。"""
+    frames = [_noise(540, 960, seed=i) for i in range(4)]
+    _paste(frames[0], load_templates()["anchor"], 500, 250)
+    assert calibrate_layout(frames) is None
+
+
+def test_calibrate_ignores_inconsistent_positions() -> None:
+    """フレームごとに位置が違うアンカーは合意にならない。"""
+    tpl = load_templates()["anchor"]
+    frames = []
+    for i, (x, y) in enumerate(((120, 120), (360, 200), (600, 280), (820, 380))):
+        frame = _noise(540, 960, seed=i)
+        _paste(frame, tpl, x, y)
+        frames.append(frame)
+    assert calibrate_layout(frames) is None
+
+
+def test_resolve_layout_uses_bundled_templates() -> None:
+    """resolve_layout は同梱テンプレートで複数フレームから解決する。"""
+    frames = [
+        _frame_with_anchor(1.0, 618, 614, seed=i, size=(1080, 1920)) for i in range(3)
+    ]
+    layout = resolve_layout(frames)
+    assert layout is not None
+    assert layout.source == "anchor"
+
+
+# ---------------------------------------------------------------------------
+# 分類 (ko / assist / それ以外は無視)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("key", "expected"), [("ko", "ko"), ("assist", "assist")])
 def test_classify_recognises_known_text(key: str, expected: str) -> None:
-    """同梱テンプレートを貼った帯域は正しく分類される。"""
-    templates = load_templates()
-    patch = _noise(60, 260, seed=3)
-    tpl = templates[key]
-    _paste(patch, tpl, 40, 12)
-    kind, score = classify_text(patch, templates)
+    """同梱テンプレートを貼ったバンドは正しく分類される。"""
+    kind, score = classify_text(_band_patch(kind=key, seed=3))
     assert kind == expected
     assert score >= 0.55
 
 
-def test_classify_other_text_is_not_a_hit() -> None:
-    """既知テンプレートに一致しない表示（例: BOOSTED!）は other になる。"""
-    templates = load_templates()
-    patch = _noise(60, 260, seed=11)
-    # 既知テキストと形が違う「太い横棒 + 縦棒」を描く
-    patch[20:30, 60:200] = 235
-    patch[20:50, 100:112] = 235
-    kind, _ = classify_text(patch, templates)
+def test_classify_empty_band_is_other() -> None:
+    """テキストが無いバンドは other になる。"""
+    kind, _ = classify_text(_band_patch(seed=11))
     assert kind == "other"
 
 
-def test_detect_end_to_end_at_other_scale() -> None:
-    """ゲージ + KO テキストを別スケールで貼ったフレームから ko を検出する。"""
-    import cv2
+def test_classify_unknown_text_is_other() -> None:
+    """既知テンプレートに一致しない表示 (BOOSTED! など) は other になる。"""
+    patch = _band_patch(seed=17)
+    # 横棒 + 縦棒だけの「別の文字列」を描く
+    patch[14:24, 60:200] = 235
+    patch[14:46, 100:112] = 235
+    patch[14:46, 150:162] = 235
+    kind, _ = classify_text(patch)
+    assert kind == "other"
 
-    templates = load_templates()
-    scale = 0.8
-    gauge = cv2.resize(
-        templates["gauge"],
-        (
-            round(templates["gauge"].shape[1] * scale),
-            round(templates["gauge"].shape[0] * scale),
-        ),
-        interpolation=cv2.INTER_AREA,
-    )
+
+def test_classify_works_on_bright_background() -> None:
+    """背景が明るい (戦闘エフェクトで白飛びする) フレームでも分類できる。
+
+    NCC はゲイン不変なので、背景輝度が上がってもテキストは同じように一致する。
+    実測でも参照フレーム (493.5 秒) の背景は白いビームで明るい。
+    """
+    patch = _band_patch(seed=21)
+    patch = np.clip(patch.astype(np.int16) + 80, 0, 255).astype(np.uint8)
+    _paste(patch, load_templates()["assist"], 40, 12)
+    kind, score = classify_text(patch)
+    assert kind == "assist"
+    assert score >= 0.55
+
+
+def test_classify_needs_bright_glyphs() -> None:
+    """グリフが明るくない場合は採用しない (NCC がゲイン不変なことの裏返し)。"""
+    patch = _band_patch(kind="assist", seed=23)
+    faded = (patch.astype(np.float32) * 0.6).astype(np.uint8)
+    kind, _ = classify_text(faded)
+    assert kind == "other"
+
+
+# ---------------------------------------------------------------------------
+# 検出 (レイアウトからのバンド切り出し)
+# ---------------------------------------------------------------------------
+
+
+def test_detect_indicator_finds_text_in_band() -> None:
+    """バンドに KO テキストが入っていれば検出する。"""
+    layout = IndicatorLayout(scale=1.0, x=618.0, y=614.0)
     frame = _noise(1080, 1920, seed=5)
-    gx, gy = 700, 500
-    _paste(frame, gauge, gx, gy)
-
-    # 真のバー位置から帯域を計算し、そこへ KO テンプレートを同じスケールで貼る
-    bar_w = 128.0 * scale
-    bar_x0 = gx + 62.0 * scale
-    bar_y1 = gy + 55.0 * scale
-    band_y0 = round(bar_y1 - 0.05 * bar_w)
-    tx = round(bar_x0 + (bar_w - templates["ko"].shape[1] * scale) / 2)
-    ko = cv2.resize(
-        templates["ko"],
-        (
-            round(templates["ko"].shape[1] * scale),
-            round(templates["ko"].shape[0] * scale),
-        ),
-        interpolation=cv2.INTER_AREA,
-    )
-    _paste(frame, ko, tx, band_y0 + 2)
-
-    layout = calibrate_layout(frame, templates["gauge"])
-    assert layout is not None
-    hit = detect_indicator(frame, layout, templates)
+    band = layout.text_band()
+    tpl = load_templates()["ko"]
+    _paste(frame, tpl, round(band.x0) + 60, round(band.y0) + 6)
+    hit = detect_indicator(frame, layout)
     assert hit is not None
     assert hit.kind == "ko"
 
 
-def test_resolve_layout_uses_bundled_templates() -> None:
-    """resolve_layout は同梱テンプレートでキャリブレーションする。"""
+def test_detect_indicator_returns_none_on_plain_frame() -> None:
+    layout = IndicatorLayout(scale=1.0, x=618.0, y=614.0)
+    assert detect_indicator(_noise(1080, 1920, seed=31), layout) is None
 
-    templates = load_templates()
-    frame = _noise(1080, 1920, seed=9)
-    _paste(frame, templates["gauge"], 1000, 400)
-    layout = resolve_layout(frame)
-    assert layout is not None
-    assert layout.source == "anchor"
+
+def test_detect_indicator_at_scaled_layout() -> None:
+    """レイアウトが 0.8 倍でもバンド内のテキストを拾う。"""
+    layout = IndicatorLayout(scale=0.8, x=621.0, y=289.0)
+    frame = _noise(1080, 1920, seed=7)
+    band = layout.text_band()
+    tpl = _scaled(load_templates()["assist"], 0.8)
+    _paste(frame, tpl, round(band.x0) + 10, round(band.y0) + 8)
+    hit = detect_indicator(frame, layout)
+    assert hit is not None
+    assert hit.kind == "assist"
+
+
+# ---------------------------------------------------------------------------
+# グルーピング / スキャン
+# ---------------------------------------------------------------------------
+
+
+def test_group_detections_merges_consecutive_samples() -> None:
+    """連続するヒットは 1 イベントにまとまり、開始/終了が記録される。"""
+    detections = [
+        (0.0, None, 0.2),
+        (0.1, "assist", 0.9),
+        (0.2, "assist", 0.95),
+        (0.3, "assist", 0.8),
+        (0.4, None, 0.3),
+    ]
+    events = group_detections(detections, max_gap=0.25, min_samples=2)
+    assert events == [
+        IndicatorEvent(kind="assist", start=0.1, end=0.3, score=0.95, samples=3)
+    ]
+
+
+def test_group_detections_drops_single_sample_blips() -> None:
+    """1 サンプルだけの検出は捨てる (単発ノイズ対策)。"""
+    detections = [(0.0, "ko", 0.6), (0.5, None, 0.1), (1.0, "ko", 0.7)]
+    assert group_detections(detections, max_gap=0.25, min_samples=2) == []
+
+
+def test_group_detections_splits_on_kind_change() -> None:
+    detections = [
+        (0.0, "ko", 0.7),
+        (0.1, "ko", 0.7),
+        (0.2, "assist", 0.9),
+        (0.3, "assist", 0.9),
+    ]
+    events = group_detections(detections, max_gap=0.25, min_samples=2)
+    assert [e.kind for e in events] == ["ko", "assist"]
+
+
+def test_scan_indicators_returns_events_from_frames() -> None:
+    """フレーム列から 0.1 秒刻みの検出を回してイベントを返す。"""
+    layout = IndicatorLayout(scale=1.0, x=618.0, y=614.0)
+    band = layout.text_band()
+    tpl = load_templates()["assist"]
+    frames = []
+    for i in range(20):
+        frame = _noise(1080, 1920, seed=40 + i)
+        if 5 <= i <= 12:
+            _paste(frame, tpl, round(band.x0) + 60, round(band.y0) + 6)
+        frames.append((i * 0.1, frame))
+    events = scan_indicators(frames, layout)
+    assert len(events) == 1
+    event = events[0]
+    assert event.kind == "assist"
+    assert event.start == pytest.approx(0.5)
+    assert event.end == pytest.approx(1.2)
+    assert event.samples == 8
