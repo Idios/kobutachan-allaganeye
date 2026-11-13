@@ -583,9 +583,9 @@ KO: 1 / ASSIST: 2 (3 intervals)
 | 0 | 正常終了（イベント 0 件でも 0） |
 | 1 | 一般エラー（レポート `-o` の書込み失敗など） |
 | 2 | 入力エラー（`metadata.json` 不在 / 不正 JSON / `source` 不在 / `indicator_layout` の値不正 / `indicator_layout` から導出した探索領域がフレーム外） |
-| 3 | ffmpeg / ffprobe エラー（動画を開けない等） |
+| 3 | ffmpeg / ffprobe エラー（動画を開けない / ffmpeg を起動できない等） |
 | 4 | 探索領域を解決できなかった（キャリブレーション失敗）。**「イベント 0 件」とは区別する** |
-| 5 | オプション値不正（`--interval` が下限未満・非有限値 / `-o` が入力を潰す先を指す） |
+| 5 | オプション値不正・書込み前の拒否（`--interval` が下限未満・非有限値 / `-o` や `metadata.json.tmp` が入力を潰す先を指す） |
 | 6 | metadata write-back の CAS 衝突（`--expected-mtime` と実 mtime の不一致） |
 | 130 | SIGINT (Ctrl+C) によるキャンセル |
 

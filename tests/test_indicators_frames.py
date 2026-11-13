@@ -137,6 +137,24 @@ def test_iter_accepts_clean_eof(monkeypatch: pytest.MonkeyPatch) -> None:
     assert [timestamp for timestamp, _ in frames] == [0.0, 0.1]
 
 
+def test_iter_translates_launch_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ffmpeg を起動できない (壊れた exe / 実行権限なし) ときも traceback にしない。
+
+    `Popen` の `OSError` は `AllaganEyeError` 系に乗らないため、そのままでは
+    exit 3 にならず CLI の `--json` にも error 行が出ない。
+    """
+    from allaganeye.exceptions import VideoProcessingError
+    from allaganeye.video import frames
+
+    def boom(*_args: object, **_kwargs: object) -> object:
+        raise OSError(22, "not executable")
+
+    monkeypatch.setattr(frames.subprocess, "Popen", boom)
+    monkeypatch.setattr(frames, "find_ffmpeg", lambda: "ffmpeg")
+    with pytest.raises(VideoProcessingError, match="ffmpeg"):
+        list(frames.iter_gray_frames(Path("in.mp4"), fps=10.0, frame_size=(4, 2)))
+
+
 def test_iter_does_not_kill_after_clean_eof(monkeypatch: pytest.MonkeyPatch) -> None:
     """stdout が EOF でもプロセスが未 reap のことがある。ここで kill しない。
 

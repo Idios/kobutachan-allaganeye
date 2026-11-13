@@ -102,7 +102,16 @@ def iter_gray_frames(
     message = ""
     completed = False
     with tempfile.TemporaryFile() as error_log:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=error_log)
+        try:
+            process = subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=error_log
+            )
+        except OSError as e:
+            # 壊れた ffmpeg / 実行権限なし / ALLAGANEYE_FFMPEG の誤指し。
+            # ここを素通りさせると `OSError` が CLI の error ハンドラをすり抜ける。
+            raise VideoProcessingError(
+                f"cannot launch ffmpeg ({command[0]}) for {video}: {e}"
+            ) from e
         assert process.stdout is not None
         index = 0
         try:

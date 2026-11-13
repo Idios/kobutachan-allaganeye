@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -295,6 +296,25 @@ def test_indicators_writes_report_atomically(
     assert result.exit_code == 0, result.output
     assert json.loads(out.read_text(encoding="utf-8"))["events"]
     assert list(tmp_path.glob("events.json.*")) == []
+
+
+def test_indicators_rejects_staging_aliasing_source(
+    app: typer.Typer, metadata_path: Path, fake_video
+):
+    """`metadata.json.tmp` が元動画と同じ実体なら write-back 前に拒否する。
+
+    `write_metadata_atomic` は staging に `write_text` する (truncate)。
+    staging がハードリンク / シンボリックで録画を指していると、write-back が
+    録画を不可逆に破壊する。
+    """
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    source = Path(payload["source"])
+    staging = metadata_path.with_suffix(metadata_path.suffix + ".tmp")
+    os.link(source, staging)
+    result = runner.invoke(app, ["indicators", str(metadata_path)])
+    assert result.exit_code == 5
+    assert "source video" in result.output
+    assert source.read_bytes() == b""
 
 
 def test_indicators_missing_metadata_exits_2(app: typer.Typer, tmp_path: Path):

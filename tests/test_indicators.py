@@ -525,6 +525,24 @@ def test_layout_payload_accepts_unknown_source() -> None:
     assert restored.source == "user"
 
 
+def test_layout_payload_rejects_oversized_number() -> None:
+    """巨大な整数 (float に変換できない) は traceback ではなく InputFileError。
+
+    JSON の数値は桁数無制限なので、`float(value)` が `OverflowError` を投げる。
+    これは `AllaganEyeError` ではないため catch をすり抜ける。
+    """
+    payload = {
+        "anchor_x": 0.3,
+        "anchor_y": 0.5,
+        "scale": int("1" + "0" * 400),
+        "support": 6,
+        "confidence": 0.9,
+        "source": "anchor",
+    }
+    with pytest.raises(InputFileError, match="scale"):
+        layout_from_payload(payload, frame_width=1920, frame_height=1080)
+
+
 def test_layout_payload_rejects_non_mapping() -> None:
     with pytest.raises(InputFileError):
         layout_from_payload([], frame_width=1920, frame_height=1080)  # type: ignore[arg-type]

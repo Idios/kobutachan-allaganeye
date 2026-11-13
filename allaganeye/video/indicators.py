@@ -628,7 +628,15 @@ def _payload_number(
         raise InputFileError(
             f"indicator_layout.{key} は数値が必要です (実際: {type(value).__name__})"
         )
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        # JSON の整数は桁数無制限。float に収まらない値はここで止める
+        # (素通りすると `OverflowError` が `AllaganEyeError` の catch をすり抜ける)。
+        raise InputFileError(
+            f"indicator_layout.{key} が大きすぎて数値に変換できません "
+            f"(桁数 {len(str(value))})"
+        ) from None
     # NaN / infinity は範囲比較をすり抜ける (NaN は全ての比較が False、inf は上限なしなら pass)。
     # JSON の `NaN` / `Infinity` / `1e309` は Python の json が読めてしまうので、
     # 範囲チェックより先に有限性を見る。
