@@ -216,6 +216,22 @@ def test_indicators_rejects_invalid_interval(
     assert "--interval" in result.output
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_indicators_rejects_non_finite_interval(
+    app: typer.Typer, metadata_path: Path, fake_video, value: str
+):
+    """NaN / inf は `interval < MIN_INTERVAL` が False になるので別途弾く。
+
+    素通りすると `fps=1/interval` が nan / 0.0 になり、ffmpeg の引数として
+    意味不明な値が渡る (NaN はすべての比較が False なので下限判定をすり抜ける)。
+    """
+    result = runner.invoke(
+        app, ["indicators", str(metadata_path), "--interval", value, "--no-write"]
+    )
+    assert result.exit_code == 5
+    assert "--interval" in result.output
+
+
 def test_indicators_missing_metadata_exits_2(app: typer.Typer, tmp_path: Path):
     result = runner.invoke(app, ["indicators", str(tmp_path / "nope.json")])
     assert result.exit_code == 2

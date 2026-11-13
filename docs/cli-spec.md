@@ -526,6 +526,8 @@ allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR] [--include I,J,K]
   試合が 1 つも無い metadata では動画全体から等間隔に抜く
 - 走査は既定 **0.1 秒刻み**。連続 KO の更新は 0.15-0.35 秒間隔なので、それより粗いと
   取りこぼす ([design note](superpowers/specs/2026-11-12-l4-ko-assist-indicator-appearance.md) 4-9)
+- 走査範囲は**動画全体**。`matches` はキャリブレーションのサンプリングと、各イベントへの
+  `match_index` 注記に使う（試合境界外の検出も落とさずに返す）
 - `BOOSTED!`（ドローン撃破による戦意値上昇）など未知の表示は既定で無視する
 
 ### 構文
@@ -548,7 +550,7 @@ allaganeye indicators <metadata.json> [-o events.json] [--json]
 | --- | --- | --- |
 | `-o PATH` / `--output PATH` | (なし) | 検出結果を JSON ドキュメントとして書き出す（[output-spec.md §「indicators コマンド出力」](output-spec.md)） |
 | `--json` | `false` | stdout に JSON Lines を出す（進捗 + 最終 `complete` 行）。人間向け summary は出さない |
-| `--interval SEC` | `0.1` | 走査間隔（秒）。下限 `0.05`（20 Hz を超える走査は情報を増やさない）を下回ると **exit 5** |
+| `--interval SEC` | `0.1` | 走査間隔（秒）。下限 `0.05`（20 Hz を超える走査は情報を増やさない）を下回るか、有限値（`NaN` / `inf`）でなければ **exit 5** |
 | `--recalibrate` | `false` | `metadata.json` の `indicator_layout` を無視して再解決する |
 | `--write` / `--no-write` | `--write` | 解決した `indicator_layout` を `metadata.json` に write-back する |
 | `--expected-mtime MS` | (なし) | write-back 前の CAS guard。`metadata.json` の現在 mtime (Unix ms) と不一致なら **exit 6**（GUI ConflictModal 対応） |
@@ -580,10 +582,10 @@ KO: 1 / ASSIST: 2 (3 intervals)
 | --- | --- |
 | 0 | 正常終了（イベント 0 件でも 0） |
 | 1 | 一般エラー |
-| 2 | 入力エラー（`metadata.json` 不在 / 不正 JSON / `source` 不在 / `indicator_layout` の値不正） |
+| 2 | 入力エラー（`metadata.json` 不在 / 不正 JSON / `source` 不在 / `indicator_layout` の値不正 / `indicator_layout` から導出した探索領域がフレーム外） |
 | 3 | ffmpeg / ffprobe エラー（動画を開けない等） |
 | 4 | 探索領域を解決できなかった（キャリブレーション失敗）。**「イベント 0 件」とは区別する** |
-| 5 | オプション値不正（`--interval` が下限未満） |
+| 5 | オプション値不正（`--interval` が下限未満・非有限値 / `-o` が入力を潰す先を指す） |
 | 6 | metadata write-back の CAS 衝突（`--expected-mtime` と実 mtime の不一致） |
 | 130 | SIGINT (Ctrl+C) によるキャンセル |
 
