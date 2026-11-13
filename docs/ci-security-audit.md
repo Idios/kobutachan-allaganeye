@@ -157,6 +157,29 @@ CI が常時 fail する状態を避けるため、本 workflow では default �
 cd gui && npm audit --json
 ```
 
+### minimatch の GHSA-g3hv-75wg-m249 対応 (2026-11-13)
+
+`npm audit --audit-level=moderate` が dev-only の moderate で fail したため、対応を記録する。
+
+**advisory**: GHSA-g3hv-75wg-m249「minimatch has potential denial of service via globparts amplification」、severity medium、影響範囲 `>= 7.0.0, < 11.0.1`、patched **11.0.1**。
+
+**依存鎖 (すべて `dev: true`、ビルド成果物には入らない)**
+
+| 経路 | 宣言 |
+| --- | --- |
+| `eslint` 10.2.1 | `minimatch ^10.2.6` を直接 + `@eslint/config-array` 0.23.5 経由 (`^10.2.4`) |
+| `typescript-eslint` 8.69.0 | `@typescript-eslint/typescript-estree` 経由 (`^10.2.2`) |
+
+**判断: `gui/package.json` の `overrides` で `minimatch` を 11.0.8 に固定する。**
+
+- eslint 10.14.0 (latest) / typescript-eslint 8.72.2 (latest) も依然 `minimatch ^10` に依存しており、**upstream fix は存在しない** (2026-11-13 実測)。10.2.6 は patched ではない (patched は 11.0.1 のみ)
+- `--omit=dev` は採らない。この advisory の全経路が dev 依存なので `--omit=dev` で黙るが、それは **dev 依存全体を監査対象外にする**ことを意味し、gate を構造的に弱める (将来の dev 依存 advisory を全部素通しする)
+- minimatch 11 は CJS 互換 (`exports.require` あり) で engines は `node 20 || >=22`。CI の node 20 で動く
+
+**検証 (2026-11-13)**: override 適用後に `npm ci` → `npm audit --audit-level=moderate` が `0 vulnerabilities`。続けて `npm run lint` / `npm run typecheck` / `npm test` (903 passed) / `npm run build` がすべて green。
+
+**解除トリガー**: eslint / typescript-eslint が `minimatch >= 11.0.1` に依存した時点で `overrides` を削除する (残すと upstream の更新を黙って上書きし続ける)。
+
 ### tauri 2.11 transitive 制約 (PR #760 v0.2.1 Track A)
 
 tauri 2.10.3 → 2.11.1 bump (PR #760) を実施したが、以下の transitive 依存は新版へ解決できなかった:
