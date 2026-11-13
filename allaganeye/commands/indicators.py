@@ -18,6 +18,7 @@ metadata.json を入力に、KO / ASSIST インジケータの発生区間を検
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -385,6 +386,12 @@ def run_indicators(
     progress: Callable[[str], None],
 ) -> IndicatorReport:
     """Body of the command, kept free of typer so it can be unit-tested."""
+    # NaN はすべての比較が False なので、下限比較より先に有限性を見る。
+    # 素通りすると `fps=1/interval` が nan / 0.0 になり、ffmpeg に意味不明な値が渡る。
+    if not math.isfinite(interval):
+        raise ConfigValidationError(
+            f"--interval must be a finite number, got {interval}"
+        )
     if interval < MIN_INTERVAL:
         raise ConfigValidationError(
             f"--interval must be >= {MIN_INTERVAL}s (continuous KO updates arrive "
