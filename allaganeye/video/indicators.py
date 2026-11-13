@@ -73,6 +73,9 @@ _MIN_SCORE = {"ko": 0.55, "assist": 0.68}
 _BRIGHT_CORE = 150
 _MIN_BRIGHT_FRACTION = 0.45
 
+# 「この位置は採用しない」を表す NCC マップ上の番兵値。NCC の下限 (-1) より下にする。
+_GATED_OUT = -2.0
+
 # アンカー照合のハイパス (局所平均を引いて背景輝度の支配を弱める)。
 _HIGH_PASS_KERNEL = 11
 
@@ -231,13 +234,13 @@ def _glyph_mask(tpl: np.ndarray) -> np.ndarray:
     return cv2.dilate(_glyph_core(tpl), np.ones((3, 3), np.uint8))
 
 
-def _masked_ncc(
-    patch: np.ndarray, tpl: np.ndarray, mask: np.ndarray
-) -> tuple[float, tuple[int, int]]:
-    """マスク画素だけの正規化相互相関の最大値とその位置 (左上)。
+def _ncc_map(patch: np.ndarray, tpl: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """マスク画素だけの正規化相互相関マップ (各位置の左上が添字)。
 
     OpenCV の masked matching は TM_CCORR / TM_SQDIFF 専用で平均を引かないため、
     「マスク内平均を引いた NCC」を filter2D + TM_CCORR で直接組む。
+    マップを返すのは、明度ゲートを**位置の選択前**に掛けるため (最大値だけを返すと、
+    暗い高スコア位置が本物の明るい位置を隱す)。
     """
     cv2 = _import_cv2()
     p = patch.astype(np.float32)
@@ -248,11 +251,11 @@ def _masked_ncc(
     res_h = p.shape[0] - height + 1
     res_w = p.shape[1] - width + 1
     if m_sum < 1.0 or res_h < 1 or res_w < 1:
-        return -1.0, (0, 0)
+        return np.full((0, 0), _GATED_OUT, np.float32)
     t_sum = float((m * t).sum())
     var_t = float((m * t * t).sum()) - t_sum * t_sum / m_sum
     if var_t <= 1e-6:
-        return -1.0, (0, 0)
+        return np.full((res_h, res_w), _GATED_OUT, np.float32)
     sum_p = cv2.filter2D(p, -1, m, anchor=(0, 0), borderType=cv2.BORDER_REFLECT)[
         :res_h, :res_w
     ]
@@ -262,25 +265,31 @@ def _masked_ncc(
     corr = cv2.matchTemplate(p, m * t, cv2.TM_CCORR)
     var_p = sum_p2 - sum_p * sum_p / m_sum
     denom = np.sqrt(np.clip(var_p, 0.0, None) * var_t)
-    ncc = np.where(
-        denom > 1e-6, (corr - sum_p * t_sum / m_sum) / np.maximum(denom, 1e-6), -1.0
-    )
-    idx = np.unravel_index(int(np.argmax(ncc)), ncc.shape)
-    return float(ncc[idx]), (int(idx[1]), int(idx[0]))
+    return np.where(
+        denom > 1e-6,
+        (corr - sum_p * t_sum / m_sum) / np.maximum(denom, 1e-6),
+        _GATED_OUT,
+    ).astype(np.float32)
 
 
-def _bright_fraction(
-    patch: np.ndarray, location: tuple[int, int], core: np.ndarray
-) -> float:
-    """一致位置のグリフ画素が実際に明るい割合。"""
+def _bright_map(patch: np.ndarray, core: np.ndarray) -> np.ndarray:
+    """各位置での「グリフ画素が実際に明るい割合」マップ (0..1)。"""
+    cv2 = _import_cv2()
     height, width = core.shape[:2]
-    y, x = location[1], location[0]
-    sub = patch[y : y + height, x : x + width]
-    if sub.shape != core.shape:
-        return 0.0
-    bright = ((sub >= _BRIGHT_CORE) & (core > 0)).sum()
-    total = int(core.sum())
-    return float(bright) / float(total) if total else 0.0
+    res_h = patch.shape[0] - height + 1
+    res_w = patch.shape[1] - width + 1
+    total = float(core.sum())
+    if total < 1.0 or res_h < 1 or res_w < 1:
+        return np.zeros((0, 0), np.float32)
+    bright = (patch >= _BRIGHT_CORE).astype(np.float32)
+    sums = cv2.filter2D(
+        bright,
+        -1,
+        core.astype(np.float32),
+        anchor=(0, 0),
+        borderType=cv2.BORDER_REFLECT,
+    )[:res_h, :res_w]
+    return (sums / total).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -307,11 +316,13 @@ def match_text(
     """
     tpls = templates if templates is not None else load_templates()
     unset = {
-        kind: TextMatch(kind=kind, score=-1.0, scale_factor=1.0, bright_fraction=0.0)
+        kind: TextMatch(
+            kind=kind, score=_GATED_OUT, scale_factor=1.0, bright_fraction=0.0
+        )
         for kind in _TEXT_KINDS
     }
-    bright_best: dict[str, TextMatch] = dict(unset)
-    overall_best: dict[str, TextMatch] = dict(unset)
+    qualified: dict[str, TextMatch] = dict(unset)
+    overall: dict[str, TextMatch] = dict(unset)
     for factor in scale_factors:
         effective = scale * factor
         normalised = _resize(
@@ -321,30 +332,36 @@ def match_text(
         )
         for kind in _TEXT_KINDS:
             tpl = tpls[kind]
-            score, location = _masked_ncc(normalised, tpl, _glyph_mask(tpl))
-            if score <= -1.0:
+            ncc = _ncc_map(normalised, tpl, _glyph_mask(tpl))
+            if ncc.size == 0:
                 continue
-            match = TextMatch(
-                kind=kind,
-                score=score,
-                scale_factor=factor,
-                bright_fraction=_bright_fraction(
-                    normalised, location, _glyph_core(tpl)
-                ),
-            )
-            if score > overall_best[kind].score:
-                overall_best[kind] = match
-            if (
-                match.bright_fraction >= _MIN_BRIGHT_FRACTION
-                and score > bright_best[kind].score
-            ):
-                bright_best[kind] = match
+            bright = _bright_map(normalised, _glyph_core(tpl))
+            gated = np.where(bright >= _MIN_BRIGHT_FRACTION, ncc, _GATED_OUT)
+            overall[kind] = _better(overall[kind], ncc, factor, bright)
+            qualified[kind] = _better(qualified[kind], gated, factor, bright)
     return {
-        kind: (
-            bright_best[kind] if bright_best[kind].score > -1.0 else overall_best[kind]
-        )
+        kind: (qualified[kind] if qualified[kind].score > _GATED_OUT else overall[kind])
         for kind in _TEXT_KINDS
     }
+
+
+def _better(
+    current: TextMatch,
+    score_map: np.ndarray,
+    scale_factor: float,
+    bright_map: np.ndarray,
+) -> TextMatch:
+    """マップの最大値が現状より良ければ `TextMatch` を置き換える。"""
+    index = np.unravel_index(int(np.argmax(score_map)), score_map.shape)
+    score = float(score_map[index])
+    if score <= current.score:
+        return current
+    return TextMatch(
+        kind=current.kind,
+        score=score,
+        scale_factor=scale_factor,
+        bright_fraction=float(bright_map[index]),
+    )
 
 
 def classify_text(

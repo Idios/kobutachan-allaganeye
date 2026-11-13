@@ -21,6 +21,7 @@ from allaganeye.video.indicators import (
     classify_text,
     detect_indicator,
     group_detections,
+    match_text,
     resolve_layout,
     scan_indicators,
 )
@@ -219,7 +220,8 @@ def test_classify_prefers_bright_match_over_darker_higher_score() -> None:
     """暗いが高スコアな候補ではなく、明るい合格候補を採る。
 
     NCC はコントラスト不変なので、減光したコピーのほうがスコアが高くなりうる。
-    明度ゲートを通った候補の中から最良を選ばないと、本物のテキストを取り逃す。
+    明度ゲートを位置の選択前に掛けないと、本物のテキストを取り逃す。
+    ここでは縮小したコピー (別スケール) を置いているので、スケールをまたぐ選択の検証。
     """
     patch = _noise(54, 252, seed=29)
     tpl = load_templates()["assist"]
@@ -229,6 +231,31 @@ def test_classify_prefers_bright_match_over_darker_higher_score() -> None:
     kind, score = classify_text(patch)
     assert kind == "assist"
     assert score >= 0.55
+
+
+def test_match_text_gates_brightness_before_choosing_location() -> None:
+    """同じスケール内で暗い高スコア位置と明るい位置が競合しても明るいほうを採る。
+
+    スコアマップの最大値だけを取ると、暗い妨害物が正解を隱す。明度をマップの
+    段階で適用してから最大値を取る必要がある。スケールを 1 つに固定するのは、
+    別スケールの探索で偶然救済されるのを避け、選択順序の欠陥を直接狙うため。
+    """
+    rng = np.random.default_rng(31)
+    patch = _noise(54, 252, seed=31)
+    tpl = load_templates()["assist"]
+    # 完全一致だが減光されたコピー (スコア 1.0 / 明度ゲートは落ちる)
+    dimmed = (tpl.astype(np.float32) * 0.5).astype(np.uint8)
+    _paste(patch, dimmed, 8, 4)
+    # わずかにノイズが乗った本物 (スコアは僅かに低いが明るい)
+    noisy = np.clip(
+        tpl.astype(np.int16) + rng.integers(-6, 7, size=tpl.shape), 0, 255
+    ).astype(np.uint8)
+    _paste(patch, noisy, 60, 32)
+
+    match = match_text(patch, scale_factors=(1.0,))["assist"]
+    assert match.bright_fraction >= 0.45
+    assert match.score >= 0.55
+    assert classify_text(patch)[0] == "assist"
 
 
 def test_classify_needs_bright_glyphs() -> None:
