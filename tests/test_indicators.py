@@ -348,6 +348,21 @@ def test_validate_layout_for_frame_rejects_non_positive_frame_size() -> None:
         validate_layout_for_frame(layout, frame_width=0, frame_height=1080)
 
 
+def test_validate_layout_for_frame_matches_the_real_crop_rounding() -> None:
+    """丸めた幅ではなく、実際の切り出し端点の差で最小寸法を判定する。
+
+    スケール 0.29 では band 高さが 15.53 なので `round(band.height)` は 16 で
+    通過するが、`detect_indicator` は端点を別々に丸めるため 15 px になる。
+    この 1 px 差を許すとキャリブレーション資産の検証をすり抜け、走査の最初の
+    フレームで `ValueError` になる。
+    """
+    layout = IndicatorLayout(scale=0.29, x=100.0, y=100.0)
+    with pytest.raises(InputFileError, match="小さすぎます"):
+        validate_layout_for_frame(layout, frame_width=1920, frame_height=1080)
+    with pytest.raises(ValueError):
+        detect_indicator(np.zeros((1080, 1920), dtype=np.uint8), layout)
+
+
 def test_detect_indicator_at_scaled_layout() -> None:
     """レイアウトが 0.8 倍でもバンド内のテキストを拾う。"""
     layout = IndicatorLayout(scale=0.8, x=621.0, y=289.0)

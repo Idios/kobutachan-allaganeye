@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+import tempfile
 from typing import Annotated, Any
 
 import typer
@@ -374,6 +376,39 @@ def _guard_mtime(metadata_path: Path, expected_mtime: int | None) -> None:
         )
 
 
+def _stage_report(output: Path, payload: dict[str, Any]) -> Path:
+    """レポートを出力先と同じディレクトリの staging に書く (公開はまだしない)。
+
+    既存の `-o` を truncate しないための 2 段階化。書込みに失敗しても既存の
+    レポートは元のまま残る。staging 名は `mkstemp` のランダム名にして、
+    利用者の `events.json.tmp` のような既存ファイルを巻き込まない。
+    """
+    try:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, name = tempfile.mkstemp(
+            dir=output.parent, prefix=output.name + ".", suffix=".tmp"
+        )
+    except OSError as e:
+        raise AllaganEyeError(f"Cannot prepare the report path {output}: {e}") from e
+    staging = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+    except OSError as e:
+        staging.unlink(missing_ok=True)
+        raise AllaganEyeError(f"Cannot write the report to {output}: {e}") from e
+    return staging
+
+
+def _publish_report(staging: Path, output: Path) -> None:
+    """staging を `os.replace` で公開する (どちらかが失敗しても中途半端にならない)。"""
+    try:
+        os.replace(staging, output)
+    except OSError as e:
+        staging.unlink(missing_ok=True)
+        raise AllaganEyeError(f"Cannot write the report to {output}: {e}") from e
+
+
 def run_indicators(
     *,
     metadata_path: Path,
@@ -460,21 +495,23 @@ def run_indicators(
     )
 
     # どの書込みよりも先に CAS を確かめる: ここで落ちれば `-o` のファイルも作らない。
-    # (metadata の書込み直前にもう一度確かめて、判定から書込みまでの隙を狭める)
     if write:
         _guard_mtime(metadata_path, expected_mtime)
 
-    if output is not None:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(
-            json.dumps(report.to_payload(), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-
-    if write:
-        _guard_mtime(metadata_path, expected_mtime)
-        payload["indicator_layout"] = layout_payload
-        write_metadata_atomic(metadata_path, payload)
+    # レポートは staging に書いて、metadata write-back の成功後に `os.replace` で公開する。
+    # 先に公開すると、2 回目の CAS で衝突したときに既存レポートを置き換えてしまう。
+    staged = _stage_report(output, report.to_payload()) if output is not None else None
+    try:
+        if write:
+            _guard_mtime(metadata_path, expected_mtime)
+            payload["indicator_layout"] = layout_payload
+            write_metadata_atomic(metadata_path, payload)
+        if staged is not None and output is not None:
+            _publish_report(staged, output)
+            staged = None
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
 
     emit(
         {

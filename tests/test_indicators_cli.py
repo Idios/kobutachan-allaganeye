@@ -17,6 +17,7 @@ from allaganeye.commands.indicators import (
     calibration_timestamps,
     register,
 )
+from allaganeye.exceptions import MetadataConflictError
 from allaganeye.video.indicators import IndicatorLayout, layout_to_payload
 from allaganeye.video.refs import load_templates
 
@@ -230,6 +231,70 @@ def test_indicators_rejects_non_finite_interval(
     )
     assert result.exit_code == 5
     assert "--interval" in result.output
+
+
+def test_indicators_reports_output_write_failure(
+    app: typer.Typer, metadata_path: Path, fake_video, tmp_path: Path
+):
+    """`-o` の親がファイルで書けないとき、traceback ではなく exit 1 + メッセージ。"""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    result = runner.invoke(
+        app,
+        ["indicators", str(metadata_path), "--no-write", "-o", str(blocker / "e.json")],
+    )
+    assert result.exit_code == 1
+    assert "Cannot" in result.output
+
+
+def test_indicators_cas_conflict_keeps_existing_report(
+    app: typer.Typer,
+    metadata_path: Path,
+    fake_video,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """レポート公開前の 2 回目の CAS で落ちたら、既存レポートを置き換えない。
+
+    公開を metadata write-back の後に回しているのはこのため。staging も残さない。
+    """
+    out = tmp_path / "events.json"
+    out.write_text("KEEP\n", encoding="utf-8")
+    calls = {"count": 0}
+
+    def guard(_path: Path, _expected: int | None) -> None:
+        calls["count"] += 1
+        if calls["count"] >= 2:
+            raise MetadataConflictError("metadata.json changed on disk")
+
+    monkeypatch.setattr(indicators_cmd, "_guard_mtime", guard)
+    result = runner.invoke(
+        app,
+        [
+            "indicators",
+            str(metadata_path),
+            "-o",
+            str(out),
+            "--expected-mtime",
+            "1",
+        ],
+    )
+    assert result.exit_code == 6
+    assert out.read_text(encoding="utf-8") == "KEEP\n"
+    assert list(tmp_path.glob("events.json.*")) == []
+
+
+def test_indicators_writes_report_atomically(
+    app: typer.Typer, metadata_path: Path, fake_video, tmp_path: Path
+):
+    """正常路では staging を経てレポートが公開され、staging は残らない。"""
+    out = tmp_path / "events.json"
+    result = runner.invoke(
+        app, ["indicators", str(metadata_path), "--no-write", "-o", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(out.read_text(encoding="utf-8"))["events"]
+    assert list(tmp_path.glob("events.json.*")) == []
 
 
 def test_indicators_missing_metadata_exits_2(app: typer.Typer, tmp_path: Path):
