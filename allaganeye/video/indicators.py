@@ -662,6 +662,36 @@ def _payload_int(payload: Mapping[str, Any], key: str, *, minimum: int) -> int:
     return value
 
 
+def validate_layout_for_frame(
+    layout: IndicatorLayout, *, frame_width: int, frame_height: int
+) -> None:
+    """探索領域がフレーム内に収まり、十分な大きさか走査前に確かめる。
+
+    `detect_indicator` は条件を満たさないと `ValueError` を投げる。走査ループの
+    途中でそれが起きると CLI の exit code 体系に乗らない traceback になるので、
+    フレームを 1 枚も読む前にここで落とす (metadata.json に残った古い / 手で書き換えた
+    `indicator_layout` が典型)。
+    """
+    if frame_width <= 0 or frame_height <= 0:
+        raise ValueError(
+            f"frame size must be positive, got {frame_width}x{frame_height}"
+        )
+    band = layout.text_band()
+    if band.x0 < 0 or band.y0 < 0 or band.x1 > frame_width or band.y1 > frame_height:
+        raise InputFileError(
+            "indicator_layout から導出した探索領域がフレームに収まっていません "
+            f"(band=({band.x0:.1f}, {band.y0:.1f}, {band.x1:.1f}, {band.y1:.1f}), "
+            f"frame={frame_width}x{frame_height})。"
+            "--recalibrate で再解決するか、metadata.json の値を確認してください。"
+        )
+    if round(band.width) < _MIN_BAND_PX or round(band.height) < _MIN_BAND_PX:
+        raise InputFileError(
+            "indicator_layout から導出した探索領域が小さすぎます "
+            f"(band=({band.x0:.1f}, {band.y0:.1f}, {band.x1:.1f}, {band.y1:.1f}))。"
+            "scale が小さすぎる可能性があります。"
+        )
+
+
 # ---------------------------------------------------------------------------
 # 検出ループ
 # ---------------------------------------------------------------------------
@@ -753,4 +783,5 @@ __all__ = [
     "match_text",
     "resolve_layout",
     "scan_indicators",
+    "validate_layout_for_frame",
 ]

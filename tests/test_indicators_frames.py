@@ -135,3 +135,20 @@ def test_iter_accepts_clean_eof(monkeypatch: pytest.MonkeyPatch) -> None:
     proc = _FakeProcess([bytes(8), bytes(8)], returncode=0)
     frames = _run_fake(monkeypatch, proc)
     assert [timestamp for timestamp, _ in frames] == [0.0, 0.1]
+
+
+def test_iter_does_not_kill_after_clean_eof(monkeypatch: pytest.MonkeyPatch) -> None:
+    """stdout が EOF でもプロセスが未 reap のことがある。ここで kill しない。
+
+    ffmpeg は終了処理で stdout を先に閉じるため、`poll()` が None でも
+    正常終了している場合がある。kill すると exit -9 を「失敗」と誤判定する。
+    """
+
+    class _AlwaysRunning(_FakeProcess):
+        def poll(self) -> int | None:
+            return None
+
+    running = _AlwaysRunning([bytes(8)], returncode=0)
+    frames = _run_fake(monkeypatch, running)
+    assert len(frames) == 1
+    assert running.killed is False

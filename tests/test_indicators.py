@@ -27,6 +27,7 @@ from allaganeye.video.indicators import (
     match_text,
     resolve_layout,
     scan_indicators,
+    validate_layout_for_frame,
 )
 from allaganeye.video.refs import load_templates
 
@@ -307,6 +308,44 @@ def test_detect_indicator_rejects_partially_clipped_band() -> None:
     layout = IndicatorLayout(scale=1.0, x=618.0, y=614.0)
     with pytest.raises(ValueError):
         detect_indicator(_noise(650, 640, seed=35), layout)
+
+
+def test_validate_layout_for_frame_accepts_resolved_layout() -> None:
+    """実測レイアウト (スケール 1.0 / 0.8) はどちらもフレームに収まる。"""
+    validate_layout_for_frame(
+        IndicatorLayout(scale=1.0, x=618.0, y=614.0),
+        frame_width=1920,
+        frame_height=1080,
+    )
+    validate_layout_for_frame(
+        IndicatorLayout(scale=0.8, x=621.0, y=289.0),
+        frame_width=1920,
+        frame_height=1080,
+    )
+
+
+def test_validate_layout_for_frame_rejects_out_of_frame_band() -> None:
+    """帯域がフレーム外へ出る layout は走査前に InputFileError で落とす。
+
+    `detect_indicator` は走査中に `ValueError` を投げるが、それは CLI の exit code
+    体系に乗らない traceback になる。
+    """
+    layout = IndicatorLayout(scale=1.0, x=0.0, y=0.0)
+    with pytest.raises(InputFileError, match="収まっていません"):
+        validate_layout_for_frame(layout, frame_width=1920, frame_height=1080)
+
+
+def test_validate_layout_for_frame_rejects_tiny_band() -> None:
+    """スケールが小さすぎて帯域が潰れる layout も拒否する。"""
+    layout = IndicatorLayout(scale=0.02, x=100.0, y=100.0)
+    with pytest.raises(InputFileError, match="小さすぎます"):
+        validate_layout_for_frame(layout, frame_width=1920, frame_height=1080)
+
+
+def test_validate_layout_for_frame_rejects_non_positive_frame_size() -> None:
+    layout = IndicatorLayout(scale=1.0, x=618.0, y=614.0)
+    with pytest.raises(ValueError):
+        validate_layout_for_frame(layout, frame_width=0, frame_height=1080)
 
 
 def test_detect_indicator_at_scaled_layout() -> None:
