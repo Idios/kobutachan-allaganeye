@@ -317,6 +317,20 @@ def test_indicators_rejects_staging_aliasing_source(
     assert source.read_bytes() == b""
 
 
+def test_indicators_rejects_staging_aliasing_restore_backup(
+    app: typer.Typer, metadata_path: Path, fake_video
+):
+    """staging が GUI の `[元に戻す]` バックアップを指していても拒否する。"""
+    backup = metadata_path.parent / "metadata.original.json"
+    backup.write_text('{"original": true}', encoding="utf-8")
+    staging = metadata_path.with_suffix(metadata_path.suffix + ".tmp")
+    os.link(backup, staging)
+    result = runner.invoke(app, ["indicators", str(metadata_path)])
+    assert result.exit_code == 5
+    assert "restore backup" in result.output
+    assert json.loads(backup.read_text(encoding="utf-8")) == {"original": True}
+
+
 def test_indicators_missing_metadata_exits_2(app: typer.Typer, tmp_path: Path):
     result = runner.invoke(app, ["indicators", str(tmp_path / "nope.json")])
     assert result.exit_code == 2
