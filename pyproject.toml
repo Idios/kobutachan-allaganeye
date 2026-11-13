@@ -78,6 +78,10 @@ include = ["allaganeye*"]
 
 [tool.setuptools.package-data]
 "allaganeye.audio.refs" = ["*.npz"]
+# KO / ASSIST インジケータの同梱テンプレート (#1106)。ここを追加しないと
+# wheel / Portable ZIP で `allaganeye.video.refs` が入らず、ソースチェックアウト以外で
+# load_templates() が FileNotFoundError になる。
+"allaganeye.video.refs" = ["*.npz"]
 
 [project.optional-dependencies]
 dev = [
