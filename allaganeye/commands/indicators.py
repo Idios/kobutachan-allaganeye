@@ -34,6 +34,7 @@ from allaganeye.exceptions import (
     AllaganEyeError,
     ConfigValidationError,
     DetectionError,
+    InputFileError,
     MetadataConflictError,
 )
 from allaganeye.video.frames import iter_gray_frames
@@ -45,6 +46,7 @@ from allaganeye.video.indicators import (
     group_detections,
     layout_from_payload,
     layout_to_payload,
+    validate_layout_for_frame,
 )
 from allaganeye.video.probe import probe_video
 
@@ -231,11 +233,12 @@ def calibration_timestamps(
 def _inset(start: float, end: float, timestamp: float, *, margin: float = 0.5) -> float:
     """内側に寄せる: 表示のフェード端や境界フレームを避ける。
 
-    1 秒未満の区間では ``margin`` を両側から引くと範囲が反転するので中点を返す。
+    1 秒未満の短い区間では固定 0.5 秒の margin だと全サンプルが中点に潰れる
+    (dedupe で 1 フレームになり、2 フレーム以上の合意を要求するキャリブレーションが
+    失敗する)。区間長の 1/4 を上限にして、短い区間でも位置が分かれるようにする。
     """
-    if end - start <= margin * 2:
-        return round((start + end) / 2, 3)
-    return round(min(end - margin, max(start + margin, timestamp)), 3)
+    effective = min(margin, (end - start) / 4)
+    return round(min(end - effective, max(start + effective, timestamp)), 3)
 
 
 def resolve_indicator_layout(
@@ -264,6 +267,14 @@ def resolve_indicator_layout(
             f"({len(frames)} フレームの合意が取れず)。"
             "戦意値ゲージが映っていない録画か、HUD レイアウトが想定外の可能性があります。"
         )
+    try:
+        validate_layout_for_frame(
+            layout, frame_width=frame_size[0], frame_height=frame_size[1]
+        )
+    except InputFileError as exc:
+        # 合意で見つけたアンカーがフレーム端に寄っていて、帯域がはみ出すケース。
+        # 入力 metadata の不正ではなく解決失敗なので exit 4 に寄せる。
+        raise DetectionError(f"探索領域を解決できませんでした: {exc}") from exc
     return layout
 
 
@@ -296,39 +307,56 @@ def _event_payload(
 def _reject_output_aliasing_inputs(
     output: Path | None, metadata_path: Path, source: Path
 ) -> None:
-    """`-o` が入力 (metadata.json / 元動画) を指していたら書く前に拒否する。
+    """`-o` が入力を潰す先を指していたら、何も書く前に拒否する。
 
-    `-o metadata.json` は入力をイベントレポートで置き換え、`-o <元動画>` は録画を
-    破壊する。どちらも `--no-write` でも起きる (この関数はオプションの意味と独立)。
-    同一性は realpath と (両方実在する場合の) `samefile` で見る: シンボリックリンクや
-    大文字小文字違いのパスを名前比較だけで見逃さない。
+    守る対象:
+
+    - `metadata.json` 本体 (イベントレポートで置き換えてしまう)
+    - 元動画 (録画を破壊する)
+    - `metadata.json.tmp` (write_metadata_atomic の staging。ここに書いた
+      レポートは直後の rename で消える)
+    - `metadata.original.json` (GUI の `[元に戻す]` バックアップ。
+      docs/metadata-spec.md sec.「metadata.original.json policy」)
+
+    同一性は realpath と (両方実在する場合の) `samefile` で見る:
+    シンボリックリンク・ハードリンク・Windows の大文字小文字差を名前比較だけで
+    見逃さない。レポートは metadata の書込みより先に書かれるので、ここで
+    落とせば部分的な書込みも起きない。
     """
     if output is None:
         return
-    try:
-        resolved_output = output.resolve()
-    except OSError:
-        resolved_output = output.absolute()
-    for label, other in (("metadata.json", metadata_path), ("source video", source)):
-        try:
-            resolved_other = other.resolve()
-        except OSError:
-            resolved_other = other.absolute()
-        same = resolved_output == resolved_other
-        if not same:
-            try:
-                same = output.exists() and output.samefile(other)
-            except OSError:
-                same = False
-        if same:
-            raise ConfigValidationError(
-                f"-o must not point at the {label} ({other}); "
-                "choose a separate output path"
-            )
     if output.exists() and output.is_dir():
         raise ConfigValidationError(
             f"-o must be a file path, but {output} is a directory"
         )
+    staging = metadata_path.with_suffix(metadata_path.suffix + ".tmp")
+    backup = metadata_path.parent / "metadata.original.json"
+    protected = [
+        ("metadata.json", metadata_path),
+        ("source video", source),
+        ("metadata write staging file", staging),
+        ("GUI restore backup", backup),
+    ]
+    for label, other in protected:
+        if _same_path(output, other):
+            raise ConfigValidationError(
+                f"-o must not point at the {label} ({other}); "
+                "choose a separate output path"
+            )
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    """realpath 一致、または両方実在する場合の samefile 一致で判定する。"""
+    try:
+        if left.resolve() == right.resolve():
+            return True
+    except OSError:
+        if left.absolute() == right.absolute():
+            return True
+    try:
+        return left.exists() and right.exists() and left.samefile(right)
+    except OSError:
+        return False
 
 
 def _guard_mtime(metadata_path: Path, expected_mtime: int | None) -> None:
@@ -377,6 +405,9 @@ def run_indicators(
     if cached is not None and not recalibrate:
         layout = layout_from_payload(
             cached, frame_width=frame_size[0], frame_height=frame_size[1]
+        )
+        validate_layout_for_frame(
+            layout, frame_width=frame_size[0], frame_height=frame_size[1]
         )
         progress("reused indicator_layout from metadata.json")
     else:

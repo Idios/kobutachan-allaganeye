@@ -100,6 +100,7 @@ def iter_gray_frames(
     frame_bytes = width * height
     return_code = 0
     message = ""
+    completed = False
     with tempfile.TemporaryFile() as error_log:
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=error_log)
         assert process.stdout is not None
@@ -108,6 +109,9 @@ def iter_gray_frames(
             while True:
                 buffer = process.stdout.read(frame_bytes)
                 if not buffer:
+                    # stdout の EOF は「既に reap 済み」を意味しない (ffmpeg は終了処理で
+                    # 先に stdout を閉じる)。ここでは kill せず wait で回収する。
+                    completed = True
                     break
                 if len(buffer) < frame_bytes:
                     # 中途半端な最終フレーム = デコーダが frame の途中で死んだ。
@@ -121,8 +125,8 @@ def iter_gray_frames(
                 index += 1
         finally:
             process.stdout.close()
-            # 正常 EOF で終わっているプロセスを kill しない (先に終了コードを見るため)。
-            if process.poll() is None:
+            if not completed and process.poll() is None:
+                # 早期 close (Ctrl+C / break) だけ kill する。
                 process.kill()
             return_code = process.wait()
             error_log.seek(0)

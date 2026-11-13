@@ -387,3 +387,47 @@ def test_indicators_conflict_leaves_no_output(
     )
     assert result.exit_code == 6
     assert not out.exists()
+
+
+def test_calibration_timestamps_keeps_short_match_samples_distinct() -> None:
+    """1 秒未満の試合でもサンプルが 1 点に潰れない。
+
+    全点が中点に潰れると dedupe で 1 フレームになり、2 フレーム以上の合意を
+    要求するキャリブレーションが失敗する。
+    """
+    timestamps = calibration_timestamps(
+        [{"start_time": 10.0, "end_time": 10.6}], duration=20.0, samples=3
+    )
+    assert len(timestamps) == 3
+    assert len(set(timestamps)) == 3
+    assert all(10.0 <= value <= 10.6 for value in timestamps)
+
+
+@pytest.mark.parametrize("suffix", [".tmp", ".original.json"])
+def test_indicators_rejects_output_colliding_with_reserved_paths(
+    app: typer.Typer, metadata_path: Path, fake_video, suffix: str
+):
+    """`-o` が atomic write の staging や GUI のバックアップを指したら拒否する。"""
+    reserved = metadata_path.parent / (
+        metadata_path.name + ".tmp" if suffix == ".tmp" else "metadata.original.json"
+    )
+    result = runner.invoke(
+        app, ["indicators", str(metadata_path), "--no-write", "-o", str(reserved)]
+    )
+    assert result.exit_code == 5
+    assert "-o" in result.output
+
+
+def test_indicators_rejects_cached_layout_outside_frame(
+    app: typer.Typer, metadata_path: Path, fake_video
+):
+    """キャッシュされた layout が枠外を指すなら走査前に exit 2 で落とす。
+
+    そのまま走査すると `detect_indicator` の ValueError が traceback として出る。
+    """
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["indicator_layout"].update({"anchor_x": 0.0, "anchor_y": 0.0, "scale": 1.0})
+    metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    result = runner.invoke(app, ["indicators", str(metadata_path), "--no-write"])
+    assert result.exit_code == 2
+    assert "収まっていません" in result.output
