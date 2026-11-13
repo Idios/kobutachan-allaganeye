@@ -362,6 +362,22 @@ def _same_path(left: Path, right: Path) -> bool:
         return False
 
 
+def _reject_staging_aliasing_source(metadata_path: Path, source: Path) -> None:
+    """metadata write の staging が元動画と同じ実体なら、何も書く前に拒否する。
+
+    `write_metadata_atomic` は staging (`metadata.json.tmp`) に `write_text` する
+    ので、staging がシンボリックリンク / ハードリンクで録画を指していると、
+    write-back が録画を不可逆に破壊する。`-o` の alias 検査は `-o` が無い
+    (既定の write-back だけの) 実行を守らないので、ここで別に見る。
+    """
+    staging = metadata_path.with_suffix(metadata_path.suffix + ".tmp")
+    if _same_path(staging, source):
+        raise ConfigValidationError(
+            f"metadata write staging file {staging} points at the source video "
+            f"({source}); remove it before writing metadata"
+        )
+
+
 def _guard_mtime(metadata_path: Path, expected_mtime: int | None) -> None:
     if expected_mtime is None:
         return
@@ -435,6 +451,8 @@ def run_indicators(
     payload = read_metadata(metadata_path)
     source = resolve_source_path(payload, metadata_path)
     _reject_output_aliasing_inputs(output, metadata_path, source)
+    if write:
+        _reject_staging_aliasing_source(metadata_path, source)
     probe = probe_video(source)
     frame_size = (int(probe["width"]), int(probe["height"]))
     duration = float(probe["duration"])
