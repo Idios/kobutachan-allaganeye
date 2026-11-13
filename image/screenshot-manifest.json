@@ -48,7 +48,13 @@
   ],
   "source_exclude": [
     "gui/src/**/*.test.ts",
-    "gui/src/**/*.test.tsx"
+    "gui/src/**/*.test.tsx",
+    "gui/src/types/metadata.generated.ts",
+    "gui/src/types/metadata.schema.ts"
   ],
-  "sources_sha256": "88b646b3e57d0d2f253f8cb50bd36d124757f4cc76c5ec7d6929a147d80f8af6"
+  "sources_sha256": "cc361360031e07e4ca3ed858baf2f181bfeed726997aaad1254233f4d778f14e",
+  "notes": {
+    "gui/src/types/metadata.generated.ts": "型定義のみの生成物 (scripts/codegen/generate.py)。TS の型は build で消えるため描画結果に影響しない。schema 変更のたびに撮り直しを要求しないよう exclude する。",
+    "gui/src/types/metadata.schema.ts": "zod の検証定義のみ (画面を描画しない)。フィールド集合の追加/変更は表示に影響せず、JSON Schema との整合は zod-schema-integrity.test.ts が見る。schema 変更のたびに撮り直しを要求しないよう exclude する。"
+  }
 }

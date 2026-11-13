@@ -25,13 +25,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
 import numpy as np
 
+from allaganeye.exceptions import InputFileError
 from allaganeye.video.refs import load_templates
 
 # ---------------------------------------------------------------------------
@@ -551,6 +552,109 @@ def resolve_layout(
 
 
 # ---------------------------------------------------------------------------
+# metadata への永続化 (#1106 作業項目 5)
+# ---------------------------------------------------------------------------
+
+
+def layout_to_payload(
+    layout: IndicatorLayout, *, frame_width: int, frame_height: int
+) -> dict[str, Any]:
+    """`IndicatorLayout` を metadata.json に書ける形にする。
+
+    アンカー位置は **正規化座標** (`capture_regions` と同じ規約) で保存する。
+    `scale` は参照レイアウト (1080p) に対する倍率なので、正規化位置と組み合わせれば
+    解像度が変わっても同じ UI 配置を指す。
+    """
+    if frame_width <= 0 or frame_height <= 0:
+        raise ValueError(
+            f"frame size must be positive, got {frame_width}x{frame_height}"
+        )
+    return {
+        "anchor_x": layout.x / frame_width,
+        "anchor_y": layout.y / frame_height,
+        "scale": layout.scale,
+        "support": layout.support,
+        "confidence": layout.confidence,
+        "source": layout.source,
+    }
+
+
+def layout_from_payload(
+    payload: Mapping[str, Any] | None, *, frame_width: int, frame_height: int
+) -> IndicatorLayout:
+    """metadata.json の `indicator_layout` を `IndicatorLayout` に戻す。
+
+    不正な値は黙って補正せず :class:`InputFileError` にする。キャリブレーションを
+    省略する判断材料なので、壊れた値を「それらしく」使うと検出が静かにずれる。
+    """
+    if not isinstance(payload, Mapping):
+        raise InputFileError(
+            "indicator_layout は JSON オブジェクトである必要があります "
+            f"(実際: {type(payload).__name__})"
+        )
+    if frame_width <= 0 or frame_height <= 0:
+        raise ValueError(
+            f"frame size must be positive, got {frame_width}x{frame_height}"
+        )
+    anchor_x = _payload_number(payload, "anchor_x", minimum=0.0, maximum=1.0)
+    anchor_y = _payload_number(payload, "anchor_y", minimum=0.0, maximum=1.0)
+    scale = _payload_number(payload, "scale", minimum=0.0, exclusive_minimum=True)
+    confidence = _payload_number(payload, "confidence", minimum=0.0, maximum=1.0)
+    support = _payload_int(payload, "support", minimum=1)
+    source = payload.get("source")
+    if not isinstance(source, str) or not source:
+        raise InputFileError("indicator_layout.source は空でない文字列が必要です")
+    return IndicatorLayout(
+        scale=scale,
+        x=anchor_x * frame_width,
+        y=anchor_y * frame_height,
+        support=support,
+        confidence=confidence,
+        source=source,
+    )
+
+
+def _payload_number(
+    payload: Mapping[str, Any],
+    key: str,
+    *,
+    minimum: float,
+    maximum: float | None = None,
+    exclusive_minimum: bool = False,
+) -> float:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InputFileError(
+            f"indicator_layout.{key} は数値が必要です (実際: {type(value).__name__})"
+        )
+    number = float(value)
+    too_small = number <= minimum if exclusive_minimum else number < minimum
+    if too_small or (maximum is not None and number > maximum):
+        bound = (
+            f"({minimum}, {maximum}]"
+            if exclusive_minimum
+            else f"[{minimum}, {maximum}]"
+        )
+        raise InputFileError(
+            f"indicator_layout.{key} が範囲外です: {number} (期待 {bound})"
+        )
+    return number
+
+
+def _payload_int(payload: Mapping[str, Any], key: str, *, minimum: int) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise InputFileError(
+            f"indicator_layout.{key} は整数が必要です (実際: {type(value).__name__})"
+        )
+    if value < minimum:
+        raise InputFileError(
+            f"indicator_layout.{key} が範囲外です: {value} (期待 >= {minimum})"
+        )
+    return value
+
+
+# ---------------------------------------------------------------------------
 # 検出ループ
 # ---------------------------------------------------------------------------
 
@@ -636,6 +740,8 @@ __all__ = [
     "classify_text",
     "detect_indicator",
     "group_detections",
+    "layout_from_payload",
+    "layout_to_payload",
     "match_text",
     "resolve_layout",
     "scan_indicators",

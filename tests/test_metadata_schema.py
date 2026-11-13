@@ -412,3 +412,77 @@ def test_minimap_regions_rejects_bad_entries():
         sample["minimap_regions"] = bad
         with pytest.raises(jsonschema.ValidationError):
             validator.validate(sample)
+
+
+# ---------------------------------------------------------------------------
+# indicator_layout (#1106 作業項目 5)
+# ---------------------------------------------------------------------------
+
+
+def _indicator_layout_sample() -> dict:
+    return {
+        "anchor_x": 618.0 / 1920,
+        "anchor_y": 614.0 / 1080,
+        "scale": 1.0,
+        "support": 6,
+        "confidence": 0.95,
+        "source": "anchor",
+    }
+
+
+def test_indicator_layout_valid_sample_passes():
+    schema = _load_schema()
+    sample = _valid_sample()
+    sample["indicator_layout"] = _indicator_layout_sample()
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_indicator_layout_omitted_accepted():
+    # 未実行の metadata.json は field 欠落 = valid (後方互換)
+    schema = _load_schema()
+    sample = _valid_sample()
+    assert "indicator_layout" not in sample
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_indicator_layout_accepts_unknown_source():
+    # source は自由文字列 (未知値も読める = 前方互換)
+    schema = _load_schema()
+    sample = _valid_sample()
+    layout = _indicator_layout_sample()
+    layout["source"] = "user"
+    sample["indicator_layout"] = layout
+    Draft202012Validator(schema).validate(sample)
+
+
+@pytest.mark.parametrize(
+    ("override", "description"),
+    [
+        ({"anchor_x": 1.5}, "anchor_x > 1"),
+        ({"anchor_y": -0.1}, "anchor_y < 0"),
+        ({"scale": 0.0}, "scale が 0"),
+        ({"support": 0}, "support < 1"),
+        ({"confidence": 1.5}, "confidence > 1"),
+        ({"source": ""}, "source が空"),
+        ({"extra": 1}, "additionalProperties"),
+    ],
+)
+def test_indicator_layout_rejects_bad_values(override: dict, description: str):
+    schema = _load_schema()
+    sample = _valid_sample()
+    layout = _indicator_layout_sample()
+    layout.update(override)
+    sample["indicator_layout"] = layout
+    with pytest.raises(jsonschema.ValidationError):
+        Draft202012Validator(schema).validate(sample)
+
+
+@pytest.mark.parametrize("missing", ["anchor_x", "scale", "support", "source"])
+def test_indicator_layout_requires_all_keys(missing: str):
+    schema = _load_schema()
+    sample = _valid_sample()
+    layout = _indicator_layout_sample()
+    del layout[missing]
+    sample["indicator_layout"] = layout
+    with pytest.raises(jsonschema.ValidationError):
+        Draft202012Validator(schema).validate(sample)

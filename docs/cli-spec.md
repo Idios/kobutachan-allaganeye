@@ -513,6 +513,80 @@ allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR] [--include I,J,K]
 | 6 | metadata write-back の CAS 衝突（`--expected-mtime` と実 mtime の不一致）。GUI が ConflictModal を表示する |
 | 130 | SIGINT (Ctrl+C) によるキャンセル |
 
+## indicators コマンド
+
+`metadata.json` を入力に、KO / ASSIST インジケータの発生区間を検出して出力する
+(#1106 作業項目 9)。検出に使った探索領域 (`indicator_layout`) は既定で
+`metadata.json` に write-back し、次回以降のキャリブレーションを省略する
+(#1106 作業項目 5)。
+
+- 入力は `metadata.json`（`export` / `minimap` と同じ系譜）。試合区間と解決済み
+  レイアウトの両方が metadata に載っており、両方を使う
+- キャリブレーションは**試合区間内のフレーム**で行う（戦意値ゲージは試合中しか出ない）。
+  試合が 1 つも無い metadata では動画全体から等間隔に抜く
+- 走査は既定 **0.1 秒刻み**。連続 KO の更新は 0.15-0.35 秒間隔なので、それより粗いと
+  取りこぼす ([design note](superpowers/specs/2026-11-12-l4-ko-assist-indicator-appearance.md) 4-9)
+- `BOOSTED!`（ドローン撃破による戦意値上昇）など未知の表示は既定で無視する
+
+### 構文
+
+```bash
+allaganeye indicators <metadata.json> [-o events.json] [--json]
+                      [--interval 0.1] [--recalibrate] [--no-write]
+                      [--expected-mtime MS]
+```
+
+### 引数
+
+| 引数 | 必須 | 説明 |
+| --- | --- | --- |
+| `metadata_path` | Yes | `allaganeye detect` / `allaganeye split` が生成した `metadata.json` のパス |
+
+### オプション
+
+| オプション | デフォルト | 説明 |
+| --- | --- | --- |
+| `-o PATH` / `--output PATH` | (なし) | 検出結果を JSON ドキュメントとして書き出す（[output-spec.md §「indicators コマンド出力」](output-spec.md)） |
+| `--json` | `false` | stdout に JSON Lines を出す（進捗 + 最終 `complete` 行）。人間向け summary は出さない |
+| `--interval SEC` | `0.1` | 走査間隔（秒）。下限 `0.05`（20 Hz を超える走査は情報を増やさない）を下回ると **exit 5** |
+| `--recalibrate` | `false` | `metadata.json` の `indicator_layout` を無視して再解決する |
+| `--write` / `--no-write` | `--write` | 解決した `indicator_layout` を `metadata.json` に write-back する |
+| `--expected-mtime MS` | (なし) | write-back 前の CAS guard。`metadata.json` の現在 mtime (Unix ms) と不一致なら **exit 6**（GUI ConflictModal 対応） |
+
+### 出力
+
+人間向け summary（stdout）:
+
+```text
+KO: 1 / ASSIST: 2 (3 intervals)
+    493.50s -   494.50s  ko     score=0.80  (match 1)
+    206.40s -   207.80s  assist score=1.00  (match 1)
+```
+
+`--json` モード（stdout、JSON Lines）:
+
+```json
+{"type": "progress", "phase": "calibrating"}
+{"type": "progress", "phase": "scanning", "layout": {...}}
+{"type": "progress", "phase": "scanning", "processed_s": 30.0, "total_s": 944.0}
+{"type": "complete", "metadata": "...", "layout": {...}, "recalibrated": true, "events": [...], "wrote_metadata": true}
+```
+
+エラー時は `{"type": "error", "message": "..."}` を 1 行出してから exit code を返す。
+
+### Exit Codes
+
+| コード | 意味 |
+| --- | --- |
+| 0 | 正常終了（イベント 0 件でも 0） |
+| 1 | 一般エラー |
+| 2 | 入力エラー（`metadata.json` 不在 / 不正 JSON / `source` 不在 / `indicator_layout` の値不正） |
+| 3 | ffmpeg / ffprobe エラー（動画を開けない等） |
+| 4 | 探索領域を解決できなかった（キャリブレーション失敗）。**「イベント 0 件」とは区別する** |
+| 5 | オプション値不正（`--interval` が下限未満） |
+| 6 | metadata write-back の CAS 衝突（`--expected-mtime` と実 mtime の不一致） |
+| 130 | SIGINT (Ctrl+C) によるキャンセル |
+
 ## debug-brightness コマンド
 
 フレーム輝度を CSV 出力する。暗転検知の閾値チューニング用。

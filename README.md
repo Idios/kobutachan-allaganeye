@@ -298,6 +298,7 @@ GUI を使わずコマンドから実行できます。Portable ZIP では `alla
 | `split` | 検知して試合ごとに MP4 へ分割する |
 | `export` | `metadata.json` から並列で書き出す (H.264 再エンコード可) |
 | `minimap` | エリアマップ (ミニマップ) 領域の提案と切り抜き |
+| `indicators` | KO / ASSIST インジケータの発生時刻を検出する |
 | `debug-brightness` | フレーム輝度を CSV 出力 (しきい値の調整用) |
 
 ```bash
@@ -313,6 +314,10 @@ allaganeye export "C:\out\metadata.json" -o "C:\out" --codec h264
 # エリアマップ領域を提案 → 提案された領域で切り抜く
 allaganeye minimap "C:\out\metadata.json"
 allaganeye minimap "C:\out\metadata.json" --region 1520,780,380,380
+
+# KO / ASSIST インジケータの発生時刻を検出する (0.1 秒刻み、結果は metadata.json にもキャッシュされる)
+allaganeye indicators "C:\out\metadata.json"
+allaganeye indicators "C:\out\metadata.json" -o "C:\out\indicators.json" --json
 
 # フレーム輝度を CSV 出力する
 allaganeye debug-brightness "C:\videos\recording.mkv"
