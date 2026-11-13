@@ -214,3 +214,30 @@ def test_quiet_window_has_no_events() -> None:
     video = _video("20260116_1.mp4")
     layout = _layout(video, "ref1")
     assert _events_around(video, layout, 400.0) == []
+
+
+def test_iter_gray_frames_feeds_the_detector() -> None:
+    """実フレーム読み出し経路 (frame reader -> detector) が 0.1 秒刻みで機能する。
+
+    単体テストは ffmpeg 引数の順序しか見ていない。ここでは実際に動画から
+    10 Hz でフレームを取り、KO 表示区間 (493.2-494.7 秒) を拾えることを確認する。
+    """
+    from allaganeye.video.frames import iter_gray_frames
+    from allaganeye.video.indicators import detect_indicator
+
+    video = _video("20260116_1.mp4")
+    layout = _layout(video, "ref1")
+    hits = []
+    for timestamp, frame in iter_gray_frames(
+        video,
+        fps=SCAN_FPS,
+        frame_size=(FRAME_WIDTH, FRAME_HEIGHT),
+        start=493.0,
+        duration=2.0,
+    ):
+        hit = detect_indicator(frame, layout)
+        if hit is not None:
+            hits.append((round(timestamp, 1), hit.kind, round(hit.score, 2)))
+    assert hits, "expected at least one KO detection inside the display window"
+    assert {kind for _, kind, _ in hits} == {"ko"}
+    assert min(timestamp for timestamp, _, _ in hits) <= 493.7

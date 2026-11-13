@@ -259,6 +259,9 @@ $guiSection
     rem 提案された領域で切り抜く
     allaganeye.bat minimap "C:\path\to\output\metadata.json" --region 1520,780,380,380
 
+    rem KO / ASSIST インジケータの発生時刻を検出する (0.1 秒刻み)
+    allaganeye.bat indicators "C:\path\to\output\metadata.json"
+
     rem フレーム輝度を CSV に出す (しきい値の調整用)
     allaganeye.bat debug-brightness "C:\path\to\video.mkv"
 

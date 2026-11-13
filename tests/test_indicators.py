@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from allaganeye.exceptions import InputFileError
 from allaganeye.video.indicators import (
     IndicatorEvent,
     IndicatorLayout,
@@ -21,6 +22,8 @@ from allaganeye.video.indicators import (
     classify_text,
     detect_indicator,
     group_detections,
+    layout_from_payload,
+    layout_to_payload,
     match_text,
     resolve_layout,
     scan_indicators,
@@ -373,3 +376,110 @@ def test_scan_indicators_returns_events_from_frames() -> None:
     assert event.start == pytest.approx(0.5)
     assert event.end == pytest.approx(1.2)
     assert event.samples == 8
+
+
+# ---------------------------------------------------------------------------
+# metadata への永続化 (#1106 作業項目 5)
+# ---------------------------------------------------------------------------
+
+
+def test_layout_payload_round_trip() -> None:
+    """解決結果を metadata の payload にして戻すと同じ layout になる。"""
+    layout = IndicatorLayout(
+        scale=1.0, x=618.0, y=614.0, support=6, confidence=0.95, source="anchor"
+    )
+    payload = layout_to_payload(layout, frame_width=1920, frame_height=1080)
+    assert payload == {
+        "anchor_x": pytest.approx(618.0 / 1920),
+        "anchor_y": pytest.approx(614.0 / 1080),
+        "scale": 1.0,
+        "support": 6,
+        "confidence": 0.95,
+        "source": "anchor",
+    }
+    restored = layout_from_payload(payload, frame_width=1920, frame_height=1080)
+    assert restored == layout
+
+
+def test_layout_payload_is_normalised() -> None:
+    """保存は正規化座標 (capture_regions と同じ規約) で行う。"""
+    layout = IndicatorLayout(scale=2.0, x=1236.0, y=1228.0, support=5, confidence=0.8)
+    payload = layout_to_payload(layout, frame_width=3840, frame_height=2160)
+    assert payload["anchor_x"] == pytest.approx(1236.0 / 3840)
+    assert payload["anchor_y"] == pytest.approx(1228.0 / 2160)
+    assert payload["scale"] == pytest.approx(2.0)
+
+
+def test_layout_payload_scales_with_frame_size() -> None:
+    """同じ payload を別解像度のフレームに適用すると比例して配置される。"""
+    payload = layout_to_payload(
+        IndicatorLayout(scale=1.0, x=618.0, y=614.0),
+        frame_width=1920,
+        frame_height=1080,
+    )
+    restored = layout_from_payload(payload, frame_width=3840, frame_height=2160)
+    assert restored.x == pytest.approx(1236.0)
+    assert restored.y == pytest.approx(1228.0)
+    assert restored.scale == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("override", "field"),
+    [
+        ({"anchor_x": 1.5}, "anchor_x"),
+        ({"anchor_y": -0.1}, "anchor_y"),
+        ({"scale": 0.0}, "scale"),
+        ({"support": 0}, "support"),
+        ({"confidence": 1.5}, "confidence"),
+        ({"source": ""}, "source"),
+        ({"anchor_x": "0.3"}, "anchor_x"),
+        ({"support": 3.5}, "support"),
+    ],
+)
+def test_layout_payload_rejects_invalid_values(override: dict, field: str) -> None:
+    """壊れた payload はその場で落とす (黙って使わない)。"""
+    payload = layout_to_payload(
+        IndicatorLayout(scale=1.0, x=618.0, y=614.0),
+        frame_width=1920,
+        frame_height=1080,
+    )
+    payload.update(override)
+    with pytest.raises(InputFileError, match=field):
+        layout_from_payload(payload, frame_width=1920, frame_height=1080)
+
+
+@pytest.mark.parametrize("missing", ["anchor_x", "scale", "support", "source"])
+def test_layout_payload_requires_all_keys(missing: str) -> None:
+    payload = layout_to_payload(
+        IndicatorLayout(scale=1.0, x=618.0, y=614.0),
+        frame_width=1920,
+        frame_height=1080,
+    )
+    del payload[missing]
+    with pytest.raises(InputFileError, match=missing):
+        layout_from_payload(payload, frame_width=1920, frame_height=1080)
+
+
+def test_layout_payload_accepts_unknown_source() -> None:
+    """source は自由文字列 (未知値も読める = 前方互換)。"""
+    payload = layout_to_payload(
+        IndicatorLayout(scale=1.0, x=618.0, y=614.0, source="user"),
+        frame_width=1920,
+        frame_height=1080,
+    )
+    restored = layout_from_payload(payload, frame_width=1920, frame_height=1080)
+    assert restored.source == "user"
+
+
+def test_layout_payload_rejects_non_mapping() -> None:
+    with pytest.raises(InputFileError):
+        layout_from_payload([], frame_width=1920, frame_height=1080)  # type: ignore[arg-type]
+
+
+def test_layout_payload_rejects_non_positive_frame_size() -> None:
+    with pytest.raises(ValueError):
+        layout_to_payload(
+            IndicatorLayout(scale=1.0, x=618.0, y=614.0),
+            frame_width=0,
+            frame_height=1080,
+        )

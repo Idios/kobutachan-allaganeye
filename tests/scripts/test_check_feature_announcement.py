@@ -54,6 +54,7 @@ def test_collects_the_five_shipped_commands() -> None:
         "detect",
         "export",
         "minimap",
+        "indicators",
         "debug-brightness",
     }
 

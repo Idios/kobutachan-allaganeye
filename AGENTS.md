@@ -119,6 +119,7 @@ allaganeye minimap <metadata.json>                               # エリアマ�
 allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR]    # 指定領域で crop + H.264 encode
 allaganeye export <metadata.json> -o <dir>                       # metadata から並列書き出し (#761、default codec=copy)
 allaganeye export <metadata.json> -o <dir> --codec h264           # H.264 再エンコード（NVENC/QSV/AMF/libx264 を自動選択）
+allaganeye indicators <metadata.json> [-o events.json] [--json]   # KO / ASSIST インジケータ検出 (#1106、0.1 秒刻み。indicator_layout を metadata に write-back)
 
 # GUI (L2a Tauri、#483 で bootstrap)
 # 詳細は docs/gui-development.md を参照
@@ -162,7 +163,8 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `video/presence.py` | presence（scorebar 在/不在）ベースの試合検出エンジン + GT 突合ハーネス基盤（L3 Phase 1。2 信号 fusion 再アーキ spec 参照） |
 | `video/vtuber_timeline.py` | VTuber presence x motion timeline 検出 V0-V4。`--vtuber` gate 内でのみ動作（OBS/masked path は非接触）。V0 anchor 解決 / V1 全域 10s stride scan / V2 rolling-window 粗 segmentation / V3 gap merge 裁定 + blackout-peek override + 境界 snap / V4 segment 検証。縮退 4 trigger（anchor 失敗 / UNKNOWN 過半 / V2 空 / V4 が全 segment を drop）で従来 band-crop path へ fall back。詳細 spec: [docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md](docs/superpowers/specs/2026-07-17-vtuber-timeline-detection-design.md) |
 | `video/probe_state.py` | probe 失敗縮退の統一契約型（`PresenceState` tri-state / `PresenceSample` / `ProbeFailurePolicy`、#824）。presence / capture_region / scorebar / detector から import される中立 module（circular import 回避） |
-| `video/indicators.py` | KO / ASSIST インジケータ検出（L4 信号抽出、#1106 作業項目 2–3）。常時表示の戦意値ゲージの**バー左キャップ**をアンカーに、複数フレームの合意（同一位置 + 同一スケール）で動画ごとにスケールと位置を解決し、バンド内を **グリフ画素だけの masked NCC** で `K.O.!!` → ko / `ASSISTED!` → assist / それ以外（`BOOSTED!` 等）→ 無視 の 3 分岐にする。同梱テンプレートは `video/refs/indicators.npz`。実測の正は [docs/superpowers/specs/2026-11-12-l4-ko-assist-indicator-appearance.md](docs/superpowers/specs/2026-11-12-l4-ko-assist-indicator-appearance.md) §7。CLI 表面 / metadata 永続化は未着手（同 issue の作業項目 9 / 5） |
+| `video/indicators.py` | KO / ASSIST インジケータ検出（L4 信号抽出、#1106 作業項目 2–3）。常時表示の戦意値ゲージの**バー左キャップ**をアンカーに、複数フレームの合意（同一位置 + 同一スケール）で動画ごとにスケールと位置を解決し、バンド内を **グリフ画素だけの masked NCC** で `K.O.!!` → ko / `ASSISTED!` → assist / それ以外（`BOOSTED!` 等）→ 無視 の 3 分岐にする。`layout_to_payload` / `layout_from_payload` が metadata 永続化形（正規化座標）を担う。同梱テンプレートは `video/refs/indicators.npz`。実測の正は [docs/superpowers/specs/2026-11-12-l4-ko-assist-indicator-appearance.md](docs/superpowers/specs/2026-11-12-l4-ko-assist-indicator-appearance.md) §7。CLI 表面は `commands/indicators.py`。CLI 出力形式 (#127) と GUI 統合は未着手 |
+| `video/frames.py` | 逐次グレースケールフレーム読み出し (#1106)。ffmpeg の rawvideo パイプで指定 fps のフレームを stream する（`indicators` コマンド専用。detector のチャンク並列デコーダとは別物）。`-ss` は `-i` の前 / `-t` は `-i` の後という**引数順序に依存**するため、順序は `tests/test_indicators_frames.py` が pin している |
 | `video/scorebar.py` | スコアバーフィルタリング（暗転分類・試合内/非FL判定）+ 音声昇格。masked path では `_presence_at_anchor_from_raw`（at-anchor tri-state）を使い、分類規則を変更（in_match 全除去 / non_fl keep）。masked fallback の 2 層構成（Layer 1 anchor 解決 + Layer 2 segment 検証）は [#822 spec](docs/superpowers/specs/2026-07-11-issue-822-masked-oversplit-anchor-design.md) および [docs/detection-map.md](docs/detection-map.md) §5.4 を参照 |
 | `video/splitter.py` | FFmpeg で動画分割（-c copy） |
 | `export/encoder.py` | H.264 エンコーダ選択ロジック (#761)。GUI Rust 側から移植し CLI / GUI で単一の正を共有 |
@@ -179,6 +181,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `commands/detect.py` | detect コマンド。検知のみ実行し metadata.json を出力 (#463) |
 | `commands/minimap.py` | minimap コマンド。提案モード（領域検出・表示、exit 4）/ crop モード（`--region` 指定、H.264 encode + metadata write-back、#481） |
 | `commands/export.py` | export コマンド (#761)。metadata.json (positional または `--stdin`) を読み、エンコーダスロットを列挙して並列 export を実行。`--json` で JSON Lines 進捗を emit |
+| `commands/indicators.py` | indicators コマンド (#1106 作業項目 9)。metadata.json を読み、試合区間内のフレームで探索領域をキャリブレーション (またはキャッシュを再利用) し、0.1 秒刻みで KO / ASSIST を検出して出力する。`indicator_layout` を metadata に write-back（`--expected-mtime` CAS 対応、作業項目 5） |
 | `commands/encoder_slots.py` | 隠しコマンド `encoder-slots` (#761)。GUI Tauri `enumerate_h264_encoders` が subprocess で呼び、EncoderSlot 一覧を JSON で返す |
 | `video/areamap.py` | エリアマップ window の seed 検出 + per-match consensus（`resolve_match_regions`）。cv2 は lazy import（opencv 未インストール環境でも import 失敗しない）。提案モード専用 (#481) |
 | `detection/` | 検知パイプラインの共有ヘルパ (#463)。`format.py` (フォーマッタ) / `metadata_writer.py` (atomic read/write) / `migrations.py` (`schema_version` 検証 + 前方 migration、#515) / `progress_emitter.py` (`--progress-format json` の JSON Lines emitter、#569) / `warnings.py` (metadata `warnings` の payload scaffold、#518) |

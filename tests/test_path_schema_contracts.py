@@ -372,6 +372,18 @@ UNCHECKED_PROSE: dict[tuple[str, ...], str] = {
         "「Documented values」+「Free string: readers must accept unknown values」= "
         "意図的な open enum。閉じた集合として検査すると将来の detector 追加で false-red になる"
     ),
+    ("$defs", "IndicatorLayout", "properties", "scale"): (
+        "「1080p 参照レイアウトに対する倍率」は同梱テンプレートとの比であり、payload 単体では"
+        "検証できない (正の値であることは schema の exclusiveMinimum: 0 が機械化済み)。"
+        "比の意味付けの正は docs/superpowers/specs/2026-11-12-l4-ko-assist-indicator-appearance.md"
+    ),
+    ("$defs", "IndicatorLayout", "properties", "source"): (
+        "「Documented values」+「Free string: readers must accept unknown values」= "
+        "CaptureRegion.source と同じ意図的な open enum。閉じた集合として検査すると将来の"
+        "解決経路追加 (ユーザー指定領域 fallback 等) で false-red になる。"
+        "unknown 値を受容すること自体は tests/test_indicators.py の"
+        "test_layout_payload_accepts_unknown_source が pin している"
+    ),
     ("$defs", "CaptureRegions"): (
         "coarse がどの検出器由来かの説明 (OBS は FULL_FRAME 等) は検出経路の記述であり、"
         "payload の形の契約ではない。検出経路の pin は tests/test_capture_region.py 側"
