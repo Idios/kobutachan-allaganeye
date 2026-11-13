@@ -483,3 +483,28 @@ def test_layout_payload_rejects_non_positive_frame_size() -> None:
             frame_width=0,
             frame_height=1080,
         )
+
+
+@pytest.mark.parametrize(
+    ("override", "field"),
+    [
+        ({"anchor_x": float("nan")}, "anchor_x"),
+        ({"scale": float("inf")}, "scale"),
+        ({"confidence": float("nan")}, "confidence"),
+        ({"anchor_y": float("-inf")}, "anchor_y"),
+    ],
+)
+def test_layout_payload_rejects_non_finite(override: dict, field: str) -> None:
+    """NaN / inf は範囲比較をすり抜けるので有限性を先に検査する。
+
+    JSON の `NaN` / `Infinity` / `1e309` は Python の json が読めてしまい、
+    NaN は全ての比較が False になるため範囲チェックだけでは通ってしまう。
+    """
+    payload = layout_to_payload(
+        IndicatorLayout(scale=1.0, x=618.0, y=614.0),
+        frame_width=1920,
+        frame_height=1080,
+    )
+    payload.update(override)
+    with pytest.raises(InputFileError, match=field):
+        layout_from_payload(payload, frame_width=1920, frame_height=1080)

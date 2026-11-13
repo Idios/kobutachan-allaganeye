@@ -248,11 +248,17 @@ def test_indicators_rejects_corrupt_layout(
 
 
 def test_calibration_timestamps_prefers_match_centres() -> None:
+    """サンプルは必ず試合区間の内側に落ちる (試合間のロビーを引かない)。"""
     matches = [
         {"start_time": 10.0, "end_time": 20.0},
         {"start_time": 100.0, "end_time": 200.0},
     ]
-    assert calibration_timestamps(matches, duration=300.0) == [15.0, 150.0]
+    timestamps = calibration_timestamps(matches, duration=300.0)
+    assert len(timestamps) == 6
+    for value in timestamps:
+        assert 10.0 <= value <= 20.0 or 100.0 <= value <= 200.0
+    # 長い試合のほうに多くのサンプルが割り当たる
+    assert sum(1 for value in timestamps if value > 50.0) > 3
 
 
 def test_calibration_timestamps_caps_sample_count() -> None:
@@ -294,3 +300,90 @@ def test_indicator_report_payload_shape() -> None:
     assert payload["metadata"] == "metadata.json"
     assert payload["recalibrated"] is True
     assert payload["events"] == [{"kind": "ko"}]
+
+
+# ---------------------------------------------------------------------------
+# レビュー指摘の回帰テスト (Codex adversarial-review)
+# ---------------------------------------------------------------------------
+
+
+def test_calibration_timestamps_spreads_within_a_single_match() -> None:
+    """試合が 1 つでもサンプル数ぶんの時刻を返す。
+
+    `calibrate_layout` は 2 フレーム以上の合意を要求するので、ここが 1 点だと
+    1 試合だけの録画 (試合分割後の MP4 はまさにこれ) が必ず exit 4 になる。
+    """
+    timestamps = calibration_timestamps(
+        [{"start_time": 0.0, "end_time": 900.0}], duration=900.0, samples=6
+    )
+    assert len(timestamps) == 6
+    assert len(set(timestamps)) == 6
+    assert all(0.5 <= value <= 899.5 for value in timestamps)
+    assert timestamps == sorted(timestamps)
+
+
+def test_calibration_timestamps_distributes_over_short_matches() -> None:
+    """試合数がサンプル数より少ないときは各試合の中に配分する。"""
+    matches = [
+        {"start_time": 100.0, "end_time": 160.0},
+        {"start_time": 400.0, "end_time": 460.0},
+    ]
+    timestamps = calibration_timestamps(matches, duration=1000.0, samples=6)
+    assert len(timestamps) == 6
+    inside = [
+        100.5 <= value <= 159.5 or 400.5 <= value <= 459.5 for value in timestamps
+    ]
+    assert all(inside)
+
+
+def test_calibration_timestamps_handles_very_short_match() -> None:
+    """1 秒未満の試合でも内側の 1 点を返す (境界で負の範囲を作らない)。"""
+    timestamps = calibration_timestamps(
+        [{"start_time": 10.0, "end_time": 10.6}], duration=20.0, samples=2
+    )
+    assert all(10.0 <= value <= 10.6 for value in timestamps)
+
+
+def test_indicators_rejects_output_aliasing_metadata(
+    app: typer.Typer, metadata_path: Path, fake_video
+):
+    """`-o` が入力 metadata.json 自身なら書く前に落とす (入力を潰さない)。"""
+    before = metadata_path.read_text(encoding="utf-8")
+    result = runner.invoke(
+        app, ["indicators", str(metadata_path), "--no-write", "-o", str(metadata_path)]
+    )
+    assert result.exit_code == 5
+    assert "-o" in result.output
+    assert metadata_path.read_text(encoding="utf-8") == before
+
+
+def test_indicators_rejects_output_aliasing_source(
+    app: typer.Typer, metadata_path: Path, fake_video
+):
+    """`-o` が元動画なら書く前に落とす (録画を破壊しない)。"""
+    video = Path(json.loads(metadata_path.read_text(encoding="utf-8"))["source"])
+    result = runner.invoke(
+        app, ["indicators", str(metadata_path), "--no-write", "-o", str(video)]
+    )
+    assert result.exit_code == 5
+    assert "-o" in result.output
+
+
+def test_indicators_conflict_leaves_no_output(
+    app: typer.Typer, metadata_path: Path, fake_video, tmp_path: Path
+):
+    """CAS 衝突 (exit 6) のときは `-o` のファイルも作らない。"""
+    out = tmp_path / "events.json"
+    result = runner.invoke(
+        app,
+        [
+            "indicators",
+            str(metadata_path),
+            "--expected-mtime",
+            "1",
+            "-o",
+            str(out),
+        ],
+    )
+    assert result.exit_code == 6
+    assert not out.exists()

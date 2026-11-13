@@ -98,6 +98,8 @@ def iter_gray_frames(
         raise ValueError(f"frame_size must be positive, got {frame_size}")
     command = build_frame_command(video, fps=fps, start=start, duration=duration)
     frame_bytes = width * height
+    return_code = 0
+    message = ""
     with tempfile.TemporaryFile() as error_log:
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=error_log)
         assert process.stdout is not None
@@ -105,20 +107,29 @@ def iter_gray_frames(
         try:
             while True:
                 buffer = process.stdout.read(frame_bytes)
-                if len(buffer) < frame_bytes:
+                if not buffer:
                     break
+                if len(buffer) < frame_bytes:
+                    # 中途半端な最終フレーム = デコーダが frame の途中で死んだ。
+                    # 捨てて成功扱いにすると不完全なデータで判定を続けることになる。
+                    raise VideoProcessingError(
+                        f"truncated frame after {index} frames from {video}: "
+                        f"expected {frame_bytes} bytes, got {len(buffer)}"
+                    )
                 frame = np.frombuffer(buffer, np.uint8).reshape(height, width)
                 yield start + index / fps, frame
                 index += 1
         finally:
             process.stdout.close()
-            process.kill()
+            # 正常 EOF で終わっているプロセスを kill しない (先に終了コードを見るため)。
+            if process.poll() is None:
+                process.kill()
             return_code = process.wait()
             error_log.seek(0)
             message = error_log.read().decode("utf-8", errors="replace").strip()
-    # Reached only when the loop finished normally (an exception or an early
-    # close skips this): surface a decoder that produced nothing at all.
-    if index == 0 and return_code != 0:
+    # ここに来るのはループが正常終了した場合だけ (例外 / 早期 close は飛ばす)。
+    if return_code != 0:
         raise VideoProcessingError(
-            f"ffmpeg failed to decode {video} for indicator scanning: {message}"
+            f"ffmpeg failed while decoding {video} (exit {return_code}, {index} frames): "
+            f"{message}"
         )

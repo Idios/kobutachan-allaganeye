@@ -187,8 +187,12 @@ def calibration_timestamps(
 
     The battle-fervor gauge only renders during a match, so sampling the whole
     video uniformly pulls in lobby / loading frames where the anchor cannot
-    match at all and the consensus collapses. One frame per match, spread
-    across the match list, keeps the samples inside the UI we look for.
+    match at all and the consensus collapses.
+
+    Samples are distributed over the **total matched time**, not one per
+    match: a recording split into per-match MP4s has exactly one match, and
+    ``calibrate_layout`` needs at least two agreeing frames, so "one frame per
+    match" would make every single-match file fail calibration.
     """
     usable = [
         match
@@ -202,20 +206,36 @@ def calibration_timestamps(
         if duration <= 0:
             return []
         step = duration / (samples + 1)
-        return [round(step * (index + 1), 3) for index in range(samples)]
-    if len(usable) <= samples:
-        chosen = usable
-    else:
-        stride = (len(usable) - 1) / (samples - 1)
-        chosen = [usable[round(index * stride)] for index in range(samples)]
-    timestamps = []
-    for match in chosen:
-        start = float(match["start_time"])
-        end = float(match["end_time"])
-        centre = (start + end) / 2
-        # 0.5 秒だけ内側に寄せる: 表示のフェード端や境界フレームを避ける
-        timestamps.append(round(min(end - 0.5, max(start + 0.5, centre)), 3))
-    return timestamps
+        return [_inset(0.0, duration, step * (index + 1)) for index in range(samples)]
+
+    spans = [(float(match["start_time"]), float(match["end_time"])) for match in usable]
+    if len(spans) >= samples:
+        stride = (len(spans) - 1) / (samples - 1) if samples > 1 else 0.0
+        chosen = [spans[round(index * stride)] for index in range(samples)]
+        return [_inset(start, end, (start + end) / 2) for start, end in chosen]
+
+    total = sum(end - start for start, end in spans)
+    timestamps: list[float] = []
+    for index in range(samples):
+        target = total * (index + 0.5) / samples
+        offset = 0.0
+        for start, end in spans:
+            length = end - start
+            if offset + length >= target:
+                timestamps.append(_inset(start, end, start + (target - offset)))
+                break
+            offset += length
+    return sorted(set(timestamps))
+
+
+def _inset(start: float, end: float, timestamp: float, *, margin: float = 0.5) -> float:
+    """内側に寄せる: 表示のフェード端や境界フレームを避ける。
+
+    1 秒未満の区間では ``margin`` を両側から引くと範囲が反転するので中点を返す。
+    """
+    if end - start <= margin * 2:
+        return round((start + end) / 2, 3)
+    return round(min(end - margin, max(start + margin, timestamp)), 3)
 
 
 def resolve_indicator_layout(
@@ -273,6 +293,44 @@ def _event_payload(
     }
 
 
+def _reject_output_aliasing_inputs(
+    output: Path | None, metadata_path: Path, source: Path
+) -> None:
+    """`-o` が入力 (metadata.json / 元動画) を指していたら書く前に拒否する。
+
+    `-o metadata.json` は入力をイベントレポートで置き換え、`-o <元動画>` は録画を
+    破壊する。どちらも `--no-write` でも起きる (この関数はオプションの意味と独立)。
+    同一性は realpath と (両方実在する場合の) `samefile` で見る: シンボリックリンクや
+    大文字小文字違いのパスを名前比較だけで見逃さない。
+    """
+    if output is None:
+        return
+    try:
+        resolved_output = output.resolve()
+    except OSError:
+        resolved_output = output.absolute()
+    for label, other in (("metadata.json", metadata_path), ("source video", source)):
+        try:
+            resolved_other = other.resolve()
+        except OSError:
+            resolved_other = other.absolute()
+        same = resolved_output == resolved_other
+        if not same:
+            try:
+                same = output.exists() and output.samefile(other)
+            except OSError:
+                same = False
+        if same:
+            raise ConfigValidationError(
+                f"-o must not point at the {label} ({other}); "
+                "choose a separate output path"
+            )
+    if output.exists() and output.is_dir():
+        raise ConfigValidationError(
+            f"-o must be a file path, but {output} is a directory"
+        )
+
+
 def _guard_mtime(metadata_path: Path, expected_mtime: int | None) -> None:
     if expected_mtime is None:
         return
@@ -306,6 +364,7 @@ def run_indicators(
         )
     payload = read_metadata(metadata_path)
     source = resolve_source_path(payload, metadata_path)
+    _reject_output_aliasing_inputs(output, metadata_path, source)
     probe = probe_video(source)
     frame_size = (int(probe["width"]), int(probe["height"]))
     duration = float(probe["duration"])
@@ -361,6 +420,11 @@ def run_indicators(
         metadata_path=metadata_path,
         recalibrated=recalibrated,
     )
+
+    # どの書込みよりも先に CAS を確かめる: ここで落ちれば `-o` のファイルも作らない。
+    # (metadata の書込み直前にもう一度確かめて、判定から書込みまでの隙を狭める)
+    if write:
+        _guard_mtime(metadata_path, expected_mtime)
 
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)

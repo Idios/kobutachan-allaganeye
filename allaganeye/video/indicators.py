@@ -28,6 +28,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
+import math
 from typing import Any
 
 import numpy as np
@@ -628,6 +629,13 @@ def _payload_number(
             f"indicator_layout.{key} は数値が必要です (実際: {type(value).__name__})"
         )
     number = float(value)
+    # NaN / infinity は範囲比較をすり抜ける (NaN は全ての比較が False、inf は上限なしなら pass)。
+    # JSON の `NaN` / `Infinity` / `1e309` は Python の json が読めてしまうので、
+    # 範囲チェックより先に有限性を見る。
+    if not math.isfinite(number):
+        raise InputFileError(
+            f"indicator_layout.{key} に有限でない値が入っています: {number}"
+        )
     too_small = number <= minimum if exclusive_minimum else number < minimum
     if too_small or (maximum is not None and number > maximum):
         bound = (
