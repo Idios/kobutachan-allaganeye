@@ -523,7 +523,8 @@ allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR] [--include I,J,K]
 - 入力は `metadata.json`（`export` / `minimap` と同じ系譜）。試合区間と解決済み
   レイアウトの両方が metadata に載っており、両方を使う
 - キャリブレーションは**試合区間内のフレーム**で行う（戦意値ゲージは試合中しか出ない）。
-  試合が 1 つも無い metadata では動画全体から等間隔に抜く
+  試合が 1 つも無い metadata では動画全体から等間隔に抜く。`--region` を指定したときは
+  キャリブレーションを行わず、その矩形をそのまま使う（`indicator_layout.source` = `"user"`）
 - 走査は既定 **0.1 秒刻み**。連続 KO の更新は 0.15-0.35 秒間隔なので、それより粗いと
   取りこぼす ([design note](superpowers/specs/2026-11-12-l4-ko-assist-indicator-appearance.md) 4-9)
 - 走査範囲は**動画全体**。`matches` はキャリブレーションのサンプリングと、各イベントへの
@@ -535,7 +536,7 @@ allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR] [--include I,J,K]
 ```bash
 allaganeye indicators <metadata.json> [-o events.json] [--json]
                       [--interval 0.1] [--recalibrate] [--no-write]
-                      [--expected-mtime MS]
+                      [--expected-mtime MS] [--region X,Y,W,H]
 ```
 
 ### 引数
@@ -554,6 +555,7 @@ allaganeye indicators <metadata.json> [-o events.json] [--json]
 | `--recalibrate` | `false` | `metadata.json` の `indicator_layout` を無視して再解決する |
 | `--write` / `--no-write` | `--write` | 解決した `indicator_layout` を `metadata.json` に write-back する |
 | `--expected-mtime MS` | (なし) | write-back 前の CAS guard。`metadata.json` の現在 mtime (Unix ms) と不一致なら **exit 6**（GUI ConflictModal 対応） |
+| `--region X,Y,W,H` | (なし) | **自動キャリブレーションをスキップ**し、指定した矩形を**ゲージバーの外枠**として使う（px）。バー幅から `scale`、左上からアンカー位置を逆算する（`layout_from_bar_region`）。想定外 HUD で自動解決が失敗する場合の fallback。`--recalibrate` と併用不可（exit 5）。不正な値（4 要素でない / 数値でない / 小さすぎる / アスペクト比が大きく外れる）は exit 5 |
 
 ### 出力
 
@@ -585,7 +587,7 @@ KO: 1 / ASSIST: 2 (3 intervals)
 | 2 | 入力エラー（`metadata.json` 不在 / 不正 JSON / `source` 不在 / `indicator_layout` の値不正 / `indicator_layout` から導出した探索領域がフレーム外） |
 | 3 | ffmpeg / ffprobe エラー（動画を開けない / ffmpeg を起動できない等） |
 | 4 | 探索領域を解決できなかった（キャリブレーション失敗）。**「イベント 0 件」とは区別する** |
-| 5 | オプション値不正・書込み前の拒否（`--interval` が下限未満・非有限値 / `-o` や `metadata.json.tmp` が入力を潰す先を指す） |
+| 5 | オプション値不正・書込み前の拒否（`--interval` が下限未満・非有限値 / `--region` の形式不正・極端なアスペクト比 / `--region` と `--recalibrate` の併用 / `-o` や `metadata.json.tmp` が入力を潰す先を指す） |
 | 6 | metadata write-back の CAS 衝突（`--expected-mtime` と実 mtime の不一致） |
 | 130 | SIGINT (Ctrl+C) によるキャンセル |
 

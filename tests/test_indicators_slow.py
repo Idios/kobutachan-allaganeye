@@ -26,6 +26,7 @@ from allaganeye.ffmpeg_path import find_ffmpeg
 from allaganeye.video.indicators import (
     IndicatorEvent,
     IndicatorLayout,
+    layout_from_bar_region,
     resolve_layout,
     scan_indicators,
 )
@@ -214,6 +215,20 @@ def test_quiet_window_has_no_events() -> None:
     video = _video("20260116_1.mp4")
     layout = _layout(video, "ref1")
     assert _events_around(video, layout, 400.0) == []
+
+
+def test_user_region_matches_auto_calibration() -> None:
+    """`--region` 相当のバー矩形から解決した layout でも同じイベントを拾う。
+
+    自動キャリブレーションが失敗する HUD への fallback 経路。バー矩形 (626, 618,
+    153x13) は参照レイアウトの実測値で、ここからアンカー (618, 614) と
+    scale 1.0 が逆算される。
+    """
+    video = _video("20260116_1.mp4")
+    layout = layout_from_bar_region(626.0, 618.0, 153.0, 13.0)
+    assert layout.scale == pytest.approx(1.0)
+    assert layout.source == "user"
+    _assert_event(_events_around(video, layout, 493.2), "ko", 493.2)
 
 
 def test_iter_gray_frames_feeds_the_detector() -> None:
