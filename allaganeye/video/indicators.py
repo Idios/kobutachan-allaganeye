@@ -25,13 +25,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
+import math
 from typing import Any
 
 import numpy as np
 
+from allaganeye.exceptions import InputFileError
 from allaganeye.video.refs import load_templates
 
 # ---------------------------------------------------------------------------
@@ -551,6 +553,160 @@ def resolve_layout(
 
 
 # ---------------------------------------------------------------------------
+# metadata への永続化 (#1106 作業項目 5)
+# ---------------------------------------------------------------------------
+
+
+def layout_to_payload(
+    layout: IndicatorLayout, *, frame_width: int, frame_height: int
+) -> dict[str, Any]:
+    """`IndicatorLayout` を metadata.json に書ける形にする。
+
+    アンカー位置は **正規化座標** (`capture_regions` と同じ規約) で保存する。
+    `scale` は参照レイアウト (1080p) に対する倍率なので、正規化位置と組み合わせれば
+    解像度が変わっても同じ UI 配置を指す。
+    """
+    if frame_width <= 0 or frame_height <= 0:
+        raise ValueError(
+            f"frame size must be positive, got {frame_width}x{frame_height}"
+        )
+    return {
+        "anchor_x": layout.x / frame_width,
+        "anchor_y": layout.y / frame_height,
+        "scale": layout.scale,
+        "support": layout.support,
+        "confidence": layout.confidence,
+        "source": layout.source,
+    }
+
+
+def layout_from_payload(
+    payload: Mapping[str, Any] | None, *, frame_width: int, frame_height: int
+) -> IndicatorLayout:
+    """metadata.json の `indicator_layout` を `IndicatorLayout` に戻す。
+
+    不正な値は黙って補正せず :class:`InputFileError` にする。キャリブレーションを
+    省略する判断材料なので、壊れた値を「それらしく」使うと検出が静かにずれる。
+    """
+    if not isinstance(payload, Mapping):
+        raise InputFileError(
+            "indicator_layout は JSON オブジェクトである必要があります "
+            f"(実際: {type(payload).__name__})"
+        )
+    if frame_width <= 0 or frame_height <= 0:
+        raise ValueError(
+            f"frame size must be positive, got {frame_width}x{frame_height}"
+        )
+    anchor_x = _payload_number(payload, "anchor_x", minimum=0.0, maximum=1.0)
+    anchor_y = _payload_number(payload, "anchor_y", minimum=0.0, maximum=1.0)
+    scale = _payload_number(payload, "scale", minimum=0.0, exclusive_minimum=True)
+    confidence = _payload_number(payload, "confidence", minimum=0.0, maximum=1.0)
+    support = _payload_int(payload, "support", minimum=1)
+    source = payload.get("source")
+    if not isinstance(source, str) or not source:
+        raise InputFileError("indicator_layout.source は空でない文字列が必要です")
+    return IndicatorLayout(
+        scale=scale,
+        x=anchor_x * frame_width,
+        y=anchor_y * frame_height,
+        support=support,
+        confidence=confidence,
+        source=source,
+    )
+
+
+def _payload_number(
+    payload: Mapping[str, Any],
+    key: str,
+    *,
+    minimum: float,
+    maximum: float | None = None,
+    exclusive_minimum: bool = False,
+) -> float:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InputFileError(
+            f"indicator_layout.{key} は数値が必要です (実際: {type(value).__name__})"
+        )
+    try:
+        number = float(value)
+    except OverflowError:
+        # JSON の整数は桁数無制限。float に収まらない値はここで止める
+        # (素通りすると `OverflowError` が `AllaganEyeError` の catch をすり抜ける)。
+        raise InputFileError(
+            f"indicator_layout.{key} が大きすぎて数値に変換できません "
+            f"(桁数 {len(str(value))})"
+        ) from None
+    # NaN / infinity は範囲比較をすり抜ける (NaN は全ての比較が False、inf は上限なしなら pass)。
+    # JSON の `NaN` / `Infinity` / `1e309` は Python の json が読めてしまうので、
+    # 範囲チェックより先に有限性を見る。
+    if not math.isfinite(number):
+        raise InputFileError(
+            f"indicator_layout.{key} に有限でない値が入っています: {number}"
+        )
+    too_small = number <= minimum if exclusive_minimum else number < minimum
+    if too_small or (maximum is not None and number > maximum):
+        bound = (
+            f"({minimum}, {maximum}]"
+            if exclusive_minimum
+            else f"[{minimum}, {maximum}]"
+        )
+        raise InputFileError(
+            f"indicator_layout.{key} が範囲外です: {number} (期待 {bound})"
+        )
+    return number
+
+
+def _payload_int(payload: Mapping[str, Any], key: str, *, minimum: int) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise InputFileError(
+            f"indicator_layout.{key} は整数が必要です (実際: {type(value).__name__})"
+        )
+    if value < minimum:
+        raise InputFileError(
+            f"indicator_layout.{key} が範囲外です: {value} (期待 >= {minimum})"
+        )
+    return value
+
+
+def validate_layout_for_frame(
+    layout: IndicatorLayout, *, frame_width: int, frame_height: int
+) -> None:
+    """探索領域がフレーム内に収まり、十分な大きさか走査前に確かめる。
+
+    `detect_indicator` は条件を満たさないと `ValueError` を投げる。走査ループの
+    途中でそれが起きると CLI の exit code 体系に乗らない traceback になるので、
+    フレームを 1 枚も読む前にここで落とす (metadata.json に残った古い / 手で書き換えた
+    `indicator_layout` が典型)。
+    """
+    if frame_width <= 0 or frame_height <= 0:
+        raise ValueError(
+            f"frame size must be positive, got {frame_width}x{frame_height}"
+        )
+    band = layout.text_band()
+    if band.x0 < 0 or band.y0 < 0 or band.x1 > frame_width or band.y1 > frame_height:
+        raise InputFileError(
+            "indicator_layout から導出した探索領域がフレームに収まっていません "
+            f"(band=({band.x0:.1f}, {band.y0:.1f}, {band.x1:.1f}, {band.y1:.1f}), "
+            f"frame={frame_width}x{frame_height})。"
+            "--recalibrate で再解決するか、metadata.json の値を確認してください。"
+        )
+    # 最小寸法は `detect_indicator` と同じ「端点を別々に丸めてから引く」で見る。
+    # 幅を丸めて比べると 1 px ずれ、走査の最初のフレームで ValueError になる
+    # (例: 高さ 15.53 は round で 16 だが、端点差は 15)。
+    width = round(band.x1) - round(band.x0)
+    height = round(band.y1) - round(band.y0)
+    if width < _MIN_BAND_PX or height < _MIN_BAND_PX:
+        raise InputFileError(
+            "indicator_layout から導出した探索領域が小さすぎます "
+            f"(band=({band.x0:.1f}, {band.y0:.1f}, {band.x1:.1f}, {band.y1:.1f}) "
+            f"= {width}x{height} px)。"
+            "scale が小さすぎる可能性があります。"
+        )
+
+
+# ---------------------------------------------------------------------------
 # 検出ループ
 # ---------------------------------------------------------------------------
 
@@ -636,7 +792,10 @@ __all__ = [
     "classify_text",
     "detect_indicator",
     "group_detections",
+    "layout_from_payload",
+    "layout_to_payload",
     "match_text",
     "resolve_layout",
     "scan_indicators",
+    "validate_layout_for_frame",
 ]

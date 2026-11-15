@@ -129,6 +129,19 @@ class CaptureRegions(TypedDict):
     fallback_reason: str | None
 
 
+class IndicatorLayout(TypedDict):
+    """
+    KO / ASSIST インジケータ検出の探索領域 (#1106 作業項目 5; serialized allaganeye/video/indicators.py::IndicatorLayout via layout_to_payload / layout_from_payload). `anchor_*` はアンカーテンプレート (戦意値ゲージのバー左キャップ) の左上を正規化したもので、テキストバンドはこれと `scale` から一意に求まる (値を重複保存しない). `scale` は 1080p 参照レイアウトに対する倍率。Optional at the root: 未実行の metadata.json は持たない (次回再解決する).
+    """
+
+    anchor_x: float
+    anchor_y: float
+    scale: float
+    support: int
+    confidence: float
+    source: str
+
+
 class Metadata(TypedDict):
     """
     metadata.json contract between allaganeye CLI and the L2a Tauri GUI (#463). Machine-readable source of truth (#612). The human-readable counterpart lives in docs/metadata-spec.md; refine-style semantic constraints (e.g. end_time >= start_time) are enforced by zod (GUI) and InputFileError checks (CLI), not by this schema.
@@ -150,3 +163,4 @@ class Metadata(TypedDict):
     brightness_samples: NotRequired[BrightnessSamples]
     capture_regions: NotRequired[CaptureRegions]
     minimap_regions: NotRequired[list[MinimapRegionEntry]]
+    indicator_layout: NotRequired[IndicatorLayout]

@@ -147,6 +147,21 @@ export const MinimapRegionEntrySchema = z.object({
 });
 
 /**
+ * #1106 作業項目 5 -- KO / ASSIST インジケータの探索領域 (`allaganeye indicators`
+ * が解決し, metadata.json に write-back する). 座標は capture_regions と同じ
+ * 正規化 [0,1]. GUI はまだ consumer を持たず, load -> apply で round-trip する
+ * だけなので passthrough せず厳密に定義する.
+ */
+export const IndicatorLayoutSchema = z.object({
+  anchor_x: z.number().min(0).max(1),
+  anchor_y: z.number().min(0).max(1),
+  scale: z.number().positive(),
+  support: z.number().int().min(1),
+  confidence: z.number().min(0).max(1),
+  source: z.string().min(1),
+});
+
+/**
  * #465 review: default frame rate when ``source_fps`` is missing. Pre-#465
  * legacy metadata.json files don't include the field, so we keep a
  * conservative 60fps assumption (the most common OBS recording cadence).
@@ -209,5 +224,11 @@ export const MetadataSchema = z
      * consumer yet; the field round-trips through load -> apply unchanged.
      */
     minimap_regions: z.array(MinimapRegionEntrySchema).optional(),
+    /**
+     * #1106 作業項目 5 -- `allaganeye indicators` が解決した探索領域。
+     * pre-#1106 metadata.json と, indicators 未実行の run は持たないので optional。
+     * GUI はまだ consumer を持たない (round-trip のみ)。
+     */
+    indicator_layout: IndicatorLayoutSchema.optional(),
   })
   .passthrough();
