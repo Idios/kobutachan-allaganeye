@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   validate-checklist:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +28,7 @@ jobs:
   # filter があり、本 gate が生まれる原因になった `release/*` base の PR では 1 job も起動しない
   # (= 完全な no-op)。branch filter を持たない当 workflow が唯一の適格な配置先である。
   validate-preflight-freshness:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 

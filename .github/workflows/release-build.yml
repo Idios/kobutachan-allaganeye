@@ -31,7 +31,7 @@ jobs:
     # 各 job entry で event/ref を明示判定し、main / develop-* / v*.*.* tag 以外の
     # push は skipped に倒す。pull_request / workflow_dispatch は影響なし。
     if: github.event_name != 'push' || github.ref_name == 'main' || startsWith(github.ref_name, 'develop-') || startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.parse.outputs.version }}
     steps:
@@ -149,7 +149,7 @@ jobs:
     # `jobs.<job_id>.steps[*].shell` field は matrix context をサポートしない
     # ため (PR #788 / issue #786 で確定)、step 個別の `shell:` 指定では matrix.shell
     # を展開できない。`defaults.run.shell` field は matrix context 参照可能。
-    # version-check / release job は ubuntu-latest 上で意図的に `shell: bash`
+    # version-check / release job は ubuntu-24.04 上で意図的に `shell: bash`
     # を step 個別指定しているが、これは shell variation 不要なため。
     defaults:
       run:

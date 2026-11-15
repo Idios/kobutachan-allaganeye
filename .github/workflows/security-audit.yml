@@ -37,7 +37,7 @@ permissions:
 jobs:
   cargo-audit:
     name: cargo audit (Rust)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -56,7 +56,7 @@ jobs:
 
   dependency-review:
     name: dependency review (GitHub Advisory DB)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 本 action は base/head を持つイベントでしか動かない。この workflow は
     # workflow_dispatch も受けるため、その経路では skip する (付けないと手動実行が
     # 常に red になる)。cargo-audit / npm-audit は従来どおり手動実行できる。
@@ -108,7 +108,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
     defaults:
       run:
         shell: bash
@@ -208,7 +208,7 @@ jobs:
 
   npm-audit:
     name: npm audit (JavaScript)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v5

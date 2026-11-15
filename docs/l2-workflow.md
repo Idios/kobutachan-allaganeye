@@ -392,7 +392,7 @@ PR 作成前のローカル自動チェックは、変更ファイル path に�
 
 | 変更パス / 内容 | 必要な実機検証 | 根拠 / mock 不可理由 |
 | --- | --- | --- |
-| `allaganeye/video/gpu_detector.py`, `system_info.py` | `pytest -m slow_gpu` (NVIDIA GPU 必須環境) | GPU 初期化 / hwaccel が mock 不可。CI は ubuntu-latest で GPU なし |
+| `allaganeye/video/gpu_detector.py`, `system_info.py` | `pytest -m slow_gpu` (NVIDIA GPU 必須環境) | GPU 初期化 / hwaccel が mock 不可。CI は ubuntu-24.04 で GPU なし |
 | `allaganeye/audio/scan.py`, `audio/matcher.py`, `audio/features.py` | `pytest -m slow tests/test_audio_integration.py` (`ALLAGANEYE_AUDIO_TEST_VIDEO` 必須) | Fanfare 検出は 39GB 録画ファイルが必要 |
 | `allaganeye/video/detector.py` Pass 1 / scorebar 関連 | `pytest -m slow_detect` または `pytest -m "slow or baseline_regen"` | 実動画 baseline 検証 |
 | `allaganeye/commands/split_matches.py` パイプライン変更 | `pytest -m slow_pipeline` | 全パイプライン統合動作 |

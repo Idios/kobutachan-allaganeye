@@ -506,7 +506,7 @@ def test_identity_key_folding_runs_on_every_platform(
 ):
     """The folding *logic* must be gated even where the OS does not fold.
 
-    CI runs pytest on ubuntu-latest only (`.github/workflows/ci.yml`), so the
+    CI runs pytest on ubuntu-24.04 only (`.github/workflows/ci.yml`), so the
     ``skipif(sys.platform != "win32")`` tests in this section never execute
     there -- they gate nothing until Idios runs the suite locally. Driving the
     platform switch directly keeps the logic itself covered on every runner.

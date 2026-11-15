@@ -91,17 +91,17 @@ cd gui && find src -name '*.test.ts' -o -name '*.test.tsx' | wc -l
 
 | ジョブ | OS | 役割 |
 | --- | --- | --- |
-| `python` | ubuntu-latest | ruff / pyright / pytest |
-| `hook-test` | ubuntu-latest | `.claude/hooks/` のシェルフック検証 |
-| `gui-frontend` | ubuntu-latest | npm ci → lint → typecheck → build → `gui/dist/` をアーティファクト保存 |
+| `python` | ubuntu-24.04 | ruff / pyright / pytest |
+| `hook-test` | ubuntu-24.04 | `.claude/hooks/` のシェルフック検証 |
+| `gui-frontend` | ubuntu-24.04 | npm ci → lint → typecheck → build → `gui/dist/` をアーティファクト保存 |
 | `gui-rust` | windows-latest | `gui-frontend` のアーティファクトを取得して `cargo check` |
-| `doc-tauri-commands-drift` | ubuntu-latest | Tauri command 一覧と doc の drift 検出 |
-| `doc-error-hint-drift` | ubuntu-latest | エラーヒント文言と doc の drift 検出 |
-| `doc-code-refs` | ubuntu-latest | doc → code 参照 (link / symbol / spawn 網羅) の解決検査 (#912 / #910) |
-| `feature-announcement` | ubuntu-latest | 同梱 README.txt / 入口 doc に CLI サブコマンドの告知漏れが無いかの検査 (#944) |
-| `screenshot-freshness` | ubuntu-latest | README スクショが現行 GUI source から撮られているかの検査 (#944) |
-| `changelog-style` | ubuntu-latest | CHANGELOG entry の記述規約検査 (内部用語 / `### Internal` 節、#952) |
-| `shellcheck` | ubuntu-latest | シェルスクリプトの静的検査 |
+| `doc-tauri-commands-drift` | ubuntu-24.04 | Tauri command 一覧と doc の drift 検出 |
+| `doc-error-hint-drift` | ubuntu-24.04 | エラーヒント文言と doc の drift 検出 |
+| `doc-code-refs` | ubuntu-24.04 | doc → code 参照 (link / symbol / spawn 網羅) の解決検査 (#912 / #910) |
+| `feature-announcement` | ubuntu-24.04 | 同梱 README.txt / 入口 doc に CLI サブコマンドの告知漏れが無いかの検査 (#944) |
+| `screenshot-freshness` | ubuntu-24.04 | README スクショが現行 GUI source から撮られているかの検査 (#944) |
+| `changelog-style` | ubuntu-24.04 | CHANGELOG entry の記述規約検査 (内部用語 / `### Internal` 節、#952) |
+| `shellcheck` | ubuntu-24.04 | シェルスクリプトの静的検査 |
 | `installer-pester` | windows-latest | `scripts/build-portable-zip.ps1` の Pester テスト |
 
 `gui-rust` が Windows runner なのは **L2 の Windows 専用ターゲット (#451) に合わせるため**。`gui-frontend` を ubuntu 分離しているのはコスト最適化 (Windows runner は低速)。

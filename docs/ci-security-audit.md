@@ -61,7 +61,7 @@ pip-audit は 2 回呼ぶ。**1 回では `pull_request.paths` に載せた Pyth
 
 #### OS matrix にしている理由
 
-本 job は `ubuntu-latest` と `windows-latest` の **両方**で走る。Python の依存解決は環境マーカーで OS ごとに変わるため、ubuntu だけで監査すると**出荷物にしか入らない Windows 限定の transitive が永久に無検査**になる。
+本 job は `ubuntu-24.04` と `windows-latest` の **両方**で走る。Python の依存解決は環境マーカーで OS ごとに変わるため、ubuntu だけで監査すると**出荷物にしか入らない Windows 限定の transitive が永久に無検査**になる。
 
 | 依存経路 | Windows 限定 transitive |
 | --- | --- |
@@ -89,7 +89,7 @@ UTF-8 mode (PEP 540) にすると `locale.getpreferredencoding(False)` が UTF-8
 - PyPI に無い依存 (ffmpeg 等の OS バイナリ) は対象外
 - `-c constraints.txt` で固定していない依存は「その日の最新」を監査するため、**同じ commit でも実行日によって結果が変わりうる**
 - `--strict` を付けていないため、editable install した本体は skip される (PyPI 由来でないので監査対象にならない)
-- **監査するのは `ubuntu-latest` / `windows-latest` の 2 つだけ。** macOS 限定の依存は対象外だが、本プロジェクトは Windows のみ対応なので実害はない
+- **監査するのは `ubuntu-24.04` / `windows-latest` の 2 つだけ。** macOS 限定の依存は対象外だが、本プロジェクトは Windows のみ対応なので実害はない
 - **ZIP ビルド時に PyInstaller が frozen application へ取り込む内容までは見ない。** 監査対象は PyPI パッケージの版であって、bundle された成果物ではない
 
 ### dependency review を追加した理由 (v0.3.0)

@@ -34,9 +34,16 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# **ubuntu ジョブは `ubuntu-latest` ではなく `ubuntu-24.04` に固定する。**
+# 2026-11-14 に `ubuntu-latest` が Ubuntu 26.04 へロールし、`actions/setup-python`
+# が 3.11.9 を取得できず (`The version '3.11.9' ... was not found for Ubuntu 26.04`)
+# setup-python を使う全ジョブが失敗した。3.11.9 は本プロジェクトの対象実行環境
+# (#510) なので、取得できるイメージに固定する。ランナー版を上げるかどうかは
+# 別 issue で判断する (上げる場合は 3.11 系の供給を先に確かめる)。
+
 jobs:
   python:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -164,7 +171,7 @@ jobs:
         run: pytest tests/test_export_pool.py tests/test_path_schema_contracts.py tests/scripts/test_check_doc_code_refs.py -q -rs -k "not export_cli"
 
   hook-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -216,7 +223,7 @@ jobs:
           done
 
   gui-frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -299,7 +306,7 @@ jobs:
         run: cargo test --lib --no-default-features --manifest-path gui/src-tauri/Cargo.toml
 
   doc-tauri-commands-drift:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -322,7 +329,7 @@ jobs:
           echo "OK: $LIB_COUNT tauri commands documented (name-level match)"
 
   doc-error-hint-drift:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -331,7 +338,7 @@ jobs:
         run: bash .github/scripts/check-error-hint-drift.sh
 
   doc-code-refs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -347,7 +354,7 @@ jobs:
         run: python scripts/check_doc_code_refs.py
 
   doc-agent-migration-sweep:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -364,7 +371,7 @@ jobs:
         run: python scripts/check_agent_migration_sweep.py
 
   doc-declaration-catalog:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -392,7 +399,7 @@ jobs:
         run: python scripts/check_declarations.py
 
   feature-announcement:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -414,14 +421,14 @@ jobs:
 
       # 同梱 README.txt は source を grep せず pwsh で実際に描画して検査する
       # (here-string / 関数境界の取り違えによる false-green を避けるため)。
-      # pwsh は ubuntu-latest runner にプリインストールされている。
+      # pwsh は ubuntu-24.04 runner にプリインストールされている。
       # exit 1 = 告知漏れ / exit 2 = 検査自体が壊れている (#944)。
       - name: Check shipped CLI subcommands are announced in entry docs
         shell: bash
         run: python scripts/check_feature_announcement.py
 
   screenshot-freshness:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -440,7 +447,7 @@ jobs:
         run: python scripts/check_screenshot_freshness.py
 
   changelog-style:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -458,7 +465,7 @@ jobs:
         run: python scripts/check_changelog_style.py
 
   shellcheck:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
