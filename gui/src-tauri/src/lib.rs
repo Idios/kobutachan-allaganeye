@@ -3905,6 +3905,376 @@ async fn detect_minimap_regions(
     Err(AppError::new("subprocess.exit_failed", detail).with_default_hint())
 }
 
+/// #1106 -- Request payload for the `start_indicators` Tauri command.
+///
+/// `write` は CLI の `--write/--no-write` (default: write) に対応するので
+/// `Option<bool>` にし、`Some(false)` のときだけ `--no-write` を渡す
+/// (`None` = CLI 既定の write をそのまま使う)。`region` は自動キャリブレーションが
+/// 失敗したときの fallback (`X,Y,W,H` ピクセル) で、CLI 側では `--region` と
+/// `--recalibrate` が排他 (同時指定は exit 5)。
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartIndicatorsRequest {
+    pub metadata_path: String,
+    #[serde(default)]
+    pub output_path: Option<String>,
+    #[serde(default)]
+    pub interval: Option<f64>,
+    #[serde(default)]
+    pub recalibrate: Option<bool>,
+    #[serde(default)]
+    pub write: Option<bool>,
+    #[serde(default)]
+    pub expected_mtime: Option<i64>,
+    #[serde(default)]
+    pub region: Option<[f64; 4]>,
+}
+
+/// #1106 -- `indicator_layout` (metadata.json に永続化されるのと同じ形)。
+///
+/// `anchor_x` / `anchor_y` はフレーム幅・高さで正規化したアンカー位置、`scale` は
+/// 1080p 参照レイアウトに対する倍率、`support` は合意に寄与したフレーム数、
+/// `source` は `"anchor"` (自動解決) / `"user"` (`--region` 由来) のいずれか。
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct IndicatorLayoutPayload {
+    pub anchor_x: f64,
+    pub anchor_y: f64,
+    pub scale: f64,
+    pub support: u32,
+    pub confidence: f64,
+    pub source: String,
+}
+
+/// #1106 -- KO / ASSIST の 1 区間。`match_index` は区間開始が属する試合の index で、
+/// どの試合にも入らない場合 (試合外の暗転中等) は null。
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct IndicatorEventPayload {
+    pub kind: String,
+    pub start: f64,
+    pub end: f64,
+    pub score: f64,
+    pub samples: u32,
+    pub match_index: Option<u32>,
+}
+
+/// #1106 -- `start_indicators` の戻り値 (CLI `--json` 最終行 `complete` の本体)。
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct IndicatorsResult {
+    /// CLI が解決した metadata.json のパス。
+    pub metadata: String,
+    pub layout: IndicatorLayoutPayload,
+    /// 自動キャリブレーションをやり直したか (キャッシュ再利用 / `--region` では false)。
+    pub recalibrated: bool,
+    pub events: Vec<IndicatorEventPayload>,
+    /// `indicator_layout` を metadata.json へ書き戻したか (`--no-write` では false)。
+    pub wrote_metadata: bool,
+}
+
+/// #1106 -- `{"type":"progress"}` 行。`phase` は `calibrating` / `scanning`。
+/// `scanning` では layout (走査開始直後の 1 行) か processed_s / total_s
+/// (30 秒ごと) のどちらかが入る。frontend へは minimap-progress と同じく
+/// snake_case のまま emit する。
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct IndicatorsProgress {
+    pub phase: String,
+    #[serde(default)]
+    pub layout: Option<IndicatorLayoutPayload>,
+    #[serde(default)]
+    pub processed_s: Option<f64>,
+    #[serde(default)]
+    pub total_s: Option<f64>,
+}
+
+/// #1106 -- `allaganeye indicators --json` の stdout 1 行の分類結果。
+#[derive(Debug)]
+pub enum IndicatorsLine {
+    Progress(IndicatorsProgress),
+    Complete(IndicatorsResult),
+    /// `{"type":"error"}` 行。CLI はこの行を出したあと非 0 で exit する。
+    Error { message: String },
+    /// 空行 / malformed JSON / 未知の type (forward-compat)。
+    Ignore,
+}
+
+/// #1106 -- Parse one stdout line from `allaganeye indicators --json`.
+///
+/// 空行・malformed・未知 type はすべて `IndicatorsLine::Ignore` にする
+/// (start_minimap の `parse_wire_event` と同じく silently skip し、途中の
+/// 雑多な出力で走査を止めない)。
+fn parse_indicators_line(line: &str) -> IndicatorsLine {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return IndicatorsLine::Ignore;
+    }
+    let value: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(v) => v,
+        Err(_) => return IndicatorsLine::Ignore,
+    };
+    match value.get("type").and_then(|t| t.as_str()) {
+        Some("progress") => match serde_json::from_value::<IndicatorsProgress>(value) {
+            Ok(p) => IndicatorsLine::Progress(p),
+            Err(_) => IndicatorsLine::Ignore,
+        },
+        Some("complete") => match serde_json::from_value::<IndicatorsResult>(value) {
+            Ok(r) => IndicatorsLine::Complete(r),
+            Err(_) => IndicatorsLine::Ignore,
+        },
+        Some("error") => match value.get("message").and_then(|m| m.as_str()) {
+            Some(message) => IndicatorsLine::Error {
+                message: message.to_string(),
+            },
+            None => IndicatorsLine::Ignore,
+        },
+        _ => IndicatorsLine::Ignore,
+    }
+}
+
+/// #1106 -- Build the argv for `allaganeye indicators`.
+///
+/// spawn を伴わずに検証できるよう pure 関数に切り出す (build_minimap_argv と
+/// 同じ方針)。`--json` は常に付ける (この command は JSON Lines を 1 行ずつ
+/// parse する前提)。
+fn build_indicators_argv(req: &StartIndicatorsRequest) -> Vec<String> {
+    let mut argv = vec![
+        "indicators".to_string(),
+        req.metadata_path.clone(),
+        "--json".to_string(),
+    ];
+    if let Some(output) = &req.output_path {
+        argv.push("-o".to_string());
+        argv.push(output.clone());
+    }
+    if let Some(interval) = req.interval {
+        argv.push("--interval".to_string());
+        argv.push(format!("{}", interval));
+    }
+    if req.recalibrate == Some(true) {
+        argv.push("--recalibrate".to_string());
+    }
+    if req.write == Some(false) {
+        argv.push("--no-write".to_string());
+    }
+    if let Some(mtime) = req.expected_mtime {
+        argv.push("--expected-mtime".to_string());
+        argv.push(mtime.to_string());
+    }
+    if let Some(region) = req.region {
+        argv.push("--region".to_string());
+        argv.push(format!(
+            "{},{},{},{}",
+            region[0], region[1], region[2], region[3]
+        ));
+    }
+    argv
+}
+
+/// #1106 -- CLI の exit code を AppError に写す (spawn 後の失敗経路)。
+///
+/// - exit 6 (metadata mtime CAS 衝突) → `state.mtime_conflict`
+///   (書き戻し系 command 共通の ConflictModal を GUI が再利用できる)
+/// - exit 5 (オプション値不正) → `validation.range_invalid`
+/// - exit 130 (Ctrl+C / kill による中断) → `subprocess.cancelled`
+/// - exit 4 (レイアウト解決失敗) とその他 → `subprocess.exit_failed`
+///   (既存 code に detection 失敗専用のものがないため、CLI が出した
+///   `{"type":"error"}` 行の message を detail に載せて伝える)
+fn indicators_exit_error(
+    code: Option<i32>,
+    cli_error: Option<&str>,
+    stderr_tail: &[u8],
+) -> AppError {
+    if code == Some(6) {
+        return AppError::new(
+            "state.mtime_conflict",
+            "conflict: metadata.json was modified externally during indicators write",
+        )
+        .with_default_hint();
+    }
+    let tail = String::from_utf8_lossy(stderr_tail).trim().to_string();
+    let detail = match (cli_error, tail.is_empty()) {
+        (Some(message), true) => message.to_string(),
+        (Some(message), false) => format!("{}: {}", message, tail),
+        (None, true) => format!(
+            "python indicators subprocess exited unexpectedly (status: {:?})",
+            code
+        ),
+        (None, false) => format!(
+            "python indicators subprocess exited unexpectedly (status: {:?}): {}",
+            code, tail
+        ),
+    };
+    match code {
+        Some(5) => AppError::new("validation.range_invalid", detail).with_default_hint(),
+        // exit 130 = Ctrl+C / kill による中断。CLI は `{"type":"error","message":"cancelled"}`
+        // 行も出すが、ユーザー操作による中断として `subprocess.cancelled` に写す
+        // (この code は hint を持たない: UI 側で「キャンセルされました」を出す)。
+        Some(130) => AppError::new("subprocess.cancelled", detail).with_default_hint(),
+        _ => AppError::new("subprocess.exit_failed", detail).with_default_hint(),
+    }
+}
+
+/// #1106 -- Launch `allaganeye indicators <path> --json …` as a child process
+/// and stream `indicators-progress` events to the frontend until the process
+/// exits, then return the final `complete` payload.
+///
+/// metadata はパス渡し (stdin 不使用) なので、GUI 側で metadata 全体を Rust に
+/// 持ち上げる必要がない (start_minimap と同じ経路)。CLI exit 6 / 5 の写像は
+/// `indicators_exit_error` を参照。
+#[tauri::command]
+async fn start_indicators(
+    app: tauri::AppHandle,
+    req: StartIndicatorsRequest,
+) -> Result<IndicatorsResult, AppError> {
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+    for arg in &cmd_spec.prefix_args {
+        cmd.arg(arg);
+    }
+    for a in build_indicators_argv(&req) {
+        cmd.arg(a);
+    }
+    if let Some(cwd) = &cmd_spec.cwd {
+        cmd.current_dir(cwd);
+    }
+    cmd.env("PYTHONIOENCODING", "utf-8:replace")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    process_util::apply_no_window(&mut cmd);
+
+    let mut child = cmd.spawn().map_err(|e| {
+        AppError::new(
+            "subprocess.spawn_failed",
+            format!("start_indicators spawn: {}", e),
+        )
+        .with_default_hint()
+    })?;
+
+    // #837 (P2-16) -- start_minimap と同じ順序: track より前に pipe を取る。
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // #837 (P2-15) -- stderr は bounded tail へ並行 drain する (chatty な child で
+    // OS pipe が詰まらないようにし、異常終了時の traceback を error detail に残す)。
+    let stderr_handle = stderr.map(|stderr| {
+        tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await })
+    });
+
+    // indicators は Python から ffmpeg の rawvideo パイプを 1 本だけ起動する
+    // (match 単位の並列 encode はしない)。それでもキャンセル時に孫 ffmpeg を
+    // 取りこぼさないよう minimap と同じ Job Object で束ねる。
+    #[cfg(windows)]
+    let job: Option<process_util::job_object::ProcessJob> = {
+        match process_util::job_object::ProcessJob::new() {
+            Ok(j) => {
+                if let Some(raw) = child.raw_handle() {
+                    if let Err(e) = j.assign(raw) {
+                        eprintln!(
+                            "warning: AssignProcessToJobObject failed: {} \
+                             (indicators descendants may be orphaned on cancel)",
+                            e
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "warning: child.raw_handle() returned None for indicators \
+                         spawn (indicators descendants may be orphaned on cancel)"
+                    );
+                }
+                Some(j)
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: CreateJobObject failed: {} \
+                     (indicators descendants may be orphaned on cancel)",
+                    e
+                );
+                None
+            }
+        }
+    };
+    let tracked = TrackedChild {
+        child,
+        #[cfg(windows)]
+        job,
+    };
+    let tracked_id = track_child(tracked).await;
+
+    let mut complete_capture: Option<IndicatorsResult> = None;
+    let mut cli_error: Option<String> = None;
+    if let Some(stdout) = stdout {
+        // #656 -- PYTHONIOENCODING=utf-8:replace を primary の保証とし、ここでも
+        // lossy UTF-8 で decode する defensive 層を重ねる (start_minimap と同じ)。
+        let mut reader = BufReader::new(stdout);
+        let mut line_buf: Vec<u8> = Vec::with_capacity(1024);
+
+        loop {
+            line_buf.clear();
+            match reader.read_until(b'\n', &mut line_buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    while matches!(line_buf.last(), Some(b'\n') | Some(b'\r')) {
+                        line_buf.pop();
+                    }
+                    let line = String::from_utf8_lossy(&line_buf);
+                    match parse_indicators_line(&line) {
+                        IndicatorsLine::Progress(p) => {
+                            let _ = app.emit("indicators-progress", p);
+                        }
+                        IndicatorsLine::Complete(r) => complete_capture = Some(r),
+                        IndicatorsLine::Error { message } => cli_error = Some(message),
+                        IndicatorsLine::Ignore => {
+                            // forward-compat: 空行 / malformed / 未知 type は捨てる
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
+    let mut child = match untrack_child(tracked_id).await {
+        Some(c) => c,
+        None => {
+            return Err(
+                AppError::new("subprocess.cancelled", "indicators cancelled")
+                    .with_default_hint(),
+            );
+        }
+    };
+    let status = child.wait().await.map_err(|e| {
+        AppError::new(
+            "subprocess.wait_failed",
+            format!("start_indicators wait: {}", e),
+        )
+        .with_default_hint()
+    })?;
+
+    let stderr_tail = match stderr_handle {
+        Some(h) => h.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+
+    if status.success() {
+        // Python は --json で必ず最後に complete 行を出す。ここに来るのは出力が
+        // truncate された / pipe が壊れた等の異常系で、exit 0 を「完了」と返すと
+        // 空の events を成功として扱ってしまうため明示的に失敗にする。
+        return complete_capture.ok_or_else(|| {
+            AppError::new(
+                "subprocess.exit_failed",
+                "python indicators subprocess exited cleanly without emitting a complete line",
+            )
+            .with_default_hint()
+        });
+    }
+
+    Err(indicators_exit_error(
+        status.code(),
+        cli_error.as_deref(),
+        &stderr_tail,
+    ))
+}
+
 pub fn run() {
     // #614 -- Rotate stale panic logs (>7 days) and detect unclean shutdown
     // from the previous session, BEFORE the Tauri builder runs so the
@@ -3990,6 +4360,7 @@ pub fn run() {
         start_export,
         start_minimap,
         detect_minimap_regions,
+        start_indicators,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -4021,6 +4392,7 @@ pub fn run() {
         start_export,
         start_minimap,
         detect_minimap_regions,
+        start_indicators,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -6645,5 +7017,270 @@ mod start_export_wire_tests {
     #[test]
     fn parse_proposal_line_ignores_non_proposal() {
         assert!(parse_proposal_line(r#"{"type":"summary","success":1}"#).is_none());
+    }
+}
+
+#[cfg(test)]
+mod start_indicators_tests {
+    use super::*;
+
+    fn base_request() -> StartIndicatorsRequest {
+        StartIndicatorsRequest {
+            metadata_path: "C:/x/metadata.json".into(),
+            output_path: None,
+            interval: None,
+            recalibrate: None,
+            write: None,
+            expected_mtime: None,
+            region: None,
+        }
+    }
+
+    // -- build_indicators_argv ------------------------------------------------
+
+    /// 既定リクエストは `indicators <path> --json` だけを渡す
+    /// (未指定 option は CLI 既定に委ねる)。
+    #[test]
+    fn argv_minimal_passes_only_json() {
+        let argv = build_indicators_argv(&base_request());
+        let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+        assert_eq!(args, vec!["indicators", "C:/x/metadata.json", "--json"]);
+    }
+
+    /// 全 option 指定時に CLI のフラグ名・値の対応が崩れていないことを pin する。
+    #[test]
+    fn argv_emits_every_option_when_present() {
+        let req = StartIndicatorsRequest {
+            metadata_path: "m.json".into(),
+            output_path: Some("events.json".into()),
+            interval: Some(0.05),
+            recalibrate: Some(true),
+            write: Some(false),
+            expected_mtime: Some(1_700_000_000_000),
+            region: Some([10.0, 20.0, 300.0, 400.0]),
+        };
+        let argv = build_indicators_argv(&req);
+        assert!(argv.windows(2).any(|w| w[0] == "-o" && w[1] == "events.json"));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--interval" && w[1] == "0.05"));
+        assert!(argv.contains(&"--recalibrate".to_string()));
+        assert!(argv.contains(&"--no-write".to_string()));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--expected-mtime" && w[1] == "1700000000000"));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--region" && w[1] == "10,20,300,400"));
+    }
+
+    /// `write: Some(true)` は CLI 既定なので `--no-write` を出さない
+    /// (`--write` というフラグは CLI に存在しない)。
+    #[test]
+    fn argv_write_true_omits_no_write_flag() {
+        let mut req = base_request();
+        req.write = Some(true);
+        let argv = build_indicators_argv(&req);
+        assert!(!argv.iter().any(|a| a == "--no-write"));
+        assert!(!argv.iter().any(|a| a == "--write"));
+    }
+
+    /// `recalibrate: Some(false)` はフラグを出さない。
+    #[test]
+    fn argv_recalibrate_false_omits_flag() {
+        let mut req = base_request();
+        req.recalibrate = Some(false);
+        let argv = build_indicators_argv(&req);
+        assert!(!argv.iter().any(|a| a == "--recalibrate"));
+    }
+
+    /// 整数値の region / interval は `10.0` ではなく `10` として渡す
+    /// (Python 側は float として受けるので値は同じ、argv を短く保つ)。
+    #[test]
+    fn argv_formats_integral_floats_without_decimal_point() {
+        let mut req = base_request();
+        req.region = Some([0.0, 0.0, 1920.0, 64.0]);
+        req.interval = Some(1.0);
+        let argv = build_indicators_argv(&req);
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--region" && w[1] == "0,0,1920,64"));
+        assert!(argv.windows(2).any(|w| w[0] == "--interval" && w[1] == "1"));
+    }
+
+    // -- parse_indicators_line ------------------------------------------------
+
+    #[test]
+    fn parses_calibrating_progress_line() {
+        let line = r#"{"type":"progress","phase":"calibrating"}"#;
+        match parse_indicators_line(line) {
+            IndicatorsLine::Progress(p) => {
+                assert_eq!(p.phase, "calibrating");
+                assert!(p.layout.is_none());
+                assert!(p.processed_s.is_none());
+                assert!(p.total_s.is_none());
+            }
+            other => panic!("expected Progress, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_scanning_progress_line_with_layout() {
+        let line = r#"{"type":"progress","phase":"scanning","layout":{"anchor_x":0.0729,"anchor_y":0.0648,"scale":1.0,"support":6,"confidence":0.92,"source":"anchor"}}"#;
+        match parse_indicators_line(line) {
+            IndicatorsLine::Progress(p) => {
+                assert_eq!(p.phase, "scanning");
+                let layout = p.layout.expect("layout");
+                assert!((layout.anchor_x - 0.0729).abs() < 1e-9);
+                assert!((layout.anchor_y - 0.0648).abs() < 1e-9);
+                assert_eq!(layout.support, 6);
+                assert!((layout.confidence - 0.92).abs() < 1e-9);
+                assert_eq!(layout.source, "anchor");
+                assert!(p.processed_s.is_none());
+            }
+            other => panic!("expected Progress, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_scanning_progress_line_with_counters() {
+        let line = r#"{"type":"progress","phase":"scanning","processed_s":30.0,"total_s":944.0}"#;
+        match parse_indicators_line(line) {
+            IndicatorsLine::Progress(p) => {
+                assert_eq!(p.phase, "scanning");
+                assert!(p.layout.is_none());
+                assert!((p.processed_s.expect("processed_s") - 30.0).abs() < 1e-9);
+                assert!((p.total_s.expect("total_s") - 944.0).abs() < 1e-9);
+            }
+            other => panic!("expected Progress, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_complete_line() {
+        let line = r#"{"type":"complete","metadata":"C:/x/metadata.json","layout":{"anchor_x":0.07,"anchor_y":0.06,"scale":1.0,"support":6,"confidence":0.9,"source":"user"},"recalibrated":true,"events":[{"kind":"ko","start":12.3,"end":13.0,"score":0.88,"samples":3,"match_index":1},{"kind":"assist","start":40.0,"end":40.5,"score":0.71,"samples":2,"match_index":null}],"wrote_metadata":false}"#;
+        match parse_indicators_line(line) {
+            IndicatorsLine::Complete(r) => {
+                assert_eq!(r.metadata, "C:/x/metadata.json");
+                assert_eq!(r.layout.source, "user");
+                assert!(r.recalibrated);
+                assert!(!r.wrote_metadata);
+                assert_eq!(r.events.len(), 2);
+                assert_eq!(r.events[0].kind, "ko");
+                assert_eq!(r.events[0].samples, 3);
+                assert_eq!(r.events[0].match_index, Some(1));
+                assert!(r.events[1].match_index.is_none());
+            }
+            other => panic!("expected Complete, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_error_line() {
+        let line = r#"{"type":"error","message":"indicator layout could not be resolved"}"#;
+        match parse_indicators_line(line) {
+            IndicatorsLine::Error { message } => {
+                assert_eq!(message, "indicator layout could not be resolved");
+            }
+            other => panic!("expected Error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn ignores_malformed_json() {
+        assert!(matches!(
+            parse_indicators_line("not json {"),
+            IndicatorsLine::Ignore
+        ));
+    }
+
+    #[test]
+    fn ignores_empty_and_whitespace_only_lines() {
+        assert!(matches!(parse_indicators_line(""), IndicatorsLine::Ignore));
+        assert!(matches!(
+            parse_indicators_line("   \t "),
+            IndicatorsLine::Ignore
+        ));
+    }
+
+    #[test]
+    fn ignores_unknown_type() {
+        assert!(matches!(
+            parse_indicators_line(r#"{"type":"future_unknown","extra":1}"#),
+            IndicatorsLine::Ignore
+        ));
+    }
+
+    /// `progress` でも必須の `phase` が欠けていれば Ignore (parse 失敗を
+    /// 握り潰して走査を続ける)。
+    #[test]
+    fn ignores_progress_without_phase() {
+        assert!(matches!(
+            parse_indicators_line(r#"{"type":"progress","processed_s":10.0}"#),
+            IndicatorsLine::Ignore
+        ));
+    }
+
+    /// `complete` の layout / events が欠けていれば Ignore (frontend に
+    /// 半端な payload を返さない)。
+    #[test]
+    fn ignores_complete_without_layout() {
+        assert!(matches!(
+            parse_indicators_line(r#"{"type":"complete","metadata":"m.json"}"#),
+            IndicatorsLine::Ignore
+        ));
+    }
+
+    // -- indicators_exit_error ------------------------------------------------
+
+    #[test]
+    fn exit_6_maps_to_mtime_conflict() {
+        let err = indicators_exit_error(Some(6), Some("changed on disk"), b"");
+        assert_eq!(err.code, "state.mtime_conflict");
+        assert!(err.hint.is_some());
+    }
+
+    #[test]
+    fn exit_5_maps_to_validation_range_invalid() {
+        let err = indicators_exit_error(Some(5), Some("--interval must be >= 0.05s"), b"");
+        assert_eq!(err.code, "validation.range_invalid");
+        assert!(err.message.contains("--interval"));
+    }
+
+    /// exit 4 (レイアウト解決失敗) は専用 code がないため exit_failed に載せ、
+    /// CLI の error message を失わない。
+    #[test]
+    fn exit_4_keeps_cli_error_message() {
+        let err = indicators_exit_error(Some(4), Some("layout unresolved"), b"");
+        assert_eq!(err.code, "subprocess.exit_failed");
+        assert!(err.message.contains("layout unresolved"));
+    }
+
+    /// CLI の error 行が無い場合は stderr tail を detail に残す。
+    #[test]
+    fn exit_without_cli_error_falls_back_to_stderr_tail() {
+        let err = indicators_exit_error(Some(3), None, b"ffmpeg: boom");
+        assert_eq!(err.code, "subprocess.exit_failed");
+        assert!(err.message.contains("status: Some(3)"));
+        assert!(err.message.contains("ffmpeg: boom"));
+    }
+
+    /// exit 130 (Ctrl+C / kill) は中断として `subprocess.cancelled` に写す。
+    /// CLI は `{"type":"error","message":"cancelled"}` 行も出すので、message には
+    /// その文言を保つ (hint は None のまま = UI 側で「キャンセルされました」)。
+    #[test]
+    fn exit_130_maps_to_cancelled() {
+        let err = indicators_exit_error(Some(130), Some("cancelled"), b"");
+        assert_eq!(err.code, "subprocess.cancelled");
+        assert!(err.message.contains("cancelled"));
+        assert!(err.hint.is_none());
+    }
+
+    /// CLI の error 行も stderr も無い 130 でも code は cancelled のまま。
+    #[test]
+    fn exit_130_without_detail_still_maps_to_cancelled() {
+        let err = indicators_exit_error(Some(130), None, b"");
+        assert_eq!(err.code, "subprocess.cancelled");
+        assert!(err.message.contains("status: Some(130)"));
     }
 }
