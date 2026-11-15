@@ -9,7 +9,7 @@
 開発セットアップには以下 3 つのソフトウェアが必要です。
 
 - **Git**: ソースコードの取得・更新に使います
-- **Python 3.11 (3.11.9 推奨)**: 実行環境です（Portable ZIP 同梱の Python とは別に必要です）。CI と Portable ZIP は 3.11.9 で固定しているため、ローカルも同じ patch に揃えると挙動差を避けられます
+- **Python 3.11 (3.11.9 推奨)**: 実行環境です（Portable ZIP 同梱の Python とは別に必要です）。Portable ZIP のビルドと Windows の CI は 3.11.9、Linux (ubuntu) の CI は 3.11.18 で固定しています（どちらも 3.11 系。理由は [`ci.yml` 冒頭](../.github/workflows/ci.yml) と #1119 を参照）。ローカルはどちらでも動きますが、**出荷物と同じ 3.11.9** に揃えると挙動差を避けられます
 - **ffmpeg / ffprobe 8.1 LGPLv3 推奨**: 動画の解析・分割エンジンです。最低 4.1 で動作しますが、CI / Portable ZIP は BtbN の LGPLv3 8.1 shared に固定しているので同系列を推奨します
 
 ### Git
@@ -92,7 +92,7 @@ sudo apt update && sudo apt install python3 python3-pip python3-venv
 #### インストール確認
 
 ```bash
-python --version   # "Python 3.11.9" (推奨) または "Python 3.11.x" 以上が表示されること
+python --version   # "Python 3.11.x" が表示されること（3.11.9 推奨）
 pip --version      # pip が利用可能であること
 ```
 
@@ -504,14 +504,22 @@ allaganeye debug-brightness <video_path> --start 100 --end 200 --interval 0.5
 
 CI / Portable ZIP / 開発環境の 3 環境で Python と FFmpeg のバージョンを揃えるため、bump 時は以下を**同時に**更新する (#510 で 2026-04-23 に統一)。
 
-### Python (現在 3.11.9 に固定)
+### Python (3.11 系。Linux CI 3.11.18 / Windows・Portable ZIP 3.11.9)
 
 | 場所 | キー |
 | --- | --- |
-| `.github/workflows/ci.yml` | `python-version: "3.11.9"` |
-| `.github/workflows/release.yml` (3 ジョブ) | `python-version: '3.11.9'` |
+| `.github/workflows/ci.yml` (ubuntu ジョブ) | `python-version: "3.11.18"` |
+| `.github/workflows/ci.yml` (windows ジョブ) | `python-version: "3.11.9"` |
+| `.github/workflows/release-build.yml` / `release-publish.yml` | ubuntu ジョブ `'3.11.18'` / windows ビルド `'3.11.9'` |
+| `.github/workflows/security-audit.yml` (OS matrix) | `python-version: "3.11"`（プラットフォーム別に解決） |
 | `scripts/build-portable-zip.ps1` | `python --version` sanity check (line ~448) で `^Python 3\.11\.` を期待 |
 | `docs/developer-setup.md` §1 | 「Python 3.11 (3.11.9 推奨)」の記載 |
+
+> **OS によって patch が違う理由**: `actions/setup-python` は「OS イメージ×版」のビルド済み
+> アーカイブを取る。2026-11-14 の `ubuntu-latest` → Ubuntu 26.04 ロールで 3.11.9 の
+> linux-26.04 アセットが無いことが判明し、3.11.18 は逆に win32 アセットを持たない
+> (両方をカバーする版は現時点で無い)。版を bump する時は **両 OS のアセット有無**を
+> 確かめる (#1119)。
 
 ### FFmpeg (現在 BtbN LGPLv3 n8.1 shared / `autobuild-2026-04-30-13-44` monthly snapshot に固定)
 
@@ -550,7 +558,7 @@ bump 手順:
 
 bump 頻度: 4-6 か月毎を目安、PyInstaller 公式 release notes を確認して numpy / scipy / cv2 hook の互換性を事前確認する。
 
-Python interpreter 自体は CI 上 `actions/setup-python@v5` で 3.11.9 に pin される (`.github/workflows/release.yml`)。local build では `python --version` (PATH 上の `python` コマンド) を build script 冒頭で sanity check する。
+Python interpreter 自体は CI 上 `actions/setup-python@v5` で 3.11.9 に pin される (`.github/workflows/release-build.yml` の `build-windows`)。local build では `python --version` (PATH 上の `python` コマンド) を build script 冒頭で sanity check する。
 
 > **履歴**: 旧 Python 3.11 embed + get-pip.py SHA pin フローは [#649](https://github.com/Idios/kobutachan-allaganeye/issues/649) (PR [#651](https://github.com/Idios/kobutachan-allaganeye/pull/651)) → [PR #675](https://github.com/Idios/kobutachan-allaganeye/pull/675) Round 2 #7 → [#681](https://github.com/Idios/kobutachan-allaganeye/issues/681) / PR [#703](https://github.com/Idios/kobutachan-allaganeye/pull/703) の versioned tag 化を経て [#752](https://github.com/Idios/kobutachan-allaganeye/issues/752) で PyInstaller `--onedir` に移行した。
 

@@ -52,7 +52,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11.9'
+          python-version: '3.11.18'
 
       # #911: バージョン保持箇所は pyproject.toml だけではない (実測 6 ファイル)。
       # 箇所リストの正は scripts/check_version_consistency.py の VERSION_LOCATIONS。
