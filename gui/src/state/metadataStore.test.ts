@@ -1815,6 +1815,79 @@ describe('useMetadataStore.reloadFromDisk (#893)', () => {
   });
 });
 
+// #1106 Phase 2 review R1: indicators の CLI が metadata.json を atomic
+// write-back した後、GUI の store を disk へ追従させる。reloadFromDisk と違い
+// 未適用の編集 (dirty) を捨てない。
+describe('useMetadataStore.refreshFromDiskPreservingEdits (#1106)', () => {
+  const layout = {
+    anchor_x: 0.0729,
+    anchor_y: 0.0648,
+    scale: 1,
+    support: 6,
+    confidence: 0.92,
+    source: 'anchor',
+  };
+
+  it('takes disk changes (indicator_layout / mtime) while keeping unsaved edits and dirty', async () => {
+    configureInvoke({
+      get_metadata_mtime: 4242,
+      load_metadata: { ...validMetadata(), indicator_layout: layout },
+    });
+    useMetadataStore.setState({
+      filePath: 'C:/x/metadata.json',
+      metadata: validMetadata() as unknown as Metadata,
+      loadedMtimeMs: 1,
+      dirty: false,
+    });
+    // 未適用の編集を積む (name / type_override / 境界)
+    useMetadataStore.getState().updateMatch(1, {
+      name: 'edited',
+      type_override: 'skip',
+      edited: { start_time: 5, end_time: 10 },
+    });
+    expect(useMetadataStore.getState().dirty).toBe(true);
+
+    await useMetadataStore.getState().refreshFromDiskPreservingEdits();
+
+    const s = useMetadataStore.getState();
+    // disk 側の write-back 結果 (mtime / indicator_layout) は取り込む
+    expect(s.loadedMtimeMs).toBe(4242);
+    expect(s.metadata?.indicator_layout).toEqual(layout);
+    expect(s.loadErrorState).toBeNull();
+    // 未適用の編集と dirty は保持する (silent loss なし)
+    expect(s.dirty).toBe(true);
+    const m = s.metadata?.matches.find((x) => x.index === 1);
+    expect(m?.name).toBe('edited');
+    expect(m?.type_override).toBe('skip');
+    expect(m?.edited).toEqual({ start_time: 5, end_time: 10 });
+  });
+
+  it('keeps the in-memory metadata when the read fails', async () => {
+    configureInvoke({ load_metadata_error: new Error('file gone') });
+    const existing = validMetadata();
+    useMetadataStore.setState({
+      filePath: 'C:/x/metadata.json',
+      metadata: existing as unknown as Metadata,
+      loadedMtimeMs: 1,
+    });
+
+    // throw しないこと自体を検証する (throw すればテストが落ちる)
+    await useMetadataStore.getState().refreshFromDiskPreservingEdits();
+
+    const s = useMetadataStore.getState();
+    expect(s.loadErrorState?.message).toContain('file gone');
+    // stale な mtime は次の apply / 再実行で CAS 衝突として表面化させる
+    expect(s.loadedMtimeMs).toBe(1);
+    expect(s.metadata?.source).toBe(existing.source);
+  });
+
+  it('is a no-op without filePath (sample mode)', async () => {
+    useMetadataStore.setState({ filePath: null });
+    await useMetadataStore.getState().refreshFromDiskPreservingEdits();
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('normalizeForPersistence minimap_regions round-trip (#481)', () => {
   it('normalizeForPersistence preserves minimap_regions (#481)', async () => {
     // minimap_regions must survive load -> edit -> apply intact so the

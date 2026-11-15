@@ -93,6 +93,7 @@ describe('indicatorsStore (#1106 Phase 1)', () => {
   it('初期状態は idle で、listener はまだ張られていない', () => {
     const s = useIndicatorsStore.getState();
     expect(s.status).toBe('idle');
+    expect(s.metadataPath).toBeNull();
     expect(s.phase).toBeNull();
     expect(s.events).toEqual([]);
     expect(s.error).toBeNull();
@@ -187,12 +188,41 @@ describe('indicatorsStore (#1106 Phase 1)', () => {
 
     const s = useIndicatorsStore.getState();
     expect(s.status).toBe('idle');
+    expect(s.metadataPath).toBeNull();
     expect(s.phase).toBeNull();
     expect(s.processedSeconds).toBeNull();
     expect(s.totalSeconds).toBeNull();
     expect(s.layout).toBeNull();
     expect(s.events).toEqual([]);
     expect(s.error).toBeNull();
+  });
+
+  // #1106 Phase 2 review R1: 結果はどの metadata.json 向けかを持ち、画面側が
+  // 別ファイルの結果を隠せるようにする (録画 A → B と切り替えたときの誤表示防止)。
+  it('start は対象 metadata.json を metadataPath に記録し、complete 後も保持する', async () => {
+    invokeMock.mockResolvedValue(completeResult());
+    await useIndicatorsStore
+      .getState()
+      .start({ metadataPath: 'C:/a/metadata.json' });
+
+    const s = useIndicatorsStore.getState();
+    expect(s.status).toBe('complete');
+    expect(s.metadataPath).toBe('C:/a/metadata.json');
+  });
+
+  it('error に落ちても metadataPath は保持する (領域フォールバックの再実行が同じ対象を使う)', async () => {
+    invokeMock.mockRejectedValue(
+      new Error('python indicators subprocess exited unexpectedly'),
+    );
+    await expect(
+      useIndicatorsStore
+        .getState()
+        .start({ metadataPath: 'C:/b/metadata.json' }),
+    ).rejects.toThrow();
+
+    const s = useIndicatorsStore.getState();
+    expect(s.status).toBe('error');
+    expect(s.metadataPath).toBe('C:/b/metadata.json');
   });
 
   // -- 走行中の再入拒否 (run の重なり防止) ---------------------------------

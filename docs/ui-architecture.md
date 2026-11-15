@@ -399,6 +399,8 @@ stateDiagram-v2
 - 走行中の離脱: `listen` の寿命は `start()` が持つので、画面を離れても購読と状態更新は続く。戻れば同じ status から再開する (再実行もしない)
 - `error` のうち `subprocess.cancelled` (= ユーザーの [中断]) だけは失敗ではないため、赤いエラーではなく中立の「中断しました」+ [⬦ 検出を開始] を出す
 - 探索領域の解決失敗 (CLI exit 4) では領域の手動指定フォームを追加表示する。exit 4 は Rust 側 `indicators_exit_error` で `subprocess.exit_failed` に写像され `code` だけでは他の異常終了と区別できないため、CLI の文言 (`探索領域を解決できませんでした`) で判定する
+- 結果は `indicatorsStore.metadataPath` と `metadataStore.filePath` の一致でスコープする。別の録画の `complete` / `error` は `idle` 扱いで隠し、別の録画の run が走行中なら「別の動画の検出が進行中」+ [中断] を出す (録画 A の結果で B にシークする事故の防止)
+- 成功して `wrote_metadata === true` のときは `metadataStore.refreshFromDiskPreservingEdits()` で mtime と `indicator_layout` を disk から取り込む。編集バッファ (`name` / `type_override` / `edited`) と `dirty` は保持されるので、preview の未適用編集は失われない。これをやらないと、次の [再検出] が自分の write を外部変更とみなして exit 6 で失敗する
 - [◀ 一覧へ] は実行中も常に enabled (minimap と同じ)。中断せずに離脱すると subprocess は走り続ける
 - イベント一覧の行は「その発生時刻を preview で見る」導線で、`pendingSeekSeconds` に `start` を積んでから `openPreviewFor(match_index)` する。`match_index` が null (試合外) の行は遷移先が無いためボタンにしない
 - 画面内の UI 部品ごとの操作 → store mutation は [ui-interaction-spec.md §2.7](ui-interaction-spec.md) が正

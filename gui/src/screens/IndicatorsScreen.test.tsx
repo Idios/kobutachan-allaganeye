@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -75,6 +75,8 @@ const COMPLETE_RESULT: IndicatorsResult = {
 
 /** `start()` の action を差し替えられるよう、実装を保持しておく。 */
 const realStart = useIndicatorsStore.getState().start;
+/** metadata refresh の action も同様に差し替えられるよう保持する (review R1)。 */
+const realRefreshFromDisk = useMetadataStore.getState().refreshFromDiskPreservingEdits;
 
 /**
  * store の値を直接初期化する。`reset()` は running 中に throw するため、
@@ -83,6 +85,7 @@ const realStart = useIndicatorsStore.getState().start;
 function idleState(): void {
   useIndicatorsStore.setState({
     status: 'idle',
+    metadataPath: null,
     phase: null,
     processedSeconds: null,
     totalSeconds: null,
@@ -131,7 +134,15 @@ function renderIndicators(patch: Partial<IndicatorsState> = {}): void {
 function completePatch(
   overrides: Partial<IndicatorsState> = {},
 ): Partial<IndicatorsState> {
-  return { status: 'complete', phase: null, layout: LAYOUT, events: EVENTS, error: null, ...overrides };
+  return {
+    status: 'complete',
+    metadataPath: METADATA_PATH,
+    phase: null,
+    layout: LAYOUT,
+    events: EVENTS,
+    error: null,
+    ...overrides,
+  };
 }
 
 beforeEach(() => {
@@ -146,6 +157,9 @@ beforeEach(() => {
   progressHandlers.length = 0;
   useAppStateStore.getState().reset();
   useMetadataStore.getState().clear();
+  useMetadataStore.setState({
+    refreshFromDiskPreservingEdits: realRefreshFromDisk,
+  });
   idleState();
 });
 
@@ -231,6 +245,79 @@ describe('IndicatorsScreen run (idle → running → complete)', () => {
     expect(mockInvoke).toHaveBeenCalledWith('start_indicators', {
       req: { metadataPath: METADATA_PATH, expectedMtime: MTIME },
     });
+  });
+
+  // #1106 Phase 2 review R1: CLI は metadata.json を atomic に書き換えるので、
+  // 成功後に store を disk へ追従させる (mtime を refresh しないと次の [再検出] が
+  // 自分の write を外部変更として exit 6 し、preview の [適用] も偽の競合になる)。
+  it('refreshes the metadata store after a successful write-back', async () => {
+    const refreshSpy = vi.fn().mockResolvedValue(undefined);
+    useMetadataStore.setState({ refreshFromDiskPreservingEdits: refreshSpy });
+    const user = userEvent.setup();
+    renderIndicators();
+    await user.click(screen.getByRole('button', { name: '検出を開始' }));
+    await waitFor(() => expect(refreshSpy).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not refresh the metadata store when the CLI did not write', async () => {
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'start_indicators'
+        ? Promise.resolve({ ...COMPLETE_RESULT, wrote_metadata: false })
+        : Promise.resolve(undefined),
+    );
+    const refreshSpy = vi.fn().mockResolvedValue(undefined);
+    useMetadataStore.setState({ refreshFromDiskPreservingEdits: refreshSpy });
+    const user = userEvent.setup();
+    renderIndicators();
+    await user.click(screen.getByRole('button', { name: '検出を開始' }));
+    await screen.findByTestId('indicators-summary');
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not refresh a file that was loaded while the run was in flight', async () => {
+    const pending = deferred<IndicatorsResult>();
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'start_indicators' ? pending.promise : Promise.resolve(undefined),
+    );
+    const refreshSpy = vi.fn().mockResolvedValue(undefined);
+    useMetadataStore.setState({ refreshFromDiskPreservingEdits: refreshSpy });
+    const user = userEvent.setup();
+    renderIndicators();
+    await user.click(screen.getByRole('button', { name: '検出を開始' }));
+
+    // 走行中に別の録画を load する (画面は離脱しても promise は生きている)
+    await act(async () => {
+      useMetadataStore.setState({ filePath: 'C:/other/metadata.json' });
+    });
+    await act(async () => {
+      pending.resolve(COMPLETE_RESULT);
+      await pending.promise;
+    });
+
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it('takes the post-write mtime and indicator_layout from disk (end-to-end)', async () => {
+    const user = userEvent.setup();
+    renderIndicators();
+    // disk の内容は in-memory と同じ metadata に indicator_layout が足された形
+    const diskMetadata = {
+      ...(useMetadataStore.getState().metadata as unknown as Record<string, unknown>),
+      indicator_layout: LAYOUT,
+    };
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'start_indicators') return Promise.resolve(COMPLETE_RESULT);
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(777);
+      if (cmd === 'load_metadata') return Promise.resolve(diskMetadata);
+      return Promise.resolve(undefined);
+    });
+    await user.click(screen.getByRole('button', { name: '検出を開始' }));
+
+    // 次の [再検出] が自分の write を外部変更とみなさないよう mtime が追従する
+    await waitFor(() =>
+      expect(useMetadataStore.getState().loadedMtimeMs).toBe(777),
+    );
+    expect(useMetadataStore.getState().metadata?.indicator_layout).toEqual(LAYOUT);
   });
 
   it('中断 calls cancel() on the store', async () => {
@@ -331,6 +418,62 @@ describe('IndicatorsScreen complete', () => {
   });
 });
 
+// #1106 Phase 2 review R1: 結果は「どの metadata.json 向けか」でスコープする。
+// 録画 A で検出 → complete → B を load → 本画面を開いたとき、A の結果が見えると
+// 行を押して B に A の時刻 / match index でシークしてしまう (存在しない試合もあり得る)。
+describe('IndicatorsScreen results scoping', () => {
+  const OTHER = 'C:/other/metadata.json';
+
+  it('hides results produced for a different metadata file', () => {
+    renderIndicators(completePatch({ metadataPath: OTHER }));
+    expect(screen.getByTestId('indicators-screen')).toHaveAttribute(
+      'data-status',
+      'idle',
+    );
+    expect(screen.queryByTestId('indicators-summary')).toBeNull();
+    expect(screen.queryByTestId('indicators-group-1')).toBeNull();
+    expect(screen.getByRole('button', { name: '検出を開始' })).toBeEnabled();
+  });
+
+  it('hides an error produced for a different metadata file', () => {
+    renderIndicators({
+      status: 'error',
+      metadataPath: OTHER,
+      error: {
+        message: '探索領域を解決できませんでした',
+        hint: null,
+        code: 'subprocess.exit_failed',
+      },
+    });
+    expect(screen.queryByTestId('indicators-error')).toBeNull();
+    expect(screen.queryByTestId('indicators-region-form')).toBeNull();
+  });
+
+  it('shows an other-file notice while a run for a different file is in flight', () => {
+    renderIndicators({
+      status: 'running',
+      metadataPath: OTHER,
+      phase: 'scanning',
+    });
+    expect(
+      screen.getByTestId('indicators-other-file-running'),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId('indicators-progress')).toBeNull();
+    // 止める手段を必ず出す (store は run の重なりを拒否するため)
+    expect(screen.getByRole('button', { name: '中断' })).toBeEnabled();
+  });
+
+  it('shows progress when the run belongs to the loaded file', () => {
+    renderIndicators({
+      status: 'running',
+      metadataPath: METADATA_PATH,
+      phase: 'calibrating',
+    });
+    expect(screen.getByTestId('indicators-progress')).toBeInTheDocument();
+    expect(screen.queryByTestId('indicators-other-file-running')).toBeNull();
+  });
+});
+
 describe('IndicatorsScreen error', () => {
   const genericError = {
     message: 'python indicators subprocess exited unexpectedly (status: 1)',
@@ -345,7 +488,11 @@ describe('IndicatorsScreen error', () => {
   };
 
   it('shows the CLI message and hint', () => {
-    renderIndicators({ status: 'error', error: genericError });
+    renderIndicators({
+      status: 'error',
+      metadataPath: METADATA_PATH,
+      error: genericError,
+    });
     const box = screen.getByTestId('indicators-error');
     expect(box).toHaveTextContent('検出に失敗しました');
     expect(box).toHaveTextContent('status: 1');
@@ -355,7 +502,11 @@ describe('IndicatorsScreen error', () => {
   });
 
   it('offers the region fallback form on a layout-resolution failure', () => {
-    renderIndicators({ status: 'error', error: layoutError });
+    renderIndicators({
+      status: 'error',
+      metadataPath: METADATA_PATH,
+      error: layoutError,
+    });
     const form = screen.getByTestId('indicators-region-form');
     expect(form).toHaveTextContent('戦意値ゲージのバー本体を囲む');
     expect(within(form).getByLabelText('region x')).toBeInTheDocument();
@@ -367,7 +518,12 @@ describe('IndicatorsScreen error', () => {
   it('validates the region client-side before calling start', async () => {
     const startMock = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
-    renderIndicators({ status: 'error', error: layoutError, start: startMock });
+    renderIndicators({
+      status: 'error',
+      metadataPath: METADATA_PATH,
+      error: layoutError,
+      start: startMock,
+    });
 
     await user.click(screen.getByRole('button', { name: 'この領域で再実行' }));
 
@@ -380,7 +536,12 @@ describe('IndicatorsScreen error', () => {
   it('rejects a region that is too small for the CLI', async () => {
     const startMock = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
-    renderIndicators({ status: 'error', error: layoutError, start: startMock });
+    renderIndicators({
+      status: 'error',
+      metadataPath: METADATA_PATH,
+      error: layoutError,
+      start: startMock,
+    });
 
     await user.type(screen.getByLabelText('region x'), '10');
     await user.type(screen.getByLabelText('region y'), '10');
@@ -397,7 +558,12 @@ describe('IndicatorsScreen error', () => {
   it('re-runs with --region when the form is valid', async () => {
     const startMock = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
-    renderIndicators({ status: 'error', error: layoutError, start: startMock });
+    renderIndicators({
+      status: 'error',
+      metadataPath: METADATA_PATH,
+      error: layoutError,
+      start: startMock,
+    });
 
     await user.type(screen.getByLabelText('region x'), '640');
     await user.type(screen.getByLabelText('region y'), '980');
@@ -415,7 +581,12 @@ describe('IndicatorsScreen error', () => {
   it('keeps the form usable after a failed region retry', async () => {
     const startMock = vi.fn().mockRejectedValue(layoutError);
     const user = userEvent.setup();
-    renderIndicators({ status: 'error', error: layoutError, start: startMock });
+    renderIndicators({
+      status: 'error',
+      metadataPath: METADATA_PATH,
+      error: layoutError,
+      start: startMock,
+    });
 
     await user.type(screen.getByLabelText('region x'), '640');
     await user.type(screen.getByLabelText('region y'), '980');
@@ -431,6 +602,7 @@ describe('IndicatorsScreen error', () => {
   it('treats a user cancel as a neutral notice, not a failure', () => {
     renderIndicators({
       status: 'error',
+      metadataPath: METADATA_PATH,
       error: { message: 'cancelled', hint: null, code: 'subprocess.cancelled' },
     });
     expect(screen.getByTestId('indicators-cancelled')).toHaveTextContent(
@@ -452,6 +624,7 @@ describe('IndicatorsScreen a11y', () => {
   it('has no axe violations in the region fallback form', async () => {
     renderIndicators({
       status: 'error',
+      metadataPath: METADATA_PATH,
       error: {
         message: 'インジケータの探索領域を解決できませんでした。',
         hint: null,

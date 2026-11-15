@@ -183,7 +183,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | §2.4 | preview | [◀ 一覧へ] / match name input / type select / Pane (×2 IN/OUT) / Pane.video / Pane.tcInput / stepRow ×6 / keyHint / FrameStrip / [適用] / dirty indicator / applyError / [元に戻す] / [書き出し] / emptyNote | #605 で追加 |
 | §2.5 | export | [◀ プレビュー] / header / 出力先 input + [参照…] / 命名規則 input / コーデック selector ×2 / errorMessage / progressBox / [書き出し開始] / [中断] / [✓ フォルダを開く] + openFolderError / [設定変更して再書き出し] / [設定変更して再試行] / listHeader + bulk / listItem / emptyNote / [⬦ ミニマップ切抜きへ] | #590 §2.5 追加 PR で追加、[⬦ ミニマップ切抜きへ] は #893 で追加 |
 | §2.6 | minimap | ConflictModal / [◀ 一覧へ] / videoPane (`<video>` + drag-select overlay) / frame match select / 数値入力 (X/Y/W/H) + regionError / [自動検出を試す] + [中止] + detectNotice / 出力先 input + [参照…] / 命名規則 input / errorMessage / progressBox / [⬦ 切抜き開始] / [中断] / [✓ 完了 — フォルダを開く] + openFolderError / [再切り抜き] / [再試行] / listHeader + bulk / listItem (+ fallbackNotice) | #893 で追加、fallbackNotice は #899 |
-| §2.7 | indicators | [⬦ 検出を開始] / [中断] / progressBox (phase + 進捗) / KO / ASSIST サマリ + 探索領域の provenance / イベント一覧 (match 別グループ + 行) / 領域フォーム (X/Y/W/H + [この領域で再実行]) / errorMessage + InlineErrorHint / 中断ノート / [再検出] / [再試行] / [◀ 一覧へ] / [戻る] | #1106 Phase 2 で追加 |
+| §2.7 | indicators | [⬦ 検出を開始] / [中断] / progressBox (phase + 進捗) / KO / ASSIST サマリ + 探索領域の provenance / イベント一覧 (match 別グループ + 行) / 領域フォーム (X/Y/W/H + [この領域で再実行]) / errorMessage + InlineErrorHint / 中断ノート / 「別の動画の検出が進行中」ノート / [再検出] / [再試行] / [◀ 一覧へ] / [戻る] | #1106 Phase 2 で追加、結果のスコープと write-back 追従は review R1 |
 
 各部品節の記述フォーマット (canonical):
 
@@ -1266,13 +1266,25 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 - `complete` / `error` → `running`: [再検出] (§2.7.9) / [再試行] / [この領域で再実行] (§2.7.6) が再び `start(req)` を呼ぶ (`reset()` は挟まない)
 - `running` 中の `start()` / `reset()` は store が拒否する (code `indicators.busy`)。run を重ねると run id を持たない進捗 payload が混線するため
 
-**store**: `indicatorsStore` から `status` / `phase` / `processedSeconds` / `totalSeconds` / `layout` / `events` / `error` を読み `start` / `cancel` を呼ぶ。`appStateStore` から `navigate` / `setPendingSeekSeconds` / `openPreviewFor` / `selectedVideoPath` を、`metadataStore` から `metadata` / `filePath` / `loadedMtimeMs` を読む。
+**store**: `indicatorsStore` から `status` / `metadataPath` / `phase` / `processedSeconds` / `totalSeconds` / `layout` / `events` / `error` を読み `start` / `cancel` を呼ぶ。`appStateStore` から `navigate` / `setPendingSeekSeconds` / `openPreviewFor` / `selectedVideoPath` を、`metadataStore` から `metadata` / `filePath` / `loadedMtimeMs` を読む。
+
+**結果のスコープ (review R1)**: 結果は「どの metadata.json 向けか」でスコープする。run を起こした path は `indicatorsStore.metadataPath` が保持し、画面は `metadataStore.filePath` と比較する。
+
+| 条件 | 表示 |
+| --- | --- |
+| 一致 (`metadataPath === filePath`) | 通常の status をそのまま表示 |
+| 不一致 + `complete` / `error` | `idle` 扱いにし、結果とエラーを隠す (新しい run は開始できる) |
+| 不一致 + `running` | §2.7.11 の「別の動画の検出が進行中」ブロックに切替 |
+
+不一致時に結果を隠す理由は、録画 A → B と切り替えたときに A の行を押すと **B の存在しない match index / 時刻** へシークし得るため。走行中の run は store が listener の寿命を持つので止めず、§2.7.11 で `[中断]` の逃げ道を出す。
 
 **mtime CAS**: `start()` には `expectedMtime` として `metadataStore.loadedMtimeMs` を渡す (§2.6.4 と同じ契約。書込前に metadata.json が外部変更されていれば CLI が exit 6 で拒否する)。
 
-**metadata の再読込はしない**: 本画面の write-back は `indicator_layout` のみで GUI に表示・編集する UI が無いため `reloadFromDisk()` を呼ばない (§2.6 と意図的に非対称)。`reloadFromDisk()` は `dirty` を落とすので、preview の未適用編集を巻き込む。write-back で `loadedMtimeMs` が古くなるため、その後の preview [適用] は exit 6 → ConflictModal (§1.3) で外部変更として扱われる (silent な上書きにはならない)。
+**write-back 後の store 追従 (review R1)**: CLI は `indicator_layout` を metadata.json に atomic write-back する。成功して `wrote_metadata === true` のとき、画面は `metadataStore.refreshFromDiskPreservingEdits()` を呼んで mtime と disk 側のフィールドを取り込む。これをやらないと、次の [再検出] が **自分の write を外部変更とみなして** exit 6 で失敗し、preview の [適用] も偽の競合になる。
 
-**dirty / silent loss**: match 編集を行わない上に reload もしないため、in-memory の編集が本画面の実行で失われることはない (§1.3 の dirty confirm は対象外)。
+`refreshFromDiskPreservingEdits()` は `reloadFromDisk()` と違い **未適用の編集を捨てない**: disk に存在しない GUI-only フィールド (`name` / `type_override` / `edited`) は index 一致で in-memory 側から引き継ぎ、`dirty` も変えない (§2.6 の `reloadFromDisk()` は `dirty` を落とすため、ここでは使わない)。走行中に別の録画が load された場合 (画面は unmount 済みでも promise は生きている) は、そのファイルを A の write-back で refresh しない。
+
+**dirty / silent loss**: match 編集を行わない上、write-back 後の refresh は編集バッファを保持するので、in-memory の編集が本画面の実行で失われることはない (§1.3 の dirty confirm は対象外)。
 
 **sample mode**: `filePath === null` では CLI を実行できないので [⬦ 検出を開始] / [再検出] / [再試行] を disabled にし、§1.4 の理由 `サンプル動画では検出を実行できません` を DisabledTooltip (inlineHint) で出す。`SampleModeBanner` は `styles.screen` 直下に常設。
 
@@ -1285,7 +1297,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 種類 | button。`[⬦ 検出を開始]` (idle / 中断ノート) は primary、`[再検出]` (complete) / `[再試行]` (error) は同じ `runIndicators()` を呼ぶ secondary |
 | 状態 | `runDisabled = filePath === null` (§1.4 sample mode)。`running` 中は描画しない (store が再入を拒否するため) |
 | 遷移トリガー | `onClick` → `start({ metadataPath: filePath, expectedMtime: loadedMtimeMs })` |
-| store mutation | `indicatorsStore.start()` |
+| store mutation | `indicatorsStore.start()` (成功して `wrote_metadata === true` なら完了後に `metadataStore.refreshFromDiskPreservingEdits()` も呼ぶ — §2.7 ヘッダ「write-back 後の store 追従」) |
 | 例外 / edge case | §1.2: disabled 理由は DisabledTooltip + `inlineHint`。`start()` の reject は画面側で握り潰す (store が `error` を保持し、画面は status / error だけを見る二重表示防止) |
 
 #### §2.7.2 [中断] ボタン
@@ -1377,6 +1389,16 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 遷移トリガー | なし (表示専用) |
 | store mutation | なし |
 | 例外 / edge case | §1.6 準拠: `videoSource` を `splitPath()` で分解し primary (fileName) + secondary (parentDir 左側省略) + container の `title={videoSource}`。カスタム title bar は持たない (ウィンドウ chrome は Tauri ネイティブ) |
+
+#### §2.7.11 「別の動画の検出が進行中」ノート
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | `role="status"` のノート (`data-testid="indicators-other-file-running"`) + [中断] button |
+| 状態 | `indicatorsStore.status === 'running'` かつ `indicatorsStore.metadataPath !== metadataStore.filePath` のとき (§2.7 ヘッダのスコープ表) |
+| 遷移トリガー | [中断] → `cancel()`。走行中の run が完了すると `status === 'complete'` + 別 path になるので、次 render で `idle` (開始ボタン) に戻る |
+| store mutation | `indicatorsStore.cancel()` |
+| 例外 / edge case | 進捗 (phase / `processed_s`) も run のものなので **出さない**。store は run の重なりを拒否する (`indicators.busy`) ので、待つか中止するしかないことを明示するため [中断] を必ず出す。run は止めずに放置しても state は壊れない (結果は別 path のまま隠れる) |
 
 ## 3. 既存 doc との分担 + クロスリファレンス
 

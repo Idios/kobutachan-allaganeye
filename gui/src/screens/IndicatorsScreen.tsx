@@ -36,6 +36,7 @@ import {
   type IndicatorsEvent,
   type IndicatorsLayout,
   type IndicatorsRequest,
+  type IndicatorsStatus,
 } from '../state/indicatorsStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { splitPath } from '../utils/path';
@@ -187,6 +188,7 @@ export function IndicatorsScreen() {
   const openPreviewFor = useAppStateStore((s) => s.openPreviewFor);
 
   const status = useIndicatorsStore((s) => s.status);
+  const runMetadataPath = useIndicatorsStore((s) => s.metadataPath);
   const phase = useIndicatorsStore((s) => s.phase);
   const processedSeconds = useIndicatorsStore((s) => s.processedSeconds);
   const totalSeconds = useIndicatorsStore((s) => s.totalSeconds);
@@ -221,9 +223,27 @@ export function IndicatorsScreen() {
       ? '—'
       : `${fmtTime(processedSeconds)} / ${totalSeconds === null ? '—' : fmtTime(totalSeconds)}`;
 
-  const cancelled = status === 'error' && error?.code === 'subprocess.cancelled';
+  /**
+   * #1106 Phase 2 review R1: 結果は「どの metadata.json に対して出したか」で
+   * スコープする。録画 A で検出した後 B を load して本画面を開くと、A の結果が
+   * そのまま見えてしまい、行を押すと B に A の時刻 / match_index でシークする
+   * (存在しない試合もあり得る)。
+   *
+   * - 走行中で他所のファイル向け: 進捗もその run のものなので専用ブロックに切替
+   * - `complete` / `error` で他所のファイル向け: `idle` 扱いにし、結果を隠す
+   *   (走行していないので新しい run を開始できる。Phase 1 store の重なり拒否は
+   *   走行中のみなので衝突しない)
+   */
+  const runIsForThisFile =
+    runMetadataPath !== null && runMetadataPath === filePath;
+  const displayedStatus: IndicatorsStatus =
+    status === 'running' ? 'running' : runIsForThisFile ? status : 'idle';
+  const runningElsewhere = displayedStatus === 'running' && !runIsForThisFile;
+
+  const cancelled =
+    displayedStatus === 'error' && error?.code === 'subprocess.cancelled';
   const showRegionFallback =
-    status === 'error' &&
+    displayedStatus === 'error' &&
     !cancelled &&
     (regionAttempted || isLayoutResolutionFailure(error));
 
@@ -233,6 +253,11 @@ export function IndicatorsScreen() {
    *
    * `start()` は失敗時に store へ `status='error'` + error を立ててから reject
    * するので、ここでは握って二重表示を避ける (中断・busy も同経路)。
+   *
+   * 成功して CLI が metadata.json を書き換えた場合 (`wroteMetadata`) は、
+   * 画面の store を disk に追従させる (review R1)。これをやらないと、次の
+   * [再検出] が **自分の write を外部変更とみなして** exit 6 で失敗し、preview の
+   * [適用] も偽の競合になる。
    */
   async function runIndicators(
     region?: [number, number, number, number],
@@ -247,7 +272,16 @@ export function IndicatorsScreen() {
     if (mtime !== null) request.expectedMtime = mtime;
     if (region !== undefined) request.region = region;
     try {
-      await start(request);
+      const result = await start(request);
+      if (result.wrote_metadata) {
+        // 走行中に別の録画が load された場合 (画面は unmount 済みでも promise は
+        // 生きている) は、そのファイルを A の write-back で refresh しない
+        // (無関係な外部変更を黙って取り込まないため)。
+        const metadataStore = useMetadataStore.getState();
+        if (metadataStore.filePath === path) {
+          await metadataStore.refreshFromDiskPreservingEdits();
+        }
+      }
     } catch {
       // store が error を保持する (画面は status / error だけを見る)。
     }
@@ -277,7 +311,7 @@ export function IndicatorsScreen() {
 
   if (!metadata) {
     return (
-      <div className={styles.screen} data-testid="indicators-screen" data-status={status}>
+      <div className={styles.screen} data-testid="indicators-screen" data-status={displayedStatus}>
         <div className={styles.emptyNote} role="status" data-testid="indicators-metadata-missing">
           metadata.json が読み込まれていません。先に検出を実行してください。
         </div>
@@ -293,7 +327,7 @@ export function IndicatorsScreen() {
   }
 
   return (
-    <div className={styles.screen} data-testid="indicators-screen" data-status={status}>
+    <div className={styles.screen} data-testid="indicators-screen" data-status={displayedStatus}>
       <SampleModeBanner />
 
       <div className={styles.header}>
@@ -334,7 +368,7 @@ export function IndicatorsScreen() {
       </div>
 
       <AllaganFrame className={styles.panel}>
-        {status === 'idle' && (
+        {displayedStatus === 'idle' && (
           <div className={styles.stateBlock}>
             <div className={styles.stateLead} role="status" data-testid="indicators-idle">
               録画全体を走査するため、動画の長さに応じて数分かかることがあります。
@@ -367,7 +401,23 @@ export function IndicatorsScreen() {
           </div>
         )}
 
-        {status === 'running' && (
+        {displayedStatus === 'running' && runningElsewhere && (
+          <div className={styles.stateBlock} data-testid="indicators-other-file-running">
+            <div className={styles.stateLead} role="status">
+              別の動画の検出が進行中です。完了を待つか、[中断] で停止してから
+              この動画を検出してください。
+            </div>
+            <button
+              type="button"
+              className={styles.cancelButton}
+              onClick={cancel}
+            >
+              中断
+            </button>
+          </div>
+        )}
+
+        {displayedStatus === 'running' && !runningElsewhere && (
           <div className={styles.stateBlock}>
             <div
               className={styles.progressBox}
@@ -395,7 +445,7 @@ export function IndicatorsScreen() {
           </div>
         )}
 
-        {status === 'complete' && (
+        {displayedStatus === 'complete' && (
           <div className={styles.stateBlock}>
             <div
               className={styles.summary}
@@ -507,7 +557,7 @@ export function IndicatorsScreen() {
           </div>
         )}
 
-        {status === 'error' &&
+        {displayedStatus === 'error' &&
           (cancelled ? (
             <div className={styles.stateBlock}>
               <div
