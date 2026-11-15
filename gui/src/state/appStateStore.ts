@@ -8,6 +8,8 @@ import { stripExtendedPathPrefix } from '../utils/path';
  * router) because Allagan Eye is a single-window desktop app without
  * browser-history semantics. See docs/ui-architecture.md for the full
  * screen-transition diagram.
+ *
+ * `indicators` was added in #1106 Phase 2 (KO / ASSIST 検出画面).
  */
 export type AppScreen =
   | 'drop'
@@ -15,7 +17,8 @@ export type AppScreen =
   | 'complete'
   | 'preview'
   | 'export'
-  | 'minimap';
+  | 'minimap'
+  | 'indicators';
 
 /**
  * #613: User-tunable detect parameters surfaced from the DropScreen "詳細設定"
@@ -86,6 +89,15 @@ export interface AppState {
    * In-memory only; reset() clears it.
    */
   lastExportOutputDir: string | null;
+  /**
+   * #1106 Phase 2: 一度だけ消費される preview のシーク位置 (秒)。
+   *
+   * IndicatorsScreen が検出イベントの行を押したとき `event.start` を入れ、
+   * PreviewScreen が active pane の `video.currentTime` に反映した時点で
+   * `null` に戻す。IN / OUT の編集バッファ (`startT` / `endT`) には触らない —
+   * これは「その瞬間を見る」ためのシークであり、境界を動かす操作ではない。
+   */
+  pendingSeekSeconds: number | null;
 
   /** Switch to a different screen. */
   navigate: (screen: AppScreen) => void;
@@ -101,6 +113,8 @@ export interface AppState {
   resetDetectionParams: () => void;
   /** Record the output dir used by the last export start (#893 R2). */
   setLastExportOutputDir: (dir: string | null) => void;
+  /** Set / clear the one-shot preview seek position (#1106 Phase 2). */
+  setPendingSeekSeconds: (seconds: number | null) => void;
   /** Reset everything back to a freshly launched state (screen = 'drop'). */
   reset: () => void;
 }
@@ -111,6 +125,7 @@ export const useAppStateStore = create<AppState>((set) => ({
   selectedVideoPath: null,
   detectionParams: { ...DEFAULT_DETECTION_PARAMS },
   lastExportOutputDir: null,
+  pendingSeekSeconds: null,
 
   navigate: (screen) => set({ screen }),
   selectMatch: (selectedMatchIndex) => set({ selectedMatchIndex }),
@@ -134,6 +149,7 @@ export const useAppStateStore = create<AppState>((set) => ({
     set({ detectionParams: { ...DEFAULT_DETECTION_PARAMS } }),
   // #893 R2: record the export output dir so MinimapScreen can default to it.
   setLastExportOutputDir: (lastExportOutputDir) => set({ lastExportOutputDir }),
+  setPendingSeekSeconds: (pendingSeekSeconds) => set({ pendingSeekSeconds }),
   reset: () =>
     set({
       screen: 'drop',
@@ -141,5 +157,6 @@ export const useAppStateStore = create<AppState>((set) => ({
       selectedVideoPath: null,
       detectionParams: { ...DEFAULT_DETECTION_PARAMS },
       lastExportOutputDir: null,
+      pendingSeekSeconds: null,
     }),
 }));

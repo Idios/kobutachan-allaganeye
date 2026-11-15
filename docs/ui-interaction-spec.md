@@ -1,6 +1,6 @@
 # Allagan Eye GUI — UI Interaction Spec
 
-> **スコープ**: 6 画面 (drop / detecting / complete / preview / export / minimap) の **UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理**を明文化する source of truth。画面間遷移は [ui-architecture.md](ui-architecture.md)、画面レイアウトとデザインシステムは [design/README.md](design/README.md)、metadata.json データ契約は [metadata-spec.md](metadata-spec.md) を参照。
+> **スコープ**: 7 画面 (drop / detecting / complete / preview / export / minimap / indicators) の **UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理**を明文化する source of truth。画面間遷移は [ui-architecture.md](ui-architecture.md)、画面レイアウトとデザインシステムは [design/README.md](design/README.md)、metadata.json データ契約は [metadata-spec.md](metadata-spec.md) を参照。
 >
 > **a11y 方針**: focus visible / キーボード全機能操作 / disabled 理由表示 / screen reader scope 等の cross-cutting 方針は [a11y-policy.md](a11y-policy.md) を参照 (#587)。本 doc は UI 部品レベルの仕様、a11y-policy.md は application-wide 方針を担当。
 
@@ -14,7 +14,7 @@
 
 ## 1. 共通原則
 
-6 画面すべての UI 部品は本節の原則に準拠する。違反は #589 系統のバグとして扱い、レビュー時は本節を逐条照合する。
+7 画面すべての UI 部品は本節の原則に準拠する。違反は #589 系統のバグとして扱い、レビュー時は本節を逐条照合する。
 
 ### 1.1 state mutation flow: input → store → dirty 即時反映
 
@@ -141,7 +141,8 @@ Tauri command 失敗時の error 表示は以下を厳守する:
 path 表示領域を持つ 5 画面 (drop / detecting / complete / preview / export) のすべての主要表示領域で
 **絶対 path** を可視化する。fileName だけの表示は禁止 (同名ファイル区別不能のため)。
 minimap (§2.6) は現状 path 表示領域そのものを持たない (動画は `<video>` プレビューで直接提示される) ため
-本節の適用対象外。将来 path 表示を追加する場合は本節の 2 段構造に従う。
+本節の適用対象外。indicators (§2.7) は header に本節準拠の path 表示を持つ(`data-testid="indicators-path"`)。
+将来 path 表示を追加する場合は本節の 2 段構造に従う。
 
 | 観点 | 規定 |
 | --- | --- |
@@ -150,7 +151,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | secondary 行 | parent dir のみ。`gui/src/styles/path-display.module.css` の `.pathSecondary` クラスを使用 (11px / `--ae-text-dim` / `--ae-font-mono`) |
 | truncate | secondary 行は左側省略 (RTL ellipsis + `unicode-bidi:plaintext`)。`.pathSecondary` に集約 |
 | hover ツールチップ | 必ず container `<div>` に `title={fullPath}` を付与。primary/secondary 個別ではなく container 1 個 |
-| path source-of-truth | drop=`info.path` / detecting=`selectedVideoPath` / complete・preview・export=`videoSource` (= `selectedVideoPath ?? metadata.source`) |
+| path source-of-truth | drop=`info.path` / detecting=`selectedVideoPath` / complete・preview・export・indicators=`videoSource` (= `selectedVideoPath ?? metadata.source`) |
 | path 分解 | `gui/src/utils/path.ts` の `splitPath(absPath)` で `{fileName, parentDir}` を取得 (例外不投げ) |
 | parentDir 空 | drive root などで parentDir が空文字列のとき、secondary 行は非表示 (primary 単独) |
 | data-testid | container に `<screen>-path` を基本とする。1 画面に複数 path 表示があるとき or phase 固有のとき context 接尾辞を入れる (例: `drop-selected-path` は `phase=selected` 限定 / `detecting-path` (running) と `detecting-error-path` (error view) で区別) |
@@ -167,12 +168,12 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 1 行版だが「直近 path 識別」の同種要求への先行解。本 §1.6 は SelectedCard を含む他全画面用の 2 段版。
 
 **画面別適用箇所**: §2.1.4 (Drop SelectedCard) / §2.2.2 (Detecting Header) / §2.2.8 (Detecting error view、新規) /
-§2.3.2 (Complete sourceBox) / §2.4.16 (Preview header path display、新規) / §2.5.2 (Export header) — 各節に「§1.6 準拠」リンク。
+§2.3.2 (Complete sourceBox) / §2.4.16 (Preview header path display、新規) / §2.5.2 (Export header) / §2.7.10 (Indicators header) — 各節に「§1.6 準拠」リンク。
 新規サブセクション (§2.2.8 / §2.4.16) は既存 anchor 互換のため各 §2 の末尾に追加する。
 
 ## 2. 画面別 UI 部品状態機械
 
-§2 は 6 画面それぞれを **1 画面 = 1 PR** で順次追加する (#590 着手フローに従う)。
+§2 は 7 画面それぞれを **1 画面 = 1 PR** で順次追加する (#590 着手フローに従う)。
 
 | 節 | 画面 | 主要 UI 部品 | 進捗 |
 | --- | --- | --- | --- |
@@ -182,6 +183,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | §2.4 | preview | [◀ 一覧へ] / match name input / type select / Pane (×2 IN/OUT) / Pane.video / Pane.tcInput / stepRow ×6 / keyHint / FrameStrip / [適用] / dirty indicator / applyError / [元に戻す] / [書き出し] / emptyNote | #605 で追加 |
 | §2.5 | export | [◀ プレビュー] / header / 出力先 input + [参照…] / 命名規則 input / コーデック selector ×2 / errorMessage / progressBox / [書き出し開始] / [中断] / [✓ フォルダを開く] + openFolderError / [設定変更して再書き出し] / [設定変更して再試行] / listHeader + bulk / listItem / emptyNote / [⬦ ミニマップ切抜きへ] | #590 §2.5 追加 PR で追加、[⬦ ミニマップ切抜きへ] は #893 で追加 |
 | §2.6 | minimap | ConflictModal / [◀ 一覧へ] / videoPane (`<video>` + drag-select overlay) / frame match select / 数値入力 (X/Y/W/H) + regionError / [自動検出を試す] + [中止] + detectNotice / 出力先 input + [参照…] / 命名規則 input / errorMessage / progressBox / [⬦ 切抜き開始] / [中断] / [✓ 完了 — フォルダを開く] + openFolderError / [再切り抜き] / [再試行] / listHeader + bulk / listItem (+ fallbackNotice) | #893 で追加、fallbackNotice は #899 |
+| §2.7 | indicators | [⬦ 検出を開始] / [中断] / progressBox (phase + 進捗) / KO / ASSIST サマリ + 探索領域の provenance / イベント一覧 (match 別グループ + 行) / 領域フォーム (X/Y/W/H + [この領域で再実行]) / errorMessage + InlineErrorHint / 中断ノート / [再検出] / [再試行] / [◀ 一覧へ] / [戻る] | #1106 Phase 2 で追加 |
 
 各部品節の記述フォーマット (canonical):
 
@@ -484,7 +486,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 - `complete_idle` — metadata あり、操作待機
 - `complete_restoring` — RestoreButton が in-flight (`metadataStore.restoring=true`)
 
-**store**: 主に **読み取り** (`metadata` / `selectedMatchIndex` / `selectedVideoPath` / `hasBackup`)。書き込みは `selectMatch` (listItem / BrightnessTimeline 選択)、`openPreviewFor` ([境界を調整] / listItem 双 click)、`navigate` ([全試合書き出し] → `navigate('export')` / [⬦ ミニマップ切抜き] → `navigate('minimap')` / [× 閉じる] → `navigate('drop')`)、`metadataStore.clear` ([× 閉じる])、`appStateStore.reset` ([× 閉じる])。`metadataStore.restore` は RestoreButton 経由 (§2.3.4)。
+**store**: 主に **読み取り** (`metadata` / `selectedMatchIndex` / `selectedVideoPath` / `hasBackup`)。書き込みは `selectMatch` (listItem / BrightnessTimeline 選択)、`openPreviewFor` ([境界を調整] / listItem 双 click)、`navigate` ([全試合書き出し] → `navigate('export')` / [⬦ ミニマップ切抜き] → `navigate('minimap')` / [⬦ KO / ASSIST を検出] → `navigate('indicators')` / [× 閉じる] → `navigate('drop')`)、`metadataStore.clear` ([× 閉じる])、`appStateStore.reset` ([× 閉じる])。`metadataStore.restore` は RestoreButton 経由 (§2.3.4)。
 
 **dirty / silent loss**: §1.3 dirty consume 表に従う。complete 画面で dirty=true (preview から戻った直後等) 状態の consume 経路:
 
@@ -623,6 +625,16 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 遷移トリガー | `onClick` → `navigate('minimap')` (§2.6 minimap 画面へ) |
 | store mutation | `appStateStore.screen='minimap'` |
 | 例外 / edge case | [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) で追加。complete → minimap の入口は本 button と export 画面の `[⬦ ミニマップ切抜きへ]` (§2.5.17) の 2 経路で、どちらも `navigate('minimap')` のみを行い metadata は触らない。§1.2 の disabled 理由表示 (DisabledTooltip) は **現状未実装** (`[⬦ 境界を調整]` (§2.3.5) は実装済で非対称)。§1.3 dirty=true 時の confirm も未実装だが、minimap 側が切抜き開始時に dirty guard で実行拒否する (§2.6 の `handleStartCrop`) ため silent loss は起きない |
+
+#### §2.3.13 [⬦ KO / ASSIST を検出] button (#1106 Phase 2)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | button ([CompleteScreen.tsx](../gui/src/screens/CompleteScreen.tsx) の `styles.exportAllButton` (3 つ目)、`aria-label="KO / ASSIST を検出"`)。`[⬦ ミニマップ切抜き]` (§2.3.12) の直後、`[× 閉じる]` (§2.3.7) の前に配置 |
+| 状態 | `idle` (`metadata.matches.length > 0`) / `disabled` (`metadata.matches.length === 0`) |
+| 遷移トリガー | `onClick` → `navigate('indicators')` (§2.7 indicators 画面へ) |
+| store mutation | `appStateStore.screen='indicators'` |
+| 例外 / edge case | キャリブレーションが試合区間内のフレームで行われる (戦意値ゲージは試合中しか出ない) ため、試合 0 件では実行できない → §2.3.12 と同じ disabled 条件。本 button は §1.2 の disabled 理由表示 (DisabledTooltip) を持たない (§2.3.12 と同じ非対称) |
 
 ### §2.4 preview
 
@@ -824,6 +836,16 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 遷移トリガー | `videoSource` (= `selectedVideoPath ?? metadata?.source ?? null`) 変化に追従 |
 | store mutation | なし |
 | 例外 / edge case | **§1.6 ファイルパス表示の原則に準拠** — `videoSource` を `splitPath()` で分解、primary `.headerFileName` (13px / text-bright、PreviewScreen.module.css 新設) + secondary `.pathSecondary` (parentDir 左側省略) + container `title={videoSource}` (`data-testid="preview-path"`、#676)。`videoSource === null` で領域全体を非表示 (条件付き render) |
+
+#### §2.4.17 pendingSeekSeconds の消費 (#1106 Phase 2)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | 画面描画を持たない one-shot 副作用 (`useEffect`)。IndicatorsScreen (§2.7) からのシーク引き渡し |
+| 状態 | `appStateStore.pendingSeekSeconds` が `number` のとき未消費、`null` のとき待機なし |
+| 遷移トリガー | マウント直後 / `videoUrl` 解決時に 1 回だけ実行: `inVideoRef.current.currentTime = pendingSeekSeconds` → `setPendingSeekSeconds(null)`。`register_video` 未解決の間は待機し、登録失敗 (`videoError`) 時はシークせず消費だけする |
+| store mutation | `appStateStore.setPendingSeekSeconds(null)` (§1.1 の例外: match 編集ではないため `metadataStore` は触らない) |
+| 例外 / edge case | **IN / OUT の編集バッファ (`startT` / `endT`) には触らない**。値から `currentTime` を再同期する既存 effect は deps 不変なら走らないため、境界も dirty も動かない。§2.4.5 の再生中 sync は `paused` 中のみ `t → currentTime` を書くので、シーク後の TC 表示は境界のまま (「その瞬間を見る」専用) |
 
 ### §2.5 export
 
@@ -1234,6 +1256,128 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | store mutation | `appStateStore.screen='complete'` |
 | 例外 / edge case | §1.3 の dirty confirm は本画面が metadata を編集しないため対象外。**`running` / `cancelling` 中も enabled** で、export の §2.5.1 のような実行中 disable / DisabledTooltip を持たない。実行中に離脱すると `minimap-progress` の listener は unmount で解除される一方 Python subprocess は kill されないため、進捗表示を失ったまま crop が継続する (実装側のギャップ) |
 
+### §2.7 indicators (#1106 Phase 2)
+
+**status**: `idle | running | complete | error`。画面ローカルの reducer ではなく [`indicatorsStore.ts`](../gui/src/state/indicatorsStore.ts) の `IndicatorsStatus` をそのまま表示する (実行 state を Phase 1 で store に集約した設計)。
+
+- `idle` → `running`: [⬦ 検出を開始] (§2.7.1) が `start(req)` を呼ぶ
+- `running` → `complete`: `start_indicators` が complete payload で resolve
+- `running` → `error`: 非 0 exit で reject (`subprocess.exit_failed` / `validation.range_invalid` / `state.mtime_conflict` / `subprocess.cancelled` 等)
+- `complete` / `error` → `running`: [再検出] (§2.7.9) / [再試行] / [この領域で再実行] (§2.7.6) が再び `start(req)` を呼ぶ (`reset()` は挟まない)
+- `running` 中の `start()` / `reset()` は store が拒否する (code `indicators.busy`)。run を重ねると run id を持たない進捗 payload が混線するため
+
+**store**: `indicatorsStore` から `status` / `phase` / `processedSeconds` / `totalSeconds` / `layout` / `events` / `error` を読み `start` / `cancel` を呼ぶ。`appStateStore` から `navigate` / `setPendingSeekSeconds` / `openPreviewFor` / `selectedVideoPath` を、`metadataStore` から `metadata` / `filePath` / `loadedMtimeMs` を読む。
+
+**mtime CAS**: `start()` には `expectedMtime` として `metadataStore.loadedMtimeMs` を渡す (§2.6.4 と同じ契約。書込前に metadata.json が外部変更されていれば CLI が exit 6 で拒否する)。
+
+**metadata の再読込はしない**: 本画面の write-back は `indicator_layout` のみで GUI に表示・編集する UI が無いため `reloadFromDisk()` を呼ばない (§2.6 と意図的に非対称)。`reloadFromDisk()` は `dirty` を落とすので、preview の未適用編集を巻き込む。write-back で `loadedMtimeMs` が古くなるため、その後の preview [適用] は exit 6 → ConflictModal (§1.3) で外部変更として扱われる (silent な上書きにはならない)。
+
+**dirty / silent loss**: match 編集を行わない上に reload もしないため、in-memory の編集が本画面の実行で失われることはない (§1.3 の dirty confirm は対象外)。
+
+**sample mode**: `filePath === null` では CLI を実行できないので [⬦ 検出を開始] / [再検出] / [再試行] を disabled にし、§1.4 の理由 `サンプル動画では検出を実行できません` を DisabledTooltip (inlineHint) で出す。`SampleModeBanner` は `styles.screen` 直下に常設。
+
+**metadata 不在**: `metadata === null` (§3.3 の entry-time 特殊状態) は `metadata.json が読み込まれていません。先に検出を実行してください。` の note + [◀ 一覧へ] のみを出す。
+
+#### §2.7.1 [⬦ 検出を開始] / [再検出] / [再試行]
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | button。`[⬦ 検出を開始]` (idle / 中断ノート) は primary、`[再検出]` (complete) / `[再試行]` (error) は同じ `runIndicators()` を呼ぶ secondary |
+| 状態 | `runDisabled = filePath === null` (§1.4 sample mode)。`running` 中は描画しない (store が再入を拒否するため) |
+| 遷移トリガー | `onClick` → `start({ metadataPath: filePath, expectedMtime: loadedMtimeMs })` |
+| store mutation | `indicatorsStore.start()` |
+| 例外 / edge case | §1.2: disabled 理由は DisabledTooltip + `inlineHint`。`start()` の reject は画面側で握り潰す (store が `error` を保持し、画面は status / error だけを見る二重表示防止) |
+
+#### §2.7.2 [中断] ボタン
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | button (`styles.cancelButton`) |
+| 状態 | `running` 中のみ描画 |
+| 遷移トリガー | `onClick` → `cancel()` (`kill_tracked_processes` invoke + spawn 前 cancel の記録) |
+| store mutation | `indicatorsStore.cancel()` (status は `running` のまま) |
+| 例外 / edge case | 中断は走行中の `start()` の reject (`subprocess.cancelled`) で `error` に着地する。ユーザー操作なので §2.7.7 の赤いエラーではなく §2.7.8 の中立表示に分岐する |
+
+#### §2.7.3 progressBox (phase + 進捗)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | `role="status"` の progress block (`data-testid="indicators-progress"`) + progress bar |
+| 状態 | `running` 中のみ描画。phase は `calibrating` → `探索領域を解決中` / `scanning` → `KO / ASSIST を走査中` / `null` → `準備中` |
+| 遷移トリガー | `indicators-progress` event (`{phase, layout?}` または `{phase: 'scanning', processed_s, total_s}`) で store の `phase` / `processedSeconds` / `totalSeconds` が更新 |
+| store mutation | なし (表示のみ) |
+| 例外 / edge case | `processedSeconds === null` の間は時刻を `—` にし、`totalSeconds === null` の間はパーセントを 0% にする (走査開始前は総尺が未確定)。時刻表示は `fmtTime` で `mm:ss / mm:ss` |
+
+#### §2.7.4 KO / ASSIST サマリ + 探索領域の provenance
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | `role="status"` の件数表示 (`data-testid="indicators-summary"`) + 小さな出典表示 (`data-testid="indicators-layout-source"`) |
+| 状態 | `complete` 中のみ描画。`KO n / ASSIST m` は `events` の `kind` を数えるだけ |
+| 遷移トリガー | `complete` payload の `events` / `layout` で更新 |
+| store mutation | なし |
+| 例外 / edge case | provenance は `layout.source` を `自動解決 (anchor)` / `手動指定 (--region)` に対応。`layout === null` は `不明` (実装上 reach しない防御) |
+
+#### §2.7.5 イベント一覧 (match 別のグループ + 行)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | `match_index` ごとのグループ (container の `data-testid="indicators-group-<index>"`。試合外は `indicators-group-outside`) + `<ul>` 内の行。行は `<button>` (試合に属する行) 又は `<div data-navigable="false">` (試合外) |
+| 状態 | `complete` かつ `events.length > 0` のとき描画。`events.length === 0` は §2.7.10 の明示的な空メッセージ |
+| 遷移トリガー | 行の `onClick` / Enter / Space (button の既定挙動) → `setPendingSeekSeconds(event.start)` → `openPreviewFor(match_index)`。グループ順は match index 昇順 + 試合外 (`null`) が末尾、グループ内は `start` 昇順 |
+| store mutation | `appStateStore.pendingSeekSeconds` (積む) / `openPreviewFor` 経由で `selectedMatchIndex` + `screen='preview'` |
+| 例外 / edge case | §2.4.17 の one-shot seek で消費される。`match_index === null` (試合外) の行は遷移先が無いため button にせず keyboard でも到達しない (tooltip で理由を出す)。行は `role="button"` を持つので Tab / Enter で全件操作できる (a11y: button の可視名は `KO 00:12.3 - 00:13.0 をプレビューで開く`) |
+
+#### §2.7.6 領域フォーム (X / Y / W / H + [この領域で再実行])
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | 数値入力 ×4 (`aria-label` は minimap §2.6.2 と同じ `region x` / `region y` / `region width` / `region height`) + [この領域で再実行] button。`data-testid="indicators-region-form"` |
+| 状態 | `status === 'error'` かつ (`isLayoutResolutionFailure(error)` または直前の run が `--region` 付き) のときのみ描画 |
+| 遷移トリガー | 入力 → local state (文字列のまま保持) / [この領域で再実行] → `validateRegionInputs()` → 問題なければ `start({ ..., region })` |
+| store mutation | `indicatorsStore.start()` (region 付き) |
+| 例外 / edge case | **判定基準**: CLI exit 4 (探索領域の解決失敗) は Rust 側で `subprocess.exit_failed` に写像され `code` だけでは他の異常終了と区別できないため、CLI 文言 `探索領域を解決できませんでした` との AND で判定する。**client-side 検証**: 4 フィールドすべて `0 以上の整数`、W は 20px 以上 / H は 2px 以上 (CLI `layout_from_bar_region` の下限)。違反は InlineErrorHint (`role="alert"`) で表示し `start()` を呼ばない。`--recalibrate` とは排他なので同時には渡さない (CLI が exit 5) |
+
+#### §2.7.7 errorMessage (phase=error)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | `role="alert"` のエラーボックス (`data-testid="indicators-error"`)。1 行目は固定の `検出に失敗しました`、2 行目は `error.message`、3 行目は `InlineErrorHint` (§1.5) |
+| 状態 | `status === 'error'` かつ `error.code !== 'subprocess.cancelled'` のとき描画 |
+| 遷移トリガー | store の `error` 更新に追従 |
+| store mutation | なし |
+| 例外 / edge case | hint が無い error では `InlineErrorHint` が null を返し 2 行表示になる。§1.5.1 の hint slot 規約に準拠 (ConflictModal ではないので `state.mtime_conflict` もこのボックスに出る) |
+
+#### §2.7.8 中断ノート (`subprocess.cancelled`)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | `role="status"` の中立領域 (`data-testid="indicators-cancelled"`) + [⬦ 検出を開始] / [戻る] |
+| 状態 | `status === 'error'` かつ `error.code === 'subprocess.cancelled'` のとき |
+| 遷移トリガー | [⬦ 検出を開始] → §2.7.1 と同じ `start()` |
+| store mutation | `indicatorsStore.start()` |
+| 例外 / edge case | store の契約上、中断も `error` に着地する。ユーザー操作を赤い alert で失敗扱いにしないための分岐 (§2.7.7 とは排他) |
+
+#### §2.7.9 [再検出] / [◀ 一覧へ] / [戻る]
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | button。`[再検出]` は `complete` 用 (§2.7.1 と同じ `start()`)、`[◀ 一覧へ]` は header の常設 back、`[戻る]` は idle / 中断ノート内の secondary |
+| 状態 | 常時 enabled (`[再検出]` は sample mode で disabled) |
+| 遷移トリガー | `[再検出]` → `start()` / `[◀ 一覧へ]`・`[戻る]` → `navigate('complete')` |
+| store mutation | `indicatorsStore.start()` / `appStateStore.screen='complete'` |
+| 例外 / edge case | `[再検出]` を置く理由は **complete が行き止まりにならない** ため (画面を離れて戻っても store は `complete` のままで、他に再実行の入口が無い)。[◀ 一覧へ] は `running` 中も enabled で、離脱しても subprocess は止まらない (§2.6.18 と同じギャップ) |
+
+#### §2.7.10 header (caption / title / path display)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | header block ([IndicatorsScreen.tsx](../gui/src/screens/IndicatorsScreen.tsx) の `styles.header`)。`[◀ 一覧へ]` + path 表示 (`data-testid="indicators-path"`) + caption `KO / ASSIST 検出` + title + purpose |
+| 状態 | 常時描画 (`metadata === null` の entry 特殊状態を除く)。`videoSource` 不在 (sample mode 等で `selectedVideoPath` も `metadata.source` も null) のとき path 表示のみ非 render |
+| 遷移トリガー | なし (表示専用) |
+| store mutation | なし |
+| 例外 / edge case | §1.6 準拠: `videoSource` を `splitPath()` で分解し primary (fileName) + secondary (parentDir 左側省略) + container の `title={videoSource}`。カスタム title bar は持たない (ウィンドウ chrome は Tauri ネイティブ) |
+
 ## 3. 既存 doc との分担 + クロスリファレンス
 
 ### 3.1 doc 分担
@@ -1253,7 +1397,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 ### 3.2 状態名と mermaid 対応表
 
-6 画面の便宜状態名 (§2 各画面ヘッダで定義) と [ui-architecture.md](ui-architecture.md) §各画面 mermaid の状態を対応付ける。差異は意図的な分担 (§3.3 で集約) であり矛盾ではない。
+7 画面の便宜状態名 (§2 各画面ヘッダで定義) と [ui-architecture.md](ui-architecture.md) §各画面 mermaid の状態を対応付ける。差異は意図的な分担 (§3.3 で集約) であり矛盾ではない。
 
 | 画面 | reducer | 本 doc 状態 (§2.x ヘッダ) | mermaid 状態 ([ui-architecture.md](ui-architecture.md)) | 差異 |
 | --- | --- | --- | --- | --- |
@@ -1263,6 +1407,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | preview (§2.4) | なし | `preview_empty / preview_idle / preview_applying / preview_applyError / preview_restoring` | `preview_idle / preview_applying / preview_applyError / preview_restoring / preview_restoreError` | `preview_empty` は本 doc のみ (§2.4.15 emptyNote) / `preview_restoreError` は mermaid のみ (§2.4.13 RestoreButton 共通 component) |
 | export (§2.5) | あり ([reducers/export.ts](../gui/src/screens/reducers/export.ts)) | `idle / running / cancelling / completed / error` | `export_idle / export_running / export_cancelling / export_completed / export_error` | 本 doc は接頭辞 `export_` 省略 (実装の `phase: ExportPhase` 直値に揃える)。mermaid `export_cancelling → export_idle: ffmpeg 停止` / `export_cancelling → export_completed: PROGRESS_COMPLETE` ([#837](https://github.com/Idios/kobutachan-allaganeye/issues/837)) と内部 reducer `cancelling → idle (CANCEL_CONFIRMED)` / `cancelling → completed (PROGRESS_COMPLETE)` は同形状 |
 | minimap (§2.6) | あり ([reducers/minimap.ts](../gui/src/screens/reducers/minimap.ts)) | `idle / running / cancelling / completed / error` | `minimap_idle / minimap_running / minimap_cancelling / minimap_completed / minimap_error` | 本 doc は接頭辞 `minimap_` 省略。CONFLICT_RESOLVED は running→idle 特殊経路で mermaid に注記 |
+| indicators (§2.7) | なし (store の `status`) | `idle / running / complete / error` | `indicators_idle / indicators_running / indicators_complete / indicators_error` | 本 doc は接頭辞 `indicators_` 省略。reducer を持たず `IndicatorsStatus` を store が持つ点が他 6 画面との違い |
 
 ### 3.3 「entry-time 特殊状態」「sub-component エラー」の扱い
 

@@ -333,6 +333,33 @@ export function PreviewScreen() {
     }
   }, [endT, videoUrl]);
 
+  // #1106 Phase 2: IndicatorsScreen からの one-shot seek。検出イベントの行を
+  // 押すと `appStateStore.pendingSeekSeconds` に発生時刻が入り、ここで IN pane
+  // (= 既定の active pane) の `currentTime` に **一度だけ** 反映して null に戻す。
+  //
+  // IN / OUT の編集バッファ (`startT` / `endT`) には触らない。上の 2 つの
+  // sync effect は deps (`startT` / `endT` / `videoUrl`) が変わらなければ走らない
+  // ので境界も dirty も動かず、「その瞬間を表示する」だけになる。
+  const pendingSeekSeconds = useAppStateStore((s) => s.pendingSeekSeconds);
+  const setPendingSeekSeconds = useAppStateStore((s) => s.setPendingSeekSeconds);
+  useEffect(() => {
+    if (pendingSeekSeconds === null) return;
+    const v = inVideoRef.current;
+    if (v === null) {
+      // register_video 未解決の間は待つ。登録に失敗した (videoError) 場合は
+      // シークできないので消費し、別の match を開いたときに古い位置へ
+      // 飛ばないようにする。
+      if (videoError !== null) setPendingSeekSeconds(null);
+      return;
+    }
+    try {
+      v.currentTime = pendingSeekSeconds;
+    } catch {
+      // メタデータ未ロード時の seek 失敗は無視 (編集バッファは pristine のまま)
+    }
+    setPendingSeekSeconds(null);
+  }, [pendingSeekSeconds, videoUrl, videoError, setPendingSeekSeconds]);
+
   // #465: fetch candidate-frame thumbnails around the start boundary. Runs
   // when the boundary moves by more than ~0.5s so ffmpeg calls aren't
   // spammed on each single-frame nudge (cache hits handle the rest anyway).

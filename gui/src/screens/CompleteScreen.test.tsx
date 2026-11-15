@@ -486,6 +486,50 @@ describe('#893 CompleteScreen minimap entry', () => {
   });
 });
 
+// #1106 Phase 2: indicators screen navigation from CompleteScreen.
+describe('#1106 CompleteScreen indicators entry', () => {
+  beforeEach(() => {
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.getState().loadSample();
+    useAppStateStore.getState().navigate('complete');
+  });
+
+  it('navigates to indicators screen on KO / ASSIST を検出 click', async () => {
+    render(<CompleteScreen />);
+    const btn = screen.getByRole('button', { name: 'KO / ASSIST を検出' });
+    const user = userEvent.setup();
+    await user.click(btn);
+    expect(useAppStateStore.getState().screen).toBe('indicators');
+  });
+
+  it('KO / ASSIST を検出 button is disabled when matches is empty', () => {
+    useMetadataStore.setState({
+      metadata: {
+        source: 'x',
+        source_duration: 1,
+        source_duration_display: '0:01',
+        detected_at: '2026-04-22T00:00:00Z',
+        detection_params: {
+          sample_interval: 2,
+          blackout_threshold: 15,
+          min_match_duration: 300,
+          min_blackout_duration: 3,
+          no_audio: false,
+          use_gpu: null,
+          workers: null,
+        },
+        matches: [],
+        gaps: [],
+      },
+      hasBackup: false,
+    });
+    render(<CompleteScreen />);
+    const btn = screen.getByRole('button', { name: 'KO / ASSIST を検出' });
+    expect(btn).toBeDisabled();
+  });
+});
+
 // #805 Phase 1: post_match match no-crash guard.
 // A metadata whose matches[] includes a post_match entry (output_file
 // undefined, post_match: true) must load and render CompleteScreen without

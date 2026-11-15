@@ -58,6 +58,12 @@
 - Tab で全 button / input に到達
 - 数値入力 (X / Y / W / H) が drag-select のキーボード代替手段（#587 keyboard-全機能: drag-select は mouse 操作だが、数値入力欄で同等の領域指定が可能）
 
+### IndicatorsScreen (#1106 Phase 2)
+
+- Tab で全 button / input に到達
+- イベント一覧の行は `<button>` なので Tab + Enter / Space でプレビューに遷移する（試合外 (`match_index === null`) の行は遷移先が無いため非 button で、keyboard focus も与えない）
+- 探索領域の解決に失敗したときの領域フォーム (X / Y / W / H) は数値入力なので、mouse を使わずに再実行できる
+
 ### Modal (ConflictModal / ConfirmExitModal / ErrorModal)
 
 - Tab で modal 内循環、Escape で「キャンセル」相当
@@ -91,6 +97,7 @@ scope 外で扱う `aria-describedby` は使わず、title 属性 (mouse hover) 
 
 5 画面の path 表示は **[ui-interaction-spec.md §1.6](ui-interaction-spec.md)** が source of truth。
 `title` 属性 (hover tooltip) で full path を出し、`aria-label` は新規追加しない方針 (a11y-policy 「scope 外」整合)。
+（#1106 Phase 2 で indicators 画面にも同じ 2 段構造を適用した。）
 
 ## 動きの抑止 (prefers-reduced-motion)
 

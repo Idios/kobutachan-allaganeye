@@ -9,12 +9,21 @@ const SCREEN_LABELS: Record<AppScreen, string> = {
   preview: '境界調整',
   export: '書出し',
   minimap: 'ミニマップ',
+  indicators: 'KO/ASSIST',
 };
 
-const SCREENS: AppScreen[] = ['drop', 'detecting', 'complete', 'preview', 'export', 'minimap'];
+const SCREENS: AppScreen[] = [
+  'drop',
+  'detecting',
+  'complete',
+  'preview',
+  'export',
+  'minimap',
+  'indicators',
+];
 
 /**
- * Dev-only screen switcher. Lets a developer jump between the 6 screens (see
+ * Dev-only screen switcher. Lets a developer jump between the 7 screens (see
  * SCREENS below) without going through the real flow. Renders as a floating
  * pill in the top-right.
  *

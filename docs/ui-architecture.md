@@ -9,7 +9,7 @@
 Phase 2 で整備した責務:
 
 - React 19 + Zustand による 2 層 state machine (screen + phase)
-- 5 画面 (drop / detecting / complete / preview / export) の UI 骨格 (minimap は #893 で追加され、現在は 6 画面)
+- 5 画面 (drop / detecting / complete / preview / export) の UI 骨格 (minimap は #893、indicators は #1106 Phase 2 で追加され、現在は 7 画面)
 - `aetherTheme` デザイントークンの CSS 変数化 (`gui/src/styles/tokens.css`)
 - CSS Modules による component-scoped スタイル
 - `#516` `[元に戻す]` 機能 (Rust `restore_from_original` + TS `metadataStore.restore`)
@@ -20,13 +20,13 @@ Phase 3/4 (#465, #466) は本 doc の phase 遷移を維持したまま reducer 
 ## 2. 2 層構造の state machine
 
 ```text
-(a) screen   = drop | detecting | complete | preview | export | minimap   (useAppStateStore.screen)
+(a) screen   = drop | detecting | complete | preview | export | minimap | indicators   (useAppStateStore.screen)
 (b) phase    = 各 screen の内部 state enum                                  (screens/types.ts + local useState)
 ```
 
 - **screen** は URL の代替。`useAppStateStore.navigate()` で切り替える。react-router-dom は採用しない (desktop-only)
 - **phase** は画面内の状態を表現。純粋関数 `reducers/*.ts` で遷移を記述
-- screen enum の正は [`appStateStore.ts`](../gui/src/state/appStateStore.ts) の `AppScreen` 型 (`minimap` は #893 で追加)
+- screen enum の正は [`appStateStore.ts`](../gui/src/state/appStateStore.ts) の `AppScreen` 型 (`minimap` は #893、`indicators` は #1106 Phase 2 で追加)
 
 ## 3. screen 遷移図 + アプリ終了経路
 
@@ -41,6 +41,7 @@ stateDiagram-v2
     complete --> preview: 試合行 double-click
     complete --> export: [全試合書き出し]
     complete --> minimap: [⬦ ミニマップ切抜き] (matches 0 件なら disabled、#893)
+    complete --> indicators: [⬦ KO / ASSIST を検出] (matches 0 件なら disabled、#1106)
     complete --> drop: [x 閉じる] (store.clear でリセット)
 
     preview --> complete: [◀ 一覧へ] or [元に戻す] 完了
@@ -50,6 +51,9 @@ stateDiagram-v2
     export --> minimap: [⬦ ミニマップ切抜きへ] (completed phase のみ描画 + matches 0 件なら disabled、#893)
 
     minimap --> complete: [◀ 一覧へ] (#893)
+
+    indicators --> complete: [◀ 一覧へ] / [戻る] (#1106)
+    indicators --> preview: イベント行の click / Enter → openPreviewFor + pendingSeekSeconds (#1106)
 ```
 
 > **[✓ 完了 — フォルダを開く] は画面遷移しない**: ExportScreen の `handleOpenFolder` は `open_folder_in_explorer` を invoke するだけで `navigate` を呼ばない (旧実装の `navigate('complete')` は Explorer が開く前に遷移する不具合として #466 review #5 で撤去済)。したがって `export --> complete` のエッジは存在しない。
@@ -57,6 +61,8 @@ stateDiagram-v2
 > **`export --> preview` の条件の訂正 (#933)**: 旧記述は「idle/error 時のみ」だったが、実装は `disabled={running || cancelling}` である (`ExportScreen.tsx` の `[◀ プレビュー]` ボタンと、それを包む `DisabledTooltip`)。`ExportPhase` は `idle / running / cancelling / completed / error` の 5 値 (`gui/src/screens/types.ts`) なので、**押せるのは idle / completed / error の 3 phase**であり `completed` が抜けていた。禁止側 (`running` / `cancelling`) を書くほうが実装と 1 対 1 に対応する。
 >
 > **minimap 画面内の phase 遷移** (`idle / running / cancelling / completed / error`) は §5 の minimap 節および [ui-interaction-spec.md §2.6](ui-interaction-spec.md) を参照 (#893)。
+>
+> **indicators 画面内の status 遷移** (`idle / running / complete / error`) は §5 の indicators 節および [ui-interaction-spec.md §2.7](ui-interaction-spec.md) を参照 (#1106 Phase 2)。`indicators --> preview` は画面遷移と同時に `appStateStore.pendingSeekSeconds` を積み、PreviewScreen が IN pane の `video.currentTime` に一度だけ反映する (§5 indicators 節)。
 
 **アプリ終了**: ウィンドウ右上 `×` (Tauri chrome) = 即時 app exit。任意の screen / phase から `[*]` への遷移は暗黙。Phase 2 では警告なし (dummy のため)。Phase 3/4 で running 中の confirm + process kill を追加予定 (**#523** で追跡)。
 
@@ -373,6 +379,30 @@ stateDiagram-v2
 - `[◀ 一覧へ]` は phase に関わらず常時描画される (図では代表として `minimap_idle` から出している)
 - 画面内の UI 部品ごとの操作 → store mutation は [ui-interaction-spec.md §2.6](ui-interaction-spec.md) が正
 
+### indicators (#1106 Phase 2)
+
+```mermaid
+stateDiagram-v2
+    [*] --> indicators_idle
+    indicators_idle --> indicators_running: [⬦ 検出を開始] (start(req))
+    indicators_running --> indicators_complete: CLI が complete 行を返す
+    indicators_running --> indicators_error: CLI が非 0 exit (exit 4 / 5 / 6 / その他)
+    indicators_running --> indicators_error: [中断] → subprocess.cancelled
+    indicators_complete --> indicators_running: [再検出] (start(req))
+    indicators_error --> indicators_running: [再試行] / [この領域で再実行] (start(req))
+    indicators_complete --> [*]: イベント行の click / Enter → preview (+ pendingSeekSeconds)
+    indicators_idle --> [*]: [戻る] / [◀ 一覧へ] → complete
+```
+
+- 状態の正は [`indicatorsStore.ts`](../gui/src/state/indicatorsStore.ts) の `IndicatorsStatus` (`idle / running / complete / error`)。本画面は画面ローカルの reducer を持たず、実行状態は Phase 1 で追加した store に集約している
+- `running` の進捗は `indicators-progress` (`phase: calibrating | scanning` + 30 秒ごとの `processed_s` / `total_s`) で更新する
+- 走行中の離脱: `listen` の寿命は `start()` が持つので、画面を離れても購読と状態更新は続く。戻れば同じ status から再開する (再実行もしない)
+- `error` のうち `subprocess.cancelled` (= ユーザーの [中断]) だけは失敗ではないため、赤いエラーではなく中立の「中断しました」+ [⬦ 検出を開始] を出す
+- 探索領域の解決失敗 (CLI exit 4) では領域の手動指定フォームを追加表示する。exit 4 は Rust 側 `indicators_exit_error` で `subprocess.exit_failed` に写像され `code` だけでは他の異常終了と区別できないため、CLI の文言 (`探索領域を解決できませんでした`) で判定する
+- [◀ 一覧へ] は実行中も常に enabled (minimap と同じ)。中断せずに離脱すると subprocess は走り続ける
+- イベント一覧の行は「その発生時刻を preview で見る」導線で、`pendingSeekSeconds` に `start` を積んでから `openPreviewFor(match_index)` する。`match_index` が null (試合外) の行は遷移先が無いためボタンにしない
+- 画面内の UI 部品ごとの操作 → store mutation は [ui-interaction-spec.md §2.7](ui-interaction-spec.md) が正
+
 ## 6. ffmpeg 実行中の中断フロー (Phase 3/4、#523 で実装)
 
 Phase 2 は dummy なので `×` 即時 exit。Phase 3/4 では以下を実装 (**#523** で追跡):
@@ -411,7 +441,7 @@ main.tsx (React root)
 └── ErrorModal                  (#614、Boundary の外側なので blank 後も visible)
 
 App (App.tsx)
-├── StateSwitcher           (dev 用 6 タブ、absolute 配置で右上に float。#653 で production build では非描画)
+├── StateSwitcher           (dev 用 7 タブ、absolute 配置で右上に float。#653 で production build では非描画)
 ├── body
 │   └── main
 │       └── (screen === 'drop') DropScreen
@@ -420,6 +450,7 @@ App (App.tsx)
 │       └── (screen === 'preview') PreviewScreen (key=selectedMatchIndex で reset)
 │       └── (screen === 'export') ExportScreen
 │       └── (screen === 'minimap') MinimapScreen (#893)
+│       └── (screen === 'indicators') IndicatorsScreen (#1106 Phase 2)
 ├── ConflictModal           (#514、body の外に常時 render される global modal)
 ├── DraftRestoreModal       (#517、同上)
 └── ConfirmExitModal        (#523、同上)
@@ -451,9 +482,10 @@ Windows title bar に一本化。`tauri.conf.json` の `title: "Allagan Eye"` �
 snapshot として保持しており、production 実装からは削除されている。
 
 state/
-├── appStateStore.ts  — screen + selectedMatchIndex + selectedVideoPath + detectionParams (#613) + lastExportOutputDir (#893)
+├── appStateStore.ts  — screen + selectedMatchIndex + selectedVideoPath + detectionParams (#613) + lastExportOutputDir (#893) + pendingSeekSeconds (#1106)
 ├── metadataStore.ts  — metadata + dirty + apply / restore / loadSample
 ├── errorStore.ts     — ErrorModal 表示状態 + ErrorCategory (#614、first-write-wins)
+├── indicatorsStore.ts — indicators の実行状態 (status / phase / 進捗 / layout / events) (#1106 Phase 1)
 └── recentStore.ts    — 直近録画の履歴 (#571)
 
 screens/reducers/
