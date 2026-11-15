@@ -62,6 +62,24 @@ pytest -m slow
 pytest -m "slow or baseline_regen"
 ```
 
+### KO / ASSIST の GT 突合ハーネス (`tests/test_indicators_gt.py`)
+
+`allaganeye indicators` の検出精度を **recall / precision** で評価する (`slow` マーカー)。
+GT は `tests/fixtures/indicators_gt/*.json` に人間が裁定した表示の一覧として置いてある。
+
+```bash
+# 全ケース (2 本は全区間 0.1 秒走査、他 HUD 1 本は窓のみ) = 約 8 分
+ALLAGANEYE_SAMPLE_VIDEO_DIR=... ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER=... pytest -m slow tests/test_indicators_gt.py
+# 実測値 (recall / precision / missed / extra) を表示する
+pytest -m slow tests/test_indicators_gt.py -s
+```
+
+- 評価は**切り抜き単位**（区間の開始が ±0.5 秒以内）。近接表示の分割 / 併合は問わない
+- しきい値は KO / ASSIST 別に recall >= 0.8 / precision >= 0.8（元 issue の初期案）
+- 全区間走査は CI では実行しない（サンプル動画が無い）。**検出ロジックを変えた PR では
+  ローカルでこのハーネスを回し、数値を PR 本文に載せる**
+- 実測値の正は [`docs/superpowers/specs/2026-11-12-l4-ko-assist-indicator-appearance.md`](superpowers/specs/2026-11-12-l4-ko-assist-indicator-appearance.md) §7.9
+
 ### 開発時の推奨テスト実行パターン
 
 1. **コード変更後**: `pytest`（ユニットテストのみ、数秒）

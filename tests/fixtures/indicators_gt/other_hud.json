@@ -1,0 +1,50 @@
+{
+  "label": "other_hud",
+  "video_env": "ALLAGANEYE_SAMPLE_VIDEO_DIR_VTUBER",
+  "video_rel": "2772549129-151803977-da21c691-9ed6-4068-9a8b-4726a8a519a8.mp4",
+  "duration": 9771.87,
+  "provenance": "2 時間 43 分の VOD のため全区間走査はせず、GT のある窓だけを走査する。窓内のイベントは低閾値候補の目視裁定で確定 (2026-11-14/15)。",
+  "windows": [
+    [
+      650.0,
+      690.0
+    ],
+    [
+      745.0,
+      780.0
+    ],
+    [
+      870.0,
+      910.0
+    ]
+  ],
+  "no_detect_windows": [
+    [
+      347.0,
+      367.0
+    ]
+  ],
+  "events": [
+    {
+      "kind": "assist",
+      "start": 669.6
+    },
+    {
+      "kind": "ko",
+      "start": 762.4,
+      "note": "4 K.O.!!"
+    },
+    {
+      "kind": "assist",
+      "start": 880.0
+    },
+    {
+      "kind": "assist",
+      "start": 890.9
+    },
+    {
+      "kind": "assist",
+      "start": 899.3
+    }
+  ]
+}
