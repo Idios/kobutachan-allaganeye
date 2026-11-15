@@ -27,6 +27,7 @@ ASSIST は全数の独立列挙が無いため、**低閾値走査で拾えな�
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,6 +52,7 @@ CALIBRATION_SPAN = 900.0
 TOLERANCE_SECONDS = 0.5
 MIN_RECALL = 0.8
 MIN_PRECISION = 0.8
+SUPPORTED_KINDS = frozenset({"ko", "assist"})
 
 
 @dataclass(frozen=True)
@@ -81,10 +83,60 @@ class GtCase:
         return path
 
 
+def _require_number(path: Path, label: str, value: object, *, minimum: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{path.name}: {label} must be a number, got {value!r}")
+    number = float(value)
+    if not math.isfinite(number) or number < minimum:
+        raise ValueError(
+            f"{path.name}: {label} must be finite and >= {minimum}, got {value!r}"
+        )
+    return number
+
+
+def _require_spans(path: Path, label: str, raw: object) -> list[tuple[float, float]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{path.name}: {label} must be a list of [start, end]")
+    spans = []
+    for index, span in enumerate(raw):
+        if not isinstance(span, (list, tuple)) or len(span) != 2:
+            raise ValueError(f"{path.name}: {label}[{index}] must be [start, end]")
+        start = _require_number(path, f"{label}[{index}][0]", span[0], minimum=0.0)
+        end = _require_number(path, f"{label}[{index}][1]", span[1], minimum=0.0)
+        if end <= start:
+            raise ValueError(f"{path.name}: {label}[{index}] end must be > start")
+        spans.append((start, end))
+    return spans
+
+
 def _load_cases() -> list[GtCase]:
+    """GT を読み、壊れた点は**収集時に落とす**（fail-open にしない）。"""
     cases = []
     for path in sorted(GT_DIR.glob("*.json")):
         payload = json.loads(path.read_text(encoding="utf-8"))
+        raw_events = payload.get("events")
+        if not isinstance(raw_events, list) or not raw_events:
+            raise ValueError(f"{path.name}: events must be a non-empty list")
+        events = []
+        seen: set[tuple[str, float]] = set()
+        for index, event in enumerate(raw_events):
+            kind = event.get("kind")
+            if kind not in SUPPORTED_KINDS:
+                raise ValueError(
+                    f"{path.name}: events[{index}] has unsupported kind {kind!r} "
+                    f"(expected one of {sorted(SUPPORTED_KINDS)})"
+                )
+            start = _require_number(
+                path, f"events[{index}].start", event.get("start"), minimum=0.0
+            )
+            key = (kind, round(start, 2))
+            if key in seen:
+                raise ValueError(f"{path.name}: duplicate GT event {key}")
+            seen.add(key)
+            events.append(GtEvent(kind=kind, start=start, note=event.get("note", "")))
+        windows = _require_spans(path, "windows", payload.get("windows")) or None
         cases.append(
             GtCase(
                 label=payload["label"],
@@ -92,22 +144,15 @@ def _load_cases() -> list[GtCase]:
                 video_rel=payload["video_rel"],
                 duration=float(payload["duration"]),
                 provenance=payload.get("provenance", ""),
-                windows=(
-                    None
-                    if payload.get("windows") is None
-                    else [tuple(w) for w in payload["windows"]]
+                windows=windows,
+                no_detect_windows=_require_spans(
+                    path, "no_detect_windows", payload.get("no_detect_windows")
                 ),
-                no_detect_windows=[
-                    tuple(w) for w in payload.get("no_detect_windows", [])
-                ],
-                events=[
-                    GtEvent(
-                        kind=e["kind"], start=float(e["start"]), note=e.get("note", "")
-                    )
-                    for e in payload["events"]
-                ],
+                events=events,
             )
         )
+    if not cases:
+        raise ValueError(f"no GT fixtures found in {GT_DIR}")
     return cases
 
 
@@ -134,10 +179,8 @@ def _scan(
     video: Path,
     layout: IndicatorLayout,
     frame_size: tuple[int, int],
-    duration: float,
-    windows: list[tuple[float, float]] | None,
+    spans: list[tuple[float, float]],
 ) -> list[IndicatorEvent]:
-    spans = windows or [(0.0, duration)]
     events: list[IndicatorEvent] = []
     for start, end in spans:
         events.extend(
@@ -155,28 +198,42 @@ def _scan(
     return events
 
 
-def _match(
+def _maximum_matching(
     gt: list[GtEvent], detected: list[IndicatorEvent]
 ) -> tuple[list[tuple[int, int]], set[int], set[int]]:
-    """同 kind かつ開始差 <= 許容の組を、差が小さい順に 1:1 で対応づける。"""
-    candidates = []
-    for gt_index, gt_event in enumerate(gt):
-        for det_index, detection in enumerate(detected):
-            if detection.kind != gt_event.kind:
+    """同 kind かつ開始差 <= 許容の組を**最大基数**で対応づける。
+
+    「距離が小さい順の貪欲」だと、隣接する表示（例: 70.7 秒と 71.1 秒の GT に対し
+    検出が 70.3 / 70.8）で 1 組しか取れず、recall を過小評価する。
+    増加道法 (Kuhn) で基数を最大化し、距離は同点の判断にだけ使う。
+    """
+    adjacency = [
+        [
+            det_index
+            for det_index, detection in enumerate(detected)
+            if detection.kind == gt_event.kind
+            and abs(detection.start - gt_event.start) <= TOLERANCE_SECONDS
+        ]
+        for gt_event in gt
+    ]
+    match_det: dict[int, int] = {}
+
+    def augment(gt_index: int, visited: set[int]) -> bool:
+        for det_index in adjacency[gt_index]:
+            if det_index in visited:
                 continue
-            delta = abs(detection.start - gt_event.start)
-            if delta <= TOLERANCE_SECONDS:
-                candidates.append((delta, gt_index, det_index))
-    candidates.sort()
-    matched: list[tuple[int, int]] = []
-    used_gt: set[int] = set()
-    used_det: set[int] = set()
-    for _, gt_index, det_index in candidates:
-        if gt_index in used_gt or det_index in used_det:
-            continue
-        used_gt.add(gt_index)
-        used_det.add(det_index)
-        matched.append((gt_index, det_index))
+            visited.add(det_index)
+            if det_index not in match_det or augment(match_det[det_index], visited):
+                match_det[det_index] = gt_index
+                return True
+        return False
+
+    for gt_index in range(len(gt)):
+        augment(gt_index, set())
+
+    matched = sorted((g, d) for d, g in match_det.items())
+    used_gt = {g for g, _ in matched}
+    used_det = set(match_det)
     return matched, used_gt, used_det
 
 
@@ -185,7 +242,7 @@ def _scores(
 ) -> tuple[float, float, list[GtEvent], list[IndicatorEvent]]:
     gt_kind = [event for event in gt if event.kind == kind]
     det_kind = [event for event in detected if event.kind == kind]
-    matched, used_gt, used_det = _match(gt_kind, det_kind)
+    matched, used_gt, used_det = _maximum_matching(gt_kind, det_kind)
     recall = len(matched) / len(gt_kind) if gt_kind else 1.0
     precision = len(matched) / len(det_kind) if det_kind else 1.0
     missed = [event for index, event in enumerate(gt_kind) if index not in used_gt]
@@ -220,7 +277,10 @@ def test_indicator_gt_matches_within_thresholds(case: GtCase) -> None:
     probe = probe_video(video)
     frame_size = (int(probe["width"]), int(probe["height"]))
     layout = _calibrate(video, frame_size)
-    detected = _scan(video, layout, frame_size, case.duration, case.windows)
+    # 静かな区間（未知表示だけの区間）も**走査対象に含める**。含めないと
+    # 「検出なし」の assert が vacuous になる。
+    spans = (case.windows or [(0.0, case.duration)]) + case.no_detect_windows
+    detected = _scan(video, layout, frame_size, spans)
 
     report = _report(case, case.events, detected)
     print(report)  # `-s` 付きで実測値を確認できるようにする
