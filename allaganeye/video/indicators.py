@@ -200,10 +200,20 @@ def layout_from_bar_region(
             f"region aspect ratio looks wrong ({width}x{height}); enclose the gauge "
             f"bar only (reference {reference_width:.0f}x{reference_height:.0f} px)"
         )
+    anchor_x = x - (_REF_BAR[0] - _ANCHOR_X) * scale
+    anchor_y = y - (_REF_BAR[1] - _ANCHOR_Y) * scale
+    if anchor_x < 0 or anchor_y < 0:
+        # 逆算したアンカーがフレーム外だと metadata に負の正規化座標を書いてしまい、
+        # 次の実行で layout_from_payload が exit 2 で拒否する（キャッシュ汚染）。
+        # 実際にはバーの外枠がアンカーテンプレートより上/左にはあり得ない。
+        raise ValueError(
+            "region origin is too close to the frame edge "
+            f"({x}, {y}); the gauge bar cannot be that near the top-left corner"
+        )
     return IndicatorLayout(
         scale=scale,
-        x=x - (_REF_BAR[0] - _ANCHOR_X) * scale,
-        y=y - (_REF_BAR[1] - _ANCHOR_Y) * scale,
+        x=anchor_x,
+        y=anchor_y,
         source="user",
     )
 

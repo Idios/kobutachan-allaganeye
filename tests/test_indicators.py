@@ -390,6 +390,8 @@ def test_layout_from_bar_region_scales_with_the_bar_width() -> None:
         ((-1, 0, 153, 13), "origin"),
         ((0, 0, 19, 13), "small"),
         ((0, 0, 153, 200), "aspect"),
+        ((626, 0, 153, 13), "frame edge"),
+        ((0, 618, 153, 13), "frame edge"),
         ((0, 0, float("nan"), 13), "finite"),
         ((0, 0, 153, float("inf")), "finite"),
     ],
