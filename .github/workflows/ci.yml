@@ -143,19 +143,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Windows には 3.11.18 の setup-python 用アセットが無い (win32 は 3.11.9 までしか
-      # ビルドされていない) ので、CI と同梱物を 3.11.18 に揃えるために uv で入れる。
-      # `--default` は hosted runner 既存の 3.12 に負けるので、インタプリタの
-      # ディレクトリを PATH の先頭に置いて `python` を解決させる (#1119)。
+      # **Python 3.11.18 を uv で入れて venv に閉じ込める。** Windows には 3.11.18 の
+      # setup-python 用アセットが無い (win32 は 3.11.9 までしかビルドされていない)。
+      # `python` だけを PATH で差し替えると `pip` / `pytest` が hosted runner 既存の
+      # Python 3.12 を指したままになり、別の版をテストしてしまう (実測: 最初の実装で
+      # それが起きた)。venv の Scripts/bin を PATH 先頭に置いて python / pip /
+      # console script を揃える。
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.13.8"
 
-      - name: Install Python 3.11.18 (uv)
+      - name: Set up Python 3.11.18 (uv venv)
         shell: bash
         run: |
-          uv python install 3.11.18
-          echo "$(dirname "$(uv python find 3.11.18)")" >> "$GITHUB_PATH"
+          uv venv --python 3.11.18 --seed "$RUNNER_TEMP/ci-venv"
+          if [ -d "$RUNNER_TEMP/ci-venv/Scripts" ]; then venv_bin="$RUNNER_TEMP/ci-venv/Scripts"; else venv_bin="$RUNNER_TEMP/ci-venv/bin"; fi
+          echo "$venv_bin" >> "$GITHUB_PATH"
+          "$venv_bin/python" -V
 
       - name: Install dependencies
         run: pip install -e ".[dev]" -c constraints.txt

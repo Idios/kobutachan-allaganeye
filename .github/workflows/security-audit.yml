@@ -131,18 +131,20 @@ jobs:
 
       # **matrix で OS が変わるので、両 OS で 3.11.18 を取れる手段が必要。**
       # setup-python は Linux 26.04 用の 3.11.18 を持つが **win32 用を持たない**ため、
-      # ここでは uv (python-build-standalone 由来) を使う。CI と Portable ZIP 同梱の
-      # Python と同じ patch を監査するのが狙い (#1119)。`--default` は hosted runner
-      # 既存の Python に負けるので、インタプリタのディレクトリを PATH 先頭に置く。
-      # 代償として setup-python の `cache: pip` が使えないのでこの job は毎回 install する。
+      # ここでは uv で入れて venv に閉じ込める。CI と Portable ZIP 同梱の Python と
+      # 同じ patch を監査するのが狙い (#1119)。venv にするのは、uv の管理下の
+      # base 環境が PEP 668 (externally-managed) で `pip install` を拒否するため。
+      # 代償として setup-python の `cache: pip` が使えなくなり、この job は毎回 install する。
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.13.8"
 
-      - name: Install Python 3.11.18 (uv)
+      - name: Set up Python 3.11.18 (uv venv)
         run: |
-          uv python install 3.11.18
-          echo "$(dirname "$(uv python find 3.11.18)")" >> "$GITHUB_PATH"
+          uv venv --python 3.11.18 --seed "$RUNNER_TEMP/ci-venv"
+          if [ -d "$RUNNER_TEMP/ci-venv/Scripts" ]; then venv_bin="$RUNNER_TEMP/ci-venv/Scripts"; else venv_bin="$RUNNER_TEMP/ci-venv/bin"; fi
+          echo "$venv_bin" >> "$GITHUB_PATH"
+          "$venv_bin/python" -V
 
       # **本 job は「実際に install した環境」を監査する。** manifest を静的に
       # 読む方式にしないのは、GitHub の dependency graph が Python について
