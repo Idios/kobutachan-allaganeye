@@ -2,7 +2,7 @@
 
 GUI プロトタイプ 5 画面 (drop / detecting / complete / preview / export) のスクリーンショット。
 
-> **実装は 7 画面**である (`minimap` が [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893)、`indicators` が [#1106](https://github.com/Idios/kobutachan-allaganeye/issues/1106) で追加)。本ディレクトリは **handoff bundle 由来のプロトタイプ**を保持する場所で、この 2 画面は bundle より後に設計されたためプロトタイプが存在せず 5 枚のままである。**実装された画面のスクリーンショットはリポジトリ直下の `image/` 配下** (`01-drop.png` 〜 `06-minimap.png`。indicators の画像は未撮影 = Phase 3 で追加) を参照。
+> **実装は 7 画面**である (`minimap` が [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893)、`indicators` が [#1106](https://github.com/Idios/kobutachan-allaganeye/issues/1106) で追加)。本ディレクトリは **handoff bundle 由来のプロトタイプ**を保持する場所で、この 2 画面は bundle より後に設計されたためプロトタイプが存在せず 5 枚のままである。**実装された画面のスクリーンショットはリポジトリ直下の `image/` 配下** (`01-drop.png` 〜 `07-indicators.png`) を参照。
 
 ## ファイル一覧
 
