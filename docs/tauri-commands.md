@@ -4,7 +4,7 @@
 
 ## エラー型 (migration 完了)
 
-- 戻り値型: **全 28 command が `Result<T, AppError>` または `bool` / 値直接 (`is_process_running` / `probe_environment_info`) を返す** (PR [#665](https://github.com/Idios/kobutachan-allaganeye/pull/665) で legacy `Result<T, String>` から完全 migration 済、PR #669 で `read_error_log_tail` / `probe_environment_info` 追加、PR #787 で `enumerate_h264_encoders` / `start_export` 追加・`export_match` / `select_h264_encoder_for_export` 削除、#893 で `start_minimap` / `detect_minimap_regions` 追加)
+- 戻り値型: **全 29 command が `Result<T, AppError>` または `bool` / 値直接 (`is_process_running` / `probe_environment_info`) を返す** (PR [#665](https://github.com/Idios/kobutachan-allaganeye/pull/665) で legacy `Result<T, String>` から完全 migration 済、PR #669 で `read_error_log_tail` / `probe_environment_info` 追加、PR #787 で `enumerate_h264_encoders` / `start_export` 追加・`export_match` / `select_h264_encoder_for_export` 削除、#893 で `start_minimap` / `detect_minimap_regions` 追加、#1106 で `start_indicators` 追加)
 - `AppError` 構造体 (`gui/src-tauri/src/error.rs`、PR [#661](https://github.com/Idios/kobutachan-allaganeye/pull/661) Refs [#614](https://github.com/Idios/kobutachan-allaganeye/issues/614) で導入) のフィールド: `code: String` (domain-specific identifier、例 `io.file_not_found`) / `message: String` / `hint: Option<String>` / `stacktrace: Option<String>`
 - `From<std::io::Error>` / `From<serde_json::Error>` / `From<String>` / `From<&str>` impl があり、`?` 演算子で自動変換される (PR #665 で追加)。`std::io::Error` は `ErrorKind` から domain code を派生 (例 `NotFound` → `io.file_not_found`)
 - frontend 側 narrowing: `gui/src/lib/appError.ts` の `toErrorState(e)` / `appErrorCodeIs(e, code)` / `isAppError(e)` ヘルパーを使う。Tauri は `AppError` を JSON object として frontend に渡し、invoke 失敗時 Promise.reject 値が AppError instance になる
@@ -53,6 +53,7 @@
 | 26 | `dev_force_panic` | (なし) | `Result<(), AppError>` | state-mutating | **意図的 panic** (`#[cfg(debug_assertions)]` 限定、PR #661 E2E 検証用) | - (panic で異常終了が期待動作) |
 | 27 | `start_minimap` | `app: AppHandle, req: { metadataPath: string, region: string, outputDir: string, namePattern: string, excludedIndexes: number[], expectedMtimeMs?: number, overwrite: boolean }` (camelCase) | `Result<ExportSummary, AppError>` | subprocess + I/O + state-mutating | (a) python CLI 不在、(b) minimap crop 異常終了 (per-match error は `minimap-progress` event 経由)、(c) write-back CAS 衝突 (metadata 外部変更、CLI exit 6)、(d) `overwrite=false` かつ `expectedMtimeMs` 未指定 (fail-closed、spawn 前 reject、#893 R2) | (a) `python.not_found`、(b) `subprocess.exit_failed`、(c) `state.mtime_conflict`、(d) `state.mtime_required` |
 | 28 | `detect_minimap_regions` | `app: AppHandle, req: { metadataPath: string, excludedIndexes: number[] }` (camelCase) | `Result<Vec<MinimapProposal>, AppError>` | subprocess | (a) python CLI 不在、(b) 提案モード異常終了 (exit 4 = 提案成功として扱う、それ以外の非 0/4 が error) | (a) `python.not_found`、(b) `subprocess.exit_failed` |
+| 29 | `start_indicators` | `app: AppHandle, req: { metadataPath: string, outputPath?: string, interval?: number, recalibrate?: boolean, write?: boolean, expectedMtime?: number, region?: [number, number, number, number] }` (camelCase) | `Result<IndicatorsResult, AppError>` | subprocess + I/O + state-mutating | (a) python CLI 不在、(b) 走査の異常終了 / レイアウト解決失敗 (CLI exit 4、進捗は `indicators-progress` event 経由)、(c) オプション値不正 (CLI exit 5、`--region` と `--recalibrate` の同時指定含む)、(d) 書き戻し CAS 衝突 (metadata 外部変更、CLI exit 6)、(e) ユーザー中断 | (a) `python.not_found`、(b) `subprocess.exit_failed`、(c) `validation.range_invalid`、(d) `state.mtime_conflict`、(e) `subprocess.cancelled` |
 
 ## 補足
 
@@ -123,6 +124,20 @@ PR #669 で追加した 2 command (`read_error_log_tail` / `probe_environment_in
 
 **設計選択 (#648 spec)**: `phase=error` event 発火による DetectingScreen の error UI 接続は採用していない (UX 過剰、roadmap で却下)。silent skip → warn 化のみで UX に影響なし。
 
+## `indicators-progress` event (#1106)
+
+`start_indicators` が spawn する `allaganeye indicators --json` の stdout (JSON Lines) のうち `{"type":"progress",…}` 行を、Tauri event `indicators-progress` として 1 行 1 件 emit する。payload は CLI の JSON をそのまま写した snake_case で、`export-progress` / `minimap-progress` と同じく run id は持たない。
+
+| payload | 意味 |
+| --- | --- |
+| `{ phase: "calibrating" }` | layout の自動キャリブレーション開始 (キャッシュ無し / `recalibrate` 指定時のみ) |
+| `{ phase: "scanning", layout: { anchor_x, anchor_y, scale, support, confidence, source } }` | 走査開始。解決済み layout の通知 (`source` は `anchor` / `user`) |
+| `{ phase: "scanning", processed_s, total_s }` | 30 秒ごとの進捗 (処理済み秒 / 総尺秒) |
+
+`{"type":"complete",…}` 行は event にせず、command の戻り値 `IndicatorsResult` (`metadata` / `layout` / `recalibrated` / `events` / `wrote_metadata`) として返す。`events[]` は `{ kind: "ko" | "assist", start, end, score, samples, match_index }` で、`match_index` は試合外の区間なら `null`。`{"type":"error",…}` 行の `message` は失敗時の `AppError.message` に載せる。空行 / malformed JSON / 未知の `type` は silently skip する (`start_minimap` の `parse_wire_event` と同じ方針)。
+
+frontend 側の購読は `gui/src/state/indicatorsStore.ts` (Phase 1 で store のみ追加、画面統合は Phase 2)。
+
 ## CI による doc 整合性検査
 
 `.github/workflows/ci.yml` の `doc-tauri-commands-drift` job が `gui/src-tauri/src/lib.rs` 内の `#[tauri::command]` 数と本 doc の table 行数を比較し、不一致時に CI を fail させる (本 doc 漏れ防止、issue [#619](https://github.com/Idios/kobutachan-allaganeye/issues/619) 受け入れ条件 2)。command を追加・削除した場合は本 doc の table 行も同時に更新すること。
@@ -166,5 +181,5 @@ PR #669 で追加した 2 command (`read_error_log_tail` / `probe_environment_in
 - 派生元: [#619](https://github.com/Idios/kobutachan-allaganeye/issues/619) 本 doc 新設 + 全 23 command の AppError migration (PR #665)
 - AppError 型定義: `gui/src-tauri/src/error.rs` (PR [#661](https://github.com/Idios/kobutachan-allaganeye/pull/661), Refs [#614](https://github.com/Idios/kobutachan-allaganeye/issues/614))
 - frontend narrowing helper: `gui/src/lib/appError.ts` (PR #665 で新設)
-- frontend invoke の主な利用箇所: `gui/src/state/metadataStore.ts` / `gui/src/state/recentStore.ts` / `gui/src/lib/globalErrorListener.ts`
-- 関連実装 PR: [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) (`register_video` / `probe_video` / `generate_match_thumbnails`) / [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) (`kill_tracked_processes`) / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) (`start_detect`) / [#571](https://github.com/Idios/kobutachan-allaganeye/issues/571) (`read_recent` / `add_recent` / `clear_recent`) / [#787](https://github.com/Idios/kobutachan-allaganeye/pull/787) (`enumerate_h264_encoders` / `start_export`、旧 `export_match` / `select_h264_encoder_for_export` 削除)
+- frontend invoke の主な利用箇所: `gui/src/state/metadataStore.ts` / `gui/src/state/recentStore.ts` / `gui/src/state/indicatorsStore.ts` / `gui/src/lib/globalErrorListener.ts`
+- 関連実装 PR: [#465](https://github.com/Idios/kobutachan-allaganeye/issues/465) (`register_video` / `probe_video` / `generate_match_thumbnails`) / [#523](https://github.com/Idios/kobutachan-allaganeye/issues/523) (`kill_tracked_processes`) / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) (`start_detect`) / [#571](https://github.com/Idios/kobutachan-allaganeye/issues/571) (`read_recent` / `add_recent` / `clear_recent`) / [#787](https://github.com/Idios/kobutachan-allaganeye/pull/787) (`enumerate_h264_encoders` / `start_export`、旧 `export_match` / `select_h264_encoder_for_export` 削除) / [#1106](https://github.com/Idios/kobutachan-allaganeye/issues/1106) (`start_indicators`、GUI Phase 1)
