@@ -618,22 +618,31 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
   },
 
   refreshFromDiskPreservingEdits: async () => {
-    const { filePath, metadata } = get();
-    if (!filePath) return; // sample mode: no disk to refresh from
+    const path = get().filePath;
+    if (!path) return; // sample mode: no disk to refresh from
+    // #1106 Phase 2 review R2: await を跨いで別の録画が load され得る。読み出し
+    // 対象 (`path`) と現在の `filePath` が食い違ったら何も install しない
+    // (録画 A の metadata を B の filePath に載せると、その後の Apply が A の
+    // match を B のファイルへ書き込み得る)。
+    const stillLoaded = () => get().filePath === path;
     try {
       // reloadFromDisk と同じ順序 (mtime → 内容) で読む。逆順だと write が
       // 間に挟まったとき mtime が内容より古くなり、次の apply が「衝突なし」で
       // 古い前提のまま書き込み得る。
       const mtime = await invoke<number | null>('get_metadata_mtime', {
-        path: filePath,
+        path,
       });
-      const raw = await invoke<unknown>('load_metadata', { path: filePath });
+      if (!stillLoaded()) return;
+      const raw = await invoke<unknown>('load_metadata', { path });
+      if (!stillLoaded()) return;
       const parsed = MetadataSchema.parse(raw) as unknown as Metadata;
-      // #1106 Phase 2 review R1: disk 側の変更 (indicator_layout / mtime) は
+      // #1106 Phase 2 review R1/R2: disk 側の変更 (indicator_layout / mtime) は
       // 取り込むが、GUI-only の編集フィールドは in-memory 側を正として引き継ぐ。
-      // dirty は変更しない (編集は未適用のまま)。
+      // マージ元は **commit 時点の live state** を読む — entry 時の snapshot を
+      // 使うと、await 中に入った編集が古い値で上書きされる。
+      // `dirty` は変更しない (編集は未適用のまま)。
       const priorByIndex = new Map(
-        (metadata?.matches ?? []).map((m) => [m.index, m]),
+        (get().metadata?.matches ?? []).map((m) => [m.index, m]),
       );
       set({
         metadata: {
@@ -657,6 +666,8 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
     } catch (e) {
       // 読み出し失敗時は in-memory をそのまま残す (stale な mtime は次の
       // 実行 / apply で CAS 衝突として表面化する。黙って進めるより安全)。
+      // 別の録画に切り替わっていたら、その画面に無関係な error を出さない。
+      if (!stillLoaded()) return;
       set({ loadErrorState: toErrorState(e) });
     }
   },

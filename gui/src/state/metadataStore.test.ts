@@ -77,6 +77,18 @@ function mkErrorState(
  * AppError-shaped objects `{ code, message, hint? }`) so tests can simulate
  * the structured error path that Tauri uses post PR #665.
  */
+/**
+ * #1106 Phase 2 review R2: await を跨ぐレース (読み出し中に別ファイルを load /
+ * 編集が入る) を再現するための手動解決 promise。
+ */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 interface MockConfig {
   load_metadata?: unknown;
   load_metadata_error?: unknown;
@@ -1885,6 +1897,92 @@ describe('useMetadataStore.refreshFromDiskPreservingEdits (#1106)', () => {
     useMetadataStore.setState({ filePath: null });
     await useMetadataStore.getState().refreshFromDiskPreservingEdits();
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  // #1106 Phase 2 review R2 (race 1): await 中に別の録画が load されたら、
+  // 読み出し済みの古い metadata を install しない (filePath=B に A の matches が
+  // 載ると、その後の Apply が A の match を B のファイルへ書き込み得る)。
+  it('does not install metadata read for a file that is no longer loaded', async () => {
+    const pendingLoadA = deferred<unknown>();
+    const bMetadata = { ...validMetadata(), source: 'C:/videos/b.mkv' };
+    // A の読み出しだけを pending にし、B の load は通常どおり解決させる
+    // (mock を差し替えると A の in-flight 読み出しが制御できなくなる)。
+    invokeMock.mockImplementation(
+      (cmd: string, args?: { path?: string }) => {
+        const isA = args?.path === 'C:/a/metadata.json';
+        if (cmd === 'get_metadata_mtime') return Promise.resolve(isA ? 999 : 5000);
+        if (cmd === 'load_metadata') {
+          return isA ? pendingLoadA.promise : Promise.resolve(bMetadata);
+        }
+        if (cmd === 'check_backup_exists') return Promise.resolve(false);
+        return Promise.resolve(null);
+      },
+    );
+    useMetadataStore.setState({
+      filePath: 'C:/a/metadata.json',
+      metadata: validMetadata() as unknown as Metadata,
+      loadedMtimeMs: 1,
+    });
+
+    const refresh = useMetadataStore
+      .getState()
+      .refreshFromDiskPreservingEdits();
+
+    // 読み出しの途中で別の録画 B を load する
+    await useMetadataStore.getState().load('C:/b/metadata.json');
+    expect(useMetadataStore.getState().filePath).toBe('C:/b/metadata.json');
+
+    // 遅れて A の読み出しが返る
+    pendingLoadA.resolve({ ...validMetadata(), indicator_layout: layout });
+    await refresh;
+
+    const s = useMetadataStore.getState();
+    // A の metadata は install されない (B のまま)
+    expect(s.filePath).toBe('C:/b/metadata.json');
+    expect(s.metadata?.source).toBe('C:/videos/b.mkv');
+    expect(s.metadata?.indicator_layout).toBeUndefined();
+    // B load の mtime も上書きされない
+    expect(s.loadedMtimeMs).toBe(5000);
+    expect(s.loadErrorState).toBeNull();
+  });
+
+  // #1106 Phase 2 review R2 (race 2): await 中に入った編集は、entry 時の
+  // snapshot ではなく commit 時点の live state からマージする (上書きしない)。
+  it('merges edits made while the read is in flight (latest state wins)', async () => {
+    const pendingLoad = deferred<unknown>();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(777);
+      if (cmd === 'load_metadata') return pendingLoad.promise;
+      return Promise.resolve(null);
+    });
+    useMetadataStore.setState({
+      filePath: 'C:/a/metadata.json',
+      metadata: validMetadata() as unknown as Metadata,
+      loadedMtimeMs: 1,
+    });
+
+    const refresh = useMetadataStore
+      .getState()
+      .refreshFromDiskPreservingEdits();
+
+    // await の間に編集が入る (entry 時の snapshot には存在しない値)
+    useMetadataStore.getState().updateMatch(1, {
+      name: 'mid-flight',
+      edited: { start_time: 7, end_time: 9 },
+    });
+    expect(useMetadataStore.getState().dirty).toBe(true);
+
+    pendingLoad.resolve({ ...validMetadata(), indicator_layout: layout });
+    await refresh;
+
+    const s = useMetadataStore.getState();
+    expect(s.loadedMtimeMs).toBe(777);
+    expect(s.metadata?.indicator_layout).toEqual(layout);
+    const m = s.metadata?.matches.find((x) => x.index === 1);
+    // 途中の編集が生き残る (stale snapshot で潰されない)
+    expect(m?.name).toBe('mid-flight');
+    expect(m?.edited).toEqual({ start_time: 7, end_time: 9 });
+    expect(s.dirty).toBe(true);
   });
 });
 
