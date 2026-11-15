@@ -128,6 +128,24 @@ export interface MetadataState {
   /** #893: re-read metadata.json from disk (mtime + minimap_regions) after a
    *  minimap crop subprocess wrote to it. Idempotent; no-op in sample mode. */
   reloadFromDisk: () => Promise<void>;
+
+  /**
+   * #1106 Phase 2 (review R1): subprocess (`allaganeye indicators`) が
+   * metadata.json を atomic write-back した直後に、disk の内容
+   * (mtime / `indicator_layout`) を in-memory へ取り込む。
+   *
+   * [`reloadFromDisk`] との違いは **未適用の編集を捨てない** こと:
+   * disk に存在し得ない GUI-only フィールド (`name` / `type_override` /
+   * `edited`) は index 一致で in-memory 側から引き継ぎ、`dirty` も触らない。
+   * 逆に disk 側が持つフィールドは disk が正になる (この用途では
+   * `indicator_layout` と mtime だけが変わる)。
+   *
+   * mtime を refresh しないまま再実行すると、CLI が**自分の write を外部変更と
+   * みなして** exit 6 で拒否し、preview の [適用] も偽の競合になる。
+   * 読み出しに失敗した場合は in-memory をそのまま残す (stale な mtime は次の
+   * 実行で CAS 衝突として表面化する — silent に上書きするより安全)。
+   */
+  refreshFromDiskPreservingEdits: () => Promise<void>;
 }
 
 const PERSISTABLE_TYPES = new Set<TypeOverride>(['fl_match', 'unknown']);
@@ -595,6 +613,61 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
       // Phase 1 has no live caller of reloadFromDisk yet; the caller-context
       // behavior (e.g. how the MinimapScreen reacts to a reload failure) will
       // be finalized in the Phase 2 MinimapScreen wiring PR.
+      set({ loadErrorState: toErrorState(e) });
+    }
+  },
+
+  refreshFromDiskPreservingEdits: async () => {
+    const path = get().filePath;
+    if (!path) return; // sample mode: no disk to refresh from
+    // #1106 Phase 2 review R2: await を跨いで別の録画が load され得る。読み出し
+    // 対象 (`path`) と現在の `filePath` が食い違ったら何も install しない
+    // (録画 A の metadata を B の filePath に載せると、その後の Apply が A の
+    // match を B のファイルへ書き込み得る)。
+    const stillLoaded = () => get().filePath === path;
+    try {
+      // reloadFromDisk と同じ順序 (mtime → 内容) で読む。逆順だと write が
+      // 間に挟まったとき mtime が内容より古くなり、次の apply が「衝突なし」で
+      // 古い前提のまま書き込み得る。
+      const mtime = await invoke<number | null>('get_metadata_mtime', {
+        path,
+      });
+      if (!stillLoaded()) return;
+      const raw = await invoke<unknown>('load_metadata', { path });
+      if (!stillLoaded()) return;
+      const parsed = MetadataSchema.parse(raw) as unknown as Metadata;
+      // #1106 Phase 2 review R1/R2: disk 側の変更 (indicator_layout / mtime) は
+      // 取り込むが、GUI-only の編集フィールドは in-memory 側を正として引き継ぐ。
+      // マージ元は **commit 時点の live state** を読む — entry 時の snapshot を
+      // 使うと、await 中に入った編集が古い値で上書きされる。
+      // `dirty` は変更しない (編集は未適用のまま)。
+      const priorByIndex = new Map(
+        (get().metadata?.matches ?? []).map((m) => [m.index, m]),
+      );
+      set({
+        metadata: {
+          ...parsed,
+          matches: parsed.matches.map((m) => {
+            const prior = priorByIndex.get(m.index);
+            if (!prior) return m;
+            return {
+              ...m,
+              ...(prior.name !== undefined ? { name: prior.name } : {}),
+              ...(prior.type_override !== undefined
+                ? { type_override: prior.type_override }
+                : {}),
+              ...(prior.edited !== undefined ? { edited: prior.edited } : {}),
+            };
+          }),
+        },
+        loadedMtimeMs: mtime ?? null,
+        loadErrorState: null,
+      });
+    } catch (e) {
+      // 読み出し失敗時は in-memory をそのまま残す (stale な mtime は次の
+      // 実行 / apply で CAS 衝突として表面化する。黙って進めるより安全)。
+      // 別の録画に切り替わっていたら、その画面に無関係な error を出さない。
+      if (!stillLoaded()) return;
       set({ loadErrorState: toErrorState(e) });
     }
   },

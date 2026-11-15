@@ -225,6 +225,18 @@ export function CompleteScreen() {
           >
             ⬦ ミニマップ切抜き
           </button>
+          {/* #1106 Phase 2: KO / ASSIST 検出画面への導線。キャリブレーションは
+              試合区間内のフレームで行うため、試合 0 件では実行できない
+              (ミニマップ切抜きと同じ disabled 条件)。 */}
+          <button
+            type="button"
+            className={styles.exportAllButton}
+            onClick={() => navigate('indicators')}
+            disabled={metadata.matches.length === 0}
+            aria-label="KO / ASSIST を検出"
+          >
+            ⬦ KO / ASSIST を検出
+          </button>
           <button
             type="button"
             className={styles.closeButton}

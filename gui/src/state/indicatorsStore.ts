@@ -134,6 +134,16 @@ export class IndicatorsCancelledError extends Error {
 
 export interface IndicatorsState {
   status: IndicatorsStatus;
+  /**
+   * 直近の run の対象 metadata.json path (#1106 Phase 2 review R1)。
+   *
+   * `metadataStore.filePath` と比較して、**別のファイル向けの結果を表示しない**
+   * ためのスコープキー。run を起こした側が path を知っているので、画面ではなく
+   * store が保持する (画面を離れても run は続くため、画面ローカルでは追えない)。
+   * `status === 'running'` の間は走行中の対象、`complete` / `error` では終了した
+   * run の対象が残る。`reset()` で `null` に戻る。
+   */
+  metadataPath: string | null;
   /** CLI が通知した現在 phase (実行していないときは null)。 */
   phase: IndicatorsProgressPayload['phase'] | null;
   processedSeconds: number | null;
@@ -175,6 +185,7 @@ export interface IndicatorsState {
 function initialState() {
   return {
     status: 'idle' as IndicatorsStatus,
+    metadataPath: null,
     phase: null,
     processedSeconds: null,
     totalSeconds: null,
@@ -218,7 +229,11 @@ export const useIndicatorsStore = create<IndicatorsState>((set, get) => ({
     }
     const runId = ++runSeq;
     cancelRequestedFor = null;
-    set({ ...initialState(), status: 'running' });
+    set({
+      ...initialState(),
+      status: 'running',
+      metadataPath: request.metadataPath,
+    });
 
     // 購読を invoke より先に張る: spawn 直後の progress を取りこぼさない。
     let unlisten: UnlistenFn;

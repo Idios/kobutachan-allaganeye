@@ -212,6 +212,11 @@ cache には `.detection_cache.json` top-level (`masked_fallback_used` と同型
 不正な値（範囲外 / 型違い / キー欠落）は `InputFileError`（exit 2）で落とす。壊れた値を
 「それらしく」補正すると、探索窓が静かにずれたまま検出を続けるため。
 
+> **GUI 側の扱い**: write-back で `metadata.json` の mtime が変わるので、GUI は
+> 実行成功（`wrote_metadata === true`）後に `metadataStore.refreshFromDiskPreservingEdits()`
+> で mtime とこの値を disk から取り込む（未適用の match 編集は保持）。手順と理由は
+> [ui-interaction-spec.md §2.7](ui-interaction-spec.md) を参照。
+
 **`source: "user"` の意味**: `allaganeye indicators --region X,Y,W,H` でユーザーが
 **ゲージバーの外枠**を指定したときの値。バー幅から `scale`、左上から `anchor_*` を逆算する
 (`layout_from_bar_region`)。この経路では合意フレームが無いので `support` は 1、

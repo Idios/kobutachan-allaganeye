@@ -71,6 +71,13 @@ describe('App routing', () => {
     expect(screen.getByTestId('export-screen')).toBeInTheDocument();
   });
 
+  it('renders the indicators screen', () => {
+    useMetadataStore.getState().loadSample();
+    useAppStateStore.getState().navigate('indicators');
+    render(<App />);
+    expect(screen.getByTestId('indicators-screen')).toBeInTheDocument();
+  });
+
   it('does not render an in-app title bar (Windows native chrome is used instead)', () => {
     render(<App />);
     expect(screen.queryByTestId('window-chrome')).toBeNull();

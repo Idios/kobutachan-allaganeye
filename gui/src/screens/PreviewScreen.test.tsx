@@ -19,6 +19,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 import { PreviewScreen } from './PreviewScreen';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
+import { fmtPreciseTime } from '../utils/time';
 
 beforeEach(() => {
   invokeMock.mockReset();
@@ -865,6 +866,49 @@ describe('PreviewScreen', () => {
     expect(
       screen.getByText(/終了 \(OUT\) は開始 \(IN\) より後/),
     ).toBeInTheDocument();
+  });
+});
+
+// #1106 Phase 2: IndicatorsScreen からの one-shot seek 引き渡し。
+// `appStateStore.pendingSeekSeconds` に積まれた位置を IN pane の
+// `video.currentTime` に一度だけ反映し、消費したら null に戻す。
+describe('#1106 PreviewScreen pendingSeekSeconds handoff', () => {
+  it('seeks the IN pane to the queued position and consumes it', async () => {
+    useAppStateStore.getState().setPendingSeekSeconds(37.5);
+    render(<PreviewScreen />);
+    const video = await screen.findByLabelText<HTMLVideoElement>(
+      'IN (start) video',
+    );
+    await waitFor(() => expect(video.currentTime).toBeCloseTo(37.5, 3));
+    expect(useAppStateStore.getState().pendingSeekSeconds).toBeNull();
+  });
+
+  it('leaves the IN/OUT edit buffer untouched (no dirty, boundary TC unchanged)', async () => {
+    const metadata = useMetadataStore.getState().metadata!;
+    const match = metadata.matches.find((m) => m.index === 4)!;
+    const fps = metadata.source_fps && metadata.source_fps > 0 ? metadata.source_fps : 60;
+    useAppStateStore.getState().setPendingSeekSeconds(match.start_time + 20);
+    render(<PreviewScreen />);
+    const video = await screen.findByLabelText<HTMLVideoElement>(
+      'IN (start) video',
+    );
+    await waitFor(() =>
+      expect(video.currentTime).toBeCloseTo(match.start_time + 20, 3),
+    );
+    const inTc = screen.getByLabelText('IN (start) timecode') as HTMLInputElement;
+    expect(inTc.value).toBe(fmtPreciseTime(match.start_time, fps));
+    expect(useMetadataStore.getState().dirty).toBe(false);
+  });
+
+  it('does not seek when nothing is queued', async () => {
+    render(<PreviewScreen />);
+    const video = await screen.findByLabelText<HTMLVideoElement>(
+      'IN (start) video',
+    );
+    const metadata = useMetadataStore.getState().metadata!;
+    const match = metadata.matches.find((m) => m.index === 4)!;
+    await waitFor(() => expect(video.currentTime).toBeCloseTo(match.start_time, 3));
+    expect(useAppStateStore.getState().pendingSeekSeconds).toBeNull();
   });
 });
 
