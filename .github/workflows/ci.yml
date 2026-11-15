@@ -34,16 +34,17 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# **ubuntu ジョブの Python は 3.11.18、windows ジョブは 3.11.9 に固定する。**
-# `actions/setup-python` は「OS イメージ×版」のビルド済みアーカイブを
-# `actions/python-versions` から取る。2026-11-14 に `ubuntu-latest` が Ubuntu 26.04 へ
-# ロールした結果、3.11.9 には linux-26.04 用アセットが無く
-# (`The version '3.11.9' ... was not found for Ubuntu 26.04`)、setup-python を使う
-# ubuntu ジョブが全滅した。3.11.18 は linux-26.04 用を持つが **win32 用を持たない**
-# (実測: Windows 2025 で `3.11.18` は not found) ため windows は出荷物ビルドと
-# 同じ 3.11.9 に据え置く。両方に載っている版は今のところ無いので、ランナーを
-# 古いイメージに固定するのではなく「OS 別の版固定」で対応する。
-# 版を上げる時は両方のアセットの有無を確かめること (issue #1119)。
+# **CI は Python 3.11.18 で統一する。** `actions/setup-python` は「OS イメージ×版」の
+# ビルド済みアーカイブを `actions/python-versions` から取る。2026-11-14 に
+# `ubuntu-latest` が Ubuntu 26.04 へロールした結果、3.11.9 には linux-26.04 用
+# アセットが無く (`The version '3.11.9' ... was not found for Ubuntu 26.04`)、
+# setup-python を使う ubuntu ジョブが全滅した。3.11.18 は linux-26.04 用を持つが
+# **win32 用を持たない** (実測: Windows 2025 で `3.11.18` は not found) ため、
+# windows ジョブは `setup-uv` + `uv python install 3.11.18` で入れる
+# (python-build-standalone 由来。`--default` は既存の 3.12 に負けるので
+# インタプリタのディレクトリを PATH 先頭に置く)。これで CI と Portable ZIP 同梱の
+# Python が同じ patch になる。版を上げる時は **両 OS のアセット有無**を確かめ、
+# Portable ZIP の smoke test (build-windows job) を必ず回すこと (issue #1119)。
 
 jobs:
   python:
@@ -142,13 +143,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      # Windows には 3.11.18 の setup-python 用アセットが無い (win32 は 3.11.9 までしか
+      # ビルドされていない) ので、CI と同梱物を 3.11.18 に揃えるために uv で入れる。
+      # `--default` は hosted runner 既存の 3.12 に負けるので、インタプリタの
+      # ディレクトリを PATH の先頭に置いて `python` を解決させる (#1119)。
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.11.9"
-          cache: "pip"
-          cache-dependency-path: |
-            pyproject.toml
-            constraints.txt
+          version: "0.13.8"
+
+      - name: Install Python 3.11.18 (uv)
+        shell: bash
+        run: |
+          uv python install 3.11.18
+          echo "$(dirname "$(uv python find 3.11.18)")" >> "$GITHUB_PATH"
 
       - name: Install dependencies
         run: pip install -e ".[dev]" -c constraints.txt

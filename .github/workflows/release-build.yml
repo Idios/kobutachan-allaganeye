@@ -162,9 +162,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      # **同梱 Python は CI と同じ 3.11.18**。Windows には 3.11.18 の setup-python 用
+      # アセットが無いため uv で入れる (`--default` は hosted runner 既存の 3.12 に
+      # 負けるので PATH 先頭に置く)。build-portable-zip.ps1 は PATH 上の `python` から
+      # build venv を作るので、ここで入れた 3.11.18 がそのまま同梱物になる (#1119)。
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.11.9'
+          version: "0.13.8"
+
+      - name: Install Python 3.11.18 (uv)
+        shell: bash
+        run: |
+          uv python install 3.11.18
+          echo "$(dirname "$(uv python find 3.11.18)")" >> "$GITHUB_PATH"
 
       # Node + Rust toolchain for Tauri GUI build (#570). bundle.active = false
       # in tauri.conf.json so `npm run tauri build` only compiles the .exe and

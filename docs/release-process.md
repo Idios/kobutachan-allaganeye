@@ -85,7 +85,7 @@ claude/<scope>-* → 実機検証 → PR → review-pr (受け入れ条件チェ
 - コマンド: `git tag -a v0.x.0 -m "Release v0.x.0: <レイヤー名>"` (**annotated tag**。`taggerdate` が日付検査の**唯一の基準**になるため lightweight tag は使わない (取れなければ fail し、commit 日時へは fallback しない))
 - `git push origin v0.x.0` すると [`.github/workflows/release-publish.yml`](../.github/workflows/release-publish.yml) が発火し、Windows Portable ZIP (`allaganeye-v<version>-windows.zip`) のビルドと GitHub Release への成果物自動添付を実行する (#461)
   - ビルドと version 整合検査の実体は reusable workflow [`.github/workflows/release-build.yml`](../.github/workflows/release-build.yml) にある (`workflow_call`)。**タグ push 専用の公開 job を `release.yml` に戻してはいけない** — PR / ブランチ push の run に skipped job が現れ、マージ欄が赤く描画されるため (#1103)
-  - ビルドは [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) で PyInstaller `--onedir` により Python interpreter + 全依存 (numpy / scipy / opencv-python-headless / typer / allaganeye 本体) を frozen application 化 (`scripts/installer/requirements-pyinstaller.txt` で pyinstaller / hooks-contrib version pin、CI `actions/setup-python@v5` で Python 3.11.9 pin) し、FFmpeg LGPLv3 shared (BtbN FFmpeg-Builds win64-lgpl-shared、libdav1d 入り) を同梱する (#752)
+  - ビルドは [`scripts/build-portable-zip.ps1`](../scripts/build-portable-zip.ps1) で PyInstaller `--onedir` により Python interpreter + 全依存 (numpy / scipy / opencv-python-headless / typer / allaganeye 本体) を frozen application 化 (`scripts/installer/requirements-pyinstaller.txt` で pyinstaller / hooks-contrib version pin、CI は uv で Python 3.11.18 pin) し、FFmpeg LGPLv3 shared (BtbN FFmpeg-Builds win64-lgpl-shared、libdav1d 入り) を同梱する (#752)
     - ダウンロードする外部バイナリ (FFmpeg) はスクリプト内に **SHA256 ダイジェストをハードコードして検証** する。ダイジェスト不一致時はビルドを fail。FFmpeg は BtbN の **monthly snapshot タグ** (`autobuild-YYYY-MM-{28,29,30,31}-*`、~24 ヶ月 retention) と特定アセット名を URL にピン留めして再現性を確保する (`latest` タグは日次更新の可動ポインタなので不可、daily 中間タグは ~14 日で GC されるため不可。詳細 #705)
       - PyInstaller bundle の bump 手順は [`docs/developer-setup.md` §「PyInstaller フローでの version pin (#752 以降)」](developer-setup.md) を参照
     - 外部バイナリを更新する場合はスクリプト先頭の `$FFmpegBuildTag` / `$FFmpegAssetName` / `$*Sha256` 定数を更新する
@@ -332,7 +332,7 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 
 ### 前提
 
-- ローカル環境に Python 3.11.9 + PowerShell (Windows PowerShell 5.1 以上 or pwsh 7+) + Git がインストール済み ([Developer Setup](developer-setup.md) §1)
+- ローカル環境に Python 3.11.18 + PowerShell (Windows PowerShell 5.1 以上 or pwsh 7+) + Git がインストール済み ([Developer Setup](developer-setup.md) §1)
 - `develop-x.x.x` で全テスト pass、`release/vX.Y.Z → main` PR マージ済み
 - 公開対象バージョン (`x.y.z`) と[バージョン保持箇所](versioning.md#バージョン管理場所)が**全箇所**一致していること (`python scripts/check_version_consistency.py --tag vx.y.z` が exit 0。CI を迂回する手順のため `version-check` job の代わりに手元で実行する)
 
