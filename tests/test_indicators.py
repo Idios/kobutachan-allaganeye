@@ -22,6 +22,7 @@ from allaganeye.video.indicators import (
     classify_text,
     detect_indicator,
     group_detections,
+    layout_from_bar_region,
     layout_from_payload,
     layout_to_payload,
     match_text,
@@ -361,6 +362,43 @@ def test_validate_layout_for_frame_matches_the_real_crop_rounding() -> None:
         validate_layout_for_frame(layout, frame_width=1920, frame_height=1080)
     with pytest.raises(ValueError):
         detect_indicator(np.zeros((1080, 1920), dtype=np.uint8), layout)
+
+
+def test_layout_from_bar_region_inverts_the_reference_geometry() -> None:
+    """参照レイアウトのバー矩形 (626, 618, 153x13) からアンカーを逆算できる。"""
+    layout = layout_from_bar_region(626, 618, 153, 13)
+    assert layout.scale == pytest.approx(1.0)
+    assert layout.x == pytest.approx(618.0)
+    assert layout.y == pytest.approx(614.0)
+    assert layout.source == "user"
+
+
+def test_layout_from_bar_region_scales_with_the_bar_width() -> None:
+    """バー幅が 0.8 倍なら scale も 0.8 になり、自動解決と同じ帯域に戻る。"""
+    layout = layout_from_bar_region(621 + 8 * 0.8, 289 + 4 * 0.8, 153 * 0.8, 13 * 0.8)
+    assert layout.scale == pytest.approx(0.8)
+    assert layout.x == pytest.approx(621.0, abs=0.01)
+    assert layout.y == pytest.approx(289.0, abs=0.01)
+    auto = IndicatorLayout(scale=0.8, x=621.0, y=289.0)
+    assert layout.text_band() == auto.text_band()
+
+
+@pytest.mark.parametrize(
+    ("region", "message"),
+    [
+        ((0, 0, 0, 13), "small"),
+        ((-1, 0, 153, 13), "origin"),
+        ((0, 0, 19, 13), "small"),
+        ((0, 0, 153, 200), "aspect"),
+        ((0, 0, float("nan"), 13), "finite"),
+        ((0, 0, 153, float("inf")), "finite"),
+    ],
+)
+def test_layout_from_bar_region_rejects_invalid_regions(
+    region: tuple, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        layout_from_bar_region(*region)
 
 
 def test_detect_indicator_at_scaled_layout() -> None:

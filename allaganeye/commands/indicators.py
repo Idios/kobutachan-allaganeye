@@ -47,6 +47,7 @@ from allaganeye.video.indicators import (
     calibrate_layout,
     detect_indicator,
     group_detections,
+    layout_from_bar_region,
     layout_from_payload,
     layout_to_payload,
     validate_layout_for_frame,
@@ -148,6 +149,16 @@ def register(app: typer.Typer) -> None:
                 ),
             ),
         ] = None,
+        region: Annotated[
+            str | None,
+            typer.Option(
+                "--region",
+                help=(
+                    "Skip auto calibration and use this gauge-bar rectangle "
+                    "`X,Y,W,H` (pixels). Fallback for unexpected HUD layouts."
+                ),
+            ),
+        ] = None,
     ) -> None:
         """Detect KO / ASSIST indicator intervals in a detected recording."""
 
@@ -167,6 +178,7 @@ def register(app: typer.Typer) -> None:
                 recalibrate=recalibrate,
                 write=write,
                 expected_mtime=expected_mtime,
+                region=_parse_region(region),
                 emit=emit,
                 progress=progress,
             )
@@ -180,6 +192,24 @@ def register(app: typer.Typer) -> None:
             raise typer.Exit(code=130) from None
         if not json_output:
             print_summary(report, wrote_metadata=write, output=output)
+
+
+def _parse_region(value: str | None) -> tuple[float, float, float, float] | None:
+    """`--region X,Y,W,H` を数値に変換する（不正は exit 5 の例外にする）。"""
+    if value is None:
+        return None
+    parts = value.split(",")
+    if len(parts) != 4:
+        raise ConfigValidationError(
+            f"--region must be X,Y,W,H (4 comma-separated numbers), got {value!r}"
+        )
+    try:
+        numbers = tuple(float(part) for part in parts)
+    except ValueError as exc:
+        raise ConfigValidationError(
+            f"--region must contain numbers, got {value!r}"
+        ) from exc
+    return numbers  # type: ignore[return-value]
 
 
 def calibration_timestamps(
@@ -440,6 +470,7 @@ def run_indicators(
     expected_mtime: int | None,
     emit: Callable[[dict[str, Any]], None],
     progress: Callable[[str], None],
+    region: tuple[float, float, float, float] | None = None,
 ) -> IndicatorReport:
     """Body of the command, kept free of typer so it can be unit-tested."""
     # NaN はすべての比較が False なので、下限比較より先に有限性を見る。
@@ -467,7 +498,21 @@ def run_indicators(
 
     cached = payload.get("indicator_layout")
     recalibrated = False
-    if cached is not None and not recalibrate:
+    if region is not None:
+        if recalibrate:
+            raise ConfigValidationError(
+                "--region and --recalibrate are mutually exclusive; "
+                "--region already skips auto calibration"
+            )
+        try:
+            layout = layout_from_bar_region(*region)
+        except ValueError as exc:
+            raise ConfigValidationError(f"--region: {exc}") from exc
+        validate_layout_for_frame(
+            layout, frame_width=frame_size[0], frame_height=frame_size[1]
+        )
+        progress("using --region (auto calibration skipped)")
+    elif cached is not None and not recalibrate:
         layout = layout_from_payload(
             cached, frame_width=frame_size[0], frame_height=frame_size[1]
         )

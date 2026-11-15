@@ -194,7 +194,7 @@ cache には `.detection_cache.json` top-level (`masked_fallback_used` と同型
 | `scale` | number > 0 | ✓ | 1080p 参照レイアウトに対する HUD 倍率（1.0 = 同梱テンプレートと同じスケール） |
 | `support` | integer >= 1 | ✓ | キャリブレーションで合意したフレーム数 |
 | `confidence` | number [0,1] | ✓ | 合意フレームの平均マッチスコア |
-| `source` | string | ✓ | 由来。文書化値: `"anchor"`（自動解決）/ `"user"`（将来のユーザー指定領域）。free string のため読み手は unknown 値を受容 |
+| `source` | string | ✓ | 由来。文書化値: `"anchor"`（自動解決）/ `"user"`（`--region` で指定したバー矩形から逆算）。free string のため読み手は unknown 値を受容 |
 
 **テキスト帯（探索窓）は保存しない。** アンカー位置と `scale` から相対幾何で一意に決まる
 ため、値を重複保存すると片方だけ更新されてずれる（SSoT 違反）。導出は
@@ -211,6 +211,12 @@ cache には `.detection_cache.json` top-level (`masked_fallback_used` と同型
 `--expected-mtime` による CAS guard は `capture_regions` と同じ（不一致なら exit 6）。
 不正な値（範囲外 / 型違い / キー欠落）は `InputFileError`（exit 2）で落とす。壊れた値を
 「それらしく」補正すると、探索窓が静かにずれたまま検出を続けるため。
+
+**`source: "user"` の意味**: `allaganeye indicators --region X,Y,W,H` でユーザーが
+**ゲージバーの外枠**を指定したときの値。バー幅から `scale`、左上から `anchor_*` を逆算する
+(`layout_from_bar_region`)。この経路では合意フレームが無いので `support` は 1、
+`confidence` は 0.0 になる（「測った信頼度」ではないことを示す）。自動解決が想定外 HUD で
+失敗したときの fallback であり、次回以降は同じ矩形を再指定せずに済む。
 
 ### `Gap` オブジェクト (`gaps[]`)
 

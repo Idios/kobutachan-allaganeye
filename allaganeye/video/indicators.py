@@ -156,6 +156,58 @@ class IndicatorLayout:
         )
 
 
+# ユーザー指定 region の許容範囲。GUI のドラッグ選択は数 px ずれるので、
+# アスペクト比は緩めに見る（ゲージ全体を囲んだ等の gross な誤りだけを弾く）。
+_REGION_MIN_WIDTH_PX = 20.0
+_REGION_MIN_HEIGHT_PX = 2.0
+_REGION_ASPECT_TOLERANCE = 4.0
+
+
+def layout_from_bar_region(
+    x: float, y: float, width: float, height: float
+) -> IndicatorLayout:
+    """ユーザー指定の「ゲージバー本体の矩形」から layout を逆算する。
+
+    アンカー探索は常時表示のバーを手掛かりにするが、HUD が想定外だと失敗する。
+    そのときユーザーがバーを囲んだ矩形を渡せば、**バー幅から scale、左上から
+    アンカー位置が一意に決まる**（`_REF_BAR` と `_ANCHOR_*` の相対関係を使う）。
+
+    テキストは間欠表示なので、指定対象は**常時見えるバー**にする（テキスト帯を
+    直接指定させる設計にすると、KO/ASSIST が出る瞬間を待つ必要がある）。
+
+    妥当でない値は `ValueError`。呼び出し側（CLI）が exit code に変換する。
+    """
+    values = (x, y, width, height)
+    if any(not math.isfinite(value) for value in values):
+        raise ValueError(f"region must be finite numbers, got {values}")
+    if x < 0 or y < 0:
+        raise ValueError(f"region origin must be >= 0, got x={x}, y={y}")
+    if width < _REGION_MIN_WIDTH_PX or height < _REGION_MIN_HEIGHT_PX:
+        raise ValueError(
+            f"region is too small ({width}x{height}); expected at least "
+            f"{_REGION_MIN_WIDTH_PX:.0f}x{_REGION_MIN_HEIGHT_PX:.0f} px"
+        )
+    reference_width = _REF_BAR[2] - _REF_BAR[0]
+    reference_height = _REF_BAR[3] - _REF_BAR[1]
+    scale = width / reference_width
+    expected_height = reference_height * scale
+    if not (
+        expected_height / _REGION_ASPECT_TOLERANCE
+        <= height
+        <= expected_height * _REGION_ASPECT_TOLERANCE
+    ):
+        raise ValueError(
+            f"region aspect ratio looks wrong ({width}x{height}); enclose the gauge "
+            f"bar only (reference {reference_width:.0f}x{reference_height:.0f} px)"
+        )
+    return IndicatorLayout(
+        scale=scale,
+        x=x - (_REF_BAR[0] - _ANCHOR_X) * scale,
+        y=y - (_REF_BAR[1] - _ANCHOR_Y) * scale,
+        source="user",
+    )
+
+
 @dataclass(frozen=True)
 class IndicatorHit:
     """1 フレームで検出したインジケータ。"""
@@ -792,6 +844,7 @@ __all__ = [
     "classify_text",
     "detect_indicator",
     "group_detections",
+    "layout_from_bar_region",
     "layout_from_payload",
     "layout_to_payload",
     "match_text",

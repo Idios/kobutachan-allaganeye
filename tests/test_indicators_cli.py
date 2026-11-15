@@ -331,6 +331,75 @@ def test_indicators_rejects_staging_aliasing_restore_backup(
     assert json.loads(backup.read_text(encoding="utf-8")) == {"original": True}
 
 
+def test_indicators_uses_user_region_without_calibration(
+    app: typer.Typer, metadata_path: Path, fake_video, monkeypatch: pytest.MonkeyPatch
+):
+    """`--region` 指定時は自動キャリブレーションをせずに走査する。"""
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    del payload["indicator_layout"]
+    metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def explode(_frames):
+        raise AssertionError("calibrate_layout must not run when --region is given")
+
+    monkeypatch.setattr(indicators_cmd, "calibrate_layout", explode)
+    result = runner.invoke(
+        app,
+        ["indicators", str(metadata_path), "--region", "626,618,153,13", "--no-write"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "ASSIST: 1" in result.output
+
+
+def test_indicators_writes_user_layout_source(
+    app: typer.Typer, metadata_path: Path, fake_video
+):
+    """`--region` で解決した layout は `source: "user"` で永続化される。"""
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    del payload["indicator_layout"]
+    metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    result = runner.invoke(
+        app, ["indicators", str(metadata_path), "--region", "626,618,153,13"]
+    )
+    assert result.exit_code == 0, result.output
+    written = json.loads(metadata_path.read_text(encoding="utf-8"))["indicator_layout"]
+    assert written["source"] == "user"
+    assert written["anchor_x"] == pytest.approx(618 / 1920, abs=1e-6)
+    assert written["anchor_y"] == pytest.approx(614 / 1080, abs=1e-6)
+    assert written["scale"] == pytest.approx(1.0)
+
+
+def test_indicators_rejects_region_with_recalibrate(
+    app: typer.Typer, metadata_path: Path, fake_video
+):
+    result = runner.invoke(
+        app,
+        [
+            "indicators",
+            str(metadata_path),
+            "--region",
+            "626,618,153,13",
+            "--recalibrate",
+            "--no-write",
+        ],
+    )
+    assert result.exit_code == 5
+    assert "--region" in result.output
+
+
+@pytest.mark.parametrize(
+    "value", ["626,618,153", "a,b,c,d", "0,0,0,0", "626,618,153,200"]
+)
+def test_indicators_rejects_invalid_region(
+    app: typer.Typer, metadata_path: Path, fake_video, value: str
+):
+    result = runner.invoke(
+        app, ["indicators", str(metadata_path), "--region", value, "--no-write"]
+    )
+    assert result.exit_code == 5
+    assert "region" in result.output.lower()
+
+
 def test_indicators_missing_metadata_exits_2(app: typer.Typer, tmp_path: Path):
     result = runner.invoke(app, ["indicators", str(tmp_path / "nope.json")])
     assert result.exit_code == 2
