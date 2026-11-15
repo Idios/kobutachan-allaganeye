@@ -1,0 +1,140 @@
+{
+  "label": "ref1",
+  "video_env": "ALLAGANEYE_SAMPLE_VIDEO_DIR",
+  "video_rel": "20260116/20260116_1.mp4",
+  "duration": 944.0,
+  "provenance": "検出候補 (しきい値 0.40 の低閾値走査) を目視裁定して確定 (Idios + agent, 2026-11-14/15)。KO は K.O. カウンタが 1-4 の連番であることを併用して全数を確認。ASSIST は全数の独立列挙が無く、低閾値走査との差分 (812.9 秒の遮蔽表示) を追加した。",
+  "windows": null,
+  "no_detect_windows": [],
+  "events": [
+    {
+      "kind": "assist",
+      "start": 65.9
+    },
+    {
+      "kind": "assist",
+      "start": 68.0
+    },
+    {
+      "kind": "assist",
+      "start": 79.2
+    },
+    {
+      "kind": "assist",
+      "start": 85.2
+    },
+    {
+      "kind": "assist",
+      "start": 108.1
+    },
+    {
+      "kind": "assist",
+      "start": 118.6
+    },
+    {
+      "kind": "assist",
+      "start": 169.8
+    },
+    {
+      "kind": "assist",
+      "start": 193.2
+    },
+    {
+      "kind": "assist",
+      "start": 201.0
+    },
+    {
+      "kind": "assist",
+      "start": 206.4
+    },
+    {
+      "kind": "assist",
+      "start": 391.6
+    },
+    {
+      "kind": "ko",
+      "start": 493.4,
+      "note": "1 K.O.!!"
+    },
+    {
+      "kind": "assist",
+      "start": 513.7
+    },
+    {
+      "kind": "assist",
+      "start": 515.5
+    },
+    {
+      "kind": "ko",
+      "start": 584.3,
+      "note": "2 K.O.!!"
+    },
+    {
+      "kind": "assist",
+      "start": 603.6
+    },
+    {
+      "kind": "assist",
+      "start": 623.2
+    },
+    {
+      "kind": "assist",
+      "start": 626.4
+    },
+    {
+      "kind": "assist",
+      "start": 656.3
+    },
+    {
+      "kind": "assist",
+      "start": 661.5
+    },
+    {
+      "kind": "assist",
+      "start": 685.0
+    },
+    {
+      "kind": "assist",
+      "start": 726.0
+    },
+    {
+      "kind": "assist",
+      "start": 770.9
+    },
+    {
+      "kind": "assist",
+      "start": 788.5
+    },
+    {
+      "kind": "assist",
+      "start": 812.9,
+      "note": "キャストバー (軍用エラクター) に部分的に隠れ、既定しきい値では取りこぼす実表示"
+    },
+    {
+      "kind": "assist",
+      "start": 834.7
+    },
+    {
+      "kind": "assist",
+      "start": 842.7
+    },
+    {
+      "kind": "ko",
+      "start": 847.2,
+      "note": "3 K.O.!!"
+    },
+    {
+      "kind": "assist",
+      "start": 858.9
+    },
+    {
+      "kind": "assist",
+      "start": 866.7
+    },
+    {
+      "kind": "ko",
+      "start": 911.2,
+      "note": "4 K.O.!!"
+    }
+  ]
+}

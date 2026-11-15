@@ -1,0 +1,226 @@
+{
+  "label": "ref5",
+  "video_env": "ALLAGANEYE_SAMPLE_VIDEO_DIR",
+  "video_rel": "20260116/20260116_5.mp4",
+  "duration": 880.5,
+  "provenance": "検出候補を目視裁定して確定 (2026-11-14)。KO カウンタは 1-9, 11, 12 で、10 K.O.!! は録画側に表示が無いことを Idios が目視確認済み (検出漏れではない)。低閾値 0.40 の走査で追加の実表示は見つからなかった。",
+  "windows": null,
+  "no_detect_windows": [],
+  "events": [
+    {
+      "kind": "ko",
+      "start": 40.9,
+      "note": "1 K.O.!!"
+    },
+    {
+      "kind": "assist",
+      "start": 45.7
+    },
+    {
+      "kind": "assist",
+      "start": 57.3
+    },
+    {
+      "kind": "assist",
+      "start": 70.7
+    },
+    {
+      "kind": "assist",
+      "start": 71.1
+    },
+    {
+      "kind": "ko",
+      "start": 73.5,
+      "note": "2 K.O.!!"
+    },
+    {
+      "kind": "assist",
+      "start": 102.2
+    },
+    {
+      "kind": "assist",
+      "start": 119.8
+    },
+    {
+      "kind": "ko",
+      "start": 139.2,
+      "note": "3 K.O.!!"
+    },
+    {
+      "kind": "ko",
+      "start": 142.8,
+      "note": "4 K.O.!!"
+    },
+    {
+      "kind": "assist",
+      "start": 147.5
+    },
+    {
+      "kind": "assist",
+      "start": 153.7
+    },
+    {
+      "kind": "assist",
+      "start": 171.9
+    },
+    {
+      "kind": "assist",
+      "start": 195.3
+    },
+    {
+      "kind": "assist",
+      "start": 208.3
+    },
+    {
+      "kind": "assist",
+      "start": 209.8
+    },
+    {
+      "kind": "assist",
+      "start": 244.1
+    },
+    {
+      "kind": "assist",
+      "start": 244.9
+    },
+    {
+      "kind": "assist",
+      "start": 250.2
+    },
+    {
+      "kind": "assist",
+      "start": 250.9
+    },
+    {
+      "kind": "assist",
+      "start": 253.6
+    },
+    {
+      "kind": "assist",
+      "start": 302.6
+    },
+    {
+      "kind": "assist",
+      "start": 305.4
+    },
+    {
+      "kind": "assist",
+      "start": 327.4
+    },
+    {
+      "kind": "ko",
+      "start": 329.4,
+      "note": "5 K.O.!!"
+    },
+    {
+      "kind": "assist",
+      "start": 354.6
+    },
+    {
+      "kind": "assist",
+      "start": 357.7
+    },
+    {
+      "kind": "assist",
+      "start": 365.2
+    },
+    {
+      "kind": "ko",
+      "start": 376.4,
+      "note": "6 K.O.!!"
+    },
+    {
+      "kind": "assist",
+      "start": 378.9
+    },
+    {
+      "kind": "assist",
+      "start": 382.7
+    },
+    {
+      "kind": "assist",
+      "start": 414.9
+    },
+    {
+      "kind": "assist",
+      "start": 456.1
+    },
+    {
+      "kind": "ko",
+      "start": 487.9,
+      "note": "7 K.O.!!"
+    },
+    {
+      "kind": "assist",
+      "start": 495.2
+    },
+    {
+      "kind": "assist",
+      "start": 508.2
+    },
+    {
+      "kind": "assist",
+      "start": 509.8
+    },
+    {
+      "kind": "ko",
+      "start": 510.3,
+      "note": "8 K.O.!!"
+    },
+    {
+      "kind": "assist",
+      "start": 523.5
+    },
+    {
+      "kind": "assist",
+      "start": 526.0
+    },
+    {
+      "kind": "assist",
+      "start": 542.8
+    },
+    {
+      "kind": "ko",
+      "start": 544.1,
+      "note": "9 K.O.!!"
+    },
+    {
+      "kind": "assist",
+      "start": 619.2
+    },
+    {
+      "kind": "assist",
+      "start": 620.2
+    },
+    {
+      "kind": "assist",
+      "start": 622.1
+    },
+    {
+      "kind": "assist",
+      "start": 642.8
+    },
+    {
+      "kind": "assist",
+      "start": 648.4
+    },
+    {
+      "kind": "assist",
+      "start": 662.8
+    },
+    {
+      "kind": "ko",
+      "start": 735.6,
+      "note": "11 K.O.!!"
+    },
+    {
+      "kind": "ko",
+      "start": 788.4,
+      "note": "12 K.O.!! (2 桁、GT 788.4)"
+    },
+    {
+      "kind": "assist",
+      "start": 853.3
+    }
+  ]
+}
