@@ -175,6 +175,17 @@ def _calibrate(video: Path, frame_size: tuple[int, int]) -> IndicatorLayout:
     return layout
 
 
+def _merge_spans(spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """重なる区間を 1 つにまとめる（重複走査で同じ検出を二重に数えない）。"""
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 def _scan(
     video: Path,
     layout: IndicatorLayout,
@@ -182,7 +193,7 @@ def _scan(
     spans: list[tuple[float, float]],
 ) -> list[IndicatorEvent]:
     events: list[IndicatorEvent] = []
-    for start, end in spans:
+    for start, end in _merge_spans(spans):
         events.extend(
             scan_indicators(
                 iter_gray_frames(
