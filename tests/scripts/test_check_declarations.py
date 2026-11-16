@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -44,6 +45,7 @@ EXPECTED_IDS = {
     "line-refs",
     "path-refs",
     "metadata-schema",
+    "indicator-events",
     "version-locations",
     "error-hints",
     "shipped-commands",
@@ -511,3 +513,72 @@ def test_main_exit_two_for_structure_error(
 ) -> None:
     catalog = _catalog(tmp_path, [], header=False)
     assert _run_main(monkeypatch, catalog) == 2
+
+
+# --------------------------------------------------------------------------
+# indicator-events gate: block scope (#127 / Codex review 2026-11-16)
+# --------------------------------------------------------------------------
+
+
+def _event_repo(tmp_path: Path, doc_text: str) -> Path:
+    """`schemas/metadata.schema.json` と 1 枚の doc だけを持つ最小 repo。"""
+    schema_dir = tmp_path / "schemas"
+    schema_dir.mkdir()
+    (schema_dir / "metadata.schema.json").write_text(
+        json.dumps(
+            {
+                "$defs": {
+                    "HighlightEvent": {
+                        "properties": {"signal_id": {}, "source": {}},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "doc.md").write_text(doc_text, encoding="utf-8")
+    return tmp_path
+
+
+def test_indicator_events_scopes_to_the_event_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """イベント定義 block の外にある同名語で緑にならない。
+
+    `source` は他の節に普通に現れる語なので、doc 全体の部分文字列一致だと
+    「定義を更新していないのに緑」になる (Codex review 2026-11-16 P2)。
+    """
+    root = _event_repo(
+        tmp_path,
+        "# doc\n\n## events\n\n| `signal_id` | id |\n\n## other\n\n`source` は別文脈。\n",
+    )
+    monkeypatch.setattr(cd, "_INDICATOR_EVENT_DOCS", (("doc.md", "## events", "## "),))
+
+    problems = cd.check_indicator_events(root)
+
+    assert any("source" in problem for problem in problems), problems
+    assert not any("signal_id" in problem for problem in problems), problems
+
+
+def test_indicator_events_accepts_a_complete_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _event_repo(
+        tmp_path,
+        "# doc\n\n## events\n\n| `signal_id` | `source` |\n\n## other\n",
+    )
+    monkeypatch.setattr(cd, "_INDICATOR_EVENT_DOCS", (("doc.md", "## events", "## "),))
+
+    assert cd.check_indicator_events(root) == []
+
+
+def test_indicator_events_reports_a_missing_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """節ごと消えたら「検査不能」として red にする (silent skip しない)。"""
+    root = _event_repo(tmp_path, "# doc\n\n`signal_id` `source`\n")
+    monkeypatch.setattr(cd, "_INDICATOR_EVENT_DOCS", (("doc.md", "## events", "## "),))
+
+    problems = cd.check_indicator_events(root)
+
+    assert any("block" in problem for problem in problems), problems

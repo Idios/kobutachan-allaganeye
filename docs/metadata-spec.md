@@ -223,6 +223,40 @@ cache には `.detection_cache.json` top-level (`masked_fallback_used` と同型
 `confidence` は 0.0 になる（「測った信頼度」ではないことを示す）。自動解決が想定外 HUD で
 失敗したときの fallback であり、次回以降は同じ矩形を再指定せずに済む。
 
+### `events` 配列 (#127 / #1106 作業項目 4)
+
+`allaganeye indicators --write`（既定）が書く L4 のイベント列。**毎回全件置換**する
+（差分マージはしない。検出条件が変われば結果集合ごと変わるため）。未実行の
+metadata.json は持たない（optional）。**この文書は意味の要約で、形の正は
+`schemas/metadata.schema.json` の `$defs/HighlightEvent`**、設計の正は
+[event output format design](superpowers/specs/2026-11-16-l4-event-output-format-design.md)。
+
+| フィールド | 型 | 必須 | 意味 |
+| --- | --- | --- | --- |
+| `signal_id` | string | ✓ | 信号識別子。文書化値: `"ko_indicator"` / `"assist_indicator"`。**enum ではない**（未知値は読み手が無視する） |
+| `timestamp` | number >= 0 | ✓ | 表示区間の開始。**元録画先頭からの絶対秒**（0.01 秒丸め） |
+| `end` | number >= 0 | ✓ | 同終端。点イベントとして使う読み手は無視してよい |
+| `score` | number [0,1] | ✓ | 検出の確信度（区間内の最大テンプレートマッチスコア） |
+| `evidence` | object | ✓ | 検出根拠。文書化キーは `samples`（連続ヒットした走査サンプル数）。追加キーは自由 |
+| `match_index` | integer >= 1 または null | ✓ | 属する試合の `matches[].index`。試合外は `null`（イベント自体は捨てない） |
+
+**互換ルール**: producer はフィールドを追加してよい（event item は
+`additionalProperties: true`）。consumer は未知フィールドと未知の `signal_id` を
+無視する。既存フィールドの意味・型・単位は破壊的に変えない。
+
+**書き込みパス別の挙動**:
+
+| 経路 | 書き込み |
+| --- | --- |
+| `allaganeye indicators`（`--write`、既定） | ✓ 全件置換で書く（`indicator_layout` と同じ write） |
+| `allaganeye indicators --no-write` | ✗ 書かない |
+| `allaganeye detect` / `split` / `export` / `minimap` | ✗ 書かない |
+
+> **GUI 側の扱い**: root 直下のキーなので `[適用]`（`normalizeForPersistence`）は
+> root を spread で保持し、match 配列を組み直しても `events` は落ちない。
+> `events` は zod `HighlightEventSchema`（event は passthrough）で読み、
+> 未知の `signal_id` は画面に描画しない。
+
 ### `Gap` オブジェクト (`gaps[]`)
 
 試合間の 5 分以上の空白 (5 分未満は含まれない、`min_gap=300.0` による)。

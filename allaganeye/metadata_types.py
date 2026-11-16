@@ -142,6 +142,19 @@ class IndicatorLayout(TypedDict):
     source: str
 
 
+class HighlightEvent(TypedDict):
+    """
+    One detected highlight interval (L4, #127). Serialized by allaganeye/video/indicators.py::event_to_payload. `signal_id` is a free string (NOT an enum) so adding a signal never breaks the schema; documented values today are "ko_indicator" and "assist_indicator". `timestamp` / `end` are absolute seconds from the start of the source recording, not match-relative. Unknown fields are allowed on purpose (forward compat): consumers must ignore fields they do not know and `signal_id` values they do not recognize.
+    """
+
+    signal_id: str
+    timestamp: float
+    end: float
+    score: float
+    evidence: dict[str, Any]
+    match_index: int | None
+
+
 class Metadata(TypedDict):
     """
     metadata.json contract between allaganeye CLI and the L2a Tauri GUI (#463). Machine-readable source of truth (#612). The human-readable counterpart lives in docs/metadata-spec.md; refine-style semantic constraints (e.g. end_time >= start_time) are enforced by zod (GUI) and InputFileError checks (CLI), not by this schema.
@@ -164,3 +177,4 @@ class Metadata(TypedDict):
     capture_regions: NotRequired[CaptureRegions]
     minimap_regions: NotRequired[list[MinimapRegionEntry]]
     indicator_layout: NotRequired[IndicatorLayout]
+    events: NotRequired[list[HighlightEvent]]

@@ -24,6 +24,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { create } from 'zustand';
 
+import type { HighlightEvent } from '../types/metadata.generated';
 import { toErrorState, type ErrorState } from '../lib/appError';
 
 /**
@@ -41,15 +42,12 @@ export interface IndicatorsLayout {
   source: 'anchor' | 'user';
 }
 
-/** KO / ASSIST の 1 区間。`match_index` は試合外なら null。 */
-export interface IndicatorsEvent {
-  kind: 'ko' | 'assist';
-  start: number;
-  end: number;
-  score: number;
-  samples: number;
-  match_index: number | null;
-}
+/**
+ * KO / ASSIST の 1 区間 (#127)。形の正は schema の `$defs/HighlightEvent`
+ * (生成型をそのまま使う)。`timestamp` / `end` は元録画先頭からの絶対秒、
+ * `match_index` は試合外なら null。
+ */
+export type IndicatorsEvent = HighlightEvent;
 
 /** `start_indicators` の戻り値 (CLI `--json` 最終行 `complete` の本体)。 */
 export interface IndicatorsResult {

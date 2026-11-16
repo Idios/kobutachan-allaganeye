@@ -12,11 +12,11 @@ use axum::{
     routing::get,
     Router,
 };
-use tauri::{Emitter, Manager};
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use tauri::{Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{Mutex, Semaphore};
 use tower_http::services::ServeFile;
@@ -569,10 +569,7 @@ async fn add_recent(path: String) -> Result<Vec<RecentEntry>, AppError> {
 /// on disk; pruning inside `add_recent_sync` would empty the list out
 /// from under them). The just-inserted entry is guaranteed to exist
 /// (`add_recent` checks at the top), so it survives the prune.
-fn add_recent_with_prune(
-    path: &Path,
-    entry: RecentEntry,
-) -> Result<Vec<RecentEntry>, AppError> {
+fn add_recent_with_prune(path: &Path, entry: RecentEntry) -> Result<Vec<RecentEntry>, AppError> {
     let inserted = add_recent_sync(path, entry)?;
     let initial_len = inserted.len();
     let pruned = prune_missing(inserted);
@@ -644,10 +641,7 @@ async fn probe_video(path: String) -> Result<VideoProbeInfo, AppError> {
 
 /// Pure helper testable in cargo unit tests by injecting an ffprobe-like
 /// command (e.g. a fixture-emitting shell script).
-async fn probe_video_with(
-    path: &Path,
-    ffprobe: &str,
-) -> Result<VideoProbeInfo, AppError> {
+async fn probe_video_with(path: &Path, ffprobe: &str) -> Result<VideoProbeInfo, AppError> {
     let size_bytes = fs::metadata(path)
         .map_err(|e| {
             AppError::new(
@@ -721,11 +715,8 @@ async fn probe_video_with(
         .get("width")
         .and_then(|v| v.as_u64())
         .ok_or_else(|| {
-            AppError::new(
-                "parse.ffprobe_output_invalid",
-                "video stream missing width",
-            )
-            .with_default_hint()
+            AppError::new("parse.ffprobe_output_invalid", "video stream missing width")
+                .with_default_hint()
         })? as u32;
     let height = video_stream
         .get("height")
@@ -745,21 +736,17 @@ async fn probe_video_with(
 
     // Frame rate: prefer r_frame_rate (e.g. "60/1" or "60000/1001"), fall
     // back to avg_frame_rate. Mirrors Python's probe.py logic.
-    let fps = parse_frame_rate_str(
-        video_stream.get("r_frame_rate").and_then(|v| v.as_str()),
-    )
-    .or_else(|| {
-        parse_frame_rate_str(
-            video_stream.get("avg_frame_rate").and_then(|v| v.as_str()),
-        )
-    })
-    .ok_or_else(|| {
-        AppError::new(
-            "parse.ffprobe_output_invalid",
-            "cannot determine frame rate",
-        )
-        .with_default_hint()
-    })?;
+    let fps = parse_frame_rate_str(video_stream.get("r_frame_rate").and_then(|v| v.as_str()))
+        .or_else(|| {
+            parse_frame_rate_str(video_stream.get("avg_frame_rate").and_then(|v| v.as_str()))
+        })
+        .ok_or_else(|| {
+            AppError::new(
+                "parse.ffprobe_output_invalid",
+                "cannot determine frame rate",
+            )
+            .with_default_hint()
+        })?;
 
     let duration_seconds = json
         .get("format")
@@ -774,11 +761,10 @@ async fn probe_video_with(
             .with_default_hint()
         })?;
     if duration_seconds <= 0.0 {
-        return Err(AppError::new(
-            "validation.range_invalid",
-            "duration is non-positive",
-        )
-        .with_default_hint());
+        return Err(
+            AppError::new("validation.range_invalid", "duration is non-positive")
+                .with_default_hint(),
+        );
     }
 
     let file_name = path
@@ -867,13 +853,15 @@ async fn ensure_server_started() -> Result<u16, AppError> {
         return Ok(port);
     }
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(|e| {
-        AppError::new(
-            "subprocess.spawn_failed",
-            format!("bind 127.0.0.1:0 failed: {}", e),
-        )
-        .with_default_hint()
-    })?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| {
+            AppError::new(
+                "subprocess.spawn_failed",
+                format!("bind 127.0.0.1:0 failed: {}", e),
+            )
+            .with_default_hint()
+        })?;
     let addr = listener
         .local_addr()
         .map_err(|e| format!("local_addr failed: {}", e))?;
@@ -961,12 +949,20 @@ fn validate_capture_region(v: &Value, ctx: &str) -> Result<(), AppError> {
     for key in ["x", "y", "w", "h", "confidence"] {
         match obj.get(key).and_then(Value::as_f64) {
             Some(n) if (0.0..=1.0).contains(&n) => {}
-            _ => return Err(schema_invalid(format!("{ctx}.{key} must be a number in [0,1]"))),
+            _ => {
+                return Err(schema_invalid(format!(
+                    "{ctx}.{key} must be a number in [0,1]"
+                )))
+            }
         }
     }
     match obj.get("source").and_then(Value::as_str) {
         Some(s) if !s.is_empty() => {}
-        _ => return Err(schema_invalid(format!("{ctx}.source must be a non-empty string"))),
+        _ => {
+            return Err(schema_invalid(format!(
+                "{ctx}.source must be a non-empty string"
+            )))
+        }
     }
     Ok(())
 }
@@ -983,16 +979,23 @@ fn validate_capture_regions(v: &Value) -> Result<(), AppError> {
     let segments = obj
         .get("segments")
         .and_then(Value::as_array)
-        .ok_or_else(|| schema_invalid("metadata.capture_regions.segments must be an array".into()))?;
+        .ok_or_else(|| {
+            schema_invalid("metadata.capture_regions.segments must be an array".into())
+        })?;
     for (i, seg) in segments.iter().enumerate() {
         let so = seg.as_object().ok_or_else(|| {
-            schema_invalid(format!("metadata.capture_regions.segments[{i}] must be an object"))
-        })?;
-        let tr = so.get("time_range").and_then(Value::as_array).ok_or_else(|| {
             schema_invalid(format!(
-                "metadata.capture_regions.segments[{i}].time_range must be an array"
+                "metadata.capture_regions.segments[{i}] must be an object"
             ))
         })?;
+        let tr = so
+            .get("time_range")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                schema_invalid(format!(
+                    "metadata.capture_regions.segments[{i}].time_range must be an array"
+                ))
+            })?;
         if tr.len() != 2 || !tr.iter().all(|t| matches!(t.as_f64(), Some(n) if n >= 0.0)) {
             return Err(schema_invalid(format!(
                 "metadata.capture_regions.segments[{i}].time_range must be [n>=0, n>=0]"
@@ -1053,9 +1056,7 @@ fn validate_system_info(v: &Value) -> Result<(), AppError> {
     let obj = v
         .as_object()
         .ok_or_else(|| schema_invalid("metadata.system_info must be an object".into()))?;
-    let is_string_array = |val: Option<&Value>| {
-        matches!(val, Some(Value::Array(a)) if a.iter().all(Value::is_string))
-    };
+    let is_string_array = |val: Option<&Value>| matches!(val, Some(Value::Array(a)) if a.iter().all(Value::is_string));
     for key in ["gpu_vendors_available", "vendor_preference"] {
         if !is_string_array(obj.get(key)) {
             return Err(schema_invalid(format!(
@@ -1095,7 +1096,8 @@ fn validate_brightness_samples(v: &Value) -> Result<(), AppError> {
     }
     match obj.get("values") {
         Some(Value::Array(a))
-            if a.iter().all(|x| matches!(x.as_f64(), Some(n) if (0.0..=255.0).contains(&n))) => {}
+            if a.iter()
+                .all(|x| matches!(x.as_f64(), Some(n) if (0.0..=255.0).contains(&n))) => {}
         _ => {
             return Err(schema_invalid(
                 "metadata.brightness_samples.values must be an array of numbers in [0,255]".into(),
@@ -1121,14 +1123,26 @@ fn validate_metadata_for_write(payload: &Value) -> Result<(), AppError> {
     for key in ["source", "source_duration_display", "detected_at"] {
         match obj.get(key).and_then(Value::as_str) {
             Some(s) if !s.is_empty() => {}
-            _ => return Err(schema_err(format!("metadata.{key} must be a non-empty string"))),
+            _ => {
+                return Err(schema_err(format!(
+                    "metadata.{key} must be a non-empty string"
+                )))
+            }
         }
     }
     match obj.get("source_duration").and_then(Value::as_f64) {
         Some(d) if d > 0.0 => {}
-        _ => return Err(schema_err("metadata.source_duration must be a positive number")),
+        _ => {
+            return Err(schema_err(
+                "metadata.source_duration must be a positive number",
+            ))
+        }
     }
-    if !obj.get("detection_params").map(Value::is_object).unwrap_or(false) {
+    if !obj
+        .get("detection_params")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
         return Err(schema_err("metadata.detection_params must be an object"));
     }
 
@@ -1220,7 +1234,6 @@ fn apply_changes_sync(
             }
         }
     }
-
 
     let parent = meta_path.parent().ok_or_else(|| {
         AppError::new(
@@ -1477,11 +1490,8 @@ async fn generate_match_thumbnails(
             // #834 -- acquire from the process-global semaphore so concurrency is
             // bounded across the whole screen, not per-invoke.
             let _permit = thumbnail_semaphore().acquire().await.map_err(|e| {
-                AppError::new(
-                    "internal.error",
-                    format!("semaphore closed: {}", e),
-                )
-                .with_default_hint()
+                AppError::new("internal.error", format!("semaphore closed: {}", e))
+                    .with_default_hint()
             })?;
             ensure_thumbnail_exists(&video_for_task, t, &out_path).await?;
             Ok::<ThumbnailEntry, AppError>(ThumbnailEntry {
@@ -1843,11 +1853,7 @@ async fn force_exit_app(app: tauri::AppHandle) {
     }
 
     // 500ms timeout で hang 回避。通常は数 ms 以内に Destroyed が fire する。
-    let _ = tokio::time::timeout(
-        std::time::Duration::from_millis(500),
-        join_all(signals),
-    )
-    .await;
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), join_all(signals)).await;
 
     app.exit(0);
 }
@@ -2029,12 +2035,18 @@ async fn untrack_child(id: Uuid) -> Option<tokio::process::Child> {
 fn parse_progress_line(line: &str) -> Option<ProgressSignal> {
     let line = line.trim();
     if let Some(rest) = line.strip_prefix("out_time_ms=") {
-        rest.trim().parse::<i64>().ok().map(ProgressSignal::OutTimeMs)
+        rest.trim()
+            .parse::<i64>()
+            .ok()
+            .map(ProgressSignal::OutTimeMs)
     } else if let Some(rest) = line.strip_prefix("out_time_us=") {
         // Newer ffmpeg builds emit out_time_us instead of out_time_ms even
         // though the unit is still microseconds. Accept both so we don't
         // miss progress on future releases.
-        rest.trim().parse::<i64>().ok().map(ProgressSignal::OutTimeMs)
+        rest.trim()
+            .parse::<i64>()
+            .ok()
+            .map(ProgressSignal::OutTimeMs)
     } else if line == "progress=end" {
         Some(ProgressSignal::End)
     } else {
@@ -2369,11 +2381,7 @@ fn emit_detect_progress(app: &tauri::AppHandle, run_id: &str, progress: DetectPr
 /// Pulled out of `start_detect` so unit tests can pin flag ordering and
 /// the plumbing of optional `DetectParams` -> CLI flags without spawning
 /// a subprocess.
-fn detect_command_args(
-    video_path: &str,
-    output_dir: &str,
-    params: &DetectParams,
-) -> Vec<String> {
+fn detect_command_args(video_path: &str, output_dir: &str, params: &DetectParams) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "detect".to_string(),
         video_path.to_string(),
@@ -2448,11 +2456,7 @@ async fn start_detect(
     if let Err(e) = fs::create_dir_all(&output_buf) {
         return Err(AppError::new(
             "io.write_failed",
-            format!(
-                "create output dir failed ({}): {}",
-                output_buf.display(),
-                e
-            ),
+            format!("create output dir failed ({}): {}", output_buf.display(), e),
         )
         .with_default_hint());
     }
@@ -2635,7 +2639,9 @@ async fn start_detect(
                     ..Default::default()
                 },
             );
-            return Err(AppError::new("subprocess.cancelled", "detect cancelled").with_default_hint());
+            return Err(
+                AppError::new("subprocess.cancelled", "detect cancelled").with_default_hint()
+            );
         }
     };
 
@@ -2764,9 +2770,7 @@ fn probe_environment_info_inner() -> EnvironmentProbe {
     let os_name = match System::long_os_version() {
         Some(s) if !s.trim().is_empty() => s.trim().to_string(),
         _ => match (System::name(), System::os_version()) {
-            (Some(n), Some(v)) => format!("{} {}", n.trim(), v.trim())
-                .trim()
-                .to_string(),
+            (Some(n), Some(v)) => format!("{} {}", n.trim(), v.trim()).trim().to_string(),
             (Some(n), None) => n.trim().to_string(),
             _ => std::env::consts::OS.to_string(),
         },
@@ -2818,9 +2822,7 @@ fn probe_environment_info_inner() -> EnvironmentProbe {
                 Some(d) => (
                     Some(bytes_to_gb(d.available_space())),
                     Some(bytes_to_gb(d.total_space())),
-                    Some(strip_trailing_separator(
-                        &d.mount_point().to_string_lossy(),
-                    )),
+                    Some(strip_trailing_separator(&d.mount_point().to_string_lossy())),
                 ),
                 None => (None, None, None),
             }
@@ -2849,7 +2851,11 @@ fn bytes_to_gb(bytes: u64) -> f64 {
 /// instead of the OS-native `"E:\\"`.
 fn strip_trailing_separator(s: &str) -> String {
     let trimmed = s.trim_end_matches(['\\', '/']);
-    if trimmed.is_empty() { s.to_string() } else { trimmed.to_string() }
+    if trimmed.is_empty() {
+        s.to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// #669 -- Returns the tail of the install-dir log file
@@ -2910,8 +2916,7 @@ fn read_error_log_tail_inner(
             continue;
         }
         let file = std::fs::File::open(&path).map_err(|e| {
-            AppError::new("io.read_failed", format!("read log failed: {}", e))
-                .with_default_hint()
+            AppError::new("io.read_failed", format!("read log failed: {}", e)).with_default_hint()
         })?;
         let reader = BufReader::new(file);
         let mut tail: VecDeque<String> = VecDeque::with_capacity(line_count);
@@ -2972,9 +2977,12 @@ async fn enumerate_h264_encoders(
         cmd.arg(a);
     }
     cmd.arg("encoder-slots")
-        .arg("--vendors").arg(req.vendors.join(","))
-        .arg("--preference").arg(req.preference.join(","))
-        .arg("--gpu-models").arg(req.gpu_models.join(","))
+        .arg("--vendors")
+        .arg(req.vendors.join(","))
+        .arg("--preference")
+        .arg(req.preference.join(","))
+        .arg("--gpu-models")
+        .arg(req.gpu_models.join(","))
         .env("PYTHONIOENCODING", "utf-8:replace")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -2985,8 +2993,11 @@ async fn enumerate_h264_encoders(
     process_util::apply_no_window(&mut cmd);
 
     let output = cmd.output().await.map_err(|e| {
-        AppError::new("subprocess.spawn_failed", format!("encoder-slots spawn: {}", e))
-            .with_default_hint()
+        AppError::new(
+            "subprocess.spawn_failed",
+            format!("encoder-slots spawn: {}", e),
+        )
+        .with_default_hint()
     })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -3012,7 +3023,11 @@ async fn enumerate_h264_encoders(
 #[serde(tag = "type")]
 pub enum WireEvent {
     #[serde(rename = "progress")]
-    Progress { match_index: u32, percent: f64, stage: String },
+    Progress {
+        match_index: u32,
+        percent: f64,
+        stage: String,
+    },
     #[serde(rename = "fallback")]
     Fallback {
         match_index: u32,
@@ -3137,7 +3152,10 @@ fn parse_proposal_line(line: &str) -> Option<MinimapProposal> {
         match_index: v.get("match_index")?.as_u64()? as u32,
         region,
         confidence: v.get("confidence").and_then(|c| c.as_f64()).unwrap_or(0.0),
-        scattered: v.get("scattered").and_then(|s| s.as_bool()).unwrap_or(false),
+        scattered: v
+            .get("scattered")
+            .and_then(|s| s.as_bool())
+            .unwrap_or(false),
     })
 }
 
@@ -3219,10 +3237,14 @@ async fn start_export(
         .collect::<Vec<_>>()
         .join(",");
     cmd.arg("export")
-        .arg("--stdin").arg("--json")
-        .arg("--output-dir").arg(&req.output_dir)
-        .arg("--codec").arg(&req.codec)
-        .arg("--name-pattern").arg(&req.name_pattern);
+        .arg("--stdin")
+        .arg("--json")
+        .arg("--output-dir")
+        .arg(&req.output_dir)
+        .arg("--codec")
+        .arg(&req.codec)
+        .arg("--name-pattern")
+        .arg(&req.name_pattern);
     if !exclude_arg.is_empty() {
         cmd.arg("--exclude").arg(&exclude_arg);
     }
@@ -3236,8 +3258,11 @@ async fn start_export(
     process_util::apply_no_window(&mut cmd);
 
     let mut child = cmd.spawn().map_err(|e| {
-        AppError::new("subprocess.spawn_failed", format!("start_export spawn: {}", e))
-            .with_default_hint()
+        AppError::new(
+            "subprocess.spawn_failed",
+            format!("start_export spawn: {}", e),
+        )
+        .with_default_hint()
     })?;
 
     // Write metadata JSON to stdin, then close
@@ -3248,8 +3273,11 @@ async fn start_export(
         })?;
         use tokio::io::AsyncWriteExt;
         let serialized = serde_json::to_vec(&req.metadata_json).map_err(|e| {
-            AppError::new("subprocess.serialize_failed", format!("metadata serialize: {}", e))
-                .with_default_hint()
+            AppError::new(
+                "subprocess.serialize_failed",
+                format!("metadata serialize: {}", e),
+            )
+            .with_default_hint()
         })?;
         stdin.write_all(&serialized).await.map_err(|e| {
             AppError::new(
@@ -3342,7 +3370,11 @@ async fn start_export(
                     }
                     let line = String::from_utf8_lossy(&line_buf);
                     match parse_wire_event(&line) {
-                        Some(WireEvent::Progress { match_index, percent, stage }) => {
+                        Some(WireEvent::Progress {
+                            match_index,
+                            percent,
+                            stage,
+                        }) => {
                             let _ = app.emit(
                                 "export-progress",
                                 ExportProgress {
@@ -3354,7 +3386,12 @@ async fn start_export(
                                 },
                             );
                         }
-                        Some(WireEvent::Fallback { match_index, fallback_from, fallback_to, message }) => {
+                        Some(WireEvent::Fallback {
+                            match_index,
+                            fallback_from,
+                            fallback_to,
+                            message,
+                        }) => {
                             let _ = app.emit(
                                 "export-progress",
                                 ExportProgress {
@@ -3362,7 +3399,10 @@ async fn start_export(
                                     percent: 0.0,
                                     stage: "fallback".to_string(),
                                     message: Some(message),
-                                    fallback_from: Some(format!("{} -> {}", fallback_from, fallback_to)),
+                                    fallback_from: Some(format!(
+                                        "{} -> {}",
+                                        fallback_from, fallback_to
+                                    )),
                                 },
                             );
                         }
@@ -3378,7 +3418,12 @@ async fn start_export(
                                 },
                             );
                         }
-                        Some(WireEvent::Error { match_index, error_kind: _, error_message, error_hint }) => {
+                        Some(WireEvent::Error {
+                            match_index,
+                            error_kind: _,
+                            error_message,
+                            error_hint,
+                        }) => {
                             let _ = app.emit(
                                 "export-progress",
                                 ExportProgress {
@@ -3394,8 +3439,18 @@ async fn start_export(
                                 },
                             );
                         }
-                        Some(WireEvent::Summary { success, failure, skipped, cancelled }) => {
-                            summary_capture = Some(ExportSummary { success, failure, skipped, cancelled });
+                        Some(WireEvent::Summary {
+                            success,
+                            failure,
+                            skipped,
+                            cancelled,
+                        }) => {
+                            summary_capture = Some(ExportSummary {
+                                success,
+                                failure,
+                                skipped,
+                                cancelled,
+                            });
                         }
                         Some(WireEvent::Unknown) | None => {
                             // forward-compat: ignore unknown / non-JSON lines
@@ -3419,8 +3474,11 @@ async fn start_export(
         }
     };
     let status = child.wait().await.map_err(|e| {
-        AppError::new("subprocess.wait_failed", format!("python subprocess wait: {}", e))
-            .with_default_hint()
+        AppError::new(
+            "subprocess.wait_failed",
+            format!("python subprocess wait: {}", e),
+        )
+        .with_default_hint()
     })?;
 
     // #837 (P2-15) -- join the stderr drain and keep the bounded tail for the
@@ -3512,8 +3570,11 @@ async fn start_minimap(
     process_util::apply_no_window(&mut cmd);
 
     let mut child = cmd.spawn().map_err(|e| {
-        AppError::new("subprocess.spawn_failed", format!("start_minimap spawn: {}", e))
-            .with_default_hint()
+        AppError::new(
+            "subprocess.spawn_failed",
+            format!("start_minimap spawn: {}", e),
+        )
+        .with_default_hint()
     })?;
 
     // #837 (P2-16) -- take stdout/stderr from the child BEFORE tracking. The old
@@ -3596,7 +3657,11 @@ async fn start_minimap(
                     }
                     let line = String::from_utf8_lossy(&line_buf);
                     match parse_wire_event(&line) {
-                        Some(WireEvent::Progress { match_index, percent, stage }) => {
+                        Some(WireEvent::Progress {
+                            match_index,
+                            percent,
+                            stage,
+                        }) => {
                             let _ = app.emit(
                                 "minimap-progress",
                                 ExportProgress {
@@ -3608,7 +3673,12 @@ async fn start_minimap(
                                 },
                             );
                         }
-                        Some(WireEvent::Fallback { match_index, fallback_from, fallback_to, message }) => {
+                        Some(WireEvent::Fallback {
+                            match_index,
+                            fallback_from,
+                            fallback_to,
+                            message,
+                        }) => {
                             let _ = app.emit(
                                 "minimap-progress",
                                 ExportProgress {
@@ -3616,7 +3686,10 @@ async fn start_minimap(
                                     percent: 0.0,
                                     stage: "fallback".to_string(),
                                     message: Some(message),
-                                    fallback_from: Some(format!("{} -> {}", fallback_from, fallback_to)),
+                                    fallback_from: Some(format!(
+                                        "{} -> {}",
+                                        fallback_from, fallback_to
+                                    )),
                                 },
                             );
                         }
@@ -3632,7 +3705,12 @@ async fn start_minimap(
                                 },
                             );
                         }
-                        Some(WireEvent::Error { match_index, error_kind: _, error_message, error_hint }) => {
+                        Some(WireEvent::Error {
+                            match_index,
+                            error_kind: _,
+                            error_message,
+                            error_hint,
+                        }) => {
                             let _ = app.emit(
                                 "minimap-progress",
                                 ExportProgress {
@@ -3648,8 +3726,18 @@ async fn start_minimap(
                                 },
                             );
                         }
-                        Some(WireEvent::Summary { success, failure, skipped, cancelled }) => {
-                            summary_capture = Some(ExportSummary { success, failure, skipped, cancelled });
+                        Some(WireEvent::Summary {
+                            success,
+                            failure,
+                            skipped,
+                            cancelled,
+                        }) => {
+                            summary_capture = Some(ExportSummary {
+                                success,
+                                failure,
+                                skipped,
+                                cancelled,
+                            });
                         }
                         Some(WireEvent::Unknown) | None => {
                             // forward-compat: ignore unknown / non-JSON lines
@@ -3673,8 +3761,11 @@ async fn start_minimap(
         }
     };
     let status = child.wait().await.map_err(|e| {
-        AppError::new("subprocess.wait_failed", format!("python subprocess wait: {}", e))
-            .with_default_hint()
+        AppError::new(
+            "subprocess.wait_failed",
+            format!("python subprocess wait: {}", e),
+        )
+        .with_default_hint()
     })?;
 
     // #837 (P2-15) -- join the stderr drain and keep the bounded tail for the
@@ -3788,9 +3879,8 @@ async fn detect_minimap_regions(
     let stderr = child.stderr.take();
 
     // Drain stderr to a bounded tail so a chatty child can't stall the pipe.
-    let stderr_handle = stderr.map(|stderr| {
-        tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await })
-    });
+    let stderr_handle =
+        stderr.map(|stderr| tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await }));
 
     // Proposal mode spawns ffmpeg `-ss` decode children per match → tree-kill.
     #[cfg(windows)]
@@ -3945,15 +4035,18 @@ pub struct IndicatorLayoutPayload {
     pub source: String,
 }
 
-/// #1106 -- KO / ASSIST の 1 区間。`match_index` は区間開始が属する試合の index で、
-/// どの試合にも入らない場合 (試合外の暗転中等) は null。
+/// #1106 / #127 -- KO / ASSIST の 1 区間 (`schemas/metadata.schema.json` の
+/// `$defs/HighlightEvent`)。`timestamp` / `end` は元録画先頭からの絶対秒で、
+/// `match_index` は区間開始が属する試合の index (どの試合にも入らない場合は null)。
+/// `evidence` は自由 object (`samples` など)。GUI は `signal_id` だけを見て、
+/// 未知の値は描画しない (docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md)。
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct IndicatorEventPayload {
-    pub kind: String,
-    pub start: f64,
+    pub signal_id: String,
+    pub timestamp: f64,
     pub end: f64,
     pub score: f64,
-    pub samples: u32,
+    pub evidence: serde_json::Value,
     pub match_index: Option<u32>,
 }
 
@@ -3991,7 +4084,9 @@ pub enum IndicatorsLine {
     Progress(IndicatorsProgress),
     Complete(IndicatorsResult),
     /// `{"type":"error"}` 行。CLI はこの行を出したあと非 0 で exit する。
-    Error { message: String },
+    Error {
+        message: String,
+    },
     /// 空行 / malformed JSON / 未知の type (forward-compat)。
     Ignore,
 }
@@ -4156,9 +4251,8 @@ async fn start_indicators(
 
     // #837 (P2-15) -- stderr は bounded tail へ並行 drain する (chatty な child で
     // OS pipe が詰まらないようにし、異常終了時の traceback を error detail に残す)。
-    let stderr_handle = stderr.map(|stderr| {
-        tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await })
-    });
+    let stderr_handle =
+        stderr.map(|stderr| tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await }));
 
     // indicators は Python から ffmpeg の rawvideo パイプを 1 本だけ起動する
     // (match 単位の並列 encode はしない)。それでもキャンセル時に孫 ffmpeg を
@@ -4237,8 +4331,7 @@ async fn start_indicators(
         Some(c) => c,
         None => {
             return Err(
-                AppError::new("subprocess.cancelled", "indicators cancelled")
-                    .with_default_hint(),
+                AppError::new("subprocess.cancelled", "indicators cancelled").with_default_hint(),
             );
         }
     };
@@ -4298,7 +4391,8 @@ pub fn run() {
     // compile-time `#[cfg(...)]` so clippy on debug builds still considers
     // every integrity item "used" (the call site is a real expression in
     // both branches). Compiler optimises the dead branch out in debug.
-    let integrity_failure: Option<integrity::IntegrityErrorPayload> = if cfg!(not(debug_assertions)) {
+    let integrity_failure: Option<integrity::IntegrityErrorPayload> = if cfg!(not(debug_assertions))
+    {
         integrity::check_install_dir()
     } else {
         None
@@ -4494,7 +4588,10 @@ mod tests {
             "segments": [],
             "fallback_reason": null
         });
-        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+        assert_eq!(
+            validate_metadata_for_write(&p).unwrap_err().code,
+            "parse.schema_invalid"
+        );
     }
 
     #[test]
@@ -4505,7 +4602,10 @@ mod tests {
             "segments": [{"time_range": [0.0], "region": {"x": 0.1, "y": 0.1, "w": 0.5, "h": 0.5, "confidence": 0.9, "source": "scorebar"}}],
             "fallback_reason": null
         });
-        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+        assert_eq!(
+            validate_metadata_for_write(&p).unwrap_err().code,
+            "parse.schema_invalid"
+        );
     }
 
     #[test]
@@ -4524,7 +4624,10 @@ mod tests {
         p["minimap_regions"] = json!([
             {"match_index": 0, "region": {"x": 0.8, "y": 0.8, "w": 0.15, "h": 0.15, "confidence": 1.0, "source": "user"}}
         ]);
-        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+        assert_eq!(
+            validate_metadata_for_write(&p).unwrap_err().code,
+            "parse.schema_invalid"
+        );
     }
 
     #[test]
@@ -4542,7 +4645,10 @@ mod tests {
             "coarse": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "confidence": 1.0, "source": "full_frame"},
             "segments": []
         });
-        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+        assert_eq!(
+            validate_metadata_for_write(&p).unwrap_err().code,
+            "parse.schema_invalid"
+        );
     }
 
     #[test]
@@ -4552,7 +4658,10 @@ mod tests {
         p["minimap_regions"] = json!([
             {"match_index": 1.5, "region": {"x": 0.8, "y": 0.8, "w": 0.15, "h": 0.15, "confidence": 1.0, "source": "user"}}
         ]);
-        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+        assert_eq!(
+            validate_metadata_for_write(&p).unwrap_err().code,
+            "parse.schema_invalid"
+        );
     }
 
     #[test]
@@ -4586,7 +4695,10 @@ mod tests {
             "gpu_vendor_used": null,
             "vendor_preference": []
         });
-        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+        assert_eq!(
+            validate_metadata_for_write(&p).unwrap_err().code,
+            "parse.schema_invalid"
+        );
     }
 
     #[test]
@@ -4596,7 +4708,10 @@ mod tests {
             "gpu_vendors_available": [],
             "vendor_preference": []
         });
-        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+        assert_eq!(
+            validate_metadata_for_write(&p).unwrap_err().code,
+            "parse.schema_invalid"
+        );
     }
 
     #[test]
@@ -4610,14 +4725,20 @@ mod tests {
     fn write_validation_rejects_brightness_samples_nonpositive_interval() {
         let mut p = valid_metadata_payload();
         p["brightness_samples"] = json!({"interval_s": 0.0, "values": [1.0]});
-        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+        assert_eq!(
+            validate_metadata_for_write(&p).unwrap_err().code,
+            "parse.schema_invalid"
+        );
     }
 
     #[test]
     fn write_validation_rejects_brightness_samples_value_out_of_range() {
         let mut p = valid_metadata_payload();
         p["brightness_samples"] = json!({"interval_s": 2.0, "values": [300.0]});
-        assert_eq!(validate_metadata_for_write(&p).unwrap_err().code, "parse.schema_invalid");
+        assert_eq!(
+            validate_metadata_for_write(&p).unwrap_err().code,
+            "parse.schema_invalid"
+        );
     }
 
     #[test]
@@ -4685,7 +4806,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let meta = tmp.path().join("metadata.json");
         let mut p = valid_metadata_payload();
-        p["matches"][0].as_object_mut().unwrap().remove("start_time");
+        p["matches"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("start_time");
         let err = apply_changes_sync(&meta, &p, None).unwrap_err();
         assert_eq!(err.code, "validation.boundary_invalid");
         assert!(!meta.exists());
@@ -4850,8 +4974,7 @@ mod tests {
 
         restore_from_original_sync(&meta).unwrap();
 
-        let current: Value =
-            serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
+        let current: Value = serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
         assert_eq!(current, pristine);
     }
 
@@ -5031,7 +5154,10 @@ mod tests {
         let list = read_recent_sync(&recent);
         assert_eq!(list.len(), RECENT_LIMIT);
         // Newest first.
-        assert_eq!(list[0].path, format!("E:\\video_{:02}.mkv", RECENT_LIMIT + 4));
+        assert_eq!(
+            list[0].path,
+            format!("E:\\video_{:02}.mkv", RECENT_LIMIT + 4)
+        );
         // Oldest still kept (5 fell off the bottom).
         assert_eq!(list[RECENT_LIMIT - 1].path, "E:\\video_05.mkv");
     }
@@ -5118,27 +5244,16 @@ mod tests {
         let recent = tmp.path().join("recent.json");
 
         // Pre-populate with a "ghost" — its backing file does not exist.
-        let ghost_path = tmp
-            .path()
-            .join("ghost.mkv")
-            .to_string_lossy()
-            .into_owned();
-        add_recent_sync(
-            &recent,
-            make_recent_entry(&ghost_path, "ghost.mkv"),
-        )
-        .unwrap();
+        let ghost_path = tmp.path().join("ghost.mkv").to_string_lossy().into_owned();
+        add_recent_sync(&recent, make_recent_entry(&ghost_path, "ghost.mkv")).unwrap();
         assert_eq!(read_recent_sync(&recent).len(), 1);
 
         // Now add a real file via the prune-aware wrapper.
         let real_path = tmp.path().join("real.mkv");
         fs::write(&real_path, b"x").unwrap();
         let real_str = real_path.to_string_lossy().into_owned();
-        let result = add_recent_with_prune(
-            &recent,
-            make_recent_entry(&real_str, "real.mkv"),
-        )
-        .unwrap();
+        let result =
+            add_recent_with_prune(&recent, make_recent_entry(&real_str, "real.mkv")).unwrap();
 
         // Ghost dropped, only the real entry remains, persisted and in-memory.
         assert_eq!(result.len(), 1);
@@ -5157,11 +5272,8 @@ mod tests {
         let real_path = tmp.path().join("only.mkv");
         fs::write(&real_path, b"x").unwrap();
         let real_str = real_path.to_string_lossy().into_owned();
-        let result = add_recent_with_prune(
-            &recent,
-            make_recent_entry(&real_str, "only.mkv"),
-        )
-        .unwrap();
+        let result =
+            add_recent_with_prune(&recent, make_recent_entry(&real_str, "only.mkv")).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].file_name, "only.mkv");
     }
@@ -5276,8 +5388,7 @@ mod tests {
         let meta = tmp.path().join("metadata.json");
         let body = "\u{FEFF}{\"source\":\"a.mkv\",\"matches\":[]}";
         std::fs::write(&meta, body.as_bytes()).unwrap();
-        let value = load_metadata_sync(&meta)
-            .expect("BOM-prefixed metadata.json should load");
+        let value = load_metadata_sync(&meta).expect("BOM-prefixed metadata.json should load");
         assert_eq!(value.get("source").and_then(|v| v.as_str()), Some("a.mkv"));
     }
 
@@ -5292,7 +5403,10 @@ mod tests {
         let s = thumbnail_semaphore();
         assert_eq!(s.available_permits(), 4);
         let permits: Vec<_> = (0..4).map(|_| s.try_acquire().unwrap()).collect();
-        assert!(s.try_acquire().is_err(), "5th concurrent thumbnail must be capped");
+        assert!(
+            s.try_acquire().is_err(),
+            "5th concurrent thumbnail must be capped"
+        );
         drop(permits);
         assert_eq!(s.available_permits(), 4);
     }
@@ -5309,8 +5423,7 @@ mod tests {
         let p = valid_metadata_payload();
         apply_changes_sync(&meta, &p, Some(current)).unwrap();
 
-        let after: Value =
-            serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
+        let after: Value = serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
         assert_eq!(after, p);
     }
 
@@ -5324,11 +5437,13 @@ mod tests {
         let stale: u64 = 1;
 
         let err = apply_changes_sync(&meta, &valid_metadata_payload(), Some(stale)).unwrap_err();
-        assert!(err.message.starts_with("conflict:"), "unexpected error: {err}");
+        assert!(
+            err.message.starts_with("conflict:"),
+            "unexpected error: {err}"
+        );
 
         // Conflict must not overwrite the file.
-        let current: Value =
-            serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
+        let current: Value = serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
         assert_eq!(current, json!({"v": 1}));
     }
 
@@ -5341,8 +5456,7 @@ mod tests {
         // None → check is bypassed even though the file already exists.
         let p = valid_metadata_payload();
         apply_changes_sync(&meta, &p, None).unwrap();
-        let after: Value =
-            serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
+        let after: Value = serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
         assert_eq!(after, p);
     }
 
@@ -5398,13 +5512,15 @@ mod tests {
         );
 
         // apply_changes_sync with the stale initial mtime must refuse the write.
-        let err = apply_changes_sync(&meta, &valid_metadata_payload(), Some(initial_mtime))
-            .unwrap_err();
-        assert!(err.message.starts_with("conflict:"), "unexpected error: {err}");
+        let err =
+            apply_changes_sync(&meta, &valid_metadata_payload(), Some(initial_mtime)).unwrap_err();
+        assert!(
+            err.message.starts_with("conflict:"),
+            "unexpected error: {err}"
+        );
 
         // File still reflects the external write (not overwritten).
-        let current: Value =
-            serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
+        let current: Value = serde_json::from_str(&fs::read_to_string(&meta).unwrap()).unwrap();
         assert_eq!(current, json!({"external": true}));
     }
 
@@ -5443,7 +5559,10 @@ mod tests {
         // The original m1 is now stale — attempting to apply with it must fail
         // (regression guard: prevents accepting pre-first-apply handles).
         let err = apply_changes_sync(&meta, &p4, Some(m1)).unwrap_err();
-        assert!(err.message.starts_with("conflict:"), "unexpected error: {err}");
+        assert!(
+            err.message.starts_with("conflict:"),
+            "unexpected error: {err}"
+        );
     }
 
     // #517 — draft auto-save tests.
@@ -5842,7 +5961,6 @@ mod tests {
         assert!(!json.contains("message"));
     }
 
-
     /// #466 review #4: 出力先親ディレクトリが存在しなければエラー。
     /// 以前の `create_dir_all` (silent mkdir) は廃止されたので、存在しない
     /// パスを渡すと「does not exist」エラーを返す。
@@ -5893,8 +6011,7 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     fn validate_open_folder_request_returns_unsupported_on_non_windows() {
         let tmp = TempDir::new().unwrap();
-        let err =
-            validate_open_folder_request(&tmp.path().to_string_lossy()).unwrap_err();
+        let err = validate_open_folder_request(&tmp.path().to_string_lossy()).unwrap_err();
         assert!(err.message.contains("Windows"), "got: {}", err);
     }
 
@@ -5987,7 +6104,10 @@ mod tests {
     /// (bitrate, speed, fps, ...) must return None so we don't emit noise.
     #[test]
     fn parse_progress_line_detects_end_and_ignores_others() {
-        assert_eq!(parse_progress_line("progress=end"), Some(ProgressSignal::End));
+        assert_eq!(
+            parse_progress_line("progress=end"),
+            Some(ProgressSignal::End)
+        );
         assert_eq!(parse_progress_line("progress=continue"), None);
         assert_eq!(parse_progress_line("bitrate=512.0kbits/s"), None);
         assert_eq!(parse_progress_line("speed=1.5x"), None);
@@ -6024,8 +6144,16 @@ mod tests {
         for _ in 0..10 {
             append_bounded_tail(&mut tail, &vec![b'x'; 1000], 2048);
         }
-        assert!(tail.len() <= 4096, "tail must stay bounded, got {}", tail.len());
-        assert!(tail.len() >= 2048, "tail should retain trailing bytes, got {}", tail.len());
+        assert!(
+            tail.len() <= 4096,
+            "tail must stay bounded, got {}",
+            tail.len()
+        );
+        assert!(
+            tail.len() >= 2048,
+            "tail should retain trailing bytes, got {}",
+            tail.len()
+        );
     }
 
     #[test]
@@ -6041,8 +6169,16 @@ mod tests {
     async fn drain_to_bounded_tail_bounds_newline_free_stream() {
         let huge = vec![b'x'; 100_000]; // no '\n' anywhere
         let tail = drain_to_bounded_tail(&huge[..], 2048).await;
-        assert!(tail.len() <= 4096, "tail must stay bounded, got {}", tail.len());
-        assert!(tail.len() >= 2048, "tail should retain trailing bytes, got {}", tail.len());
+        assert!(
+            tail.len() <= 4096,
+            "tail must stay bounded, got {}",
+            tail.len()
+        );
+        assert!(
+            tail.len() >= 2048,
+            "tail should retain trailing bytes, got {}",
+            tail.len()
+        );
         assert!(tail.iter().all(|&b| b == b'x'));
     }
 
@@ -6054,8 +6190,15 @@ mod tests {
             data.extend_from_slice(format!("frame={i}\r").as_bytes());
         }
         let tail = drain_to_bounded_tail(&data[..], 2048).await;
-        assert!(tail.len() <= 4096, "tail must stay bounded, got {}", tail.len());
-        assert!(tail.ends_with(b"frame=4999\r"), "most recent progress retained");
+        assert!(
+            tail.len() <= 4096,
+            "tail must stay bounded, got {}",
+            tail.len()
+        );
+        assert!(
+            tail.ends_with(b"frame=4999\r"),
+            "most recent progress retained"
+        );
     }
 
     // #838 anti-regression guard -- start_detect must delegate its stderr drain
@@ -6275,8 +6418,7 @@ mod tests {
     #[test]
     fn parse_with_warn_whitespace_only_no_warn() {
         let mut warns: Vec<String> = Vec::new();
-        let result =
-            parse_detect_progress_line_with_warn("   \n", |m| warns.push(m.to_string()));
+        let result = parse_detect_progress_line_with_warn("   \n", |m| warns.push(m.to_string()));
         assert!(result.is_none());
         assert!(warns.is_empty());
     }
@@ -6285,8 +6427,7 @@ mod tests {
     fn parse_with_warn_valid_json_no_warn() {
         let mut warns: Vec<String> = Vec::new();
         let line = r#"{"phase":"scan","completed":12,"total":100,"elapsed_s":1.25}"#;
-        let result =
-            parse_detect_progress_line_with_warn(line, |m| warns.push(m.to_string()));
+        let result = parse_detect_progress_line_with_warn(line, |m| warns.push(m.to_string()));
         assert!(result.is_some());
         assert!(warns.is_empty());
     }
@@ -6309,8 +6450,7 @@ mod tests {
         // 67 chars (63 x + 制御文字 \x01 + 3 y) を作り、64 char truncate と
         // \x01 → \\x01 escape の両方が warn message に現れることを確認する
         let line = format!("{}{}", "x".repeat(63), "\x01yyy");
-        let result =
-            parse_detect_progress_line_with_warn(&line, |m| warns.push(m.to_string()));
+        let result = parse_detect_progress_line_with_warn(&line, |m| warns.push(m.to_string()));
         assert!(result.is_none());
         assert_eq!(warns.len(), 1);
         // 64 char truncate (\x01 escape の 4 char を含む、x 63 + control の 1 char = 64 char、escape は format 後に 4 char に膨れる)
@@ -6345,11 +6485,7 @@ mod tests {
 
     #[test]
     fn detect_command_args_omits_optional_flags_when_unset() {
-        let args = detect_command_args(
-            "in.mkv",
-            "out",
-            &DetectParams::default(),
-        );
+        let args = detect_command_args("in.mkv", "out", &DetectParams::default());
         let joined = args.join(" ");
         assert!(!joined.contains("--blackout-threshold"));
         assert!(!joined.contains("--no-audio"));
@@ -6403,11 +6539,7 @@ mod tests {
         assert!(!args_off.iter().any(|a| a == "--gpu"));
 
         // None -> neither flag (CLI auto-selects)
-        let args_auto = detect_command_args(
-            "in.mkv",
-            "out",
-            &DetectParams::default(),
-        );
+        let args_auto = detect_command_args("in.mkv", "out", &DetectParams::default());
         assert!(!args_auto.iter().any(|a| a == "--gpu" || a == "--no-gpu"));
     }
 
@@ -6509,8 +6641,7 @@ mod tests {
         let bat = tmp.path().join("allaganeye.bat");
         fs::write(&bat, "@echo off\r\n").unwrap();
 
-        let cmd = resolve_from_resource_dir(tmp.path())
-            .expect("bat present should resolve");
+        let cmd = resolve_from_resource_dir(tmp.path()).expect("bat present should resolve");
         assert_eq!(cmd.program, bat.to_string_lossy().to_string());
         assert!(cmd.prefix_args.is_empty());
         assert!(cmd.cwd.is_none());
@@ -6530,7 +6661,10 @@ mod tests {
     fn resolve_python_fallback_uses_minus_m_allaganeye() {
         let cmd = resolve_python_fallback(None);
         assert_eq!(cmd.program, "python");
-        assert_eq!(cmd.prefix_args, vec!["-m".to_string(), "allaganeye".to_string()]);
+        assert_eq!(
+            cmd.prefix_args,
+            vec!["-m".to_string(), "allaganeye".to_string()]
+        );
         assert!(cmd.cwd.is_none());
 
         let tmp = TempDir::new().unwrap();
@@ -6553,8 +6687,7 @@ mod tests {
         let canonical_root = fs::canonicalize(tmp.path()).unwrap();
         let canonical_deeper = fs::canonicalize(&deeper).unwrap();
 
-        let found = find_worktree_root(Some(canonical_deeper))
-            .expect("anchor should be found");
+        let found = find_worktree_root(Some(canonical_deeper)).expect("anchor should be found");
         let canonical_found = fs::canonicalize(&found).unwrap();
         assert_eq!(canonical_found, canonical_root);
     }
@@ -6705,8 +6838,8 @@ mod tests {
         // 前日 log は内容あり
         let yesterday = logging::ymd_compact_yesterday();
         {
-            let mut f = std::fs::File::create(log_dir.join(format!("error-{}.log", yesterday)))
-                .unwrap();
+            let mut f =
+                std::fs::File::create(log_dir.join(format!("error-{}.log", yesterday))).unwrap();
             writeln!(f, "yesterday line").unwrap();
         }
         let result = read_error_log_tail_inner(log_dir, 300).unwrap();
@@ -6860,7 +6993,11 @@ mod start_export_wire_tests {
         let line = r#"{"type":"progress","match_index":2,"percent":33.5,"stage":"encoding"}"#;
         let ev = parse_wire_event(line).expect("parse");
         match ev {
-            WireEvent::Progress { match_index, percent, stage } => {
+            WireEvent::Progress {
+                match_index,
+                percent,
+                stage,
+            } => {
                 assert_eq!(match_index, 2);
                 assert!((percent - 33.5).abs() < 0.001);
                 assert_eq!(stage, "encoding");
@@ -6874,7 +7011,12 @@ mod start_export_wire_tests {
         let line = r#"{"type":"summary","success":3,"failure":1,"skipped":0,"cancelled":false}"#;
         let ev = parse_wire_event(line).expect("parse");
         match ev {
-            WireEvent::Summary { success, failure, skipped, cancelled } => {
+            WireEvent::Summary {
+                success,
+                failure,
+                skipped,
+                cancelled,
+            } => {
                 assert_eq!(success, 3);
                 assert_eq!(failure, 1);
                 assert_eq!(skipped, 0);
@@ -6917,9 +7059,15 @@ mod start_export_wire_tests {
         assert!(argv.contains(&"minimap".to_string()));
         assert!(argv.contains(&"C:/x/metadata.json".to_string()));
         assert!(argv.contains(&"--json".to_string()));
-        assert!(argv.windows(2).any(|w| w[0] == "--region" && w[1] == "10,20,300,400"));
-        assert!(argv.windows(2).any(|w| w[0] == "--expected-mtime" && w[1] == "1700000000000"));
-        assert!(argv.windows(2).any(|w| w[0] == "--exclude" && w[1] == "2,3"));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--region" && w[1] == "10,20,300,400"));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--expected-mtime" && w[1] == "1700000000000"));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--exclude" && w[1] == "2,3"));
     }
 
     /// overwrite=true with a stale mtime: --expected-mtime must be ABSENT
@@ -6927,9 +7075,12 @@ mod start_export_wire_tests {
     #[test]
     fn minimap_argv_omits_expected_mtime_when_overwrite() {
         let req = StartMinimapRequest {
-            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
-            output_dir: "o".into(), name_pattern: "p.mp4".into(),
-            excluded_indexes: vec![], expected_mtime_ms: None,
+            metadata_path: "m.json".into(),
+            region: "0,0,16,16".into(),
+            output_dir: "o".into(),
+            name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![],
+            expected_mtime_ms: None,
             overwrite: true,
         };
         let argv = build_minimap_argv(&req);
@@ -6941,14 +7092,19 @@ mod start_export_wire_tests {
     #[test]
     fn minimap_argv_overwrite_true_drops_expected_mtime_even_with_mtime_present() {
         let req = StartMinimapRequest {
-            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
-            output_dir: "o".into(), name_pattern: "p.mp4".into(),
-            excluded_indexes: vec![], expected_mtime_ms: Some(123),
+            metadata_path: "m.json".into(),
+            region: "0,0,16,16".into(),
+            output_dir: "o".into(),
+            name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![],
+            expected_mtime_ms: Some(123),
             overwrite: true,
         };
         let argv = build_minimap_argv(&req);
-        assert!(!argv.iter().any(|a| a == "--expected-mtime"),
-            "overwrite=true must suppress --expected-mtime regardless of expected_mtime_ms");
+        assert!(
+            !argv.iter().any(|a| a == "--expected-mtime"),
+            "overwrite=true must suppress --expected-mtime regardless of expected_mtime_ms"
+        );
     }
 
     // -- #893 minimap_write_guard tests (Codex R2 HIGH) -----------------------
@@ -6957,38 +7113,54 @@ mod start_export_wire_tests {
     fn minimap_write_guard_rejects_missing_mtime_without_overwrite() {
         // Case A: !overwrite + None mtime -> Err (the dangerous accidental path)
         let req_a = StartMinimapRequest {
-            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
-            output_dir: "o".into(), name_pattern: "p.mp4".into(),
-            excluded_indexes: vec![], expected_mtime_ms: None,
+            metadata_path: "m.json".into(),
+            region: "0,0,16,16".into(),
+            output_dir: "o".into(),
+            name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![],
+            expected_mtime_ms: None,
             overwrite: false,
         };
-        let err = minimap_write_guard(&req_a).expect_err("should reject None mtime without overwrite");
-        assert_eq!(err.code, "state.mtime_required",
-            "error code must be state.mtime_required, got: {}", err.code);
+        let err =
+            minimap_write_guard(&req_a).expect_err("should reject None mtime without overwrite");
+        assert_eq!(
+            err.code, "state.mtime_required",
+            "error code must be state.mtime_required, got: {}",
+            err.code
+        );
 
         // Case B: !overwrite + Some(mtime) -> Ok (normal guarded path)
         let req_b = StartMinimapRequest {
-            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
-            output_dir: "o".into(), name_pattern: "p.mp4".into(),
-            excluded_indexes: vec![], expected_mtime_ms: Some(1_700_000_000_000),
+            metadata_path: "m.json".into(),
+            region: "0,0,16,16".into(),
+            output_dir: "o".into(),
+            name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![],
+            expected_mtime_ms: Some(1_700_000_000_000),
             overwrite: false,
         };
         minimap_write_guard(&req_b).expect("!overwrite + Some(mtime) must pass guard");
 
         // Case C: overwrite=true + None mtime -> Ok (deliberate overwrite, no mtime needed)
         let req_c = StartMinimapRequest {
-            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
-            output_dir: "o".into(), name_pattern: "p.mp4".into(),
-            excluded_indexes: vec![], expected_mtime_ms: None,
+            metadata_path: "m.json".into(),
+            region: "0,0,16,16".into(),
+            output_dir: "o".into(),
+            name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![],
+            expected_mtime_ms: None,
             overwrite: true,
         };
         minimap_write_guard(&req_c).expect("overwrite=true + None mtime must pass guard");
 
         // Case D: overwrite=true + Some(mtime) -> Ok (also fine; overwrite wins)
         let req_d = StartMinimapRequest {
-            metadata_path: "m.json".into(), region: "0,0,16,16".into(),
-            output_dir: "o".into(), name_pattern: "p.mp4".into(),
-            excluded_indexes: vec![], expected_mtime_ms: Some(42),
+            metadata_path: "m.json".into(),
+            region: "0,0,16,16".into(),
+            output_dir: "o".into(),
+            name_pattern: "p.mp4".into(),
+            excluded_indexes: vec![],
+            expected_mtime_ms: Some(42),
             overwrite: true,
         };
         minimap_write_guard(&req_d).expect("overwrite=true + Some(mtime) must pass guard");
@@ -7060,7 +7232,9 @@ mod start_indicators_tests {
             region: Some([10.0, 20.0, 300.0, 400.0]),
         };
         let argv = build_indicators_argv(&req);
-        assert!(argv.windows(2).any(|w| w[0] == "-o" && w[1] == "events.json"));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "-o" && w[1] == "events.json"));
         assert!(argv
             .windows(2)
             .any(|w| w[0] == "--interval" && w[1] == "0.05"));
@@ -7158,7 +7332,7 @@ mod start_indicators_tests {
 
     #[test]
     fn parses_complete_line() {
-        let line = r#"{"type":"complete","metadata":"C:/x/metadata.json","layout":{"anchor_x":0.07,"anchor_y":0.06,"scale":1.0,"support":6,"confidence":0.9,"source":"user"},"recalibrated":true,"events":[{"kind":"ko","start":12.3,"end":13.0,"score":0.88,"samples":3,"match_index":1},{"kind":"assist","start":40.0,"end":40.5,"score":0.71,"samples":2,"match_index":null}],"wrote_metadata":false}"#;
+        let line = r#"{"type":"complete","metadata":"C:/x/metadata.json","layout":{"anchor_x":0.07,"anchor_y":0.06,"scale":1.0,"support":6,"confidence":0.9,"source":"user"},"recalibrated":true,"events":[{"signal_id":"ko_indicator","timestamp":12.3,"end":13.0,"score":0.88,"evidence":{"samples":3},"match_index":1},{"signal_id":"assist_indicator","timestamp":40.0,"end":40.5,"score":0.71,"evidence":{"samples":2},"match_index":null}],"wrote_metadata":false}"#;
         match parse_indicators_line(line) {
             IndicatorsLine::Complete(r) => {
                 assert_eq!(r.metadata, "C:/x/metadata.json");
@@ -7166,8 +7340,9 @@ mod start_indicators_tests {
                 assert!(r.recalibrated);
                 assert!(!r.wrote_metadata);
                 assert_eq!(r.events.len(), 2);
-                assert_eq!(r.events[0].kind, "ko");
-                assert_eq!(r.events[0].samples, 3);
+                assert_eq!(r.events[0].signal_id, "ko_indicator");
+                assert_eq!(r.events[0].evidence["samples"], 3);
+                assert_eq!(r.events[0].timestamp, 12.3);
                 assert_eq!(r.events[0].match_index, Some(1));
                 assert!(r.events[1].match_index.is_none());
             }

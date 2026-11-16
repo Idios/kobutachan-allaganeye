@@ -77,12 +77,30 @@ export function isLayoutResolutionFailure(error: ErrorState | null): boolean {
   return error.message.includes(LAYOUT_FAILURE_MARKER);
 }
 
-/** イベント時刻を `mm:ss.s` で表示する (1 時間を超えても分を積み上げる)。 */
-export function fmtEventOffset(seconds: number): string {
+/**
+ * 録画先頭からの絶対秒を `hh:mm:ss` で表示する (#127)。
+ *
+ * 保存値は 0.01 秒精度のままで、表示だけ 1 秒未満を切り捨てる。試合相対で読みたければ
+ * `matches[i].start_time` を引けばよい。
+ */
+export function fmtEventTime(seconds: number): string {
   const clamped = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
-  const minutes = Math.floor(clamped / 60);
-  const rest = clamped - minutes * 60;
-  return `${String(minutes).padStart(2, '0')}:${rest.toFixed(1).padStart(4, '0')}`;
+  const total = Math.floor(clamped);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(hours)}:${pad(minutes)}:${pad(secs)}`;
+}
+
+/**
+ * `signal_id` の人間向け表示 (#127)。**未知の signal_id は null** を返し、
+ * 呼び出し側は行ごと描画しない（互換ルール §4-3: 未知信号は既定で無視）。
+ */
+export function signalLabel(signalId: string): string | null {
+  if (signalId === 'ko_indicator') return 'KO';
+  if (signalId === 'assist_indicator') return 'ASSIST';
+  return null;
 }
 
 export interface EventGroup {
@@ -112,7 +130,7 @@ export function groupEventsByMatch(
   return sortedKeys.map((matchIndex) => ({
     matchIndex,
     events: [...(byMatch.get(matchIndex) ?? [])].sort(
-      (a, b) => a.start - b.start,
+      (a, b) => a.timestamp - b.timestamp,
     ),
   }));
 }
@@ -210,9 +228,17 @@ export function IndicatorsScreen() {
   const runDisabled = isSample;
   const runDisabledReason = 'サンプル動画では検出を実行できません';
 
-  const groups = useMemo(() => groupEventsByMatch(events), [events]);
-  const koCount = events.filter((e) => e.kind === 'ko').length;
-  const assistCount = events.length - koCount;
+  // #127 §4-3: 未知の signal_id は描画しない (新しい信号が増えても既存画面は
+  // 素通りさせる)。件数も既知分だけを数える。
+  const knownEvents = useMemo(
+    () => events.filter((e) => signalLabel(e.signal_id) !== null),
+    [events],
+  );
+  const groups = useMemo(() => groupEventsByMatch(knownEvents), [knownEvents]);
+  const koCount = knownEvents.filter((e) => e.signal_id === 'ko_indicator').length;
+  const assistCount = knownEvents.filter(
+    (e) => e.signal_id === 'assist_indicator',
+  ).length;
 
   const percent =
     processedSeconds !== null && totalSeconds !== null && totalSeconds > 0
@@ -305,7 +331,7 @@ export function IndicatorsScreen() {
    */
   function openEvent(event: IndicatorsEvent): void {
     if (event.match_index === null) return;
-    setPendingSeekSeconds(event.start);
+    setPendingSeekSeconds(event.timestamp);
     openPreviewFor(event.match_index);
   }
 
@@ -452,13 +478,13 @@ export function IndicatorsScreen() {
               role="status"
               data-testid="indicators-summary"
             >
-              <span className={styles.summaryKind} data-kind="ko">
+              <span className={styles.summaryKind} data-kind="ko_indicator">
                 KO {koCount}
               </span>
               <span className={styles.summaryDivider} aria-hidden="true">
                 /
               </span>
-              <span className={styles.summaryKind} data-kind="assist">
+              <span className={styles.summaryKind} data-kind="assist_indicator">
                 ASSIST {assistCount}
               </span>
             </div>
@@ -488,11 +514,15 @@ export function IndicatorsScreen() {
                     </div>
                     <ul className={styles.eventList}>
                       {group.events.map((event, i) => {
-                        const kindLabel = event.kind === 'ko' ? 'KO' : 'ASSIST';
-                        const range = `${fmtEventOffset(event.start)} - ${fmtEventOffset(event.end)}`;
+                        // knownEvents で絞り込み済みなので null にはならない。
+                        const kindLabel = signalLabel(event.signal_id) ?? event.signal_id;
+                        const range = `${fmtEventTime(event.timestamp)} - ${fmtEventTime(event.end)}`;
                         const body = (
                           <>
-                            <span className={styles.kindBadge} data-kind={event.kind}>
+                            <span
+                              className={styles.kindBadge}
+                              data-kind={event.signal_id}
+                            >
                               {kindLabel}
                             </span>
                             <span className={styles.timeRange}>{range}</span>
@@ -503,7 +533,7 @@ export function IndicatorsScreen() {
                         );
                         return (
                           <li
-                            key={`${event.kind}-${event.start}-${i}`}
+                            key={`${event.signal_id}-${event.timestamp}-${i}`}
                             className={styles.eventItem}
                           >
                             {group.matchIndex === null ? (

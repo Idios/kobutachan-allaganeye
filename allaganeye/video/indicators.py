@@ -642,6 +642,37 @@ def layout_to_payload(
     }
 
 
+KIND_TO_SIGNAL_ID: dict[str, str] = {
+    "ko": "ko_indicator",
+    "assist": "assist_indicator",
+}
+"""内部種別 (`TextMatch.kind`) と L4 の `signal_id` の対応 (#127)。
+
+設計の正: `docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md`。
+"""
+
+
+def event_to_payload(
+    event: IndicatorEvent, *, match_index: int | None
+) -> dict[str, Any]:
+    """`IndicatorEvent` を metadata.json / `-o` に書ける形にする (#127)。
+
+    形の正は `schemas/metadata.schema.json` の `$defs/HighlightEvent`。
+    - `signal_id` は内部種別を L4 の語彙へ写す (`ko` -> `ko_indicator`)
+    - `timestamp` / `end` は**元録画先頭からの絶対秒** (0.01 秒丸め)。
+      試合相対は読み手が `matches[i].start_time` との差で導出する
+    - `match_index` は試合区間を持つ呼び出し側が渡す (`null` = 試合外)
+    """
+    return {
+        "signal_id": KIND_TO_SIGNAL_ID[event.kind],
+        "timestamp": round(event.start, 2),
+        "end": round(event.end, 2),
+        "score": round(event.score, 3),
+        "evidence": {"samples": event.samples},
+        "match_index": match_index,
+    }
+
+
 def layout_from_payload(
     payload: Mapping[str, Any] | None, *, frame_width: int, frame_height: int
 ) -> IndicatorLayout:
@@ -845,6 +876,7 @@ def scan_indicators(
 
 
 __all__ = [
+    "KIND_TO_SIGNAL_ID",
     "IndicatorEvent",
     "IndicatorHit",
     "IndicatorLayout",
@@ -853,6 +885,7 @@ __all__ = [
     "calibrate_layout",
     "classify_text",
     "detect_indicator",
+    "event_to_payload",
     "group_detections",
     "layout_from_bar_region",
     "layout_from_payload",

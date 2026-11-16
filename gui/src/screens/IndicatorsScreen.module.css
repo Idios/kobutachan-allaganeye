@@ -191,11 +191,11 @@
   color: var(--ae-text-bright);
 }
 
-.summaryKind[data-kind='ko'] {
+.summaryKind[data-kind='ko_indicator'] {
   color: var(--ae-cyan-bright);
 }
 
-.summaryKind[data-kind='assist'] {
+.summaryKind[data-kind='assist_indicator'] {
   color: var(--ae-gold-bright);
 }
 
@@ -282,11 +282,11 @@
   text-align: center;
 }
 
-.kindBadge[data-kind='ko'] {
+.kindBadge[data-kind='ko_indicator'] {
   color: var(--ae-cyan-bright);
 }
 
-.kindBadge[data-kind='assist'] {
+.kindBadge[data-kind='assist_indicator'] {
   color: var(--ae-gold-bright);
 }
 

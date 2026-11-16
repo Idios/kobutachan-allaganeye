@@ -52,11 +52,11 @@ function completeResult(): IndicatorsResult {
     recalibrated: true,
     events: [
       {
-        kind: 'ko',
-        start: 12.3,
+        signal_id: 'ko_indicator',
+        timestamp: 12.3,
         end: 13,
         score: 0.88,
-        samples: 3,
+        evidence: { samples: 3 },
         match_index: 1,
       },
     ],

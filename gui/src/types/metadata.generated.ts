@@ -61,6 +61,10 @@ export interface Metadata {
    */
   minimap_regions?: MinimapRegionEntry[];
   indicator_layout?: IndicatorLayout;
+  /**
+   * L4 highlight events (#127 / #1106 item 4). Written by `allaganeye indicators --write` as a full replacement. Field absent = the recording was never scanned. Consumers must ignore unknown fields and unknown `signal_id` values (docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md).
+   */
+  events?: HighlightEvent[];
 }
 /**
  * Parameters used by the detector when this metadata.json was produced.
@@ -294,4 +298,36 @@ export interface IndicatorLayout {
    * Where the layout came from. Documented values: "anchor" (auto-resolved from the always-visible battle-fervor gauge) and "user" (caller-supplied region). Free string: readers must accept unknown values (forward compat, same philosophy as CaptureRegion.source).
    */
   source: string;
+}
+/**
+ * One detected highlight interval (L4, #127). Serialized by allaganeye/video/indicators.py::event_to_payload. `signal_id` is a free string (NOT an enum) so adding a signal never breaks the schema; documented values today are "ko_indicator" and "assist_indicator". `timestamp` / `end` are absolute seconds from the start of the source recording, not match-relative. Unknown fields are allowed on purpose (forward compat): consumers must ignore fields they do not know and `signal_id` values they do not recognize.
+ */
+export interface HighlightEvent {
+  /**
+   * Signal identifier. Documented values: "ko_indicator" / "assist_indicator". Free string: readers must ignore unknown values (forward compat).
+   */
+  signal_id: string;
+  /**
+   * Start of the indicator's on-screen interval, in absolute seconds from the start of the source recording (rounded to 0.01 s).
+   */
+  timestamp: number;
+  /**
+   * End of the on-screen interval, same time basis as `timestamp`. Consumers that only need a point event may ignore it.
+   */
+  end: number;
+  /**
+   * Detection confidence / strength in [0,1] (maximum template-match score within the interval).
+   */
+  score: number;
+  /**
+   * Detection evidence. Documented key: `samples` (number of consecutive scan samples that hit; 15 at the default 0.1 s interval corresponds to roughly 1.5 s of display). Additional keys are allowed.
+   */
+  evidence: {
+    [k: string]: unknown;
+  };
+  /**
+   * `matches[].index` the event falls into, or null when it falls outside every match (the event is still reported). Always present so consumers only handle one shape.
+   */
+  match_index: number | null;
+  [k: string]: unknown;
 }

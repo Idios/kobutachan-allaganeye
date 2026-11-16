@@ -1725,6 +1725,36 @@ describe('normalizeForPersistence capture_regions round-trip (#810)', () => {
   });
 });
 
+describe('normalizeForPersistence events round-trip (#127)', () => {
+  it('normalizeForPersistence preserves root events (#127)', async () => {
+    // events は **root 直下** なので top-level spread で保持される。match 単位に
+    // 置いていたら allowlist 再構築 (normalizeForPersistence) で落ちる、というのが
+    // 設計判断の根拠 (docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md 1 節)。
+    const events = [
+      {
+        signal_id: 'ko_indicator',
+        timestamp: 493.4,
+        end: 494.9,
+        score: 0.93,
+        evidence: { samples: 15 },
+        match_index: 1,
+      },
+    ];
+    configureInvoke({
+      load_metadata: { ...validMetadata(), events },
+      apply_changes: 2000,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().apply();
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    expect(applyCall).toBeDefined();
+    const persisted = (applyCall![1] as { metadata: Metadata }).metadata;
+    expect(persisted.events).toEqual(events);
+  });
+});
+
 describe('useMetadataStore.reloadFromDisk (#893)', () => {
   it('reloadFromDisk refreshes metadata + mtime and clears conflict', async () => {
     const fresh = { ...validMetadata(), minimap_regions: [{ match_index: 1, region: { x: 0.01, y: 0.02, w: 0.15, h: 0.2, confidence: 1, source: 'manual' } }] };

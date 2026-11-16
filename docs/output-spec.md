@@ -280,9 +280,9 @@ Metadata: <metadata.json path>
 | モード | 生成ファイル | 備考 |
 | --- | --- | --- |
 | default | stdout: 人間向け summary | `KO: N / ASSIST: M (K intervals)` + 1 行 1 区間。進捗は stderr |
-| `-o PATH` | `PATH` (JSON ドキュメント) | `{"metadata", "layout", "recalibrated", "events"}`。`events[]` は `{"kind", "start", "end", "score", "samples", "match_index"}` |
+| `-o PATH` | `PATH` (JSON ドキュメント) | `{"metadata", "layout", "recalibrated", "events"}`。`events[]` は `{"signal_id", "timestamp", "end", "score", "evidence", "match_index"}` |
 | `--json` | stdout: JSON Lines | `progress` (calibrating / scanning) + 最終 `complete` 行。人間向け summary は出さない。エラー時は `{"type":"error","message":...}` を 1 行 |
-| `--write` (既定) | `metadata.json` 更新 | `indicator_layout` を atomic write-back する。`--no-write` で無効化 |
+| `--write` (既定) | `metadata.json` 更新 | `indicator_layout` と `events` を同じ atomic write で書く（`events` は全件置換）。`--no-write` で無効化 |
 | `--recalibrate` | (なし) | 既存の `indicator_layout` を無視して再解決し、その結果で write-back する |
 | `--expected-mtime MS` | (なし) | write-back 前の CAS guard。不一致なら exit 6 |
 
@@ -292,8 +292,12 @@ metadata write-back より後に公開するので、CAS 衝突 (exit 6) のと�
 
 `match_index` は `matches[].index` (1 始まり)。**どの試合区間にも入らない区間は `null`**
 （境界の丸め誤差などで試合外に落ちた場合。イベント自体は捨てない）。
-`score` はその区間内の最大マッチスコア、`samples` は連続ヒットしたサンプル数
+`timestamp` / `end` は**元録画先頭からの絶対秒**（0.01 秒丸め）、`score` はその区間内の
+最大マッチスコア、`evidence.samples` は連続ヒットしたサンプル数
 （走査間隔 0.1 秒なら `samples: 15` が約 1.5 秒の表示に対応する）。
+フィールドの意味と互換ルールの正は
+[event output format design](superpowers/specs/2026-11-16-l4-event-output-format-design.md)、
+形の正は `schemas/metadata.schema.json` の `$defs/HighlightEvent`。
 
 ### `--json` モード出力行 (crop モード)
 

@@ -23,6 +23,7 @@
 | line-refs | living doc の行番号参照禁止 | docs/coding-conventions.md | AGENTS.md, docs/*.md, .agents/skills/*/SKILL.md, .claude/agents/*.md | checked | script:scripts/check_declarations.py::check_line_refs | active |
 | path-refs | backtick path 参照の解決 | docs/coding-conventions.md | AGENTS.md, docs/*.md, .agents/skills/*/SKILL.md, .claude/agents/*.md | checked | script:scripts/check_declarations.py::check_path_refs | active |
 | metadata-schema | metadata.json スキーマ | schemas/metadata.schema.json | allaganeye/metadata_types.py, gui/src/types/metadata.generated.ts | generated | ci:python:Verify generated metadata_types.py is up to date + ci:gui-frontend:Verify generated metadata.generated.ts is up to date | active |
+| indicator-events | L4 イベント (`events[]` / `HighlightEvent`) のフィールド集合と意味 | schemas/metadata.schema.json | docs/metadata-spec.md, docs/cli-spec.md, docs/output-spec.md, docs/tauri-commands.md, docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md | checked | script:scripts/check_declarations.py::check_indicator_events | active |
 | version-locations | バージョン保持箇所 | scripts/check_version_consistency.py | docs/versioning.md | checked | ci:version-check | active |
 | error-hints | Tauri error と hint の対応 | gui/src-tauri/src/error.rs | docs/tauri-commands.md | checked | ci:doc-error-hint-drift | active |
 | shipped-commands | 出荷サブコマンド集合 | allaganeye/cli.py | README.md, docs/quickstart.md | checked | ci:feature-announcement | active |
