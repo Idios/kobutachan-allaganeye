@@ -116,6 +116,8 @@ def test_indicators_reports_events(app: typer.Typer, metadata_path: Path, fake_v
     assert result.exit_code == 0, result.output
     assert "KO: 0 / ASSIST: 1" in result.output
     assert "match 1" in result.output
+    # #127: 人間向け summary の時刻表示は hh:mm:ss。
+    assert "00:00:01 - 00:00:01" in result.output
 
 
 def test_indicators_writes_events_json(
@@ -128,8 +130,20 @@ def test_indicators_writes_events_json(
     assert result.exit_code == 0, result.output
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["recalibrated"] is False
-    assert payload["events"][0]["kind"] == "assist"
-    assert payload["events"][0]["match_index"] == 1
+    event = payload["events"][0]
+    assert event["signal_id"] == "assist_indicator"
+    assert event["match_index"] == 1
+    assert event["timestamp"] == pytest.approx(1.0)
+    assert event["end"] > event["timestamp"]
+    assert event["evidence"]["samples"] >= 2
+    assert set(event) == {
+        "signal_id",
+        "timestamp",
+        "end",
+        "score",
+        "evidence",
+        "match_index",
+    }
     assert payload["layout"]["anchor_x"] == pytest.approx(618.0 / 1920)
 
 
@@ -143,7 +157,7 @@ def test_indicators_json_mode_emits_lines(
     assert result.exit_code == 0, result.output
     lines = [json.loads(line) for line in result.output.splitlines() if line.strip()]
     assert lines[-1]["type"] == "complete"
-    assert lines[-1]["events"][0]["kind"] == "assist"
+    assert lines[-1]["events"][0]["signal_id"] == "assist_indicator"
     assert any(line.get("phase") == "scanning" for line in lines if "phase" in line)
 
 
@@ -155,6 +169,37 @@ def test_indicators_writes_layout_back(
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
     assert payload["indicator_layout"]["scale"] == pytest.approx(1.0)
     assert payload["indicator_layout"]["support"] == 6
+    # #127: イベントも同じ write で metadata に入る。
+    assert len(payload["events"]) == 1
+    assert payload["events"][0]["signal_id"] == "assist_indicator"
+
+
+def test_indicators_replaces_previous_events(
+    app: typer.Typer, metadata_path: Path, fake_video
+):
+    """`--write` は `events` を**全件置換**する (#127)。
+
+    差分マージにすると、検出条件 (`--interval` / `--region` / しきい値) を変えたときに
+    古いイベントが残り「どの条件の結果か」が読めなくなる。
+    """
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["events"] = [
+        {
+            "signal_id": "ko_indicator",
+            "timestamp": 999.0,
+            "end": 1000.0,
+            "score": 0.5,
+            "evidence": {"samples": 2},
+            "match_index": 1,
+        }
+    ]
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = runner.invoke(app, ["indicators", str(metadata_path)])
+    assert result.exit_code == 0, result.output
+    written = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert [event["signal_id"] for event in written["events"]] == ["assist_indicator"]
+    assert written["events"][0]["timestamp"] == pytest.approx(1.0)
 
 
 def test_indicators_no_write_keeps_metadata_untouched(
@@ -476,14 +521,14 @@ def test_calibration_timestamps_skips_malformed_matches() -> None:
 def test_indicator_report_payload_shape() -> None:
     report = IndicatorReport(
         layout={"scale": 1.0},
-        events=[{"kind": "ko"}],
+        events=[{"signal_id": "ko_indicator"}],
         metadata_path=Path("metadata.json"),
         recalibrated=True,
     )
     payload = report.to_payload()
     assert payload["metadata"] == "metadata.json"
     assert payload["recalibrated"] is True
-    assert payload["events"] == [{"kind": "ko"}]
+    assert payload["events"] == [{"signal_id": "ko_indicator"}]
 
 
 # ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@ drift ではない) ため、**id 集合は `tests/scripts/test_check_declaratio
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from collections.abc import Callable
@@ -595,6 +596,87 @@ def check_path_refs(root: Path) -> list[str]:
     return problems
 
 
+_INDICATOR_EVENT_SCHEMA = "schemas/metadata.schema.json"
+_INDICATOR_EVENT_DEF = "HighlightEvent"
+# (doc, block の開始行に含まれる文字列, block の終端行の prefix)。
+# 終端が None の doc は「開始文字列を含む行だけ」を block とする (1 行で完結する記述)。
+_INDICATOR_EVENT_DOCS: tuple[tuple[str, str, str | None], ...] = (
+    ("docs/metadata-spec.md", "### `events` 配列", "### "),
+    ("docs/cli-spec.md", "## indicators コマンド", "## "),
+    ("docs/output-spec.md", "## indicators コマンド出力", "## "),
+    ("docs/tauri-commands.md", _INDICATOR_EVENT_DEF, None),
+    (
+        "docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md",
+        "## 2. スキーマ",
+        "## 3.",
+    ),
+)
+
+
+def _event_block(text: str, start: str, stop: str | None) -> str:
+    """doc からイベント定義の block を切り出す。
+
+    **doc 全体を検索しない**。他の文脈で同じ語 (`source` 等) が使われていると、
+    「定義を更新した」ように見えてしまうため (Codex review 2026-11-16)。
+    """
+    lines = text.splitlines()
+    if stop is None:
+        return "\n".join(line for line in lines if start in line)
+    block: list[str] = []
+    started = False
+    for line in lines:
+        if not started:
+            if start in line:
+                started = True
+                block.append(line)
+            continue
+        if line.startswith(stop):
+            break
+        block.append(line)
+    return "\n".join(block)
+
+
+def check_indicator_events(root: Path) -> list[str]:
+    """L4 イベントのフィールド集合が全 spot で揃っていることを検査する (#127)。
+
+    SSoT は JSON Schema (`$defs/HighlightEvent`)。散文側は各 doc の
+    **イベント定義 block の中で**全フィールド名が現れることを要求する。フィールドを
+    足したら全 spot に追記が要る (片方だけ更新されて意味がずれるのを防ぐ)。
+    """
+    schema_path = root / _INDICATOR_EVENT_SCHEMA
+    if not schema_path.is_file():
+        return [f"indicator-events: {_INDICATOR_EVENT_SCHEMA} が無い"]
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        fields = set(schema["$defs"][_INDICATOR_EVENT_DEF]["properties"])
+    except (KeyError, json.JSONDecodeError) as exc:
+        return [
+            f"indicator-events: schema から {_INDICATOR_EVENT_DEF} を読めない ({exc})"
+        ]
+    if not fields:
+        return ["indicator-events: フィールド集合が空 (検査不能)"]
+    problems: list[str] = []
+    for rel, start, stop in _INDICATOR_EVENT_DOCS:
+        path = root / rel
+        if not path.is_file():
+            problems.append(f"indicator-events: {rel} が無い")
+            continue
+        block = _event_block(path.read_text(encoding="utf-8"), start, stop)
+        if not block.strip():
+            problems.append(
+                f"indicator-events: {rel} にイベント定義 block "
+                f"({start!r} で始まる節) が無い (検査不能)"
+            )
+            continue
+        missing = sorted(field for field in fields if field not in block)
+        if missing:
+            problems.append(
+                f"indicator-events: {rel} のイベント定義 block に "
+                f"{', '.join(missing)} の記載が無い"
+            )
+    return problems
+
+
 _GATES.update(
     {
         "check_exit_codes": check_exit_codes,
@@ -604,6 +686,7 @@ _GATES.update(
         "check_bulk_threshold": check_bulk_threshold,
         "check_required_checks": check_required_checks,
         "check_path_refs": check_path_refs,
+        "check_indicator_events": check_indicator_events,
     }
 )
 

@@ -516,9 +516,9 @@ allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR] [--include I,J,K]
 ## indicators コマンド
 
 `metadata.json` を入力に、KO / ASSIST インジケータの発生区間を検出して出力する
-(#1106 作業項目 9)。検出に使った探索領域 (`indicator_layout`) は既定で
-`metadata.json` に write-back し、次回以降のキャリブレーションを省略する
-(#1106 作業項目 5)。
+(#1106 作業項目 9)。検出に使った探索領域 (`indicator_layout`) と検出したイベント列
+(`events`) は既定で `metadata.json` に write-back し、次回以降のキャリブレーションを
+省略する (#1106 作業項目 5) とともに、結果を録画ごとに残す (#127)。
 
 - 入力は `metadata.json`（`export` / `minimap` と同じ系譜）。試合区間と解決済み
   レイアウトの両方が metadata に載っており、両方を使う
@@ -553,7 +553,7 @@ allaganeye indicators <metadata.json> [-o events.json] [--json]
 | `--json` | `false` | stdout に JSON Lines を出す（進捗 + 最終 `complete` 行）。人間向け summary は出さない |
 | `--interval SEC` | `0.1` | 走査間隔（秒）。下限 `0.05`（20 Hz を超える走査は情報を増やさない）を下回るか、有限値（`NaN` / `inf`）でなければ **exit 5** |
 | `--recalibrate` | `false` | `metadata.json` の `indicator_layout` を無視して再解決する |
-| `--write` / `--no-write` | `--write` | 解決した `indicator_layout` を `metadata.json` に write-back する |
+| `--write` / `--no-write` | `--write` | 解決した `indicator_layout` と検出した `events` を `metadata.json` に write-back する（`events` は全件置換） |
 | `--expected-mtime MS` | (なし) | write-back 前の CAS guard。`metadata.json` の現在 mtime (Unix ms) と不一致なら **exit 6**（GUI ConflictModal 対応） |
 | `--region X,Y,W,H` | (なし) | **自動キャリブレーションをスキップ**し、指定した矩形を**ゲージバーの外枠**として使う（px）。バー幅から `scale`、左上からアンカー位置を逆算する（`layout_from_bar_region`）。想定外 HUD で自動解決が失敗する場合の fallback。`--recalibrate` と併用不可（exit 5）。不正な値（4 要素でない / 数値でない / 小さすぎる / アスペクト比が大きく外れる）は exit 5 |
 
@@ -563,9 +563,12 @@ allaganeye indicators <metadata.json> [-o events.json] [--json]
 
 ```text
 KO: 1 / ASSIST: 2 (3 intervals)
-    493.50s -   494.50s  ko     score=0.80  (match 1)
-    206.40s -   207.80s  assist score=1.00  (match 1)
+  00:08:13 - 00:08:14  KO     score=0.80  (match 1)
+  00:03:26 - 00:03:27  ASSIST score=1.00  (match 1)
 ```
+
+時刻は**元録画先頭からの絶対時刻**を `hh:mm:ss` で出す（1 秒未満は切り捨て、保存値は
+0.01 秒精度のまま。#127）。未知の `signal_id` は生の id をそのまま出す。
 
 `--json` モード（stdout、JSON Lines）:
 
@@ -575,6 +578,10 @@ KO: 1 / ASSIST: 2 (3 intervals)
 {"type": "progress", "phase": "scanning", "processed_s": 30.0, "total_s": 944.0}
 {"type": "complete", "metadata": "...", "layout": {...}, "recalibrated": true, "events": [...], "wrote_metadata": true}
 ```
+
+`complete` 行の `events[]` は `-o` と同じ形（`signal_id` / `timestamp` / `end` /
+`score` / `evidence` / `match_index`）。フィールドの意味は
+[output-spec.md §「indicators コマンド出力」](output-spec.md) を参照。
 
 エラー時は `{"type": "error", "message": "..."}` を 1 行出してから exit code を返す。
 

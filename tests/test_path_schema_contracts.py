@@ -401,6 +401,33 @@ UNCHECKED_PROSE: dict[tuple[str, ...], str] = {
     ("$defs", "Match", "properties", "start_time"): (
         "「>= 0」は minimum: 0 で JSON Schema 側が既に機械化済み。散文ではない"
     ),
+    ("properties", "events"): (
+        "「Consumers must ignore unknown fields / unknown signal_id」は **reader の義務**で"
+        "あり、writer が出す payload では違反状態を構成できない。writer 側の許容は"
+        "additionalProperties: true が機械化しており、reader 側は GUI の"
+        "IndicatorsScreen.test.tsx が pin している"
+    ),
+    ("$defs", "HighlightEvent"): (
+        "「signal_id is a free string (NOT an enum)」と「consumers must ignore ...」は"
+        "properties/events と同じ **reader の義務** + 意図的な open enum。"
+        "open enum を開いた集合で assert すると信号追加のたびに false-red になる"
+    ),
+    ("$defs", "HighlightEvent", "properties", "signal_id"): (
+        "「Documented values」+「readers must ignore unknown values」= CaptureRegion.source /"
+        "IndicatorLayout.source と同じ意図的な open enum。unknown 値を受容すること自体は"
+        "tests/test_indicators_events.py の test_signal_id_is_not_an_enum が pin している"
+    ),
+    ("$defs", "HighlightEvent", "properties", "timestamp"): (
+        "「absolute seconds from the start of the source recording」は payload 単体では"
+        "検証できない (試合相対との区別には GT 突合が要る)。値が 0 以上であることは"
+        "schema の minimum: 0 が機械化済み。時刻基準の正は"
+        "docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md"
+    ),
+    ("$defs", "HighlightEvent", "properties", "match_index"): (
+        "「Always present so consumers only handle one shape」は schema の required が"
+        "既に機械化しており、producer 側は test_producer_emits_exactly_the_documented_keys"
+        "がキー集合を pin している"
+    ),
 }
 
 #: 散文が契約を含むことを示唆する語。この語を含む description は

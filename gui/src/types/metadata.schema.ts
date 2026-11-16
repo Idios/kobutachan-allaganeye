@@ -162,6 +162,26 @@ export const IndicatorLayoutSchema = z.object({
 });
 
 /**
+ * #127 -- L4 highlight event (`schemas/metadata.schema.json` の
+ * `$defs/HighlightEvent`). 設計の正は
+ * `docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md`.
+ *
+ * **未知フィールドを落とさない** ため passthrough にする（互換ルール §4-1）。
+ * `signal_id` は enum にしない（信号追加が schema の破壊的変更にならないよう、
+ * 未知値は読み手が無視する）。`timestamp` / `end` は元録画先頭からの絶対秒。
+ */
+export const HighlightEventSchema = z
+  .object({
+    signal_id: z.string().min(1),
+    timestamp: z.number().min(0),
+    end: z.number().min(0),
+    score: z.number().min(0).max(1),
+    evidence: z.record(z.string(), z.unknown()),
+    match_index: z.number().int().min(1).nullable(),
+  })
+  .passthrough();
+
+/**
  * #465 review: default frame rate when ``source_fps`` is missing. Pre-#465
  * legacy metadata.json files don't include the field, so we keep a
  * conservative 60fps assumption (the most common OBS recording cadence).
@@ -230,5 +250,11 @@ export const MetadataSchema = z
      * GUI はまだ consumer を持たない (round-trip のみ)。
      */
     indicator_layout: IndicatorLayoutSchema.optional(),
+    /**
+     * #127 -- L4 highlight events. `allaganeye indicators --write` が全件置換で
+     * 書く。未検出の recording は持たないので optional。`[適用]` は root を
+     * spread で保持するため round-trip する。
+     */
+    events: z.array(HighlightEventSchema).optional(),
   })
   .passthrough();

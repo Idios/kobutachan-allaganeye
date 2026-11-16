@@ -1325,7 +1325,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | `role="status"` の件数表示 (`data-testid="indicators-summary"`) + 小さな出典表示 (`data-testid="indicators-layout-source"`) |
-| 状態 | `complete` 中のみ描画。`KO n / ASSIST m` は `events` の `kind` を数えるだけ |
+| 状態 | `complete` 中のみ描画。`KO n / ASSIST m` は `events` の `signal_id` (`ko_indicator` / `assist_indicator`) を数えるだけ。未知の `signal_id` は数えない |
 | 遷移トリガー | `complete` payload の `events` / `layout` で更新 |
 | store mutation | なし |
 | 例外 / edge case | provenance は `layout.source` を `自動解決 (anchor)` / `手動指定 (--region)` に対応。`layout === null` は `不明` (実装上 reach しない防御) |
@@ -1336,9 +1336,9 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | --- | --- |
 | 種類 | `match_index` ごとのグループ (container の `data-testid="indicators-group-<index>"`。試合外は `indicators-group-outside`) + `<ul>` 内の行。行は `<button>` (試合に属する行) 又は `<div data-navigable="false">` (試合外) |
 | 状態 | `complete` かつ `events.length > 0` のとき描画。`events.length === 0` は §2.7.10 の明示的な空メッセージ |
-| 遷移トリガー | 行の `onClick` / Enter / Space (button の既定挙動) → `setPendingSeekSeconds(event.start)` → `openPreviewFor(match_index)`。グループ順は match index 昇順 + 試合外 (`null`) が末尾、グループ内は `start` 昇順 |
+| 遷移トリガー | 行の `onClick` / Enter / Space (button の既定挙動) → `setPendingSeekSeconds(event.timestamp)` → `openPreviewFor(match_index)`。グループ順は match index 昇順 + 試合外 (`null`) が末尾、グループ内は `timestamp` 昇順 |
 | store mutation | `appStateStore.pendingSeekSeconds` (積む) / `openPreviewFor` 経由で `selectedMatchIndex` + `screen='preview'` |
-| 例外 / edge case | §2.4.17 の one-shot seek で消費される。`match_index === null` (試合外) の行は遷移先が無いため button にせず keyboard でも到達しない (tooltip で理由を出す)。行は `role="button"` を持つので Tab / Enter で全件操作できる (a11y: button の可視名は `KO 00:12.3 - 00:13.0 をプレビューで開く`) |
+| 例外 / edge case | §2.4.17 の one-shot seek で消費される。`match_index === null` (試合外) の行は遷移先が無いため button にせず keyboard でも到達しない (tooltip で理由を出す)。行は `role="button"` を持つので Tab / Enter で全件操作できる (a11y: button の可視名は `KO 00:00:12 - 00:00:13 をプレビューで開く`)。時刻は `fmtEventTime` で `hh:mm:ss` (#127)。**未知の `signal_id` のイベントは行ごと描画しない** (前方互換、#127 §4-3) |
 
 #### §2.7.6 領域フォーム (X / Y / W / H + [この領域で再実行])
 

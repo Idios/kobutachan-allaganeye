@@ -46,6 +46,7 @@ from allaganeye.video.indicators import (
     IndicatorLayout,
     calibrate_layout,
     detect_indicator,
+    event_to_payload,
     group_detections,
     layout_from_bar_region,
     layout_from_payload,
@@ -327,14 +328,8 @@ def _match_index(matches: list[dict[str, Any]], timestamp: float) -> int | None:
 def _event_payload(
     event: IndicatorEvent, matches: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    return {
-        "kind": event.kind,
-        "start": round(event.start, 2),
-        "end": round(event.end, 2),
-        "score": round(event.score, 3),
-        "samples": event.samples,
-        "match_index": _match_index(matches, event.start),
-    }
+    """内部イベントを wire 形式にする (`HighlightEvent`、#127)。"""
+    return event_to_payload(event, match_index=_match_index(matches, event.start))
 
 
 def _reject_output_aliasing_inputs(
@@ -573,6 +568,10 @@ def run_indicators(
         if write:
             _guard_mtime(metadata_path, expected_mtime)
             payload["indicator_layout"] = layout_payload
+            # #127: イベントも同じ write に入れる。`indicator_layout` だけ更新されると
+            # 「どの layout で出したイベントか」が読めなくなる。差分マージはしない
+            # (検出条件が変われば結果集合ごと変わるため、全件置換が正)。
+            payload["events"] = report.events
             write_metadata_atomic(metadata_path, payload)
         if staged is not None and output is not None:
             _publish_report(staged, output)
@@ -591,25 +590,47 @@ def run_indicators(
     return report
 
 
+def format_timestamp(seconds: float) -> str:
+    """秒を `hh:mm:ss` にする (#127)。
+
+    L4 のイベントは録画全体の時刻で読む (試合相対は自分で引く) ため、分だけを
+    積み上げる `mm:ss` ではなく `hh:mm:ss` に揃える。1 秒未満は切り捨てる
+    (保存値は 0.01 秒精度のままで、表示だけが見やすさを優先する)。
+    """
+    total = int(max(0.0, seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+_SIGNAL_LABELS: dict[str, str] = {
+    "ko_indicator": "KO",
+    "assist_indicator": "ASSIST",
+}
+
+
 def print_summary(
     report: IndicatorReport, *, wrote_metadata: bool, output: Path | None
 ) -> None:
     """Human-readable summary (stdout; `--json` callers skip this)."""
     events = report.events
-    ko = sum(1 for event in events if event["kind"] == "ko")
-    assist = sum(1 for event in events if event["kind"] == "assist")
+    ko = sum(1 for event in events if event["signal_id"] == "ko_indicator")
+    assist = sum(1 for event in events if event["signal_id"] == "assist_indicator")
     typer.echo(f"KO: {ko} / ASSIST: {assist} ({len(events)} intervals)")
     for event in events:
         match = event["match_index"]
         where = f"match {match}" if match is not None else "outside matches"
+        # 未知 signal_id は生の id を出す (既知分だけを人間向け表記にする)。
+        label = _SIGNAL_LABELS.get(event["signal_id"], event["signal_id"])
         typer.echo(
-            f"  {event['start']:8.2f}s - {event['end']:8.2f}s  "
-            f"{event['kind']:6s} score={event['score']:.2f}  ({where})"
+            f"  {format_timestamp(event['timestamp'])} - "
+            f"{format_timestamp(event['end'])}  "
+            f"{label:6s} score={event['score']:.2f}  ({where})"
         )
     if output is not None:
         typer.echo(f"events written to {output}")
     if wrote_metadata:
-        typer.echo(f"indicator_layout written to {report.metadata_path}")
+        typer.echo(f"indicator_layout and events written to {report.metadata_path}")
 
 
 __all__ = [

@@ -29,7 +29,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 import {
   EMPTY_REGION_INPUTS,
-  fmtEventOffset,
+  fmtEventTime,
   groupEventsByMatch,
   isLayoutResolutionFailure,
   IndicatorsScreen,
@@ -59,10 +59,10 @@ const LAYOUT: IndicatorsLayout = {
 };
 
 const EVENTS: IndicatorsEvent[] = [
-  { kind: 'assist', start: 130.25, end: 131, score: 0.7, samples: 3, match_index: 2 },
-  { kind: 'ko', start: 12.3, end: 13, score: 0.88, samples: 3, match_index: 1 },
-  { kind: 'ko', start: 5.05, end: 5.6, score: 0.91, samples: 2, match_index: 1 },
-  { kind: 'assist', start: 300.5, end: 301, score: 0.66, samples: 2, match_index: null },
+  { signal_id: 'assist_indicator', timestamp: 130.25, end: 131, score: 0.7, evidence: { samples: 3 }, match_index: 2 },
+  { signal_id: 'ko_indicator', timestamp: 12.3, end: 13, score: 0.88, evidence: { samples: 3 }, match_index: 1 },
+  { signal_id: 'ko_indicator', timestamp: 5.05, end: 5.6, score: 0.91, evidence: { samples: 2 }, match_index: 1 },
+  { signal_id: 'assist_indicator', timestamp: 300.5, end: 301, score: 0.66, evidence: { samples: 2 }, match_index: null },
 ];
 
 const COMPLETE_RESULT: IndicatorsResult = {
@@ -336,16 +336,16 @@ describe('IndicatorsScreen run (idle → running → complete)', () => {
 });
 
 describe('IndicatorsScreen complete', () => {
-  it('groups rows by match_index with 試合外 last and sorts by start', () => {
+  it('groups rows by match_index with 試合外 last and sorts by timestamp', () => {
     renderIndicators(completePatch());
 
     const match1 = screen.getByTestId('indicators-group-1');
     expect(match1).toHaveTextContent('MATCH_001');
     const rows1 = within(match1).getAllByRole('button');
     expect(rows1).toHaveLength(2);
-    // 5.05 が 12.3 より先 (start 昇順)
-    expect(rows1[0]).toHaveTextContent('00:05.0 - 00:05.6');
-    expect(rows1[1]).toHaveTextContent('00:12.3 - 00:13.0');
+    // 5.05 が 12.3 より先 (timestamp 昇順)。表示は hh:mm:ss (#127)。
+    expect(rows1[0]).toHaveTextContent('00:00:05 - 00:00:05');
+    expect(rows1[1]).toHaveTextContent('00:00:12 - 00:00:13');
 
     expect(screen.getByTestId('indicators-group-2')).toHaveTextContent('MATCH_002');
 
@@ -356,6 +356,34 @@ describe('IndicatorsScreen complete', () => {
     expect(
       within(outside).getByTestId('indicators-event-outside-0'),
     ).toHaveTextContent('ASSIST');
+  });
+
+  it('ignores events whose signal_id the screen does not know (#127 §4-3)', () => {
+    renderIndicators(
+      completePatch({
+        events: [
+          ...EVENTS,
+          {
+            signal_id: 'kill_feed',
+            timestamp: 20,
+            end: 21,
+            score: 0.5,
+            evidence: {},
+            match_index: 1,
+          },
+        ],
+      }),
+    );
+
+    // 既知の 4 件だけが並ぶ (未知信号は行ごと描画しない)。
+    const match1 = screen.getByTestId('indicators-group-1');
+    expect(within(match1).getAllByRole('button')).toHaveLength(2);
+    // 件数も既知分だけを数える。
+    expect(screen.getByTestId('indicators-summary')).toHaveTextContent('KO 2');
+    expect(screen.getByTestId('indicators-summary')).toHaveTextContent(
+      'ASSIST 2',
+    );
+    expect(screen.queryByText('kill_feed')).not.toBeInTheDocument();
   });
 
   it('renders KO / ASSIST badges and the score', () => {
@@ -637,18 +665,19 @@ describe('IndicatorsScreen a11y', () => {
 });
 
 describe('IndicatorsScreen helpers', () => {
-  it('formats event offsets as mm:ss.s', () => {
-    expect(fmtEventOffset(0)).toBe('00:00.0');
-    expect(fmtEventOffset(5.05)).toBe('00:05.0');
-    expect(fmtEventOffset(65.24)).toBe('01:05.2');
-    expect(fmtEventOffset(Number.NaN)).toBe('00:00.0');
-    expect(fmtEventOffset(-1)).toBe('00:00.0');
+  it('formats event timestamps as hh:mm:ss (#127)', () => {
+    expect(fmtEventTime(0)).toBe('00:00:00');
+    expect(fmtEventTime(5.05)).toBe('00:00:05');
+    expect(fmtEventTime(65.24)).toBe('00:01:05');
+    expect(fmtEventTime(3725.9)).toBe('01:02:05');
+    expect(fmtEventTime(Number.NaN)).toBe('00:00:00');
+    expect(fmtEventTime(-1)).toBe('00:00:00');
   });
 
   it('groups events by match with 試合外 last', () => {
     const groups = groupEventsByMatch(EVENTS);
     expect(groups.map((g) => g.matchIndex)).toEqual([1, 2, null]);
-    expect(groups[0].events.map((e) => e.start)).toEqual([5.05, 12.3]);
+    expect(groups[0].events.map((e) => e.timestamp)).toEqual([5.05, 12.3]);
   });
 
   it('recognises only the CLI layout-resolution message as a layout failure', () => {
