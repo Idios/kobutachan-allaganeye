@@ -21,7 +21,7 @@
     {
       "file": "03-complete.png",
       "screen": "complete",
-      "sha256": "234039a62217d40507070822932ff2098d7c2aa00ed7df40aa7fa284feee2980"
+      "sha256": "0e21dfb78fdf25d13b56f298e5f3294cc4d92a5e3b7bdbb39780956f4c48fecb"
     },
     {
       "file": "04-preview.png",
@@ -37,6 +37,11 @@
       "file": "06-minimap.png",
       "screen": "minimap",
       "sha256": "b5e03af544b45f5d2d1eecb4e18ab7b9d4dd5ec92e5a8379f4b1bfe372c1ca64"
+    },
+    {
+      "file": "07-indicators.png",
+      "screen": "indicators",
+      "sha256": "4b9294a831cd21c99cf19127d6c0d6e861bb7c23f3cdbc1cb4a6758683284d1e"
     }
   ],
   "sources": [

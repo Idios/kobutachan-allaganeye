@@ -135,7 +135,7 @@ flowchart LR
 
 <br/>
 
-### GUI の 6 画面
+### GUI の 7 画面
 
 <table align="center">
 <tr>
@@ -190,6 +190,18 @@ flowchart LR
   <br/>
   <b>⑥ ミニマップ切抜き&nbsp;&nbsp;·&nbsp;&nbsp;M I N I M A P</b><br/>
   <sub>エリアマップ部分だけを切り出して H.264 で保存。領域は自動検出 or 映像上をドラッグして指定。<sub>v0.3.0</sub></sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top" align="center">
+  <a href="image/07-indicators.png">
+    <img src="image/07-indicators.png" alt="⑦ Indicators — KO / ASSIST 検出" width="100%"/>
+  </a>
+  <br/>
+  <b>⑦ KO / ASSIST&nbsp;&nbsp;·&nbsp;&nbsp;I N D I C A T O R S</b><br/>
+  <sub>試合ごとの KO / ASSIST を一覧し、行を選ぶとプレビューが該当時刻にシーク。探索領域の自動解決に失敗したときはバー矩形を指定して再実行。<sub>v0.4.0</sub></sub>
+</td>
+<td width="50%" valign="top" align="center">
 </td>
 </tr>
 </table>

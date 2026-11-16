@@ -278,6 +278,9 @@ try {
     export: async () => {
       await navigateTo(page, 'export', { withSample: true });
     },
+    indicators: async () => {
+      await setupIndicators(page);
+    },
     // #944 §D で画面タイトルを入れたので README に載せられるようになった。
     minimap: async () => {
       // .videoPane は flex:1 なので、既定の 1000px では下の設定欄と一覧に
@@ -321,6 +324,55 @@ try {
   console.log('done');
 } finally {
   await browser.close();
+}
+
+// #1106 Phase 3: 「検出完了 + イベント一覧」がこの画面の主目的なので、その
+// 状態を撮る。値は実録画 (`20260116_1.mp4`、1080p) の実測に合わせてある
+// (layout は PR #1118 の実測値、イベントは GT の時刻を 1.5 秒幅にして流用)。
+//
+// 結果表示は Phase 2 review R1 のスコープ判定で
+// `metadataStore.filePath === indicatorsStore.metadataPath` のときだけ有効になる。
+// sample mode は filePath が null なので、そのままでは complete を描けない。
+// 撮影時だけ filePath を実ファイル相当の値へ差し替える (ヘッダの動画パスは
+// `metadata.source` から出るので sample metadata のままで問題ない)。
+async function setupIndicators(page) {
+  // 完了状態は一覧が短く、既定の 1000px では下半分が空く。実ウィンドウで
+  // 内容が収まる高さに寄せて撮る (minimap が縦に伸ばすのと逆向きの調整)。
+  await page.setViewportSize({ width: VIEWPORT.width, height: 720 });
+  await navigateTo(page, 'indicators', { withSample: true });
+  await page.evaluate(async () => {
+    const meta = await import('/src/state/metadataStore.ts');
+    const indicators = await import('/src/state/indicatorsStore.ts');
+    const metadataPath = 'E:/videos/2026-04-08 21-14-05_metadata.json';
+    meta.useMetadataStore.setState({ filePath: metadataPath });
+    indicators.useIndicatorsStore.setState({
+      status: 'complete',
+      metadataPath,
+      phase: null,
+      processedSeconds: null,
+      totalSeconds: null,
+      layout: {
+        anchor_x: 0.321875,
+        anchor_y: 0.568519,
+        scale: 1.0,
+        support: 6,
+        confidence: 0.972,
+        source: 'anchor',
+      },
+      events: [
+        { kind: 'ko', start: 493.4, end: 494.9, score: 0.93, samples: 15, match_index: 3 },
+        { kind: 'assist', start: 512.1, end: 513.6, score: 0.81, samples: 14, match_index: 3 },
+        { kind: 'assist', start: 515.5, end: 517.0, score: 0.84, samples: 15, match_index: 3 },
+        { kind: 'ko', start: 584.3, end: 585.8, score: 0.94, samples: 15, match_index: 3 },
+        { kind: 'assist', start: 623.2, end: 624.7, score: 0.79, samples: 14, match_index: 4 },
+        { kind: 'ko', start: 631.4, end: 632.9, score: 0.91, samples: 15, match_index: 4 },
+        { kind: 'ko', start: 847.2, end: 848.7, score: 0.95, samples: 15, match_index: 5 },
+        { kind: 'assist', start: 866.7, end: 868.2, score: 0.83, samples: 14, match_index: 5 },
+      ],
+      error: null,
+    });
+  });
+  await page.waitForTimeout(400);
 }
 
 async function captureDetecting(page) {
