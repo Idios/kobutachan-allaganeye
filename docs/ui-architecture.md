@@ -402,7 +402,7 @@ stateDiagram-v2
 - 結果は `indicatorsStore.metadataPath` と `metadataStore.filePath` の一致でスコープする。別の録画の `complete` / `error` は `idle` 扱いで隠し、別の録画の run が走行中なら「別の動画の検出が進行中」+ [中断] を出す (録画 A の結果で B にシークする事故の防止)
 - 成功して `wrote_metadata === true` のときは `metadataStore.refreshFromDiskPreservingEdits()` で mtime と `indicator_layout` を disk から取り込む。編集バッファ (`name` / `type_override` / `edited`) と `dirty` は保持されるので、preview の未適用編集は失われない。これをやらないと、次の [再検出] が自分の write を外部変更とみなして exit 6 で失敗する
 - [◀ 一覧へ] は実行中も常に enabled (minimap と同じ)。中断せずに離脱すると subprocess は走り続ける
-- イベント一覧の行は「その発生時刻を preview で見る」導線で、`pendingSeekSeconds` に `start` を積んでから `openPreviewFor(match_index)` する。`match_index` が null (試合外) の行は遷移先が無いためボタンにしない
+- イベント一覧の行は「その発生時刻を preview で見る」導線で、`pendingSeekSeconds` に `timestamp` を積んでから `openPreviewFor(match_index)` する（#127 で `start` から改名）。`match_index` が null (試合外) の行は遷移先が無いためボタンにしない
 - 画面内の UI 部品ごとの操作 → store mutation は [ui-interaction-spec.md §2.7](ui-interaction-spec.md) が正
 
 ## 6. ffmpeg 実行中の中断フロー (Phase 3/4、#523 で実装)
