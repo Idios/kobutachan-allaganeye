@@ -262,6 +262,13 @@ $guiSection
     rem KO / ASSIST インジケータの発生時刻を検出する (0.1 秒刻み)
     allaganeye.bat indicators "C:\path\to\output\metadata.json"
 
+    rem L4 イベントの前後を切り抜く (既定は前後 10 秒、5 秒以内のイベントは束ねる)
+    allaganeye.bat clips "C:\path\to\output\metadata.json"
+    allaganeye.bat clips "C:\path\to\output\metadata.json" --pre 5 --post 15
+
+    rem 秒数を厳密に守りたいときは再エンコード (既定の copy はキーフレームに丸められる)
+    allaganeye.bat clips "C:\path\to\output\metadata.json" --codec h264
+
     rem フレーム輝度を CSV に出す (しきい値の調整用)
     allaganeye.bat debug-brightness "C:\path\to\video.mkv"
 

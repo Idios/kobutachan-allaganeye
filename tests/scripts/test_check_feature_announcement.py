@@ -42,7 +42,7 @@ _spec.loader.exec_module(guard)
 # --------------------------------------------------------------------------
 
 
-def test_collects_the_five_shipped_commands() -> None:
+def test_collects_the_shipped_commands() -> None:
     """SSoT は typer runtime registry であり、`@app.command` の静的走査ではない。
 
     `minimap` (`commands/minimap.py:46`) と `export` (`commands/export.py:69`) は
@@ -55,6 +55,7 @@ def test_collects_the_five_shipped_commands() -> None:
         "export",
         "minimap",
         "indicators",
+        "clips",
         "debug-brightness",
     }
 

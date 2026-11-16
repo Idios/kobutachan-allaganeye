@@ -598,6 +598,76 @@ KO: 1 / ASSIST: 2 (3 intervals)
 | 6 | metadata write-back の CAS 衝突（`--expected-mtime` と実 mtime の不一致） |
 | 130 | SIGINT (Ctrl+C) によるキャンセル |
 
+## clips コマンド
+
+`metadata.json` の L4 イベント（`events[]`、#127）から、**前後マージン付きの切り抜き
+クリップ**を書き出す（#135 / #1050 Phase A）。`allaganeye indicators` の実行が前提。
+
+- 既定は **`--codec copy`（無劣化）**。キーフレーム境界に丸められるため、指定した秒数は
+  最大 ~2 秒ずれる（L1 の分割と同じ性質）。**秒数を厳密に守りたいときは `--codec h264`**
+- 近接イベントは `--gap`（既定 5 秒）以内なら 1 本のクリップに束ねる。束ね幅も指定できる
+- 前後マージンは `--pre` / `--post`（既定 10 秒ずつ）。どちらもイベントごとに `--gap` と独立
+- 範囲は**試合区間 `matches[i]` にクランプ**する。どの試合にも入らないイベント
+  （`match_index: null`）は対象外で、件数を warning に出す（イベント自体は metadata に残る）
+- 切り出し元は `metadata.source`（元録画）。分割 MP4 の有無に依存しない
+- 出力は `export` と同じ並列実行 / encoder fallback / path sandbox を共有する
+- **既存ファイルは既定で置き換えない**（`--overwrite` で明示的に許可）。失敗した再実行が
+  前回のクリップを壊さないようにするため
+
+### 構文
+
+```bash
+allaganeye clips <metadata.json> [-o DIR] [--pre SEC] [--post SEC] [--gap SEC]
+                 [--codec copy|h264] [--name-pattern PATTERN] [--concurrency N]
+                 [--json] [--quiet]
+```
+
+### 引数
+
+| 引数 | 必須 | 説明 |
+| --- | --- | --- |
+| `metadata_path` | Yes | `allaganeye indicators` で `events` が書き込まれた `metadata.json`（`events` が無ければ **exit 2**） |
+
+### オプション
+
+| オプション | デフォルト | 説明 |
+| --- | --- | --- |
+| `-o DIR` / `--output-dir DIR` | `<metadata.json の親>/clips` | クリップの出力先 |
+| `--pre SEC` | `10` | イベント開始の何秒前から切り抜くか（0 以上の有限値。不正は **exit 5**） |
+| `--post SEC` | `10` | イベント終端の何秒後まで切り抜くか（同上） |
+| `--gap SEC` | `5` | 「現在のクリップ終端からこの秒数以内に次のイベントが始まる」なら束ねる（0 以上の有限値） |
+| `--codec MODE` | `copy` | `copy` = 無劣化（キーフレーム丸め）/ `h264` = 再エンコード（NVENC・QSV・AMF・libx264 を自動選択し、失敗時は libx264 へ fallback）。`copy` / `h264` 以外は **exit 5** |
+| `--name-pattern PATTERN` | `clip_{idx:03}_{type}_{start}.mp4` | 出力名。トークンは `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}`。`output-dir` の外へ抜ける名前は **exit 5** |
+| `--concurrency N` | (なし = 全スロット) | `--codec h264` の並列数（1 以上。`copy` は常に 1） |
+| `--overwrite` | `false` | 既存の出力を置き換える。**既定は拒否**（既存ファイルがあれば **exit 5**）。共有 runner は ffmpeg `-y` で開いた瞬間に truncate するため、途中で失敗すると前回のクリップが壊れたまま残る |
+| `--json` | `false` | stdout に JSON Lines を出す（`export` と同じ wire 形状、`match_index` = クリップ番号） |
+| `--quiet` | `false` | 進捗を抑制する（`--json` とは排他） |
+
+### 出力
+
+人間向け（stdout / stderr）:
+
+```text
+warning: 2 event(s) fall outside every match and were skipped (a clip range cannot be clamped to a match)
+3 event(s) were merged into a neighbouring clip
+[OK] clip 001 00:03:10-00:03:34 assist_ko 24.5s -> C:\out\clips\clip_001_assist_ko_03-10.mp4 (copy)
+```
+
+`--json` モードは `export` と同じ行（`progress` / `result` / `error` / `fallback` / `summary`）を出す。
+`match_index` は**クリップ番号**（1 始まり）。計画段階の失敗は
+`{"type":"error","message":"..."}` を 1 行出してから exit code を返す。
+
+### Exit Codes
+
+| コード | 意味 |
+| --- | --- |
+| 0 | 正常終了（クリップ 0 件でも 0） |
+| 1 | 1 本以上のクリップの書き出しに失敗 |
+| 2 | 入力エラー（`metadata.json` 不在 / `source` 不在 / `events` が無い / `source` 動画が見つからない） |
+| 3 | ffmpeg / ffprobe エラー（全クリップが失敗した場合は 1） |
+| 5 | 設定値不正（`--pre` / `--post` / `--gap` が負値・非有限 / `--codec` が未知 / `--concurrency` < 1 / `--name-pattern` が出力先の外を指す / 同一ファイルに衝突 / 既存出力があり `--overwrite` 未指定） |
+| 130 | SIGINT（Ctrl+C）によるキャンセル |
+
 ## debug-brightness コマンド
 
 フレーム輝度を CSV 出力する。暗転検知の閾値チューニング用。

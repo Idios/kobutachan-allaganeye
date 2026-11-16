@@ -27,6 +27,19 @@ def format_duration(seconds: float) -> str:
     return f"{m}m{s:02d}s"
 
 
+def format_hms(seconds: float) -> str:
+    """Format seconds as zero-padded ``hh:mm:ss`` (#127).
+
+    L4 のイベント / クリップ範囲は録画全体の時刻で読む (試合相対は自分で引く) ため、
+    時を省く ``MM:SS`` 形式 (:func:`format_timestamp`) ではなくこちらを使う。
+    1 秒未満は切り捨てる (保存値は 0.01 秒精度のまま)。
+    """
+    total = int(max(0.0, seconds))
+    h, rest = divmod(total, 3600)
+    m, s = divmod(rest, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
 def iso_utc_now() -> str:
     """UTC timestamp in ISO 8601 with 'Z' suffix, e.g. '2026-04-19T12:34:56Z'.
 

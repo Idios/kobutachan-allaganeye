@@ -8,6 +8,7 @@ same detection / metadata contract.
 
 from allaganeye.detection.format import (
     format_duration,
+    format_hms,
     format_timestamp,
     iso_utc_now,
 )
@@ -18,6 +19,7 @@ from allaganeye.detection.metadata_writer import (
 
 __all__ = [
     "format_duration",
+    "format_hms",
     "format_timestamp",
     "iso_utc_now",
     "read_metadata",

@@ -150,6 +150,13 @@ Allagan Eye は FF14 フロントラインの一般的な録画に合わせて�
     rem KO / ASSIST インジケータの発生時刻を検出する
     allaganeye.bat indicators "%USERPROFILE%\Desktop\matches\metadata.json"
 
+    rem L4 イベントの前後を切り抜く (既定は前後 10 秒、5 秒以内のイベントは束ねる)
+    allaganeye.bat clips "%USERPROFILE%\Desktop\matches\metadata.json"
+    allaganeye.bat clips "%USERPROFILE%\Desktop\matches\metadata.json" --pre 5 --post 15
+
+    rem 秒数を厳密に守りたいときは再エンコード (既定の copy はキーフレームに丸められる)
+    allaganeye.bat clips "%USERPROFILE%\Desktop\matches\metadata.json" --codec h264
+
     rem フレーム輝度を CSV に出す（しきい値の調整用）
     allaganeye.bat debug-brightness "C:\Users\あなた\Videos\動画.mkv"
 

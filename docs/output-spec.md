@@ -299,6 +299,22 @@ metadata write-back より後に公開するので、CAS 衝突 (exit 6) のと�
 [event output format design](superpowers/specs/2026-11-16-l4-event-output-format-design.md)、
 形の正は `schemas/metadata.schema.json` の `$defs/HighlightEvent`。
 
+## clips コマンド出力
+
+関連: 構文・オプション・exit code は [`docs/cli-spec.md` §「clips コマンド」](cli-spec.md) を参照。
+
+| モード | 生成ファイル | 備考 |
+| --- | --- | --- |
+| default | `<output-dir>/*.mp4` | 既定 `clip_{idx:03}_{type}_{start}.mp4`。1 クリップ = 1 ファイル |
+| `--json` | stdout: JSON Lines | `export` と同じ行（`progress` / `result` / `error` / `fallback` / `summary`）。`match_index` はクリップ番号 |
+| `--codec copy` (既定) | 無劣化 | キーフレームに丸められる（指定秒数は最大 ~2 秒ずれる） |
+| `--codec h264` | H.264 再エンコード | NVENC / QSV / AMF / libx264 を自動選択。失敗時は libx264 fallback（`fallback` 行） |
+| `--overwrite` | — | 既存の出力を置き換える。**既定は既存ファイルがあれば exit 5**（truncate 済みの壊れたクリップを残さないため） |
+
+クリップ範囲は metadata の `events[]`（`timestamp` / `end` / `match_index`）から決まり、
+`matches[i]` 区間にクランプされる。試合外イベント（`match_index: null`）は書き出さず、
+件数を stderr の warning に出す（metadata は変更しない）。
+
 ### `--json` モード出力行 (crop モード)
 
 `--json` フラグ指定時、stdout の各行は JSON オブジェクト 1 件（JSON Lines 形式）。GUI subprocess が parse する。crop モードの wire protocol は `export` コマンドと同一実装 (`allaganeye/export/pool.py` / `allaganeye/export/schema.py`) を共有するため、イベント種別を増減する変更は本節と [`docs/cli-spec.md` §「Wire protocol (`--json` モード)」](cli-spec.md) の両方を同 PR で更新する:

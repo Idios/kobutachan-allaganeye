@@ -704,6 +704,7 @@ def _suggest_long_option_hint(argv: list[str]) -> str | None:
 
 # #761 -- register export + encoder-slots commands. Hidden commands stay
 # out of `allaganeye --help` listings but remain dispatchable.
+from allaganeye.commands import clips as _clips_cmd  # noqa: E402
 from allaganeye.commands import encoder_slots as _encoder_slots_cmd  # noqa: E402
 from allaganeye.commands import export as _export_cmd  # noqa: E402
 from allaganeye.commands import indicators as _indicators_cmd  # noqa: E402
@@ -713,6 +714,7 @@ _export_cmd.register(app)
 _encoder_slots_cmd.register(app)
 _minimap_cmd.register(app)
 _indicators_cmd.register(app)
+_clips_cmd.register(app)
 
 
 def main() -> None:
