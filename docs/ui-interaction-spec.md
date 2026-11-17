@@ -895,7 +895,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 状態 | `appStateStore.pendingSeekSeconds` が `number` のとき未消費、`null` のとき待機なし |
 | 遷移トリガー | マウント直後 / `videoUrl` 解決時に 1 回だけ実行: `inVideoRef.current.currentTime = pendingSeekSeconds` → `setPendingSeekSeconds(null)`。`register_video` 未解決の間は待機し、登録失敗 (`videoError`) 時はシークせず消費だけする |
 | store mutation | `appStateStore.setPendingSeekSeconds(null)` (§1.1 の例外: match 編集ではないため `metadataStore` は触らない) |
-| 例外 / edge case | **IN / OUT の編集バッファ (`startT` / `endT`) には触らない**。値から `currentTime` を再同期する既存 effect は deps 不変なら走らないため、境界も dirty も動かない。§2.4.5 の再生中 sync は `paused` 中のみ `t → currentTime` を書くので、シーク後の TC 表示は境界のまま (「その瞬間を見る」専用) |
+| 例外 / edge case | **IN / OUT の編集バッファ (`startT` / `endT`) には触らない**。値から `currentTime` を再同期する既存 effect は deps 不変なら走らないため、境界も dirty も動かない。§2.4.5 の再生中 sync は `paused` 中のみ `t → currentTime` を書くので、シーク後の TC 表示は境界のまま (「その瞬間を見る」専用)。**クリップ範囲の調整画面 (§2.4.18) が描画されている間は消費だけする**: その画面が自前で IN を clip の先頭へシークするため、値を持ち越すと境界エディタに戻ったときに古い位置へ飛ぶ (#1139) |
 
 #### §2.4.18 クリップ範囲の調整画面 (ClipRangeView、#1139)
 
