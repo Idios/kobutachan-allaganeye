@@ -171,6 +171,27 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 §2.3.2 (Complete sourceBox) / §2.4.16 (Preview header path display、新規) / §2.5.2 (Export header) / §2.7.10 (Indicators header) — 各節に「§1.6 準拠」リンク。
 新規サブセクション (§2.2.8 / §2.4.16) は既存 anchor 互換のため各 §2 の末尾に追加する。
 
+### 1.7 設定項目の help 表示 (#1135)
+
+**原則**: label と現在値だけでは「何の値か・変えると何が起きるか」が分からない設定項目には、
+説明を読める help 表示を付ける。対象は**効果が非自明で、誤設定が結果を壊す** control
+(検知しきい値のような閾値・並列度・実行モード)。全 control に機械的に付けるのではなく、
+「値を変える判断をユーザーに委ねているか」で判断する。
+
+| 観点 | 規定 |
+| --- | --- |
+| 実装 | [HelpTip.tsx](../gui/src/components/HelpTip.tsx) の `HelpTip` を共通部品として使う |
+| trigger | `?` の icon-only button。`aria-label` に「<項目名>の説明」を入れる (visible text を持たない button の axe button-name 回避) |
+| 開く | (a) trigger への hover / (b) キーボード focus / (c) click (pin)。**focus でも開くので Tab だけで読める** |
+| 閉じる | hover 終了 / focus が外れる / Escape (open 中は document の capture で消費し、SelectedCard 等の dismiss に抜けさせない。trigger に focus があれば blur もする) / 別の control の click |
+| 本文の内容 | 何を決める値か / 効果の向き (上げる・下げる・切り替えるとどうなるか) / 既定値 / GUI のレンジと CLI のレンジが違う場合はその事実 / どういう状況で変えるべきか |
+| 数値の出所 | 既定値・レンジはコードの定数を参照して文言を組み立てる ([DetectionParamsPanel.tsx](../gui/src/screens/DetectionParamsPanel.tsx) の `BLACKOUT_SLIDER_MAX` / `WORKERS_INPUT_MAX` のように JSX と help 文で同じ定数を共有する)。doc に数値を複製しない |
+| 配置 | 既定は trigger の下。viewport 下端までの残りが 220px 未満なら上向きに反転し、開いたままの resize / scroll でも再計算する (drop 画面の `.screen` は `overflow: auto` のため、下向き固定では切れる。`z-index` は重なり順の制御のみで祖先の `overflow` は越えられない) |
+| a11y | screen reader 専用属性 (`aria-describedby` / `role="tooltip"`) は追加しない ([a11y-policy.md](a11y-policy.md) の scope に従う) |
+| アンチパターン | ネイティブ `title` のみで済ませる (キーボードから読めず、表示まで約 1 秒待たされる) / 説明を常時表示してレイアウトを押し広げる |
+
+**適用箇所**: §2.1.10 (詳細設定パネルの 3 項目) — 他画面は同種の不足が見つかった時点で追加する。
+
 ## 2. 画面別 UI 部品状態機械
 
 §2 は 8 画面それぞれを **1 画面 = 1 PR** で順次追加する (#590 着手フローに従う)。
@@ -377,8 +398,20 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
   - header: `aria-expanded` / `aria-controls` で expand 状態を AT に通知
   - 各 input: `<label htmlFor>` (slider / numeric) で関連付け、tri-state は `aria-label="gpu mode"` + `role="radio"`
   - リセット button: `aria-label` で disabled 理由 (default 値) を明示
-- Tab order: header toggle → (展開時) blackout slider → workers numeric → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ
+- Tab order: header toggle → (展開時) blackout slider → workers numeric → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ。**#1135 以降**: 各項目の help トリガーが label の直後に入るため、header toggle → blackout help → blackout slider → workers help → workers numeric → gpu help → gpu の 3 button → reset button の順になる (§1.7)
 - **`--no-audio` UI 不採用**: `allaganeye/audio/__init__.py` の `AUDIO_FROZEN` により audio module は frozen 状態 (#327、`split_matches.py` の `_run_audio_scan` が live probe して skip) のため `--no-audio` flag は実質 no-op。GUI 側でのみ控え (Rust `DetectParams.no_audio` field 自体は #569 で実装済み。再公開は解凍が前提だが、#865 で期限なし凍結に決着済み)
+
+##### §2.1.10.7 help トリガー (HelpTip、#1135)
+
+3 項目すべての label 右に `?` の help トリガーを置き、hover / focus / click で説明を出す (§1.7)。
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | icon-only button (`aria-label` は「検知しきい値の説明」/「ワーカー数の説明」/「GPU の説明」) + popover (`<span>`) |
+| 状態 | `closed` (default) / `open` (hover / focus / click pin のいずれか) |
+| 遷移トリガー | `mouseenter` → open / `mouseleave` → close / `focus` → open / `blur` → close / `Escape` → close + blur (open 中は document capture で消費) / `click` → pin toggle |
+| store mutation | なし ([HelpTip.tsx](../gui/src/components/HelpTip.tsx) の `HelpTip` 内部の local state) |
+| 例外 / edge case | 本文の数値は [DetectionParamsPanel.tsx](../gui/src/screens/DetectionParamsPanel.tsx) の `BLACKOUT_SLIDER_MIN` / `BLACKOUT_SLIDER_MAX` / `WORKERS_INPUT_MIN` / `WORKERS_INPUT_MAX` と [appStateStore.ts](../gui/src/state/appStateStore.ts) の `DEFAULT_DETECTION_PARAMS` から組み立てる (JSX と文言が同じ定数を共有する)。popover は label 列の下に absolute 配置し、スクロール領域の下端に近いときは上向きに反転する (§1.7 の「配置」)。`z-index` は重なり順のみを担い、祖先の `overflow` は越えられない |
 
 ### §2.2 detecting
 

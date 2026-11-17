@@ -505,6 +505,7 @@ components/
 ├── ErrorBoundary / ErrorModal                    (#614、§4 参照。main.tsx で render)
 ├── InlineErrorHint                               (#693 / #694、§4.7 参照)
 ├── DisabledTooltip                               (#587、disabled 理由の提示)
+├── HelpTip                                       (#1135、設定項目の hover / focus help。ui-interaction-spec §1.7)
 └── LoadingSpinner                                (#587、待機表示)
 
 注: **カスタム title bar は無し** (prototype の WindowChrome は handoff 時点の

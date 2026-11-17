@@ -67,6 +67,14 @@
   text-align: right;
 }
 
+/* #1135: label と help トリガーを 1 列に並べる (grid の 1 列目)。 */
+.labelRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .sliderRow {
   display: flex;
   align-items: center;
