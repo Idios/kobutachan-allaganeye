@@ -99,6 +99,8 @@ function resolveFps(sourceFps: number | undefined): number {
 export function PreviewScreen() {
   const metadata = useMetadataStore((s) => s.metadata);
   const dirty = useMetadataStore((s) => s.dirty);
+  // #1139: [適用] の実行中はクリップ範囲の編集も受け付けない。apply は開始時の
+  // snapshot を保存して `dirty` を落とすので、走行中の編集は静かに失われる。
   const applying = useMetadataStore((s) => s.applying);
   const applyErrorState = useMetadataStore((s) => s.applyErrorState);
   const filePath = useMetadataStore((s) => s.filePath);
@@ -377,6 +379,7 @@ export function PreviewScreen() {
    */
   function commitClipWindow(start: number, end: number): void {
     if (clipRange === null) return;
+    if (applying) return;
     if (!Number.isFinite(start) || !Number.isFinite(end)) return;
     if (end - start < 0.01) return;
     const nextStart = Math.max(0, start);
@@ -844,6 +847,7 @@ export function PreviewScreen() {
                   key={`clip-${edge}-${value}`}
                   defaultValue={value.toFixed(2)}
                   aria-label={`clip ${edge} seconds`}
+                  disabled={applying}
                   onBlur={(e) => commitText(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') e.currentTarget.blur();
@@ -855,6 +859,7 @@ export function PreviewScreen() {
                     key={delta}
                     type="button"
                     className={styles.stepButton}
+                    disabled={applying}
                     onClick={() =>
                       edge === 'start'
                         ? commitClipWindow(clipRange.start + delta, clipRange.end)
@@ -891,6 +896,7 @@ export function PreviewScreen() {
             type="button"
             className={styles.secondaryButton}
             onClick={resetClipWindow}
+            disabled={applying}
             title="手動指定を消して --pre / --post の自動区間に戻す"
             data-testid="preview-clip-clear"
           >

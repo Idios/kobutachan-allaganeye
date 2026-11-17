@@ -631,22 +631,37 @@ def _with_clip_overrides(
             continue
         if not isinstance(clip_end, (int, float)) or isinstance(clip_end, bool):
             continue
-        if not (math.isfinite(clip_start) and math.isfinite(clip_end)):
+        # 手編集された JSON は 401 桁整数などを含み得る。`float()` が
+        # OverflowError を投げるので、ここで閉じ込めて無視する (既存の
+        # `plan_clips` の `_finite_seconds` と同じ扱い)。
+        try:
+            start_value = float(clip_start)
+            end_value = float(clip_end)
+            timestamp_value = float(timestamp)
+        except (OverflowError, ValueError):
             continue
-        if clip_end <= clip_start:
+        if not (math.isfinite(start_value) and math.isfinite(end_value)):
             continue
-        saved[(signal_id, round(float(timestamp), 2))] = {
-            "clip_start": float(clip_start),
-            "clip_end": float(clip_end),
+        if not math.isfinite(timestamp_value):
+            continue
+        if end_value <= start_value:
+            continue
+        saved[(signal_id, round(timestamp_value, 2))] = {
+            "clip_start": start_value,
+            "clip_end": end_value,
         }
     if not saved:
         return events
     merged: list[dict[str, Any]] = []
     for event in events:
-        key = (
-            str(event.get("signal_id")),
-            round(float(event.get("timestamp", 0.0)), 2),
-        )
+        raw_timestamp = event.get("timestamp")
+        try:
+            timestamp_value = (
+                float(raw_timestamp) if isinstance(raw_timestamp, (int, float)) else 0.0
+            )
+        except (OverflowError, ValueError):
+            timestamp_value = 0.0
+        key = (str(event.get("signal_id")), round(timestamp_value, 2))
         override = saved.get(key)
         if override is None:
             merged.append(event)

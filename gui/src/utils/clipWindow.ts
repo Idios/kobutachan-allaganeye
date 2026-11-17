@@ -64,6 +64,22 @@ export function eventClipWindow(
   return { start, end };
 }
 
+/**
+ * 区間がクリップとして成立するか。
+ *
+ * - 自動区間 (束ね + pre/post): 幅 0.01 秒以上。CLI は `round(..., 2)` してから
+ *   0 幅を判定するので、丸めたら潰れる幅は書かれない。
+ * - ユーザー指定区間: CLI の判定 (`round(start,2) < round(end,2)`) に合わせて、
+ *   幅が 0.01 秒未満でも丸めた両端が異なれば成立する
+ *   (例: 100.004-100.011 は丸めで 100.00-100.01 になり書き出される)。
+ *   丸めは half-up 近似 (厳密な half-even の差は 0.005 秒の端のみ)。
+ */
+function windowSurvives(start: number, end: number, explicit: boolean): boolean {
+  if (end - start >= MIN_WINDOW_SECONDS) return true;
+  if (!explicit) return false;
+  return Math.round(end * 100) > Math.round(start * 100);
+}
+
 /** 実際に書き出される区間を `metadata.events` の 1 始まり位置で引く map を作る。 */
 export function planClipWindows(
   events: readonly HighlightEvent[] | undefined,
@@ -147,7 +163,7 @@ export function planClipWindows(
     const span = spans.get(item.matchIndex)!;
     const start = Math.max(0, span.start, item.start);
     const end = Math.min(span.end, item.end);
-    if (end - start >= MIN_WINDOW_SECONDS) {
+    if (windowSurvives(start, end, true)) {
       windows.set(item.position, { start, end });
     }
   }

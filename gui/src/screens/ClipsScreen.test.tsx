@@ -318,6 +318,22 @@ describe('planClipWindows (CLI plan_clips の鏡)', () => {
     expect(planClipWindows(events, MATCHES, 0, 0).size).toBe(0);
   });
 
+  // 明示区間は CLI が端点を丸めてから判定するので、生の幅 < 0.01 秒でも
+  // 丸めた両端が違えば書き出される (codex review 2026-11-17)。
+  it('keeps an explicit window narrower than 0.01 s when rounding keeps it', () => {
+    const events: HighlightEvent[] = [
+      {
+        ...EVENTS[0],
+        timestamp: 100.004,
+        end: 100.011,
+        clip_start: 100.004,
+        clip_end: 100.011,
+      },
+    ];
+    const windows = planClipWindows(events, MATCHES, 0, 0);
+    expectWindow(windows, 1, 100.004, 100.011);
+  });
+
   it('keeps windows of 0.01 s or wider (CLI writes them)', () => {
     const events: HighlightEvent[] = [
       { ...EVENTS[0], timestamp: 1300, end: 1300.02, match_index: 2 },
