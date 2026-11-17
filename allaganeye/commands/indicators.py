@@ -28,6 +28,7 @@ from typing import Annotated, Any
 
 import typer
 
+from allaganeye.detection.format import format_hms
 from allaganeye.detection.metadata_writer import (
     read_metadata,
     resolve_source_path,
@@ -590,19 +591,6 @@ def run_indicators(
     return report
 
 
-def format_timestamp(seconds: float) -> str:
-    """秒を `hh:mm:ss` にする (#127)。
-
-    L4 のイベントは録画全体の時刻で読む (試合相対は自分で引く) ため、分だけを
-    積み上げる `mm:ss` ではなく `hh:mm:ss` に揃える。1 秒未満は切り捨てる
-    (保存値は 0.01 秒精度のままで、表示だけが見やすさを優先する)。
-    """
-    total = int(max(0.0, seconds))
-    hours, remainder = divmod(total, 3600)
-    minutes, secs = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-
-
 _SIGNAL_LABELS: dict[str, str] = {
     "ko_indicator": "KO",
     "assist_indicator": "ASSIST",
@@ -623,8 +611,8 @@ def print_summary(
         # 未知 signal_id は生の id を出す (既知分だけを人間向け表記にする)。
         label = _SIGNAL_LABELS.get(event["signal_id"], event["signal_id"])
         typer.echo(
-            f"  {format_timestamp(event['timestamp'])} - "
-            f"{format_timestamp(event['end'])}  "
+            f"  {format_hms(event['timestamp'])} - "
+            f"{format_hms(event['end'])}  "
             f"{label:6s} score={event['score']:.2f}  ({where})"
         )
     if output is not None:

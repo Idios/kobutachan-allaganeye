@@ -120,6 +120,7 @@ allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR]    # 指定領域�
 allaganeye export <metadata.json> -o <dir>                       # metadata から並列書き出し (#761、default codec=copy)
 allaganeye export <metadata.json> -o <dir> --codec h264           # H.264 再エンコード（NVENC/QSV/AMF/libx264 を自動選択）
 allaganeye indicators <metadata.json> [-o events.json] [--json]   # KO / ASSIST インジケータ検出 (#1106、0.1 秒刻み。indicator_layout を metadata に write-back)
+allaganeye clips <metadata.json> [-o DIR] [--pre SEC] [--post SEC] [--gap SEC]  # L4 イベントの前後を切り抜く (#135/#1050。既定 copy、--codec h264 で再エンコード)
 
 # GUI (L2a Tauri、#483 で bootstrap)
 # 詳細は docs/gui-development.md を参照
@@ -170,6 +171,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `export/encoder.py` | H.264 エンコーダ選択ロジック (#761)。GUI Rust 側から移植し CLI / GUI で単一の正を共有 |
 | `export/nvenc_probe.py` | SKU テーブルによる NVENC 物理エンジン数の推定 (#761)。live な `nvidia-smi` probe は不採用 |
 | `export/pool.py` | 並列 export オーケストレータ (#761)。`ThreadPoolExecutor` で N ワーカーを起動し、`cancel_event` で in-flight ffmpeg を kill |
+| `export/clips.py` | L4 イベントから切り抜きクリップを計画する純関数 (#135 / #1050 Phase A)。近接イベントの束ね（`--gap`）/ 前後マージン（`--pre` / `--post`）/ 試合区間へのクランプを担い、ffmpeg は呼ばない。設計の正は [docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md](docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md) と同じ `events[]` |
 | `export/ffmpeg_runner.py` | 単一 match の ffmpeg 起動 + libx264 fallback retry (#761)。NVDEC/NVENC 失敗パターン検知は `_nvenc_decode_stage_failure` (#791 / #899) |
 | `export/schema.py` | stdout JSON Lines の wire protocol dataclass (#761)。Rust `start_export` が `ExportProgress` イベントへ変換 |
 | `export/wire.py` | thread-safe な stdout JSON Lines emitter (#761)。`threading.Lock` で 1 行 emit の原子性を保証 |
@@ -182,6 +184,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `commands/minimap.py` | minimap コマンド。提案モード（領域検出・表示、exit 4）/ crop モード（`--region` 指定、H.264 encode + metadata write-back、#481） |
 | `commands/export.py` | export コマンド (#761)。metadata.json (positional または `--stdin`) を読み、エンコーダスロットを列挙して並列 export を実行。`--json` で JSON Lines 進捗を emit |
 | `commands/indicators.py` | indicators コマンド (#1106 作業項目 9)。metadata.json を読み、試合区間内のフレームで探索領域をキャリブレーション (またはキャッシュを再利用) し、0.1 秒刻みで KO / ASSIST を検出して出力する。`indicator_layout` とイベント列 (`events`、#127) を metadata に write-back（`--expected-mtime` CAS 対応）。人間向け summary の時刻は `hh:mm:ss` |
+| `commands/clips.py` | clips コマンド (#135 / #1050 Phase A)。`metadata.json` の `events[]` から前後マージン付きクリップを計画し、`export_matches` を再利用して書き出す（既定 `--codec copy`、`--codec h264` で再エンコード）。`--json` は `export` と同じ wire 形状（`match_index` = クリップ番号） |
 | `commands/encoder_slots.py` | 隠しコマンド `encoder-slots` (#761)。GUI Tauri `enumerate_h264_encoders` が subprocess で呼び、EncoderSlot 一覧を JSON で返す |
 | `video/areamap.py` | エリアマップ window の seed 検出 + per-match consensus（`resolve_match_regions`）。cv2 は lazy import（opencv 未インストール環境でも import 失敗しない）。提案モード専用 (#481) |
 | `detection/` | 検知パイプラインの共有ヘルパ (#463)。`format.py` (フォーマッタ) / `metadata_writer.py` (atomic read/write) / `migrations.py` (`schema_version` 検証 + 前方 migration、#515) / `progress_emitter.py` (`--progress-format json` の JSON Lines emitter、#569) / `warnings.py` (metadata `warnings` の payload scaffold、#518) |
