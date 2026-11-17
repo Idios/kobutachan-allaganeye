@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Iterator
 from itertools import pairwise
 
@@ -306,3 +307,51 @@ def test_scan_propagates_detector_errors() -> None:
             frames_factory=_fake_frames(120.0, INTERVAL),
             detect=boom,
         )
+
+
+def test_a_failing_chunk_stops_the_siblings() -> None:
+    """1 つのワーカーが落ちたら、他のチャンクの走査も止まる (codex P2)。
+
+    `future.result()` を投入順に待つだけだと、後ろのチャンクが先に失敗しても
+    前のチャンクの完了まで気づかない。長時間録画ではそれが数分の空走りになる。
+    """
+    produced = 0
+    lock = threading.Lock()
+
+    def factory(_video, *, fps, frame_size, start=0.0, duration=None, crop=None):
+        """前半チャンクは IDLE、後半チャンク (start >= 100s) は HIT を出す。"""
+        nonlocal produced
+        mark = MARK_HIT if start >= 100.0 else MARK_IDLE
+        index = 0
+        while True:
+            timestamp = round(start + index * INTERVAL, 6)
+            if duration is not None and timestamp >= start + duration - 1e-9:
+                return
+            with lock:
+                produced += 1
+            time.sleep(0.001)  # 兄弟が先に走っている状況を作る
+            yield timestamp, np.full((2, 2), mark, dtype=np.uint8)
+            index += 1
+
+    class Boom(Exception):
+        pass
+
+    def detect(frame: np.ndarray) -> tuple[str | None, float]:
+        if int(frame[0, 0]) == MARK_HIT:
+            raise Boom("second chunk failed")
+        return None, 0.0
+
+    with pytest.raises(Boom):
+        scan_detections(
+            "unused.mp4",
+            interval=INTERVAL,
+            total=200.0,
+            frame_size=(1920, 1080),
+            crop=None,
+            workers=2,
+            frames_factory=factory,
+            detect=detect,
+        )
+
+    # 前半チャンク (1000 フレーム) を走り切っていれば、兄弟が止まっていない。
+    assert produced < 600, f"sibling kept scanning: {produced} frames"

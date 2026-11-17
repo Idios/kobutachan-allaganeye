@@ -22,7 +22,7 @@ import math
 import os
 import threading
 from collections.abc import Callable, Iterable, Iterator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -179,6 +179,12 @@ def scan_detections(
                     if on_progress is not None and processed >= next_progress:
                         on_progress(min(processed, total))
                         next_progress += progress_step
+        except BaseException:
+            # 兄弟ワーカーを即座に止める (codex review 2026-11-18 P2): 自分の
+            # 失敗は `future.result()` の完了順でしか外に出ないので、ここで
+            # halt を立てておかないと他のチャンクが何分も空走りする。
+            halt.set()
+            raise
         finally:
             # 早期終了 / 例外でも ffmpeg を確実に止める (generator の finally)。
             close = getattr(frames, "close", None)
@@ -189,7 +195,9 @@ def scan_detections(
     with ThreadPoolExecutor(max_workers=len(chunks)) as pool:
         futures = [pool.submit(run, index, chunk) for index, chunk in enumerate(chunks)]
         try:
-            for future in futures:
+            # 完了順に拾う: 後ろのチャンクが先に落ちたら、投入順の待ちに
+            # 引きずられずに即座に外へ伝える。
+            for future in as_completed(futures):
                 future.result()
         except BaseException:
             halt.set()
