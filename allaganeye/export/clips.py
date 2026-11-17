@@ -82,9 +82,11 @@ class ClipPlan:
 def filter_clips(plan: ClipPlan, event_indexes: Iterable[int]) -> ClipPlan:
     """`event_indexes` (1 始まりの `events[]` 位置) を含むクリップだけ残す。
 
-    GUI の「選択した 1 件だけ切り抜く」用 (#1131 Q2 C)。クリップ番号は 1 から
-    振り直す (`--name-pattern` の `{idx}` が飛ばないように)。索引が 1 つも
-    クリップに含まれない場合は空の計画になる。
+    GUI の「選択した 1 件だけ切り抜く」用 (#1131 Q2 C)。**クリップ番号は元の
+    計画のまま保つ** (振り直さない)。`--name-pattern` の `{idx}` が番号を決める
+    ので、振り直すと「全件切り抜き -> 2 番目だけ再切り抜き」が 1 番のファイル名を
+    指し、`--overwrite` 併用時に**別のクリップを潰す**。番号を保てば、同じ
+    イベントの再切り抜きは同じファイル名 (自分の前回出力) に当たるだけで済む。
 
     `merged_events` は **残したクリップの中だけ** で数え直す (全件時の値を
     そのまま出すと、1 本だけ切り抜いたのに「3 件を束ねた」と報告してしまう)。
@@ -94,22 +96,11 @@ def filter_clips(plan: ClipPlan, event_indexes: Iterable[int]) -> ClipPlan:
     if not wanted:
         # 未指定 = 絞り込まない (CLI の `--event-index` 省略と同じ意味)。
         return plan
-    kept = [clip for clip in plan.clips if wanted.intersection(clip.event_indexes)]
-    reindexed = tuple(
-        Clip(
-            index=position,
-            match_index=clip.match_index,
-            start=clip.start,
-            end=clip.end,
-            signal_ids=clip.signal_ids,
-            event_indexes=clip.event_indexes,
-        )
-        for position, clip in enumerate(kept, start=1)
-    )
+    kept = tuple(clip for clip in plan.clips if wanted.intersection(clip.event_indexes))
     return ClipPlan(
-        clips=reindexed,
+        clips=kept,
         outside_events=plan.outside_events,
-        merged_events=sum(len(clip.event_indexes) - 1 for clip in reindexed),
+        merged_events=sum(len(clip.event_indexes) - 1 for clip in kept),
     )
 
 

@@ -434,9 +434,9 @@ def test_clips_event_index_cuts_only_the_selected_clip(
     metadata = _metadata(tmp_path)
     result = runner.invoke(app, ["clips", str(metadata), "--event-index", "3"])
     assert result.exit_code == 0, result.output
-    # 3 件目 (700 秒) だけ。クリップ番号は 1 から振り直す。
+    # 3 件目 (700 秒) だけ。クリップ番号は計画時の 2 番目のまま (振り直さない)。
     assert [(m.index, m.start, m.end) for m in export_stub.matches] == [
-        (1, 690.0, 711.5)
+        (2, 690.0, 711.5)
     ]
     assert export_stub.matches[0].type_label == "ko"
 
@@ -484,7 +484,7 @@ def test_clips_event_index_out_of_range_writes_nothing(
 def test_clips_event_index_is_repeatable(
     app: typer.Typer, tmp_path: Path, export_stub: _Call
 ) -> None:
-    """複数指定できる (CLI 単体では束ね選択も可能)。"""
+    """複数指定できる (CLI 単体では束ね選択も可能)。番号は計画時のまま。"""
     metadata = _metadata(tmp_path)
     result = runner.invoke(
         app,
@@ -499,6 +499,27 @@ def test_clips_event_index_is_repeatable(
     )
     assert result.exit_code == 0, result.output
     assert [m.index for m in export_stub.matches] == [1, 2]
+
+
+def test_clips_event_index_keeps_names_stable_across_single_cuts(
+    app: typer.Typer, tmp_path: Path, export_stub: _Call
+) -> None:
+    """1 件ずつ切り抜いても、別のイベントが同じ `{idx}` を使わない。
+
+    振り直すと 2 回目の `--event-index 3` が `clip_001.mp4` を指し、
+    `--overwrite` 併用時に先に切り抜いた 1 番を潰す (Codex review 2026-11-16)。
+    """
+    metadata = _metadata(tmp_path)
+    runner.invoke(app, ["clips", str(metadata), "--event-index", "1"])
+    first = [m.index for m in export_stub.matches]
+
+    export_stub.matches = []
+    runner.invoke(app, ["clips", str(metadata), "--event-index", "3"])
+    second = [m.index for m in export_stub.matches]
+
+    assert first == [1]
+    assert second == [2]
+    assert set(first).isdisjoint(second)
 
 
 def test_clips_reports_output_dir_creation_failure(

@@ -263,8 +263,23 @@ def test_filter_clips_keeps_only_the_selected_clip() -> None:
     filtered = filter_clips(plan, [2])
     assert len(filtered.clips) == 1
     assert filtered.clips[0].match_index == 2
-    assert filtered.clips[0].index == 1  # 1 から振り直す
+    # 番号は計画時のまま (振り直さない)。`--name-pattern` の `{idx}` が
+    # 別のクリップを指さないようにするため (Codex review 2026-11-16)。
+    assert filtered.clips[0].index == 2
     assert filtered.clips[0].event_indexes == (2,)
+
+
+def test_filter_clips_never_maps_two_selections_to_one_name() -> None:
+    """別のイベントを選んだのに同じ `{idx}` にならない (全件 -> 1 件再切り抜き)。"""
+    events = [_event(200.0), _event(700.0, match_index=2)]
+    plan = plan_clips(events, MATCHES)
+
+    first = filter_clips(plan, [1]).clips[0]
+    second = filter_clips(plan, [2]).clips[0]
+
+    assert first.index != second.index
+    assert first.index == plan.clips[0].index
+    assert second.index == plan.clips[1].index
 
 
 def test_filter_clips_selects_the_whole_merged_group() -> None:

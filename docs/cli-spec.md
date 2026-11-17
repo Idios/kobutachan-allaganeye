@@ -615,7 +615,9 @@ KO: 1 / ASSIST: 2 (3 intervals)
   前回のクリップを壊さないようにするため
 - `--event-index N` で **1 本だけ切り抜ける**（繰り返し可）。索引は `events[]` の
   1 始まりの位置で、束ねられた仲間のどれを指定してもそのクリップ全体を書き出す
-  （GUI の「選択した 1 件だけ切り抜く」がこの経路を使う・#1131）
+  （GUI の「選択した 1 件だけ切り抜く」がこの経路を使う・#1131）。**クリップ番号は
+  計画時のまま保つ**（1 から振り直さない）ので、同じイベントの再切り抜きは同じ
+  ファイル名（自分の前回出力）に当たり、別のイベントのクリップを潰さない
 
 ### 構文
 
@@ -658,9 +660,9 @@ warning: 2 event(s) fall outside every match and were skipped (a clip range cann
 ```
 
 `--json` モードは `export` と同じ行（`progress` / `result` / `error` / `fallback` / `summary`）を出す。
-`match_index` は**クリップ番号**（1 始まり）。`--event-index` で絞り込んだ場合も
-**書き出す順に 1 から振り直す**（`--name-pattern` の `{idx:03}` が飛ばない）。
-計画段階の失敗は `{"type":"error","message":"..."}` を 1 行出してから exit code を返す。
+`match_index` は**クリップ番号**（1 始まりの計画順。`--event-index` で絞り込んでも
+番号は飛んでよいので振り直さない）。計画段階の失敗は
+`{"type":"error","message":"..."}` を 1 行出してから exit code を返す。
 
 ### Exit Codes
 
