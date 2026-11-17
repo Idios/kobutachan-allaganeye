@@ -71,7 +71,7 @@ stateDiagram-v2
 >
 > **indicators 画面内の status 遷移** (`idle / running / complete / error`) は §5 の indicators 節および [ui-interaction-spec.md §2.7](ui-interaction-spec.md) を参照 (#1106 Phase 2)。`indicators --> preview` は画面遷移と同時に `appStateStore.pendingSeekSeconds` を積み、PreviewScreen が IN pane の `video.currentTime` に一度だけ反映する (§5 indicators 節)。
 >
-> **clips 画面内の status 遷移** (`idle / running / complete / error`) は §5 の clips 節および [ui-interaction-spec.md §2.8](ui-interaction-spec.md) を参照 (#1131 Phase B2)。`clips --> preview` は `appStateStore.clipRange` (イベントの前後秒数で計算した絶対秒の区間) と `pendingSeekSeconds` を同時に積み、PreviewScreen が範囲バナーと先頭 / 末尾シークを出す。試合境界 (`startT` / `endT`) には触らない。
+- **clips 画面内の status 遷移** (`idle / running / complete / error`) は §5 の clips 節および [ui-interaction-spec.md §2.8](ui-interaction-spec.md) を参照 (#1131 Phase B2)。`clips --> preview` は `appStateStore.clipRange` (イベントの前後秒数で計算した絶対秒の区間 + `matchIndex`) と `pendingSeekSeconds` を同時に積み、PreviewScreen が範囲バナーと先頭 / 末尾シークを出す。試合境界 (`startT` / `endT`) には触らない。
 
 **アプリ終了**: ウィンドウ右上 `×` (Tauri chrome) = 即時 app exit。任意の screen / phase から `[*]` への遷移は暗黙。Phase 2 では警告なし (dummy のため)。Phase 3/4 で running 中の confirm + process kill を追加予定 (**#523** で追跡)。
 
@@ -431,8 +431,10 @@ stateDiagram-v2
 
 - 状態の正は [`clipsStore.ts`](../gui/src/state/clipsStore.ts) の `ClipsStatus` (`idle / running / complete / error`)。画面ローカルの reducer は持たず、実行状態は store に集約する (indicators と同じ設計)
 - 候補は `metadata.events` (#127) から復元する (`indicatorsStore` の結果ではない)。未知の `signal_id` と `match_index: null` は除外し、`position` は **元の `events[]` の 1 始まり位置** のまま保つ (CLI `--event-index` にそのまま渡す)
+- 行に出す「範囲」とプレビューの `clipRange` は `planClipWindows()` の戻り値。CLI の近接束ね (`--gap` 既定 5 秒) + 試合区間クランプを鏡にしており、「表示と違う長さのファイルが出る」ことを防ぐ
 - 実行は **1 件ずつ**。store が走行中の再入を拒否するので、連続クリックで複数 CLI が重なることはない
 - `dirty` (未適用の編集) / sample mode の間は [⬦ 切り抜く] を disabled にする。CLI は **disk の metadata.json** を読むため、in-memory の `events[]` と位置がずれる可能性がある
+- spawn 直前にも `get_metadata_mtime` で disk の mtime を照合し、load 後に `events[]` が外部書き換えされていれば実行しない (候補を読み直して再クリックを促す。mtime 不明時も fail-closed)
 - 既存出力があると CLI は exit 5 で拒否する (無確認の truncate 防止)。`error.message` に `already exist` を含むときだけ [▼ 上書きして切り抜く] を出し、それ以外の exit 5 (秒数の入力ミス等) では出さない。中断で書きかけの MP4 が残る件は #1132
 - [◀ 一覧へ] は常に enabled (indicators と同じ)。走行中に離れても subprocess は走り続ける
 - 画面内の UI 部品ごとの操作 → store mutation は [ui-interaction-spec.md §2.8](ui-interaction-spec.md) が正

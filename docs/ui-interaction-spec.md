@@ -1420,6 +1420,10 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 **dirty / sample mode**: [⬦ 切り抜く] は `filePath === null` (§1.4) または `dirty === true` で disabled。CLI は **disk の metadata.json** を読むため、未適用の編集があると in-memory の `events[]` と位置がずれて**別のイベントを切り抜き得る**。理由文は §2.8.2 のノートに出す。
 
+**spawn 直前の mtime 照合**: 同じ理由で、`dirty` が false でも `events[]` が**外部プロセスに書き換えられて**いる可能性がある (別端末で `allaganeye indicators` を回す等)。[⬦ 切り抜く] は spawn 前に `get_metadata_mtime` で disk の mtime を照合し、`loadedMtimeMs` と一致しなければ実行せず `refreshFromDiskPreservingEdits()` で候補を読み直して注意書き (`data-testid="clips-stale-note"`) を出す。mtime を取れないときも fail-closed で実行しない。
+
+**表示する範囲 = 実際に書かれる範囲**: 行の「範囲」とプレビューの `clipRange` は `planClipWindows()` の戻り値を使う。これは CLI (`allaganeye/export/clips.py` の `plan_clips`) の **近接束ね (`--gap` 既定 5 秒) + 試合区間クランプ** を GUI 側で鏡にしたもので、自前の `clipRangeFor()` (単独イベントの前後) を表示に使うと「表示と違う長さのファイルが出る」ことになる (codex review 2026-11-17)。鏡にしている都合上、CLI 側の束ね規則を変えたら本関数も同時に直す必要がある。
+
 #### §2.8.1 前後秒数 / 形式のフォーム
 
 | 項目 | 内容 |
@@ -1445,10 +1449,10 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | `match_index` ごとのグループ (`data-testid="clips-group-<index>"`) + `<li data-testid="clips-candidate-<position>">`。行内は badge (`KO` / `ASSIST`) + イベントの時刻範囲 (`hh:mm:ss - hh:mm:ss`) + 切り抜き範囲 (`範囲 hh:mm:ss - hh:mm:ss ・ N 秒`) + [この範囲を確認] (secondary) + [⬦ 切り抜く] (primary) |
-| 状態 | 候補が 1 件以上のとき常時描画。走行中は [⬦ 切り抜く] のみ disabled (別行の実行中に別の run を重ねない) |
-| 遷移トリガー | [この範囲を確認] → `clipRangeFor(event, pre, post)` を `appStateStore.clipRange` に入れ、`pendingSeekSeconds = range.start` → `openPreviewFor(match_index)`。 [⬦ 切り抜く] → `cutOne(position, overwrite=false)` |
+| 状態 | 候補が 1 件以上のとき常時描画。走行中は [⬦ 切り抜く] のみ disabled (別行の実行中に別の run を重ねない)。`planClipWindows()` が区間を返さない行 (クランプで 0 幅) は範囲を `範囲外` とし、両ボタンを disabled にする |
+| 遷移トリガー | [この範囲を確認] → `planClipWindows()` の区間を `appStateStore.clipRange` (`{start, end, matchIndex}`) に入れ、`pendingSeekSeconds = range.start` → `openPreviewFor(match_index)`。 [⬦ 切り抜く] → `cutOne(position, overwrite=false)` |
 | store mutation | `appStateStore.setClipRange` / `setPendingSeekSeconds` / `openPreviewFor`、または `clipsStore.start()` |
-| 例外 / edge case | 時刻は両方とも `hh:mm:ss` (1 秒切り捨て、出所は `utils/time.ts` の `fmtClockTime`)。`clipRange` の終端は `start` より前にならず、`start` は 0 秒でクランプする。試合区間へのクランプは CLI 側 (§2.8 ヘッダ)。ボタンの可視名は `KO 00:08:13 の範囲をプレビューで確認` / `KO 00:08:13 を切り抜く` |
+| 例外 / edge case | 時刻は両方とも `hh:mm:ss` (1 秒切り捨て、出所は `utils/time.ts` の `fmtClockTime`)。`clipRange` の終端は `start` より前にならず、`start` は 0 秒でクランプする。試合区間へのクランプと近接イベントの束ねは `planClipWindows()` が担う (§2.8 ヘッダ)。`clipRange.matchIndex` はプレビュー側のスコープキーで、別の試合を開くとバナーが出ない。ボタンの可視名は `KO 00:08:13 の範囲をプレビューで確認` / `KO 00:08:13 を切り抜く` |
 
 #### §2.8.4 前後秒数の検証エラー
 
@@ -1478,7 +1482,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | `status === 'error'` のとき。上書き再実行は `error.message` に `already exist` を含むとき**だけ**出す |
 | 遷移トリガー | [上書きして切り抜く] → 直前に実行した `position` を `overwrite: true` で再実行 |
 | store mutation | `clipsStore.start()` |
-| 例外 / edge case | CLI は既存出力を既定で拒否する (exit 5、無確認の truncate 防止)。exit 5 はオプション値不正と共用なので、`already exist` の文言でのみ上書き導線を出す (秒数のミスで勝手に上書きしない)。中断で書きかけの MP4 が残る件は [#1132](https://github.com/Idios/kobutachan-allaganeye/issues/1132) |
+| 例外 / edge case | CLI は既存出力を既定で拒否する (exit 5、無確認の truncate 防止)。exit 5 はオプション値不正と共用なので、`already exist` の文言でのみ上書き導線を出す (秒数のミスで勝手に上書きしない)。上書き再実行も `cutOne()` を通るので、`dirty` / mtime 不一致 / sample mode では同じく止まる (§2.8 ヘッダ)。中断で書きかけの MP4 が残る件は [#1132](https://github.com/Idios/kobutachan-allaganeye/issues/1132) |
 
 #### §2.8.7 [◀ 一覧へ] / [⬦ KO / ASSIST を検出] / header
 

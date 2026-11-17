@@ -104,12 +104,13 @@ export interface AppState {
   /**
    * #1131 Phase B2: プレビューで「クリップ範囲モード」を出すための区間 (絶対秒)。
    *
-   * ClipsScreen が `前後秒数` を確定して `{ start, end }` を入れ、PreviewScreen が
-   * 範囲バナーと先頭 / 末尾へのシークを出す。**試合境界 (`startT` / `endT`) とは
-   * 別物**で、クリップは「イベントの前 `pre` 秒〜後 `post` 秒」を指す。`null` なら
-   * 通常の preview (境界調整) として振る舞う。
+   * ClipsScreen が `前後秒数` を確定して `{ start, end, matchIndex }` を入れ、
+   * PreviewScreen が **その match を開いている間だけ** 範囲バナーと先頭 / 末尾への
+   * シークを出す (`matchIndex` が一致しない preview では無視する)。**試合境界
+   * (`startT` / `endT`) とは別物**で、クリップは「イベントの前 `pre` 秒〜後 `post` 秒」
+   * を試合区間へクランプした区間を指す。`null` なら通常の preview。
    */
-  clipRange: { start: number; end: number } | null;
+  clipRange: { start: number; end: number; matchIndex: number } | null;
 
   /** Switch to a different screen. */
   navigate: (screen: AppScreen) => void;
@@ -128,7 +129,9 @@ export interface AppState {
   /** Set / clear the one-shot preview seek position (#1106 Phase 2). */
   setPendingSeekSeconds: (seconds: number | null) => void;
   /** Set / clear the preview clip range (#1131 Phase B2). */
-  setClipRange: (range: { start: number; end: number } | null) => void;
+  setClipRange: (
+    range: { start: number; end: number; matchIndex: number } | null,
+  ) => void;
   /** Reset everything back to a freshly launched state (screen = 'drop'). */
   reset: () => void;
 }

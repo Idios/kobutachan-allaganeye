@@ -914,7 +914,9 @@ describe('#1106 PreviewScreen pendingSeekSeconds handoff', () => {
 
 describe('#1131 PreviewScreen clip range banner', () => {
   it('renders the clip window from appStateStore.clipRange', () => {
-    useAppStateStore.getState().setClipRange({ start: 483.4, end: 504.9 });
+    useAppStateStore
+      .getState()
+      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 4 });
     render(<PreviewScreen />);
     const banner = screen.getByTestId('preview-clip-range');
     expect(banner).toHaveTextContent('クリップ範囲 00:08:03 - 00:08:24');
@@ -923,7 +925,9 @@ describe('#1131 PreviewScreen clip range banner', () => {
 
   it('seeks the IN pane to the range start / end', async () => {
     const user = userEvent.setup();
-    useAppStateStore.getState().setClipRange({ start: 483.4, end: 504.9 });
+    useAppStateStore
+      .getState()
+      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 4 });
     render(<PreviewScreen />);
     const video = await screen.findByLabelText<HTMLVideoElement>(
       'IN (start) video',
@@ -940,7 +944,11 @@ describe('#1131 PreviewScreen clip range banner', () => {
     const user = userEvent.setup();
     const before = useMetadataStore.getState().metadata!;
     const match = before.matches.find((m) => m.index === 4)!;
-    useAppStateStore.getState().setClipRange({ start: match.start_time + 5, end: match.start_time + 30 });
+    useAppStateStore.getState().setClipRange({
+      start: match.start_time + 5,
+      end: match.start_time + 30,
+      matchIndex: 4,
+    });
     render(<PreviewScreen />);
 
     await user.click(screen.getByTestId('preview-clip-clear'));
@@ -951,6 +959,16 @@ describe('#1131 PreviewScreen clip range banner', () => {
   });
 
   it('renders no banner while clipRange is null', () => {
+    render(<PreviewScreen />);
+    expect(screen.queryByTestId('preview-clip-range')).not.toBeInTheDocument();
+  });
+
+  // codex review 2026-11-17: クリップ範囲は特定のイベントのもの。別の試合の
+  // preview に前の範囲が残ると、存在しない時刻へシークさせてしまう。
+  it('hides the banner when the range belongs to another match', () => {
+    useAppStateStore
+      .getState()
+      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 1 });
     render(<PreviewScreen />);
     expect(screen.queryByTestId('preview-clip-range')).not.toBeInTheDocument();
   });

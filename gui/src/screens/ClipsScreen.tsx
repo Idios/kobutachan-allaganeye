@@ -20,6 +20,7 @@
  * 実行は直列 (store が走行中の再入を拒否する)。既存出力があると CLI が exit 5 で
  * 拒否するので、そのときだけ [上書きして切り抜く] を出す (#1132 の緩和)。
  */
+import { invoke } from '@tauri-apps/api/core';
 import { useMemo, useState } from 'react';
 
 import pathStyles from '../styles/path-display.module.css';
@@ -40,6 +41,9 @@ import styles from './ClipsScreen.module.css';
 
 /** CLI `clips` の `--pre` / `--post` 既定値 (allaganeye/export/clips.py)。 */
 export const DEFAULT_MARGIN_SECONDS = 10;
+
+/** CLI `clips` の `--gap` 既定値。束ね判定に使う。 */
+export const DEFAULT_GAP_SECONDS = 5;
 
 const SECONDS_RE = /^\d+(\.\d+)?$/;
 
@@ -105,10 +109,12 @@ export function groupClipCandidates(
 }
 
 /**
- * イベント 1 件の切り抜き区間 (元録画の絶対秒)。
+ * イベント 1 件の切り抜き区間 (元録画の絶対秒)。CLI と同じく 0 秒でクランプし、
+ * 終端が開始より前にならないようにする。
  *
- * CLI と同じく 0 秒でクランプし、終端が開始より前にならないようにする
- * (試合区間へのクランプは CLI 側が行う)。
+ * これは **単独イベント** の区間で、実際に書き出されるクリップは近接イベントを
+ * 束ねて試合区間へクランプした結果になる。画面表示 / プレビューには
+ * [`planClipWindows`] の戻り値を使うこと。
  */
 export function clipRangeFor(
   event: Pick<HighlightEvent, 'timestamp' | 'end'>,
@@ -122,6 +128,101 @@ export function clipRangeFor(
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+export interface ClipWindow {
+  start: number;
+  end: number;
+}
+
+/**
+ * CLI (`allaganeye/export/clips.py` の `plan_clips` + `filter_clips`) と同じ規則で
+ * **実際に書き出される区間** を求める。
+ *
+ * 規則の正は Python 側で、ここはその鏡。プレビューや行の表示が「書かれるクリップと
+ * 違う範囲」を見せないために必要 (codex review 2026-11-17):
+ *
+ * 1. 試合内のイベントを `timestamp` 昇順に並べ、`次の start - 現在の end <= gap`
+ *    なら同じグループへ束ねる (未知の `signal_id` も CLI は束ね対象に含む)
+ * 2. グループの区間を `[イベント開始 - pre, イベント終端 + post]` にして
+ *    `[0, 試合開始, 試合終了]` でクランプする
+ * 3. クランプ後に `end <= start` になるグループはクリップにならない
+ *
+ * 戻り値は **`metadata.events` の 1 始まり位置 -> 区間**。
+ */
+export function planClipWindows(
+  events: readonly HighlightEvent[] | undefined,
+  matches: readonly { index: number; start_time: number; end_time: number }[],
+  pre: number,
+  post: number,
+  gap: number = DEFAULT_GAP_SECONDS,
+): Map<number, ClipWindow> {
+  const spans = new Map<number, { start: number; end: number }>();
+  for (const match of matches) {
+    if (Number.isFinite(match.start_time) && Number.isFinite(match.end_time)) {
+      spans.set(match.index, { start: match.start_time, end: match.end_time });
+    }
+  }
+
+  interface Item {
+    position: number;
+    matchIndex: number;
+    start: number;
+    end: number;
+  }
+  const items: Item[] = [];
+  (events ?? []).forEach((event, index) => {
+    const matchIndex = event.match_index;
+    if (matchIndex === null || !spans.has(matchIndex)) return;
+    if (!Number.isFinite(event.timestamp) || !Number.isFinite(event.end)) return;
+    items.push({
+      position: index + 1,
+      matchIndex,
+      start: event.timestamp,
+      end: Math.max(event.end, event.timestamp),
+    });
+  });
+  items.sort((a, b) =>
+    a.matchIndex !== b.matchIndex
+      ? a.matchIndex - b.matchIndex
+      : a.start !== b.start
+        ? a.start - b.start
+        : a.end - b.end,
+  );
+
+  const windows = new Map<number, ClipWindow>();
+  let group: { matchIndex: number; start: number; end: number; positions: number[] } | null =
+    null;
+  const flush = () => {
+    if (group === null) return;
+    const span = spans.get(group.matchIndex)!;
+    const start = round2(Math.max(0, span.start, group.start - pre));
+    const end = round2(Math.min(span.end, group.end + post));
+    if (end > start) {
+      for (const position of group.positions) windows.set(position, { start, end });
+    }
+    group = null;
+  };
+  for (const item of items) {
+    if (
+      group !== null &&
+      group.matchIndex === item.matchIndex &&
+      item.start - group.end <= gap
+    ) {
+      group.end = Math.max(group.end, item.end);
+      group.positions.push(item.position);
+      continue;
+    }
+    flush();
+    group = {
+      matchIndex: item.matchIndex,
+      start: item.start,
+      end: item.end,
+      positions: [item.position],
+    };
+  }
+  flush();
+  return windows;
 }
 
 /**
@@ -149,6 +250,19 @@ export function parseMargins(
   postText: string,
 ): { pre: number; post: number } {
   return { pre: Number(preText.trim()), post: Number(postText.trim()) };
+}
+
+/**
+ * 表示用の寛容なパース。入力途中 (`""` / `"-"` など) でも行の表示を壊さないよう、
+ * 不正値は 0 として扱う (実行時は `validateMargins` が先に弾く)。
+ */
+function parseMarginsSafe(
+  preText: string,
+  postText: string,
+): { pre: number; post: number } {
+  const read = (text: string) =>
+    SECONDS_RE.test(text.trim()) ? Number(text.trim()) : 0;
+  return { pre: read(preText), post: read(postText) };
 }
 
 function isAlreadyExistsError(message: string | undefined): boolean {
@@ -182,6 +296,8 @@ export function ClipsScreen() {
   const [marginsError, setMarginsError] = useState<string | null>(null);
   /** 直近の実行対象 (上書き再実行のために覚えておく)。 */
   const [lastPosition, setLastPosition] = useState<number | null>(null);
+  /** 実行直前に metadata.json の外部変更を検知して読み直したときの通知。 */
+  const [staleNote, setStaleNote] = useState<string | null>(null);
 
   const videoSource = selectedVideoPath ?? metadata?.source ?? null;
   const isSample = filePath === null;
@@ -221,19 +337,63 @@ export function ClipsScreen() {
         : null;
   const runDisabled = runDisabledReason !== null && displayedStatus !== 'running';
 
+  // 実際に書き出される区間 (CLI の `plan_clips` + クランプの鏡)。
+  // pre / post を編集したら再計算するので、表示とプレビューが常に一致する。
+  const windows = useMemo(() => {
+    const { pre, post } = parseMarginsSafe(preText, postText);
+    return planClipWindows(allEvents, metadata?.matches ?? [], pre, post);
+  }, [allEvents, metadata, preText, postText]);
+
+  /** 行の「実際の区間」。クランプの結果 0 幅なら null (クリップにならない)。 */
+  function windowFor(position: number): { start: number; end: number } | null {
+    return windows.get(position) ?? null;
+  }
+
   const percent =
     progress === null ? null : Math.max(0, Math.min(100, progress.percent));
 
   /**
    * 1 件だけ切り抜く。`overwrite` は「既存出力あり」で一度止まった後の再実行でだけ
    * true にする (無確認の truncate をしない)。
+   *
+   * spawn の直前に **disk の mtime を照合**する: CLI は disk の metadata.json を
+   * 読むので、load 後に外から `events[]` が書き換わっていたら位置が別のイベントを
+   * 指し、上書き再実行では無関係のクリップを潰し得る (codex review 2026-11-17)。
+   * 変わっていたら reload して 1 度止め、ユーザーに再クリックさせる。
    */
   async function cutOne(position: number, overwrite: boolean): Promise<void> {
     const path = filePath;
-    if (path === null) return;
+    if (path === null || dirty) {
+      // ボタンは disabled だが、再実行ボタン経由の呼び出しもここで止める。
+      return;
+    }
     const message = validateMargins(preText, postText);
     setMarginsError(message);
     if (message !== null) return;
+
+    setStaleNote(null);
+    const knownMtime = useMetadataStore.getState().loadedMtimeMs;
+    let diskMtime: number | null;
+    try {
+      diskMtime = await invoke<number | null>('get_metadata_mtime', { path });
+    } catch {
+      diskMtime = null;
+    }
+    if (diskMtime === null || knownMtime === null || diskMtime !== knownMtime) {
+      // 照合できない / 変わっている: 実行しない (位置が古い可能性がある)。
+      try {
+        await useMetadataStore.getState().refreshFromDiskPreservingEdits();
+        setStaleNote(
+          'metadata.json が外部で更新されていたため、候補を読み直しました。内容を確認してもう一度切り抜いてください。',
+        );
+      } catch {
+        setStaleNote(
+          'metadata.json を読み直せませんでした。一覧へ戻って読み込み直してください。',
+        );
+      }
+      return;
+    }
+
     const { pre, post } = parseMargins(preText, postText);
     setLastPosition(position);
     const request: ClipsRequest = {
@@ -251,17 +411,17 @@ export function ClipsScreen() {
     }
   }
 
-  /** 行の [この範囲を確認] — 範囲を積んで preview へ。 */
+  /** 行の [この範囲を確認] — 実際に書かれる区間を積んで preview へ。 */
   function confirmRange(candidate: ClipCandidate): void {
     const message = validateMargins(preText, postText);
     setMarginsError(message);
     if (message !== null) return;
-    const { pre, post } = parseMargins(preText, postText);
-    const range = clipRangeFor(candidate.event, pre, post);
-    setClipRange(range);
-    setPendingSeekSeconds(range.start);
+    const range = windowFor(candidate.position);
     const matchIndex = candidate.event.match_index;
-    if (matchIndex !== null) openPreviewFor(matchIndex);
+    if (range === null || matchIndex === null) return;
+    setClipRange({ ...range, matchIndex });
+    setPendingSeekSeconds(range.start);
+    openPreviewFor(matchIndex);
   }
 
   if (!metadata) {
@@ -376,6 +536,11 @@ export function ClipsScreen() {
             {outsideCount} 件は試合区間の外にあるため切り抜けません。
           </div>
         )}
+        {staleNote !== null && (
+          <div className={styles.note} role="status" data-testid="clips-stale-note">
+            {staleNote}
+          </div>
+        )}
 
         {displayedStatus === 'running' && (
           <div className={styles.stateBlock} data-testid="clips-progress">
@@ -445,6 +610,7 @@ export function ClipsScreen() {
                     type="button"
                     className={styles.secondaryButton}
                     onClick={() => void cutOne(lastPosition, true)}
+                    disabled={runDisabled}
                     data-testid="clips-overwrite-retry"
                   >
                     上書きして切り抜く
@@ -485,12 +651,10 @@ export function ClipsScreen() {
                   {group.candidates.map((candidate) => {
                     const { event, position } = candidate;
                     const kindLabel = signalLabel(event.signal_id) ?? event.signal_id;
-                    const range = clipRangeFor(
-                      event,
-                      Number(preText) || 0,
-                      Number(postText) || 0,
-                    );
-                    const duration = Math.max(0, range.end - range.start);
+                    // 実際に書き出される区間 (束ね + 試合区間クランプ済)。
+                    const range = windowFor(position);
+                    const duration =
+                      range === null ? 0 : Math.max(0, range.end - range.start);
                     return (
                       <li
                         key={`${event.signal_id}-${event.timestamp}-${position}`}
@@ -504,12 +668,15 @@ export function ClipsScreen() {
                           {`${fmtClockTime(event.timestamp)} - ${fmtClockTime(event.end)}`}
                         </span>
                         <span className={styles.clipRange}>
-                          {`範囲 ${fmtClockTime(range.start)} - ${fmtClockTime(range.end)} ・ ${duration.toFixed(1)} 秒`}
+                          {range === null
+                            ? '範囲外'
+                            : `範囲 ${fmtClockTime(range.start)} - ${fmtClockTime(range.end)} ・ ${duration.toFixed(1)} 秒`}
                         </span>
                         <button
                           type="button"
                           className={styles.secondaryButton}
                           onClick={() => confirmRange(candidate)}
+                          disabled={range === null}
                           aria-label={`${kindLabel} ${fmtClockTime(event.timestamp)} の範囲をプレビューで確認`}
                           data-testid={`clips-preview-${position}`}
                         >
@@ -519,7 +686,7 @@ export function ClipsScreen() {
                           type="button"
                           className={styles.cutButton}
                           onClick={() => void cutOne(position, false)}
-                          disabled={runDisabled}
+                          disabled={runDisabled || range === null}
                           aria-label={`${kindLabel} ${fmtClockTime(event.timestamp)} を切り抜く`}
                           data-testid={`clips-cut-${position}`}
                         >

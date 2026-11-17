@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -29,11 +29,13 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 import {
   ClipsScreen,
+  DEFAULT_GAP_SECONDS,
   DEFAULT_MARGIN_SECONDS,
   clipRangeFor,
   collectClipCandidates,
   groupClipCandidates,
   parseMargins,
+  planClipWindows,
   validateMargins,
 } from './ClipsScreen';
 import { useAppStateStore } from '../state/appStateStore';
@@ -45,7 +47,8 @@ const METADATA_PATH = 'C:/x/metadata.json';
 
 /**
  * 元の `events[]` の並び (未知 signal / 試合外を挟んで position が
- * 描画順に振り直されないことを pin する)。
+ * 描画順に振り直されないことを pin する)。sample metadata の match 1 は
+ * 0 - 915.5 秒なので、この 2 件はどちらも試合区間の中に収まる。
  */
 const EVENTS: HighlightEvent[] = [
   {
@@ -54,7 +57,7 @@ const EVENTS: HighlightEvent[] = [
     end: 494.9,
     score: 0.93,
     evidence: { samples: 15 },
-    match_index: 3,
+    match_index: 1,
   },
   {
     signal_id: 'unknown_signal',
@@ -62,7 +65,7 @@ const EVENTS: HighlightEvent[] = [
     end: 501,
     score: 0.5,
     evidence: {},
-    match_index: 3,
+    match_index: 1,
   },
   {
     signal_id: 'assist_indicator',
@@ -78,7 +81,7 @@ const EVENTS: HighlightEvent[] = [
     end: 207.9,
     score: 0.81,
     evidence: { samples: 14 },
-    match_index: 3,
+    match_index: 1,
   },
 ];
 
@@ -137,9 +140,12 @@ function renderClips(
 
 beforeEach(() => {
   mockInvoke.mockReset();
-  mockInvoke.mockImplementation((cmd: string) =>
-    cmd === 'start_clips' ? Promise.resolve(CLIPS_RESULT) : Promise.resolve(undefined),
-  );
+  mockInvoke.mockImplementation((cmd: string) => {
+    if (cmd === 'start_clips') return Promise.resolve(CLIPS_RESULT);
+    // 実行前の mtime 照合 (一致していればそのまま実行)。
+    if (cmd === 'get_metadata_mtime') return Promise.resolve(42);
+    return Promise.resolve(undefined);
+  });
   mockListen.mockClear();
   progressHandlers.length = 0;
   useAppStateStore.getState().reset();
@@ -173,7 +179,7 @@ describe('groupClipCandidates', () => {
   it('groups by match_index and sorts each group by timestamp', () => {
     const groups = groupClipCandidates(collectClipCandidates(EVENTS));
     expect(groups).toHaveLength(1);
-    expect(groups[0].matchIndex).toBe(3);
+    expect(groups[0].matchIndex).toBe(1);
     expect(groups[0].candidates.map((c) => c.event.timestamp)).toEqual([206.4, 493.4]);
     // position は描画順で振り直されない (元の events[] の位置のまま)
     expect(groups[0].candidates.map((c) => c.position)).toEqual([4, 1]);
@@ -186,6 +192,81 @@ describe('groupClipCandidates', () => {
     ];
     const groups = groupClipCandidates(collectClipCandidates(events));
     expect(groups.map((g) => g.matchIndex)).toEqual([2, 5]);
+  });
+});
+
+describe('planClipWindows (CLI plan_clips の鏡)', () => {
+  const MATCHES = [
+    { index: 1, start_time: 0, end_time: 915.5 },
+    { index: 2, start_time: 1129.5, end_time: 2089.375 },
+  ];
+
+  it('expands each isolated event by pre / post', () => {
+    const windows = planClipWindows(EVENTS, MATCHES, 10, 10);
+    expect(windows.get(1)).toEqual({ start: 483.4, end: 504.9 });
+    expect(windows.get(4)).toEqual({ start: 196.4, end: 217.9 });
+  });
+
+  it('merges neighbours within gap into one window (CLI default 5 s)', () => {
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], timestamp: 300, end: 301 },
+      { ...EVENTS[0], timestamp: 303, end: 304 },
+    ];
+    const windows = planClipWindows(events, MATCHES, 10, 10);
+    expect(windows.get(1)).toEqual({ start: 290, end: 314 });
+    expect(windows.get(2)).toEqual({ start: 290, end: 314 });
+  });
+
+  it('does not merge across a gap larger than gap', () => {
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], timestamp: 300, end: 301 },
+      { ...EVENTS[0], timestamp: 320, end: 321 },
+    ];
+    const windows = planClipWindows(events, MATCHES, 10, 10);
+    expect(windows.get(1)).toEqual({ start: 290, end: 311 });
+    expect(windows.get(2)).toEqual({ start: 310, end: 331 });
+  });
+
+  it('clamps to the match span', () => {
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], timestamp: 5, end: 6 },
+      { ...EVENTS[0], timestamp: 900, end: 910 },
+    ];
+    const windows = planClipWindows(events, MATCHES, 10, 10);
+    expect(windows.get(1)).toEqual({ start: 0, end: 16 });
+    expect(windows.get(2)).toEqual({ start: 890, end: 915.5 });
+  });
+
+  it('drops events outside every match span', () => {
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], timestamp: 1200, end: 1201, match_index: 2 },
+    ];
+    // match 2 は 1129.5 からなので収まる。存在しない match 9 は span が無いので落ちる。
+    const windows = planClipWindows(
+      [...events, { ...EVENTS[0], timestamp: 50, end: 51, match_index: 9 }],
+      MATCHES,
+      10,
+      10,
+    );
+    expect(windows.size).toBe(1);
+    expect(windows.get(1)).toEqual({ start: 1190, end: 1211 });
+  });
+
+  it('returns no window when the clamp leaves nothing', () => {
+    // match 2 は 1129.5 からだが、イベントは 100 秒台 -> end < start でクリップにならない。
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], timestamp: 110, end: 111, match_index: 2 },
+    ];
+    expect(planClipWindows(events, MATCHES, 10, 10).size).toBe(0);
+  });
+
+  it('counts unknown signal_id events in the merge (CLI does)', () => {
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], timestamp: 300, end: 301 },
+      { ...EVENTS[1], timestamp: 303, end: 304 },
+    ];
+    const windows = planClipWindows(events, MATCHES, 10, 10);
+    expect(windows.get(2)).toEqual({ start: 290, end: 314 });
   });
 });
 
@@ -247,6 +328,34 @@ describe('ClipsScreen idle', () => {
     expect(within(assist).getByText('ASSIST')).toBeInTheDocument();
     // 前後 10 秒 (既定) の範囲が出る
     expect(within(assist).getByText(/範囲 00:03:16 - 00:03:37/)).toBeInTheDocument();
+  });
+
+  it('shows the written window (merged neighbours share one range)', () => {
+    // 512.1 と 515.5 の ASSIST は gap 5 秒以内なので 1 本のクリップになる。
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], signal_id: 'assist_indicator', timestamp: 512.1, end: 513.6 },
+      { ...EVENTS[3], signal_id: 'assist_indicator', timestamp: 515.5, end: 517.0 },
+    ];
+    renderClips({}, { events });
+    const first = screen.getByTestId('clips-candidate-1');
+    const second = screen.getByTestId('clips-candidate-2');
+    // 束ねた区間 (502.1 - 527.0) を両方の行が同じように見せる
+    expect(within(first).getByText(/範囲 00:08:22 - 00:08:47/)).toBeInTheDocument();
+    expect(within(second).getByText(/範囲 00:08:22 - 00:08:47/)).toBeInTheDocument();
+  });
+
+  it('shows 範囲外 and disables the row when the clip would be empty', () => {
+    // match 2 は 1129.5 秒から。イベントを 110 秒台に置くとクランプで 0 幅になる。
+    const events: HighlightEvent[] = [{ ...EVENTS[0], timestamp: 110, end: 111, match_index: 2 }];
+    renderClips({}, { events });
+    const row = screen.getByTestId('clips-candidate-1');
+    expect(within(row).getByText('範囲外')).toBeInTheDocument();
+    expect(screen.getByTestId('clips-cut-1')).toBeDisabled();
+    expect(screen.getByTestId('clips-preview-1')).toBeDisabled();
+  });
+
+  it('uses the CLI default gap for the displayed window', () => {
+    expect(DEFAULT_GAP_SECONDS).toBe(5);
   });
 
   it('shows the default margins in the inputs', () => {
@@ -315,6 +424,36 @@ describe('ClipsScreen run guards', () => {
     expect(mockInvoke).not.toHaveBeenCalled();
     expect(useAppStateStore.getState().screen).toBe('clips');
   });
+
+  // codex review 2026-11-17: CLI は disk の metadata.json を読むので、load 後に
+  // 外から `events[]` が書き換えられていたら位置が別のイベントを指す。
+  it('refuses to cut when metadata.json changed on disk since load', async () => {
+    const user = userEvent.setup();
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(999); // load 時 (42) と違う
+      return Promise.resolve(undefined);
+    });
+    renderClips();
+    await user.click(screen.getByTestId('clips-cut-1'));
+
+    expect(mockInvoke).not.toHaveBeenCalledWith('start_clips', expect.anything());
+    expect(screen.getByTestId('clips-stale-note')).toHaveTextContent(
+      'metadata.json が外部で更新されていた',
+    );
+  });
+
+  it('refuses to cut when mtime cannot be verified', async () => {
+    const user = userEvent.setup();
+    mockInvoke.mockImplementation((cmd: string) =>
+      cmd === 'get_metadata_mtime'
+        ? Promise.reject(new Error('nope'))
+        : Promise.resolve(undefined),
+    );
+    renderClips();
+    await user.click(screen.getByTestId('clips-cut-1'));
+    expect(mockInvoke).not.toHaveBeenCalledWith('start_clips', expect.anything());
+    expect(screen.getByTestId('clips-stale-note')).toBeInTheDocument();
+  });
 });
 
 describe('ClipsScreen actions', () => {
@@ -325,8 +464,8 @@ describe('ClipsScreen actions', () => {
 
     const app = useAppStateStore.getState();
     expect(app.screen).toBe('preview');
-    expect(app.selectedMatchIndex).toBe(3);
-    expect(app.clipRange).toEqual({ start: 483.4, end: 504.9 });
+    expect(app.selectedMatchIndex).toBe(1);
+    expect(app.clipRange).toEqual({ start: 483.4, end: 504.9, matchIndex: 1 });
     expect(app.pendingSeekSeconds).toBe(483.4);
   });
 
@@ -340,6 +479,7 @@ describe('ClipsScreen actions', () => {
     expect(useAppStateStore.getState().clipRange).toEqual({
       start: 483.4,
       end: 497.9,
+      matchIndex: 1,
     });
   });
 
@@ -402,29 +542,58 @@ describe('ClipsScreen running / result / error', () => {
 
   it('offers an overwrite retry only for an existing-output failure', async () => {
     const user = userEvent.setup();
-    mockInvoke.mockImplementation((cmd: string) =>
-      cmd === 'start_clips'
-        ? Promise.reject({
-            code: 'validation.range_invalid',
-            message: '1 clip output(s) already exist (e.g. C:/x/clips/clip_001.mp4)',
-            hint: '入力された数値が許容範囲外です。',
-          })
-        : Promise.resolve(undefined),
-    );
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'start_clips') {
+        return Promise.reject({
+          code: 'validation.range_invalid',
+          message: '1 clip output(s) already exist (e.g. C:/x/clips/clip_001.mp4)',
+          hint: '入力された数値が許容範囲外です。',
+        });
+      }
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(42);
+      return Promise.resolve(undefined);
+    });
     renderClips();
     await user.click(screen.getByTestId('clips-cut-1'));
 
     const retry = await screen.findByTestId('clips-overwrite-retry');
     // 再実行は成功させる (上書きフラグだけを検証する)
-    mockInvoke.mockImplementation((cmd: string) =>
-      cmd === 'start_clips' ? Promise.resolve(CLIPS_RESULT) : Promise.resolve(undefined),
-    );
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'start_clips') return Promise.resolve(CLIPS_RESULT);
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(42);
+      return Promise.resolve(undefined);
+    });
     await user.click(retry);
 
     expect(mockInvoke).toHaveBeenLastCalledWith(
       'start_clips',
       expect.objectContaining({ req: expect.objectContaining({ overwrite: true }) }),
     );
+  });
+
+  it('disables the overwrite retry while metadata has unapplied edits', async () => {
+    const user = userEvent.setup();
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'start_clips') {
+        return Promise.reject({
+          code: 'validation.range_invalid',
+          message: '1 clip output(s) already exist',
+          hint: null,
+        });
+      }
+      if (cmd === 'get_metadata_mtime') return Promise.resolve(42);
+      return Promise.resolve(undefined);
+    });
+    renderClips();
+    await user.click(screen.getByTestId('clips-cut-1'));
+    const retry = await screen.findByTestId('clips-overwrite-retry');
+    expect(retry).toBeEnabled();
+
+    // 未適用の編集が入ったら上書き再実行も止まる (dirty ガードを迂回させない)。
+    await act(async () => {
+      useMetadataStore.setState({ dirty: true });
+    });
+    expect(screen.getByTestId('clips-overwrite-retry')).toBeDisabled();
   });
 
   it('does not offer the overwrite retry for other failures', () => {
