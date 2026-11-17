@@ -39,8 +39,8 @@ import {
   planClipWindows,
 } from '../utils/clipWindow';
 import { splitPath } from '../utils/path';
+import { signalLabel } from '../utils/signals';
 import { fmtClockTime } from '../utils/time';
-import { signalLabel } from './IndicatorsScreen';
 import styles from './ClipsScreen.module.css';
 
 // ── Constants ───────────────────────────────────────────────────────────────

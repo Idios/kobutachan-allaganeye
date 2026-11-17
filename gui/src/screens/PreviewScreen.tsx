@@ -11,9 +11,11 @@ import {
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { FrameStrip, type FrameStripThumb } from '../components/FrameStrip';
 import { InlineErrorHint } from '../components/InlineErrorHint';
+import { KeyboardHints } from '../components/KeyboardHints';
 import { RestoreButton } from '../components/RestoreButton';
 import { SampleModeBanner } from '../components/SampleModeBanner';
 import { TimecodePane } from '../components/TimecodePane';
+import { useRegisteredVideo } from '../hooks/useRegisteredVideo';
 import { ClipRangeView } from './ClipRangeView';
 import {
   isAppError,
@@ -41,11 +43,6 @@ import styles from './PreviewScreen.module.css';
  * inside metadataStore.
  */
 const UPDATE_DEBOUNCE_MS = 200;
-
-interface RegisteredVideo {
-  url: string;
-  token: string;
-}
 
 interface ThumbnailEntry {
   t_seconds: number;
@@ -225,8 +222,9 @@ export function PreviewScreen() {
 
   // #465: per-mount video URL fetched from the axum server. One registration
   // covers both panes (HTMLVideoElement instances can share the same URL).
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [videoError, setVideoError] = useState<string | null>(null);
+  // #1139: `register_video` の呼び出しは `useRegisteredVideo` に集約した
+  // (MinimapScreen / ClipRangeView と共通)。呼び出し位置は `videoSource` の
+  // 宣言より後に置く (hooks の評価順は毎 render で同じ)。
 
   // #465: thumbnail cache fetched from the Rust `generate_match_thumbnails`
   // command (via ffmpeg). Keyed per boundary side; falls back to [] while
@@ -265,35 +263,7 @@ export function PreviewScreen() {
   // register_video / generate_match_thumbnails を発行する。
   const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
   const videoSource = selectedVideoPath ?? metadata?.source ?? null;
-
-  useEffect(() => {
-    if (!videoSource) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const registered = await invoke<RegisteredVideo>('register_video', {
-          path: videoSource,
-        });
-        if (!cancelled) {
-          setVideoUrl(registered.url);
-          setVideoError(null);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setVideoUrl(null);
-          // #678 Lane II-b §2.1 — AppError struct (Tauri Result<T, AppError>) /
-          // Error / raw string / null/undefined を toErrorState で統一処理。
-          // 旧実装 `e instanceof Error ? e.message : String(e)` は AppError 流入時に
-          // `[object Object]` 表示になっていた。
-          // PreviewScreen には videoErrorHint 枠なし → hint UI は追加しない (spec §2.1 規約)。
-          setVideoError(toErrorState(e).message);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [videoSource]);
+  const { videoUrl, videoError } = useRegisteredVideo(videoSource);
 
   // Keep each video's currentTime in sync with the edit buffer so a keyboard
   // nudge immediately seeks the frame preview. We only seek when the numeric
@@ -884,23 +854,9 @@ export function PreviewScreen() {
         })}
       </div>
 
-      {/* #465 review: キーボードショートカット可視化 (UX item 3)。stepRow 下に
-       *  インライン hint を出し、はじめてのユーザーにも操作方法が伝わる。 */}
-      <div className={styles.keyHint} role="note" aria-label="keyboard shortcuts">
-        <span className={styles.keyHintItem}>
-          <kbd className={styles.kbd}>←</kbd>
-          <kbd className={styles.kbd}>→</kbd> 1s
-        </span>
-        <span className={styles.keyHintItem}>
-          <kbd className={styles.kbd}>Shift</kbd>+<kbd className={styles.kbd}>←→</kbd> 10s
-        </span>
-        <span className={styles.keyHintItem}>
-          <kbd className={styles.kbd}>Alt</kbd>+<kbd className={styles.kbd}>←→</kbd> 1F
-        </span>
-        <span className={styles.keyHintItem}>
-          <kbd className={styles.kbd}>Space</kbd> / クリック: 再生/停止
-        </span>
-      </div>
+      {/* #465 review: キーボードショートカット可視化 (UX item 3)。
+       *  #1139: クリップ範囲の画面と共通の部品に切り出した。 */}
+      <KeyboardHints />
 
       <div className={styles.strip}>
         {/* #645 Chapter 2 (overlay pivot): brightness data is now an SVG

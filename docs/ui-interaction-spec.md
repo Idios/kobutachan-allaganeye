@@ -801,7 +801,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 | 項目 | 内容 |
 | --- | --- |
-| 種類 | display block ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `styles.keyHint`)。`role="note"` + `aria-label="keyboard shortcuts"`、`<kbd>` で各キー表示 |
+| 種類 | display block ([KeyboardHints.tsx](../gui/src/components/KeyboardHints.tsx) の `KeyboardHints`、CSS は `KeyboardHints.module.css` の `styles.keyHint`)。`role="note"` + `aria-label="keyboard shortcuts"`、`<kbd>` で各キー表示。試合境界エディタとクリップ範囲の調整画面 (§2.4.18) で共通 (#1139) |
 | 状態 | `displayOnly` |
 | 遷移トリガー | なし (常時可視) |
 | store mutation | なし |

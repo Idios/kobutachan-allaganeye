@@ -45,6 +45,7 @@ import {
   overrideWindowFor,
 } from '../utils/clipWindow';
 import { splitPath } from '../utils/path';
+import { signalLabel } from '../utils/signals';
 import { fmtClockTime, fmtTime } from '../utils/time';
 import styles from './IndicatorsScreen.module.css';
 
@@ -97,12 +98,6 @@ export function fmtEventTime(seconds: number): string {
  * `signal_id` の人間向け表示 (#127)。**未知の signal_id は null** を返し、
  * 呼び出し側は行ごと描画しない（互換ルール §4-3: 未知信号は既定で無視）。
  */
-export function signalLabel(signalId: string): string | null {
-  if (signalId === 'ko_indicator') return 'KO';
-  if (signalId === 'assist_indicator') return 'ASSIST';
-  return null;
-}
-
 export interface EventGroup {
   /** 属する試合の index。どの試合にも入らない区間は null。 */
   matchIndex: number | null;

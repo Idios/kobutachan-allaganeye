@@ -13,18 +13,19 @@
  * (`metadataStore.setEventClipRange`)、既存の `apply()` で metadata.json に書く。
  * `allaganeye clips` はこの区間で切り抜く（metadata が SSoT, #1139）。
  */
-import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import pathStyles from '../styles/path-display.module.css';
 
+import { KeyboardHints } from '../components/KeyboardHints';
 import { TimecodePane } from '../components/TimecodePane';
+import { useRegisteredVideo } from '../hooks/useRegisteredVideo';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { DEFAULT_FPS } from '../types/metadata.schema';
 import { splitPath } from '../utils/path';
+import { signalLabel } from '../utils/signals';
 import { fmtClockTime } from '../utils/time';
-import { signalLabel } from './IndicatorsScreen';
 import styles from './ClipRangeView.module.css';
 
 export function ClipRangeView() {
@@ -60,28 +61,9 @@ export function ClipRangeView() {
       ? metadata.source_fps
       : DEFAULT_FPS;
 
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [videoError, setVideoError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!source) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await invoke<{ url: string }>('register_video', {
-          path: source,
-        });
-        // codex review 2026-11-17 (P1): `register_video` は axum が配信する
-        // **HTTP URL** を返す。`convertFileSrc(url, 'asset')` に通すと asset
-        // プロトコルへ書き換えられ、ペインに動画が映らない (範囲を目視できない)。
-        if (!cancelled) setVideoUrl(res.url);
-      } catch (e) {
-        if (!cancelled) setVideoError(String(e));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [source]);
+  // #1139: `register_video` の登録は `useRegisteredVideo` に集約
+  // (PreviewScreen / MinimapScreen と共通)。
+  const { videoUrl, videoError } = useRegisteredVideo(source);
 
   const inVideoRef = useRef<HTMLVideoElement | null>(null);
   const outVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -345,22 +327,8 @@ export function ClipRangeView() {
         ))}
       </div>
 
-      {/* キーボードショートカットの可視化 (境界エディタと同じ row、#1139) */}
-      <div className={styles.keyHint} role="note" aria-label="keyboard shortcuts">
-        <span className={styles.keyHintItem}>
-          <kbd className={styles.kbd}>←</kbd>
-          <kbd className={styles.kbd}>→</kbd> 1s
-        </span>
-        <span className={styles.keyHintItem}>
-          <kbd className={styles.kbd}>Shift</kbd>+<kbd className={styles.kbd}>←→</kbd> 10s
-        </span>
-        <span className={styles.keyHintItem}>
-          <kbd className={styles.kbd}>Alt</kbd>+<kbd className={styles.kbd}>←→</kbd> 1F
-        </span>
-        <span className={styles.keyHintItem}>
-          <kbd className={styles.kbd}>Space</kbd> / クリック: 再生/停止
-        </span>
-      </div>
+      {/* キーボードショートカットの可視化 (境界エディタと共通部品、#1139) */}
+      <KeyboardHints />
 
       <div className={styles.actions}>
         <button
