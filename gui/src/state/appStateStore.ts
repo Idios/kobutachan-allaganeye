@@ -9,7 +9,8 @@ import { stripExtendedPathPrefix } from '../utils/path';
  * browser-history semantics. See docs/ui-architecture.md for the full
  * screen-transition diagram.
  *
- * `indicators` was added in #1106 Phase 2 (KO / ASSIST 検出画面).
+ * `indicators` was added in #1106 Phase 2 (KO / ASSIST 検出画面)。
+ * `clips` was added in #1131 Phase B2 (前後秒数を指定した切り抜き画面)。
  */
 export type AppScreen =
   | 'drop'
@@ -18,7 +19,8 @@ export type AppScreen =
   | 'preview'
   | 'export'
   | 'minimap'
-  | 'indicators';
+  | 'indicators'
+  | 'clips';
 
 /**
  * #613: User-tunable detect parameters surfaced from the DropScreen "詳細設定"
@@ -99,6 +101,16 @@ export interface AppState {
    */
   pendingSeekSeconds: number | null;
 
+  /**
+   * #1131 Phase B2: プレビューで「クリップ範囲モード」を出すための区間 (絶対秒)。
+   *
+   * ClipsScreen が `前後秒数` を確定して `{ start, end }` を入れ、PreviewScreen が
+   * 範囲バナーと先頭 / 末尾へのシークを出す。**試合境界 (`startT` / `endT`) とは
+   * 別物**で、クリップは「イベントの前 `pre` 秒〜後 `post` 秒」を指す。`null` なら
+   * 通常の preview (境界調整) として振る舞う。
+   */
+  clipRange: { start: number; end: number } | null;
+
   /** Switch to a different screen. */
   navigate: (screen: AppScreen) => void;
   /** Update the selected match index (null = none). */
@@ -115,6 +127,8 @@ export interface AppState {
   setLastExportOutputDir: (dir: string | null) => void;
   /** Set / clear the one-shot preview seek position (#1106 Phase 2). */
   setPendingSeekSeconds: (seconds: number | null) => void;
+  /** Set / clear the preview clip range (#1131 Phase B2). */
+  setClipRange: (range: { start: number; end: number } | null) => void;
   /** Reset everything back to a freshly launched state (screen = 'drop'). */
   reset: () => void;
 }
@@ -126,6 +140,7 @@ export const useAppStateStore = create<AppState>((set) => ({
   detectionParams: { ...DEFAULT_DETECTION_PARAMS },
   lastExportOutputDir: null,
   pendingSeekSeconds: null,
+  clipRange: null,
 
   navigate: (screen) => set({ screen }),
   selectMatch: (selectedMatchIndex) => set({ selectedMatchIndex }),
@@ -150,6 +165,7 @@ export const useAppStateStore = create<AppState>((set) => ({
   // #893 R2: record the export output dir so MinimapScreen can default to it.
   setLastExportOutputDir: (lastExportOutputDir) => set({ lastExportOutputDir }),
   setPendingSeekSeconds: (pendingSeekSeconds) => set({ pendingSeekSeconds }),
+  setClipRange: (clipRange) => set({ clipRange }),
   reset: () =>
     set({
       screen: 'drop',
@@ -158,5 +174,6 @@ export const useAppStateStore = create<AppState>((set) => ({
       detectionParams: { ...DEFAULT_DETECTION_PARAMS },
       lastExportOutputDir: null,
       pendingSeekSeconds: null,
+      clipRange: null,
     }),
 }));

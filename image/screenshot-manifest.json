@@ -42,6 +42,11 @@
       "file": "07-indicators.png",
       "screen": "indicators",
       "sha256": "f329f223e13141ef5843500cedcbb86086e9625d7ff770558c1466b6cd9ef500"
+    },
+    {
+      "file": "08-clips.png",
+      "screen": "clips",
+      "sha256": "e4a7350e822752706be8fbe7fb11ce0304ae9d6d871abb94a42b5222aa91bf8d"
     }
   ],
   "sources": [
@@ -57,7 +62,7 @@
     "gui/src/types/metadata.generated.ts",
     "gui/src/types/metadata.schema.ts"
   ],
-  "sources_sha256": "afd3cb15e554b58b8b72acdd7f082aa4ed484d2e1b1e8e3a49517b761fbf0ac9",
+  "sources_sha256": "91946412bae7bf14394931484381d049abe75d23bec27473e8fd96c7dc41f8d1",
   "notes": {
     "gui/src/types/metadata.generated.ts": "型定義のみの生成物 (scripts/codegen/generate.py)。TS の型は build で消えるため描画結果に影響しない。schema 変更のたびに撮り直しを要求しないよう exclude する。",
     "gui/src/types/metadata.schema.ts": "zod の検証定義のみ (画面を描画しない)。フィールド集合の追加/変更は表示に影響せず、JSON Schema との整合は zod-schema-integrity.test.ts が見る。schema 変更のたびに撮り直しを要求しないよう exclude する。"

@@ -76,7 +76,7 @@ GUI のスタイルは CSS 変数 + CSS Modules で統一。詳細は [`ui-archi
 | 区分 | 対象 |
 | --- | --- |
 | `src/components/**` | 共通 UI コンポーネント (最大の区分) |
-| `src/screens/**` (`reducers/` 含む) | 7 画面と phase reducer |
+| `src/screens/**` (`reducers/` 含む) | 8 画面と phase reducer |
 | `src/state/**` | Zustand store (`appStateStore` / `metadataStore` / `indicatorsStore` / `recentStore`) |
 | `src/utils/**` / `src/lib/**` / `src/hooks/**` | path 操作・WebView ショートカット抑止・カスタム hook 等 |
 | `src/types/**` / `src/styles/**` / `src/__tests__/**` | 生成型の契約検査・CSS token・横断 smoke |

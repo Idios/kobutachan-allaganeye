@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { fmtMatchDuration, fmtPreciseTime, fmtTime } from './time';
+import { fmtClockTime, fmtMatchDuration, fmtPreciseTime, fmtTime } from './time';
 
 describe('fmtTime', () => {
   it('formats sub-hour durations as MM:SS', () => {
@@ -29,6 +29,28 @@ describe('fmtTime', () => {
   it('truncates fractional seconds (floor semantics)', () => {
     expect(fmtTime(59.9)).toBe('00:59');
     expect(fmtTime(60.999)).toBe('01:00');
+  });
+});
+
+describe('fmtClockTime', () => {
+  it('always pads the hour (hh:mm:ss)', () => {
+    expect(fmtClockTime(0)).toBe('00:00:00');
+    expect(fmtClockTime(5)).toBe('00:00:05');
+    expect(fmtClockTime(65)).toBe('00:01:05');
+    expect(fmtClockTime(3599)).toBe('00:59:59');
+    expect(fmtClockTime(493.4)).toBe('00:08:13');
+    expect(fmtClockTime(3661)).toBe('01:01:01');
+  });
+
+  it('clamps negative / NaN / Infinity to 0', () => {
+    expect(fmtClockTime(-1)).toBe('00:00:00');
+    expect(fmtClockTime(Number.NaN)).toBe('00:00:00');
+    expect(fmtClockTime(Number.POSITIVE_INFINITY)).toBe('00:00:00');
+  });
+
+  it('truncates fractional seconds (floor semantics)', () => {
+    expect(fmtClockTime(59.9)).toBe('00:00:59');
+    expect(fmtClockTime(60.999)).toBe('00:01:00');
   });
 });
 

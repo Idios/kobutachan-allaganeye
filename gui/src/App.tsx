@@ -2,6 +2,7 @@ import { ConfirmExitModal } from './components/ConfirmExitModal';
 import { ConflictModal } from './components/ConflictModal';
 import { DraftRestoreModal } from './components/DraftRestoreModal';
 import { StateSwitcher } from './components/StateSwitcher';
+import { ClipsScreen } from './screens/ClipsScreen';
 import { CompleteScreen } from './screens/CompleteScreen';
 import { DetectingScreen } from './screens/DetectingScreen';
 import { DropScreen } from './screens/DropScreen';
@@ -45,6 +46,7 @@ export default function App() {
           {screen === 'export' && <ExportScreen />}
           {screen === 'minimap' && <MinimapScreen />}
           {screen === 'indicators' && <IndicatorsScreen />}
+          {screen === 'clips' && <ClipsScreen />}
         </main>
       </div>
       {/* #514 — global modal for metadata.json external-modification conflicts. */}

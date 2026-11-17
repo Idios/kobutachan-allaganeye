@@ -17,7 +17,7 @@ drop → detecting → complete → preview → export
 - **minimap**: エリアマップ (ミニマップ) 領域の切抜き。complete から分岐する副系統で、export とは並列の枝 ([#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) で追加)
 - **indicators**: KO / ASSIST の検出と発生時刻の一覧。complete から分岐する副系統で、行を選ぶと preview でその瞬間を開く ([#1106](https://github.com/Idios/kobutachan-allaganeye/issues/1106) Phase 2 で追加)
 
-**現在は 7 画面**。本 doc が handoff bundle 由来の 5 画面を前提に書かれていた時期があるため、画面数を数える記述は `gui/src/state/appStateStore.ts` の `AppScreen` を正とすること。
+**現在は 8 画面**。本 doc が handoff bundle 由来の 5 画面を前提に書かれていた時期があるため、画面数を数える記述は `gui/src/state/appStateStore.ts` の `AppScreen` を正とすること。
 
 ## ターゲット技術 (確定: Tauri + React + TypeScript)
 
@@ -196,7 +196,7 @@ Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計�
 
 ## スクリーンショット
 
-`screens/` には handoff bundle 由来のプロトタイプ 5 枚 (drop / detecting / complete / preview / export) が commit 済み。`minimap` / `indicators` は bundle より後に設計されたためプロトタイプが存在せず 5 枚のままで、実装済み 7 画面のスクリーンショットはリポジトリ直下の `image/` 配下を参照 (詳細は [`screens/README.md`](screens/README.md))。エージェント（主エージェント・subagent を問わず）はブラウザ描画・スクショ取得を行わない (handoff bundle README の指示による)。
+`screens/` には handoff bundle 由来のプロトタイプ 5 枚 (drop / detecting / complete / preview / export) が commit 済み。`minimap` / `indicators` / `clips` は bundle より後に設計されたためプロトタイプが存在せず 5 枚のままで、実装済み 8 画面のスクリーンショットはリポジトリ直下の `image/` 配下を参照 (詳細は [`screens/README.md`](screens/README.md))。エージェント（主エージェント・subagent を問わず）はブラウザ描画・スクショ取得を行わない (handoff bundle README の指示による)。
 
 ## ファイル構成
 
@@ -204,7 +204,7 @@ Electron / Tauri の両方で最小プロトタイプを構築し F1-F5 を計�
 docs/design/
 ├── README.md              — 本ファイル (設計仕様・実装 Phase のインデックス)
 ├── feasibility.md         — Phase 0 フィージビリティ検証の記録場所 (Phase 0 完了時に埋める)
-├── screens/               — handoff bundle 由来のプロトタイプ 5 枚 (実装 7 画面は repo 直下 image/)
+├── screens/               — handoff bundle 由来のプロトタイプ 5 枚 (実装 8 画面は repo 直下 image/)
 └── bundle/                — handoff bundle 原本 (変更不可、参照のみ)
     ├── README.md          — handoff 発行元 (Claude Design) からの CODING AGENTS 向け指示
     └── project/

@@ -281,6 +281,11 @@ try {
     indicators: async () => {
       await setupIndicators(page);
     },
+    // #1131 Phase B2: 候補一覧 + バック切り抜きの前後秒数フォームがこの画面の
+    // 主目的なので、候補が並んだ idle 状態を撮る。
+    clips: async () => {
+      await setupClips(page);
+    },
     // #944 §D で画面タイトルを入れたので README に載せられるようになった。
     minimap: async () => {
       // .videoPane は flex:1 なので、既定の 1000px では下の設定欄と一覧に
@@ -370,6 +375,35 @@ async function setupIndicators(page) {
         { signal_id: 'assist_indicator', timestamp: 866.7, end: 868.2, score: 0.83, evidence: { samples: 14 }, match_index: 5 },
       ],
       error: null,
+    });
+  });
+  await page.waitForTimeout(400);
+}
+
+// #1131 Phase B2: クリップ切り抜き画面。sample metadata には `events` が無いので、
+// 実録画 (`20260116_1.mp4`) の KO / ASSIST 時刻をそのまま流用して候補を並べる
+// (indicators の screenshot と同じ値)。一覧は `metadata.events` を SSoT に復元する
+// ので、撮影時も store ではなく metadata を差し替える。
+async function setupClips(page) {
+  await page.setViewportSize({ width: VIEWPORT.width, height: 620 });
+  await navigateTo(page, 'clips', { withSample: true });
+  await page.evaluate(async () => {
+    const meta = await import('/src/state/metadataStore.ts');
+    const current = meta.useMetadataStore.getState().metadata;
+    if (current === null) return;
+    meta.useMetadataStore.setState({
+      filePath: 'E:/videos/2026-04-08 21-14-05_metadata.json',
+      metadata: {
+        ...current,
+        events: [
+          { signal_id: 'ko_indicator', timestamp: 493.4, end: 494.9, score: 0.93, evidence: { samples: 15 }, match_index: 3 },
+          { signal_id: 'assist_indicator', timestamp: 512.1, end: 513.6, score: 0.81, evidence: { samples: 14 }, match_index: 3 },
+          { signal_id: 'assist_indicator', timestamp: 515.5, end: 517.0, score: 0.84, evidence: { samples: 15 }, match_index: 3 },
+          { signal_id: 'ko_indicator', timestamp: 584.3, end: 585.8, score: 0.94, evidence: { samples: 15 }, match_index: 3 },
+          { signal_id: 'assist_indicator', timestamp: 623.2, end: 624.7, score: 0.79, evidence: { samples: 14 }, match_index: 4 },
+          { signal_id: 'ko_indicator', timestamp: 631.4, end: 632.9, score: 0.91, evidence: { samples: 15 }, match_index: 4 },
+        ],
+      },
     });
   });
   await page.waitForTimeout(400);

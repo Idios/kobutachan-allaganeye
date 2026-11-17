@@ -1,0 +1,539 @@
+/**
+ * ClipsScreen — KO / ASSIST の前後秒数を指定して 1 件ずつ切り抜く (#1131 Phase B2)。
+ *
+ * L4 の切り抜きは「イベント (KO / ASSIST の表示) の前 `pre` 秒〜後 `post` 秒」を
+ * 元録画から切り出す。L7 (#135) の「自動で価値の高いシーンを判別して切り抜く」
+ * とは別物で、こちらは**ユーザーが範囲を指定する**画面。
+ *
+ * 一覧は `metadata.events` (#127) から復元する。`indicatorsStore` の結果ではなく
+ * **metadata.json を SSoT** にするので、アプリを再起動しても候補が残る。ただし
+ * CLI (`allaganeye clips`) は **disk の metadata.json** を読むため、未適用の編集が
+ * ある (`metadataStore.dirty`) 間は切り抜きを実行しない。
+ *
+ * 行ごとの操作は 2 つ:
+ *
+ * - [この範囲を確認] — `clipRange` と `pendingSeekSeconds` を appStateStore に積んで
+ *   preview へ遷移する (PreviewScreen が範囲バナーと先頭 / 末尾シークを出す)
+ * - [切り抜く] — `useClipsStore.start()` で `start_clips` を invoke する
+ *   (`--event-index` に `metadata.events` の 1 始まり位置を渡す = 1 件ずつ)
+ *
+ * 実行は直列 (store が走行中の再入を拒否する)。既存出力があると CLI が exit 5 で
+ * 拒否するので、そのときだけ [上書きして切り抜く] を出す (#1132 の緩和)。
+ */
+import { useMemo, useState } from 'react';
+
+import pathStyles from '../styles/path-display.module.css';
+
+import { AllaganFrame } from '../components/AllaganFrame';
+import { SampleModeBanner } from '../components/SampleModeBanner';
+import { toErrorState } from '../lib/appError';
+import { useAppStateStore } from '../state/appStateStore';
+import { useClipsStore, type ClipsRequest } from '../state/clipsStore';
+import { useMetadataStore } from '../state/metadataStore';
+import type { HighlightEvent } from '../types/metadata.generated';
+import { splitPath } from '../utils/path';
+import { fmtClockTime } from '../utils/time';
+import { signalLabel } from './IndicatorsScreen';
+import styles from './ClipsScreen.module.css';
+
+// ── Constants ───────────────────────────────────────────────────────────────
+
+/** CLI `clips` の `--pre` / `--post` 既定値 (allaganeye/export/clips.py)。 */
+export const DEFAULT_MARGIN_SECONDS = 10;
+
+const SECONDS_RE = /^\d+(\.\d+)?$/;
+
+/** CLI が既存出力を拒否したときの文言 (allaganeye/commands/clips.py)。 */
+const ALREADY_EXISTS_MARKER = 'already exist';
+
+// ── Pure helpers (exported for tests) ───────────────────────────────────────
+
+export interface ClipCandidate {
+  event: HighlightEvent;
+  /**
+   * `metadata.events` の **1 始まりの位置**。CLI `--event-index` にそのまま渡す
+   * (絞り込んでもクリップ番号は振り直されない)。
+   */
+  position: number;
+}
+
+export interface ClipCandidateGroup {
+  matchIndex: number;
+  candidates: ClipCandidate[];
+}
+
+/**
+ * `metadata.events` から切り抜き候補を作る。
+ *
+ * - 未知の `signal_id` は落とす (#127 §4-3: 未知信号は既定で無視)
+ * - `match_index` が null の区間は落とす (CLI も試合区間へクランプできないため対象外)
+ * - **`position` は元の並びのまま** (描画順で振り直さない)
+ */
+export function collectClipCandidates(
+  events: readonly HighlightEvent[] | undefined,
+): ClipCandidate[] {
+  if (!events) return [];
+  const out: ClipCandidate[] = [];
+  events.forEach((event, index) => {
+    if (signalLabel(event.signal_id) === null) return;
+    if (event.match_index === null) return;
+    out.push({ event, position: index + 1 });
+  });
+  return out;
+}
+
+/** 候補を `match_index` ごとにまとめる (試合 index 昇順、各グループ内は時刻順)。 */
+export function groupClipCandidates(
+  candidates: readonly ClipCandidate[],
+): ClipCandidateGroup[] {
+  const byMatch = new Map<number, ClipCandidate[]>();
+  for (const candidate of candidates) {
+    const matchIndex = candidate.event.match_index;
+    if (matchIndex === null) continue;
+    const bucket = byMatch.get(matchIndex);
+    if (bucket) bucket.push(candidate);
+    else byMatch.set(matchIndex, [candidate]);
+  }
+  return [...byMatch.keys()]
+    .sort((a, b) => a - b)
+    .map((matchIndex) => ({
+      matchIndex,
+      candidates: [...(byMatch.get(matchIndex) ?? [])].sort(
+        (a, b) => a.event.timestamp - b.event.timestamp,
+      ),
+    }));
+}
+
+/**
+ * イベント 1 件の切り抜き区間 (元録画の絶対秒)。
+ *
+ * CLI と同じく 0 秒でクランプし、終端が開始より前にならないようにする
+ * (試合区間へのクランプは CLI 側が行う)。
+ */
+export function clipRangeFor(
+  event: Pick<HighlightEvent, 'timestamp' | 'end'>,
+  pre: number,
+  post: number,
+): { start: number; end: number } {
+  const start = Math.max(0, event.timestamp - pre);
+  const end = Math.max(start, event.end + post);
+  return { start: round2(start), end: round2(end) };
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/**
+ * 前後秒数フォームの client-side 検証。CLI は 0 以上の有限値しか受け付けない
+ * (負値 / nan / inf は exit 5)。問題なければ null。
+ */
+export function validateMargins(
+  preText: string,
+  postText: string,
+): string | null {
+  for (const [label, text] of [
+    ['前', preText],
+    ['後', postText],
+  ] as const) {
+    if (!SECONDS_RE.test(text.trim())) {
+      return `${label} は 0 以上の秒数で入力してください (例: 10)`;
+    }
+  }
+  return null;
+}
+
+/** 検証済みの入力を数値にする。 */
+export function parseMargins(
+  preText: string,
+  postText: string,
+): { pre: number; post: number } {
+  return { pre: Number(preText.trim()), post: Number(postText.trim()) };
+}
+
+function isAlreadyExistsError(message: string | undefined): boolean {
+  return typeof message === 'string' && message.includes(ALREADY_EXISTS_MARKER);
+}
+
+// ── Component ───────────────────────────────────────────────────────────────
+
+export function ClipsScreen() {
+  const metadata = useMetadataStore((s) => s.metadata);
+  const filePath = useMetadataStore((s) => s.filePath);
+  const dirty = useMetadataStore((s) => s.dirty);
+
+  const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
+  const navigate = useAppStateStore((s) => s.navigate);
+  const setPendingSeekSeconds = useAppStateStore((s) => s.setPendingSeekSeconds);
+  const setClipRange = useAppStateStore((s) => s.setClipRange);
+  const openPreviewFor = useAppStateStore((s) => s.openPreviewFor);
+
+  const status = useClipsStore((s) => s.status);
+  const runMetadataPath = useClipsStore((s) => s.metadataPath);
+  const progress = useClipsStore((s) => s.progress);
+  const result = useClipsStore((s) => s.result);
+  const error = useClipsStore((s) => s.error);
+  const start = useClipsStore((s) => s.start);
+  const cancel = useClipsStore((s) => s.cancel);
+
+  const [preText, setPreText] = useState(String(DEFAULT_MARGIN_SECONDS));
+  const [postText, setPostText] = useState(String(DEFAULT_MARGIN_SECONDS));
+  const [codec, setCodec] = useState<'copy' | 'h264'>('copy');
+  const [marginsError, setMarginsError] = useState<string | null>(null);
+  /** 直近の実行対象 (上書き再実行のために覚えておく)。 */
+  const [lastPosition, setLastPosition] = useState<number | null>(null);
+
+  const videoSource = selectedVideoPath ?? metadata?.source ?? null;
+  const isSample = filePath === null;
+
+  const allEvents = metadata?.events;
+  const candidates = useMemo(
+    () => collectClipCandidates(allEvents),
+    [allEvents],
+  );
+  const groups = useMemo(() => groupClipCandidates(candidates), [candidates]);
+  const outsideCount = useMemo(() => {
+    const events = allEvents ?? [];
+    return events.filter(
+      (e) => signalLabel(e.signal_id) !== null && e.match_index === null,
+    ).length;
+  }, [allEvents]);
+
+  // 走行中の run が別ファイル向けなら、その進捗は見せない (indicators と同じ規則)。
+  const runIsForThisFile =
+    runMetadataPath !== null && runMetadataPath === filePath;
+  const displayedStatus =
+    status === 'running' ? 'running' : runIsForThisFile ? status : 'idle';
+  const cancelled =
+    displayedStatus === 'error' && error?.code === 'subprocess.cancelled';
+  // 「既存出力あり」で止まったときだけ上書き再実行を出す (それ以外の exit 5 は
+  // 秒数の入力ミス等なので、勝手に overwrite を立てない)。
+  const canOverwriteRetry =
+    displayedStatus === 'error' && isAlreadyExistsError(error?.message);
+
+  const margins = validateMargins(preText, postText);
+  const runDisabledReason = isSample
+    ? 'サンプル動画では切り抜きを実行できません'
+    : dirty
+      ? '未適用の編集があります。先に [適用] してから切り抜いてください'
+      : margins !== null
+        ? margins
+        : null;
+  const runDisabled = runDisabledReason !== null && displayedStatus !== 'running';
+
+  const percent =
+    progress === null ? null : Math.max(0, Math.min(100, progress.percent));
+
+  /**
+   * 1 件だけ切り抜く。`overwrite` は「既存出力あり」で一度止まった後の再実行でだけ
+   * true にする (無確認の truncate をしない)。
+   */
+  async function cutOne(position: number, overwrite: boolean): Promise<void> {
+    const path = filePath;
+    if (path === null) return;
+    const message = validateMargins(preText, postText);
+    setMarginsError(message);
+    if (message !== null) return;
+    const { pre, post } = parseMargins(preText, postText);
+    setLastPosition(position);
+    const request: ClipsRequest = {
+      metadataPath: path,
+      pre,
+      post,
+      codec,
+      eventIndexes: [position],
+      overwrite,
+    };
+    try {
+      await start(request);
+    } catch {
+      // store が error を保持する (画面は status / error だけを見る)。
+    }
+  }
+
+  /** 行の [この範囲を確認] — 範囲を積んで preview へ。 */
+  function confirmRange(candidate: ClipCandidate): void {
+    const message = validateMargins(preText, postText);
+    setMarginsError(message);
+    if (message !== null) return;
+    const { pre, post } = parseMargins(preText, postText);
+    const range = clipRangeFor(candidate.event, pre, post);
+    setClipRange(range);
+    setPendingSeekSeconds(range.start);
+    const matchIndex = candidate.event.match_index;
+    if (matchIndex !== null) openPreviewFor(matchIndex);
+  }
+
+  if (!metadata) {
+    return (
+      <div className={styles.screen} data-testid="clips-screen" data-status="idle">
+        <div className={styles.emptyNote} role="status" data-testid="clips-metadata-missing">
+          metadata.json が読み込まれていません。先に検出を実行してください。
+        </div>
+        <button
+          type="button"
+          className={styles.backButton}
+          onClick={() => navigate('complete')}
+        >
+          ◀ 一覧へ
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className={styles.screen} data-testid="clips-screen" data-status={displayedStatus}>
+      <SampleModeBanner />
+
+      <div className={styles.header}>
+        <button
+          type="button"
+          className={styles.backButton}
+          onClick={() => navigate('complete')}
+        >
+          ◀ 一覧へ
+        </button>
+        <div>
+          {videoSource &&
+            (() => {
+              const { fileName, parentDir } = splitPath(videoSource);
+              return (
+                <div
+                  className={pathStyles.pathDisplay}
+                  title={videoSource}
+                  data-testid="clips-path"
+                >
+                  <div className={styles.headerFileName}>{fileName || '(video)'}</div>
+                  {parentDir && (
+                    <div className={pathStyles.pathSecondary}>{parentDir}</div>
+                  )}
+                </div>
+              );
+            })()}
+          <div className={styles.caption}>CLIPS</div>
+          <div className={styles.title}>KO / ASSIST の前後を切り抜く</div>
+          <div className={styles.purpose}>
+            KO / ASSIST が表示された時刻の前後を秒数で指定して、元録画から
+            クリップを切り出します。1 件ずつ範囲を確認しながら切り抜けます。
+          </div>
+        </div>
+      </div>
+
+      <AllaganFrame className={styles.panel}>
+        <div className={styles.controls}>
+          <label className={styles.controlField}>
+            <span>前 (秒)</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={preText}
+              aria-label="前 (秒)"
+              onChange={(e) => {
+                setPreText(e.target.value);
+                setMarginsError(null);
+              }}
+            />
+          </label>
+          <label className={styles.controlField}>
+            <span>後 (秒)</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={postText}
+              aria-label="後 (秒)"
+              onChange={(e) => {
+                setPostText(e.target.value);
+                setMarginsError(null);
+              }}
+            />
+          </label>
+          <label className={styles.controlField}>
+            <span>形式</span>
+            <select
+              value={codec}
+              aria-label="形式"
+              onChange={(e) => setCodec(e.target.value === 'h264' ? 'h264' : 'copy')}
+            >
+              <option value="copy">無劣化 (copy)</option>
+              <option value="h264">再エンコード (h264)</option>
+            </select>
+          </label>
+        </div>
+        {marginsError !== null && (
+          <div className={styles.fieldError} role="alert" data-testid="clips-margins-error">
+            {marginsError}
+          </div>
+        )}
+        {runDisabled && (
+          <div className={styles.note} role="status" data-testid="clips-run-disabled">
+            {runDisabledReason}
+          </div>
+        )}
+        {outsideCount > 0 && (
+          <div className={styles.note} data-testid="clips-outside-note">
+            {outsideCount} 件は試合区間の外にあるため切り抜けません。
+          </div>
+        )}
+
+        {displayedStatus === 'running' && (
+          <div className={styles.stateBlock} data-testid="clips-progress">
+            <div className={styles.progressBox} role="status">
+              <div className={styles.progressHeader}>
+                <span className={styles.progressLabel}>切り抜き中</span>
+                <span className={styles.progressTime}>
+                  clip {progress === null ? '—' : String(progress.match_index).padStart(3, '0')}
+                  {progress === null
+                    ? ''
+                    : ` ・ ${Math.round(percent ?? 0)}% ・ ${progress.stage}`}
+                </span>
+              </div>
+              <div className={styles.progressBar}>
+                <div
+                  className={styles.progressFill}
+                  style={{ width: `${percent ?? 0}%` }}
+                />
+              </div>
+              {progress?.message !== undefined && progress.message !== '' && (
+                <div className={styles.progressMessage}>{progress.message}</div>
+              )}
+            </div>
+            <button type="button" className={styles.cancelButton} onClick={cancel}>
+              中断
+            </button>
+          </div>
+        )}
+
+        {displayedStatus === 'complete' && result !== null && (
+          <div className={styles.stateBlock} data-testid="clips-result">
+            <div className={styles.summary} role="status">
+              <span className={styles.summaryOk}>成功 {result.success}</span>
+              <span className={styles.summaryDivider} aria-hidden="true">
+                /
+              </span>
+              <span className={styles.summaryFail}>失敗 {result.failure}</span>
+            </div>
+            {result.output_paths.length > 0 && (
+              <ul className={styles.outputList}>
+                {result.output_paths.map((outputPath) => (
+                  <li key={outputPath} className={styles.outputItem}>
+                    <span className={styles.outputPath} title={outputPath}>
+                      {outputPath}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {displayedStatus === 'error' && (
+          <div className={styles.stateBlock} data-testid="clips-error">
+            {cancelled ? (
+              <div className={styles.note} role="status" data-testid="clips-cancelled">
+                切り抜きを中断しました。
+              </div>
+            ) : (
+              <div className={styles.errorMessage} role="alert">
+                <span>{error?.message ?? toErrorState(error).message}</span>
+                {error?.hint !== null && error?.hint !== undefined && (
+                  <span className={styles.errorHint}>{error.hint}</span>
+                )}
+                {canOverwriteRetry && lastPosition !== null && (
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => void cutOne(lastPosition, true)}
+                    data-testid="clips-overwrite-retry"
+                  >
+                    上書きして切り抜く
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {candidates.length === 0 ? (
+          <div className={styles.emptyBlock}>
+            <div className={styles.emptyNote} data-testid="clips-empty">
+              KO / ASSIST のイベントがありません。先に KO / ASSIST を検出してください。
+            </div>
+            {!isSample && (
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={() => navigate('indicators')}
+              >
+                ⬦ KO / ASSIST を検出
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className={styles.groups}>
+            {groups.map((group) => (
+              <div
+                key={group.matchIndex}
+                className={styles.group}
+                data-testid={`clips-group-${group.matchIndex}`}
+              >
+                <div className={styles.groupHeading}>
+                  {`MATCH_${String(group.matchIndex).padStart(3, '0')}`}
+                </div>
+                <ul className={styles.candidateList}>
+                  {group.candidates.map((candidate) => {
+                    const { event, position } = candidate;
+                    const kindLabel = signalLabel(event.signal_id) ?? event.signal_id;
+                    const range = clipRangeFor(
+                      event,
+                      Number(preText) || 0,
+                      Number(postText) || 0,
+                    );
+                    const duration = Math.max(0, range.end - range.start);
+                    return (
+                      <li
+                        key={`${event.signal_id}-${event.timestamp}-${position}`}
+                        className={styles.candidateItem}
+                        data-testid={`clips-candidate-${position}`}
+                      >
+                        <span className={styles.kindBadge} data-kind={event.signal_id}>
+                          {kindLabel}
+                        </span>
+                        <span className={styles.timeRange}>
+                          {`${fmtClockTime(event.timestamp)} - ${fmtClockTime(event.end)}`}
+                        </span>
+                        <span className={styles.clipRange}>
+                          {`範囲 ${fmtClockTime(range.start)} - ${fmtClockTime(range.end)} ・ ${duration.toFixed(1)} 秒`}
+                        </span>
+                        <button
+                          type="button"
+                          className={styles.secondaryButton}
+                          onClick={() => confirmRange(candidate)}
+                          aria-label={`${kindLabel} ${fmtClockTime(event.timestamp)} の範囲をプレビューで確認`}
+                          data-testid={`clips-preview-${position}`}
+                        >
+                          この範囲を確認
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.cutButton}
+                          onClick={() => void cutOne(position, false)}
+                          disabled={runDisabled}
+                          aria-label={`${kindLabel} ${fmtClockTime(event.timestamp)} を切り抜く`}
+                          data-testid={`clips-cut-${position}`}
+                        >
+                          ⬦ 切り抜く
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
+      </AllaganFrame>
+    </div>
+  );
+}

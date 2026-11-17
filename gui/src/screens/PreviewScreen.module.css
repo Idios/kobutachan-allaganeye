@@ -105,6 +105,25 @@
   gap: 14px;
 }
 
+/* #1131 Phase B2 -- ClipsScreen からのクリップ範囲バナー。試合境界の編集とは
+   独立で、先頭 / 末尾へのシークだけを提供する。 */
+.clipRange {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: rgba(var(--ae-gold-rgb), 0.08);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.3);
+}
+
+.clipRangeLabel {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  color: var(--ae-gold-bright);
+}
+
 .pane {
   padding: 8px;
   background: var(--ae-bg-deep);

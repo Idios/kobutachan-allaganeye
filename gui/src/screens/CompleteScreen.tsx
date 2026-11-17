@@ -237,6 +237,18 @@ export function CompleteScreen() {
           >
             ⬦ KO / ASSIST を検出
           </button>
+          {/* #1131 Phase B2: KO / ASSIST の前後を切り抜く画面への導線。
+              候補 (`metadata.events`) は indicators の実行後にしか無いが、
+              未検出のときは画面側が「先に検出してください」を出す。 */}
+          <button
+            type="button"
+            className={styles.exportAllButton}
+            onClick={() => navigate('clips')}
+            disabled={metadata.matches.length === 0}
+            aria-label="クリップ切り抜き"
+          >
+            ⬦ クリップ切り抜き
+          </button>
           <button
             type="button"
             className={styles.closeButton}

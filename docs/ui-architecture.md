@@ -9,7 +9,7 @@
 Phase 2 で整備した責務:
 
 - React 19 + Zustand による 2 層 state machine (screen + phase)
-- 5 画面 (drop / detecting / complete / preview / export) の UI 骨格 (minimap は #893、indicators は #1106 Phase 2 で追加され、現在は 7 画面)
+- 5 画面 (drop / detecting / complete / preview / export) の UI 骨格 (minimap は #893、indicators は #1106 Phase 2、clips は #1131 Phase B2 で追加され、現在は 8 画面)
 - `aetherTheme` デザイントークンの CSS 変数化 (`gui/src/styles/tokens.css`)
 - CSS Modules による component-scoped スタイル
 - `#516` `[元に戻す]` 機能 (Rust `restore_from_original` + TS `metadataStore.restore`)
@@ -20,13 +20,13 @@ Phase 3/4 (#465, #466) は本 doc の phase 遷移を維持したまま reducer 
 ## 2. 2 層構造の state machine
 
 ```text
-(a) screen   = drop | detecting | complete | preview | export | minimap | indicators   (useAppStateStore.screen)
+(a) screen   = drop | detecting | complete | preview | export | minimap | indicators | clips   (useAppStateStore.screen)
 (b) phase    = 各 screen の内部 state enum                                  (screens/types.ts + local useState)
 ```
 
 - **screen** は URL の代替。`useAppStateStore.navigate()` で切り替える。react-router-dom は採用しない (desktop-only)
 - **phase** は画面内の状態を表現。純粋関数 `reducers/*.ts` で遷移を記述
-- screen enum の正は [`appStateStore.ts`](../gui/src/state/appStateStore.ts) の `AppScreen` 型 (`minimap` は #893、`indicators` は #1106 Phase 2 で追加)
+- screen enum の正は [`appStateStore.ts`](../gui/src/state/appStateStore.ts) の `AppScreen` 型 (`minimap` は #893、`indicators` は #1106 Phase 2、`clips` は #1131 Phase B2 で追加)
 
 ## 3. screen 遷移図 + アプリ終了経路
 
@@ -42,6 +42,7 @@ stateDiagram-v2
     complete --> export: [全試合書き出し]
     complete --> minimap: [⬦ ミニマップ切抜き] (matches 0 件なら disabled、#893)
     complete --> indicators: [⬦ KO / ASSIST を検出] (matches 0 件なら disabled、#1106)
+    complete --> clips: [⬦ クリップ切り抜き] (matches 0 件なら disabled、#1131)
     complete --> drop: [x 閉じる] (store.clear でリセット)
 
     preview --> complete: [◀ 一覧へ] or [元に戻す] 完了
@@ -54,6 +55,12 @@ stateDiagram-v2
 
     indicators --> complete: [◀ 一覧へ] / [戻る] (#1106)
     indicators --> preview: イベント行の click / Enter → openPreviewFor + pendingSeekSeconds (#1106)
+    indicators --> clips: [⬦ クリップを切り抜く] (既知イベントが 1 件以上あるとき、#1131)
+
+    clips --> complete: [◀ 一覧へ] (#1131)
+    clips --> indicators: [⬦ KO / ASSIST を検出] (候補 0 件のとき、#1131)
+    clips --> preview: [この範囲を確認] → openPreviewFor + clipRange + pendingSeekSeconds (#1131)
+    preview --> clips: [◀ 一覧へ] の遷移先は complete (clips へは戻らない、#1131)
 ```
 
 > **[✓ 完了 — フォルダを開く] は画面遷移しない**: ExportScreen の `handleOpenFolder` は `open_folder_in_explorer` を invoke するだけで `navigate` を呼ばない (旧実装の `navigate('complete')` は Explorer が開く前に遷移する不具合として #466 review #5 で撤去済)。したがって `export --> complete` のエッジは存在しない。
@@ -63,6 +70,8 @@ stateDiagram-v2
 > **minimap 画面内の phase 遷移** (`idle / running / cancelling / completed / error`) は §5 の minimap 節および [ui-interaction-spec.md §2.6](ui-interaction-spec.md) を参照 (#893)。
 >
 > **indicators 画面内の status 遷移** (`idle / running / complete / error`) は §5 の indicators 節および [ui-interaction-spec.md §2.7](ui-interaction-spec.md) を参照 (#1106 Phase 2)。`indicators --> preview` は画面遷移と同時に `appStateStore.pendingSeekSeconds` を積み、PreviewScreen が IN pane の `video.currentTime` に一度だけ反映する (§5 indicators 節)。
+>
+> **clips 画面内の status 遷移** (`idle / running / complete / error`) は §5 の clips 節および [ui-interaction-spec.md §2.8](ui-interaction-spec.md) を参照 (#1131 Phase B2)。`clips --> preview` は `appStateStore.clipRange` (イベントの前後秒数で計算した絶対秒の区間) と `pendingSeekSeconds` を同時に積み、PreviewScreen が範囲バナーと先頭 / 末尾シークを出す。試合境界 (`startT` / `endT`) には触らない。
 
 **アプリ終了**: ウィンドウ右上 `×` (Tauri chrome) = 即時 app exit。任意の screen / phase から `[*]` への遷移は暗黙。Phase 2 では警告なし (dummy のため)。Phase 3/4 で running 中の confirm + process kill を追加予定 (**#523** で追跡)。
 
@@ -404,6 +413,29 @@ stateDiagram-v2
 - [◀ 一覧へ] は実行中も常に enabled (minimap と同じ)。中断せずに離脱すると subprocess は走り続ける
 - イベント一覧の行は「その発生時刻を preview で見る」導線で、`pendingSeekSeconds` に `timestamp` を積んでから `openPreviewFor(match_index)` する（#127 で `start` から改名）。`match_index` が null (試合外) の行は遷移先が無いためボタンにしない
 - 画面内の UI 部品ごとの操作 → store mutation は [ui-interaction-spec.md §2.7](ui-interaction-spec.md) が正
+
+### clips (#1131 Phase B2)
+
+```mermaid
+stateDiagram-v2
+    [*] --> clips_idle
+    clips_idle --> clips_running: [⬦ 切り抜く] (start(req) / --event-index 1 件)
+    clips_running --> clips_complete: CLI が summary 行を返す
+    clips_running --> clips_error: CLI が非 0 exit (exit 2 / 5 / 1 / その他)
+    clips_running --> clips_error: [中断] → subprocess.cancelled
+    clips_complete --> clips_running: [⬦ 切り抜く] (別の候補)
+    clips_error --> clips_running: [▼ 上書きして切り抜く] (既存出力ありの exit 5 のみ)
+    clips_idle --> [*]: [この範囲を確認] → preview (+ clipRange + pendingSeekSeconds)
+    clips_idle --> [*]: [◀ 一覧へ] → complete
+```
+
+- 状態の正は [`clipsStore.ts`](../gui/src/state/clipsStore.ts) の `ClipsStatus` (`idle / running / complete / error`)。画面ローカルの reducer は持たず、実行状態は store に集約する (indicators と同じ設計)
+- 候補は `metadata.events` (#127) から復元する (`indicatorsStore` の結果ではない)。未知の `signal_id` と `match_index: null` は除外し、`position` は **元の `events[]` の 1 始まり位置** のまま保つ (CLI `--event-index` にそのまま渡す)
+- 実行は **1 件ずつ**。store が走行中の再入を拒否するので、連続クリックで複数 CLI が重なることはない
+- `dirty` (未適用の編集) / sample mode の間は [⬦ 切り抜く] を disabled にする。CLI は **disk の metadata.json** を読むため、in-memory の `events[]` と位置がずれる可能性がある
+- 既存出力があると CLI は exit 5 で拒否する (無確認の truncate 防止)。`error.message` に `already exist` を含むときだけ [▼ 上書きして切り抜く] を出し、それ以外の exit 5 (秒数の入力ミス等) では出さない。中断で書きかけの MP4 が残る件は #1132
+- [◀ 一覧へ] は常に enabled (indicators と同じ)。走行中に離れても subprocess は走り続ける
+- 画面内の UI 部品ごとの操作 → store mutation は [ui-interaction-spec.md §2.8](ui-interaction-spec.md) が正
 
 ## 6. ffmpeg 実行中の中断フロー (Phase 3/4、#523 で実装)
 

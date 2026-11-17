@@ -20,6 +20,26 @@ export function fmtTime(seconds: number): string {
 }
 
 /**
+ * Format seconds as HH:MM:SS (no sub-second precision).
+ *
+ * `fmtTime` は 1 時間未満で MM:SS になるため、**録画先頭からの絶対秒**を
+ * 並べると桁が揃わない。KO / ASSIST のイベント一覧 (#1106) とクリップ一覧
+ * (#1131) は常に hh:mm:ss で揃える (Idios 判断 2026-11-16)。
+ *
+ * - Negative or NaN input is clamped to 0.
+ * - 表示は 1 秒未満を切り捨てる (保存値は 0.01 秒精度のまま)。
+ */
+export function fmtClockTime(seconds: number): string {
+  const clamped = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  const total = Math.floor(clamped);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+
+/**
  * Format seconds as HH:MM:SS.ff (frame-accurate timecode).
  * Mirror of fmtPreciseTime in docs/design/bundle/project/variants/aether-preview.jsx.
  *
