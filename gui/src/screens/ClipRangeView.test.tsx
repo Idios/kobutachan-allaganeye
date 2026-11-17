@@ -324,6 +324,86 @@ describe('ClipRangeView', () => {
     expect(applyMock).not.toHaveBeenCalled();
   });
 
+  // 境界エディタと同じキーボードショートカットを使えるようにする (Idios 指摘
+  // 2026-11-17)。Space = active ペインの再生 / 停止。
+  it('toggles play/pause with Space on the active pane', async () => {
+    render(<ClipRangeView />);
+
+    const inVideo = (await screen.findByLabelText(
+      'IN (clip start) video',
+    )) as HTMLVideoElement;
+    const outVideo = (await screen.findByLabelText(
+      'OUT (clip end) video',
+    )) as HTMLVideoElement;
+    const inPlay = vi.fn().mockResolvedValue(undefined);
+    const inPause = vi.fn();
+    const outPlay = vi.fn().mockResolvedValue(undefined);
+    const outPause = vi.fn();
+    inVideo.play = inPlay;
+    inVideo.pause = inPause;
+    outVideo.play = outPlay;
+    outVideo.pause = outPause;
+    Object.defineProperty(inVideo, 'paused', { value: true, configurable: true });
+    Object.defineProperty(outVideo, 'paused', { value: true, configurable: true });
+
+    // 既定の active は IN
+    fireEvent.keyDown(window, { key: ' ' });
+    expect(inPlay).toHaveBeenCalledTimes(1);
+    expect(outPlay).not.toHaveBeenCalled();
+
+    // OUT ペインを activate すると OUT を再生 / 停止する
+    await userEvent.click(screen.getByRole('button', { name: /OUT \(clip end\)/ }));
+    fireEvent.keyDown(window, { key: ' ' });
+    expect(outPlay).toHaveBeenCalledTimes(1);
+  });
+
+  // 矢印キーは active な端を動かす (←→ 1s / Shift 10s / Alt 1 frame)。
+  it('nudges the active edge with the arrow keys', () => {
+    render(<ClipRangeView />);
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(tcSeconds('IN (clip start)')).toBeCloseTo(CLIP_START + 1, 1);
+
+    fireEvent.keyDown(window, { key: 'ArrowLeft', shiftKey: true });
+    expect(tcSeconds('IN (clip start)')).toBeCloseTo(CLIP_START - 9, 1);
+
+    fireEvent.keyDown(window, { key: 'ArrowRight', altKey: true });
+    expect(tcSeconds('IN (clip start)')).toBeCloseTo(CLIP_START - 9 + 1 / FPS, 2);
+
+    // active を OUT にすれば OUT が動く
+    fireEvent.click(screen.getByRole('button', { name: /OUT \(clip end\)/ }));
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(tcSeconds('OUT (clip end)')).toBeCloseTo(CLIP_END - 1, 1);
+  });
+
+  // TC 入力中の矢印は文字入力のものなので横取りしない。
+  it('leaves the arrow keys to the timecode input while typing', () => {
+    render(<ClipRangeView />);
+
+    const input = screen.getByLabelText('IN (clip start) timecode');
+    fireEvent.keyDown(input, { key: 'ArrowRight' });
+
+    expect(tcSeconds('IN (clip start)')).toBeCloseTo(CLIP_START, 1);
+  });
+
+  it('does not nudge from the keyboard while the event is unlinked', () => {
+    selectClipRange(null);
+
+    render(<ClipRangeView />);
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    expect(tcSeconds('IN (clip start)')).toBeCloseTo(CLIP_START, 1);
+  });
+
+  it('advertises the keyboard shortcuts', () => {
+    render(<ClipRangeView />);
+
+    const hint = screen.getByRole('note', { name: 'keyboard shortcuts' });
+    expect(hint.textContent).toMatch(/Space/);
+    expect(hint.textContent).toMatch(/1s/);
+    expect(hint.textContent).toMatch(/10s/);
+  });
+
   it('shows the clip duration in the same hh:mm:ss form as the rest of the GUI', () => {
     render(<ClipRangeView />);
 

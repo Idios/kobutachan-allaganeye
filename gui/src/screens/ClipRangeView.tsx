@@ -14,7 +14,7 @@
  * `allaganeye clips` はこの区間で切り抜く（metadata が SSoT, #1139）。
  */
 import { invoke } from '@tauri-apps/api/core';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import pathStyles from '../styles/path-display.module.css';
 
@@ -119,14 +119,20 @@ export function ClipRangeView() {
   // `parseTimecode` 失敗時と同じ扱いで、直前の有効値を保つ。
   // codex review 2026-11-17 (P2): 素通しすると `Infinity` が保存され、JSON 化で
   // `null` になった `clip_end` が metadata に書かれる。
-  const applyStart = (next: number) => {
-    if (!editable || !Number.isFinite(next)) return;
-    setStartT(Math.max(0, Math.min(next, endT - 0.01)));
-  };
-  const applyEnd = (next: number) => {
-    if (!editable || !Number.isFinite(next)) return;
-    setEndT(Math.max(next, startT + 0.01));
-  };
+  const applyStart = useCallback(
+    (next: number) => {
+      if (!editable || !Number.isFinite(next)) return;
+      setStartT(Math.max(0, Math.min(next, endT - 0.01)));
+    },
+    [editable, endT],
+  );
+  const applyEnd = useCallback(
+    (next: number) => {
+      if (!editable || !Number.isFinite(next)) return;
+      setEndT(Math.max(next, startT + 0.01));
+    },
+    [editable, startT],
+  );
 
   // 一覧の行から開いた直後は、IN ペインを **イベントの発生時刻** に置く (#1139
   // 受け入れ条件: シーク位置はイベント開始)。TC はクリップの IN のまま (編集
@@ -147,10 +153,43 @@ export function ClipRangeView() {
     seekedToEventRef.current = true;
   }, [videoUrl, event]);
 
-  const nudge = (edge: 'start' | 'end', delta: number) => {
-    if (edge === 'start') applyStart(startT + delta);
-    else applyEnd(endT + delta);
-  };
+  const nudge = useCallback(
+    (edge: 'start' | 'end', delta: number) => {
+      if (edge === 'start') applyStart(startT + delta);
+      else applyEnd(endT + delta);
+    },
+    [applyStart, applyEnd, startT, endT],
+  );
+
+  // 境界エディタと同じキーボードショートカット (Idios 指摘 2026-11-17)。
+  // Space = active ペインの再生 / 停止、←→ = ±1s、Shift = ±10s、Alt = ±1 frame。
+  // 矢印は **active な端**(`editing`) だけを動かし、TC 入力中は横取りしない。
+  const activeVideoRef = editing === 'start' ? inVideoRef : outVideoRef;
+  useEffect(() => {
+    const interactiveTags = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
+    function handleKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target && interactiveTags.has(target.tagName)) return;
+
+      if (e.key === ' ') {
+        const v = activeVideoRef.current;
+        if (v) {
+          if (v.paused) void v.play().catch(() => undefined);
+          else v.pause();
+        }
+        e.preventDefault();
+        return;
+      }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        const sign = e.key === 'ArrowLeft' ? -1 : 1;
+        const step = e.altKey ? 1 / fps : e.shiftKey ? 10 : 1;
+        nudge(editing, sign * step);
+        e.preventDefault();
+      }
+    }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [activeVideoRef, editing, fps, nudge]);
 
   const manual = event !== null && event.clip_start !== undefined;
   const changed =
@@ -304,6 +343,23 @@ export function ClipRangeView() {
             {step.label}
           </button>
         ))}
+      </div>
+
+      {/* キーボードショートカットの可視化 (境界エディタと同じ row、#1139) */}
+      <div className={styles.keyHint} role="note" aria-label="keyboard shortcuts">
+        <span className={styles.keyHintItem}>
+          <kbd className={styles.kbd}>←</kbd>
+          <kbd className={styles.kbd}>→</kbd> 1s
+        </span>
+        <span className={styles.keyHintItem}>
+          <kbd className={styles.kbd}>Shift</kbd>+<kbd className={styles.kbd}>←→</kbd> 10s
+        </span>
+        <span className={styles.keyHintItem}>
+          <kbd className={styles.kbd}>Alt</kbd>+<kbd className={styles.kbd}>←→</kbd> 1F
+        </span>
+        <span className={styles.keyHintItem}>
+          <kbd className={styles.kbd}>Space</kbd> / クリック: 再生/停止
+        </span>
       </div>
 
       <div className={styles.actions}>

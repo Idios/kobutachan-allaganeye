@@ -927,6 +927,29 @@ describe('#1131 / #1139 PreviewScreen delegates the clip range mode', () => {
     expect(screen.queryByLabelText('apply')).not.toBeInTheDocument();
   });
 
+  // Space で active ペインの再生 / 停止 (境界エディタの既存 UX)。clip 範囲の画面に
+  // 分けてもこちらが壊れていないことを pin する。
+  it('toggles play/pause with Space on the active boundary pane', async () => {
+    useMetadataStore.setState({ filePath: '/x' });
+    render(<PreviewScreen />);
+
+    const video = (await screen.findByLabelText(
+      'IN (start) video',
+    )) as HTMLVideoElement;
+    const play = vi.fn().mockResolvedValue(undefined);
+    const pause = vi.fn();
+    video.play = play;
+    video.pause = pause;
+    Object.defineProperty(video, 'paused', { value: true, configurable: true });
+
+    fireEvent.keyDown(window, { key: ' ' });
+    expect(play).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(video, 'paused', { value: false, configurable: true });
+    fireEvent.keyDown(window, { key: ' ' });
+    expect(pause).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the boundary editor when the range belongs to another match', () => {
     useAppStateStore.getState().setClipRange({
       start: 483.4,

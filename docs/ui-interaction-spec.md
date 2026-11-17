@@ -903,7 +903,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | --- | --- |
 | 種類 | PreviewScreen の**画面状態の差し替え** (`data-testid="clip-range-view"`)。`appStateStore.clipRange.matchIndex` が開いている試合と一致するとき、試合境界エディタの代わりに早期 return で描画する。動画ペインと TC 入力は共通部品 `TimecodePane` を流用 |
 | 状態 | `clipRange.start` / `end` を local state の初期値にし、編集中は local state だけが動く（`metadata.events` は [保存] まで触らない）。`position === null` (metadata に未適用) のときは TC 入力 / nudge / 再生による時間変更をすべて閉じる。マウント直後は IN ペインを **イベントの発生時刻**（`events[position-1].timestamp`）へ 1 回だけシークする（TC は clip の IN のまま、§2.4.17 と同じ「その瞬間を見る」役割） |
-| 遷移トリガー | TC 入力 / ±1s・±10s nudge（IN は `OUT - 0.01` で止まり追い越さない）/ [⬦ この範囲を保存] → `setEventClipRange(position, {start, end})` + `apply()` / [保存せず戻る]・[◀ クリップ一覧へ] → `navigate('clips')` |
+| 遷移トリガー | TC 入力 / ±1s・±10s nudge（IN は `OUT - 0.01` で止まり追い越さない）/ **キーボード**: `←` `→` = active な端を ±1s、`Shift` = ±10s、`Alt` = ±1 frame、`Space` = active ペインの再生 / 停止（境界エディタ §2.4.7 と同じ割当）/ [⬦ この範囲を保存] → `setEventClipRange(position, {start, end})` + `apply()` / [保存せず戻る]・[◀ クリップ一覧へ] → `navigate('clips')` |
 | store mutation | `metadataStore.setEventClipRange` (`events[position-1].clip_start` / `clip_end` を書いて `dirty`) + `apply()`、`appStateStore.setClipRange` |
 | 例外 / edge case | 試合境界のエディタとは **状態を共有しない**（部品だけ共有）。`clipRange` が `null` で直接来たときは「クリップ範囲が選択されていません」+ [◀ クリップ一覧へ]。`position === null` は保存不可（`clip-range-unlinked`）。`events[position-1]` に `clip_start` があるときは `手動` の注記（`clip-range-manual`）。時刻表示は `fmtPreciseTime`（フレーム付き、編集 precision のため）で、一覧の `hh:mm:ss` とは別 |
 
