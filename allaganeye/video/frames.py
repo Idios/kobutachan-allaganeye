@@ -38,11 +38,18 @@ def build_frame_command(
     fps: float,
     start: float = 0.0,
     duration: float | None = None,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> list[str]:
     """Build the ffmpeg argv for raw gray frame streaming.
 
     Kept separate from :func:`iter_gray_frames` so the argument order can be
     asserted without launching a process.
+
+    ``crop`` is ``(x, y, width, height)`` in source pixels (#1140). The scan only
+    looks at the text band, so cropping inside ffmpeg keeps ~2 MB per frame from
+    crossing the pipe. The filter order is ``format=gray`` first and ``crop``
+    second: cropping the decoded yuv420p plane would round odd x/y to the chroma
+    grid, while the gray (luma) plane is exact.
     """
     if fps <= 0:
         raise ValueError(f"fps must be positive, got {fps}")
@@ -50,6 +57,14 @@ def build_frame_command(
         raise ValueError(f"start must be >= 0, got {start}")
     if duration is not None and duration <= 0:
         raise ValueError(f"duration must be positive, got {duration}")
+    filters: list[str] = []
+    if crop is not None:
+        x, y, width, height = crop
+        if x < 0 or y < 0 or width <= 0 or height <= 0:
+            raise ValueError(f"crop must be (x >= 0, y >= 0, w > 0, h > 0), got {crop}")
+        filters.append("format=gray")
+        filters.append(f"crop={width}:{height}:{x}:{y}")
+    filters.append(f"fps={fps}")
     command = [
         find_ffmpeg(),
         "-v",
@@ -63,7 +78,7 @@ def build_frame_command(
         command += ["-t", f"{duration:.3f}"]
     command += [
         "-vf",
-        f"fps={fps}",
+        ",".join(filters),
         "-f",
         "rawvideo",
         "-pix_fmt",
@@ -77,26 +92,45 @@ def iter_gray_frames(
     video: Path,
     *,
     fps: float,
-    frame_size: tuple[int, int],
+    frame_size: tuple[int, int] | None = None,
     start: float = 0.0,
     duration: float | None = None,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> Iterator[tuple[float, np.ndarray]]:
     """Yield ``(timestamp, grayscale frame)`` pairs at ``fps`` frames per second.
 
-    ``frame_size`` is ``(width, height)``; the caller gets it from
-    :func:`allaganeye.video.probe.probe_video` because the raw stream carries no
-    header. Timestamps are ``start + index / fps`` (the ``fps`` filter resamples
-    onto a fixed grid).
+    ``frame_size`` is ``(width, height)`` of the **emitted** frame; the caller
+    gets it from :func:`allaganeye.video.probe.probe_video` because the raw
+    stream carries no header. Timestamps are ``start + index / fps`` (the ``fps``
+    filter resamples onto a fixed grid).
+
+    When ``crop`` ``(x, y, w, h)`` is given the frames come out ``w x h`` (the
+    text band) and ``frame_size`` may be omitted (#1140). Passing a
+    ``frame_size`` that disagrees with the crop is rejected instead of silently
+    reading the pipe at the wrong stride.
 
     stderr goes to a temp file rather than a pipe: reading stdout and stderr
     concurrently needs a thread, and a filled stderr pipe would deadlock the
     decoder. The FFmpeg process is killed when the generator is closed early
     (Ctrl+C, ``break``), so a cancelled scan does not leave a decoder running.
     """
-    width, height = frame_size
+    if crop is not None:
+        crop_width, crop_height = crop[2], crop[3]
+        if frame_size is not None and tuple(frame_size) != (crop_width, crop_height):
+            raise ValueError(
+                f"frame_size {frame_size} does not match the crop size "
+                f"{(crop_width, crop_height)}"
+            )
+        width, height = crop_width, crop_height
+    else:
+        if frame_size is None:
+            raise ValueError("frame_size is required when no crop is given")
+        width, height = frame_size
     if width <= 0 or height <= 0:
-        raise ValueError(f"frame_size must be positive, got {frame_size}")
-    command = build_frame_command(video, fps=fps, start=start, duration=duration)
+        raise ValueError(f"frame_size must be positive, got {(width, height)}")
+    command = build_frame_command(
+        video, fps=fps, start=start, duration=duration, crop=crop
+    )
     frame_bytes = width * height
     return_code = 0
     message = ""

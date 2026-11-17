@@ -579,9 +579,16 @@ KO: 1 / ASSIST: 2 (3 intervals)
 ```json
 {"type": "progress", "phase": "calibrating"}
 {"type": "progress", "phase": "scanning", "layout": {...}}
-{"type": "progress", "phase": "scanning", "processed_s": 30.0, "total_s": 944.0}
+{"type": "progress", "phase": "scanning", "processed_s": 30.0, "total_s": 944.0, "eta_s": 41.2}
 {"type": "complete", "metadata": "...", "layout": {...}, "recalibrated": true, "events": [...], "wrote_metadata": true}
 ```
+
+`eta_s`（#1140）は**推定残り秒**で、走査開始からの実測時間と走査済み秒数から
+CLI 側が算出する（GUI はこれを表示するだけで再計算しない）。最初の進捗行は
+`processed_s` が小さいため値が暴れることがあるので、**消費側は 0 以下の値を
+無視する**こと。
+
+人間向け出力では同じ行に `ETA hh:mm:ss` を付ける（例: `scanned 30s / 944s [ETA 00:04:01]`。実際の行は 2 スペースのインデントで始まる）。
 
 `complete` 行の `events[]` は `-o` と同じ形（`signal_id` / `timestamp` / `end` /
 `score` / `evidence` / `match_index`）。フィールドの意味は

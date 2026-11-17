@@ -4117,6 +4117,10 @@ pub struct IndicatorsProgress {
     pub processed_s: Option<f64>,
     #[serde(default)]
     pub total_s: Option<f64>,
+    /// #1140 -- 推定残り秒。CLI (`allaganeye indicators`) が実測から計算する SSoT で、
+    /// GUI は表示するだけ。`--json` の古い出力には無いので Option。
+    #[serde(default)]
+    pub eta_s: Option<f64>,
 }
 
 /// #1106 -- `allaganeye indicators --json` の stdout 1 行の分類結果。

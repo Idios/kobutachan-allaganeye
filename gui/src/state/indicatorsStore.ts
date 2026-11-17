@@ -64,12 +64,15 @@ export interface IndicatorsResult {
  * - `{ phase: 'calibrating' }` — 自動キャリブレーション開始
  * - `{ phase: 'scanning', layout }` — 走査開始 (解決済み layout の通知)
  * - `{ phase: 'scanning', processed_s, total_s }` — 30 秒ごとの進捗
+ * - `{ phase: 'scanning', processed_s, total_s, eta_s }` — 同上 + 推定残り秒 (#1140)
  */
 export interface IndicatorsProgressPayload {
   phase: 'calibrating' | 'scanning';
   layout?: IndicatorsLayout;
   processed_s?: number;
   total_s?: number;
+  /** 推定残り秒 (CLI が実測から計算する SSoT。GUI は表示のみ)。 */
+  eta_s?: number;
 }
 
 /**
@@ -146,6 +149,8 @@ export interface IndicatorsState {
   phase: IndicatorsProgressPayload['phase'] | null;
   processedSeconds: number | null;
   totalSeconds: number | null;
+  /** 推定残り秒 (#1140)。CLI が算出した値をそのまま保持する。 */
+  etaSeconds: number | null;
   /** 走査開始時に CLI が解決した layout (未解決なら null)。 */
   layout: IndicatorsLayout | null;
   events: IndicatorsEvent[];
@@ -187,6 +192,7 @@ function initialState() {
     phase: null,
     processedSeconds: null,
     totalSeconds: null,
+    etaSeconds: null,
     layout: null,
     events: [] as IndicatorsEvent[],
     error: null,
@@ -247,6 +253,7 @@ export const useIndicatorsStore = create<IndicatorsState>((set, get) => ({
             layout: payload.layout ?? state.layout,
             processedSeconds: payload.processed_s ?? state.processedSeconds,
             totalSeconds: payload.total_s ?? state.totalSeconds,
+            etaSeconds: payload.eta_s ?? state.etaSeconds,
           }));
         },
       );

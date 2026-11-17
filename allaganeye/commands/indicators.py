@@ -24,9 +24,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 import tempfile
+import time
 from typing import Annotated, Any
 
 import typer
+import numpy as np
 
 from allaganeye.detection.format import format_hms
 from allaganeye.detection.metadata_writer import (
@@ -42,11 +44,13 @@ from allaganeye.exceptions import (
     MetadataConflictError,
 )
 from allaganeye.video.frames import iter_gray_frames
+from allaganeye.video.indicator_scan import resolve_scan_workers, scan_detections
 from allaganeye.video.indicators import (
     IndicatorEvent,
     IndicatorLayout,
+    band_crop_rect,
     calibrate_layout,
-    detect_indicator,
+    detect_indicator_patch,
     event_to_payload,
     group_detections,
     layout_from_bar_region,
@@ -55,6 +59,7 @@ from allaganeye.video.indicators import (
     validate_layout_for_frame,
 )
 from allaganeye.video.probe import probe_video
+from allaganeye.video.refs import load_templates
 
 DEFAULT_INTERVAL = 0.1
 """走査間隔 (秒)。note 4-9 の「0.1 秒以下」を既定にする。"""
@@ -333,6 +338,14 @@ def _event_payload(
     return event_to_payload(event, match_index=_match_index(matches, event.start))
 
 
+def _detection_tuple(
+    patch: np.ndarray, layout: IndicatorLayout, templates: dict[str, np.ndarray]
+) -> tuple[str | None, float]:
+    """crop 済みバンド 1 枚を `group_detections` の入力形にする (#1140)。"""
+    hit = detect_indicator_patch(patch, layout, templates)
+    return (hit.kind, hit.score) if hit is not None else (None, 0.0)
+
+
 def _reject_output_aliasing_inputs(
     output: Path | None, metadata_path: Path, source: Path
 ) -> None:
@@ -529,26 +542,46 @@ def run_indicators(
     )
     emit({"type": "progress", "phase": "scanning", "layout": layout_payload})
 
-    detections: list[tuple[float, str | None, float]] = []
-    next_progress = PROGRESS_STEP_SECONDS
-    for timestamp, frame in iter_gray_frames(
-        source, fps=1.0 / interval, frame_size=frame_size, duration=duration
-    ):
-        hit = detect_indicator(frame, layout)
-        detections.append(
-            (timestamp, hit.kind if hit else None, hit.score if hit else 0.0)
-        )
-        if timestamp >= next_progress:
-            emit(
-                {
-                    "type": "progress",
-                    "phase": "scanning",
-                    "processed_s": round(timestamp, 1),
-                    "total_s": round(duration, 1),
-                }
-            )
-            progress(f"  scanned {timestamp:.0f}s / {duration:.0f}s")
-            next_progress += PROGRESS_STEP_SECONDS
+    # #1140: 走査はバンドだけを ffmpeg で crop して受け取る (転送量 2 MB -> 数十 KB)。
+    # 切り出し座標は検出側 (`band_crop_rect`) と同じ関数から得るので、
+    # フルフレーム経路と画素単位で一致する。
+    band_crop = band_crop_rect(
+        layout, frame_width=frame_size[0], frame_height=frame_size[1]
+    )
+    templates = load_templates()
+    started_at = time.monotonic()
+
+    def on_progress(scanned_s: float) -> None:
+        """走査済み秒数から推定残り時間を出して emit する。"""
+        elapsed = time.monotonic() - started_at
+        eta: float | None = None
+        if scanned_s > 0 and duration > scanned_s:
+            eta = elapsed * (duration - scanned_s) / scanned_s
+        update: dict[str, Any] = {
+            "type": "progress",
+            "phase": "scanning",
+            "processed_s": round(min(scanned_s, duration), 1),
+            "total_s": round(duration, 1),
+        }
+        suffix = ""
+        if eta is not None and math.isfinite(eta):
+            update["eta_s"] = round(eta, 1)
+            suffix = f" [ETA {format_hms(eta)}]"
+        emit(update)
+        progress(f"  scanned {scanned_s:.0f}s / {duration:.0f}s{suffix}")
+
+    detections = scan_detections(
+        source,
+        interval=interval,
+        total=duration,
+        frame_size=None,
+        crop=band_crop,
+        workers=resolve_scan_workers(),
+        frames_factory=iter_gray_frames,
+        detect=lambda frame: _detection_tuple(frame, layout, templates),
+        on_progress=on_progress,
+        progress_step=PROGRESS_STEP_SECONDS,
+    )
 
     events = group_detections(detections, max_gap=interval * 1.2, min_samples=2)
     report = IndicatorReport(

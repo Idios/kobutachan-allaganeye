@@ -162,6 +162,14 @@
   font-family: var(--ae-font-mono);
 }
 
+/* #1140: 推定残り時間 (CLI の eta_s をそのまま表示)。 */
+.progressEta {
+  margin-top: 4px;
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+}
+
 .progressBar {
   height: 8px;
   background: var(--ae-bg);

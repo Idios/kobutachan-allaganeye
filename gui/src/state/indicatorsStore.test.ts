@@ -129,13 +129,15 @@ describe('indicatorsStore (#1106 Phase 1)', () => {
 
     // scanning 開始行 (layout 通知) → 進捗行の順に来る
     emit({ phase: 'scanning', layout: LAYOUT });
-    emit({ phase: 'scanning', processed_s: 30, total_s: 944 });
+    emit({ phase: 'scanning', processed_s: 30, total_s: 944, eta_s: 512.4 });
 
     const during = useIndicatorsStore.getState();
     expect(during.phase).toBe('scanning');
     expect(during.layout).toEqual(LAYOUT);
     expect(during.processedSeconds).toBe(30);
     expect(during.totalSeconds).toBe(944);
+    // #1140: 推定残り秒は CLI が計算する (GUI 側で再計算しない)。
+    expect(during.etaSeconds).toBe(512.4);
 
     resolveInvoke(completeResult());
     const result = await promise;

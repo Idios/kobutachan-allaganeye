@@ -206,6 +206,7 @@ export function IndicatorsScreen() {
   const phase = useIndicatorsStore((s) => s.phase);
   const processedSeconds = useIndicatorsStore((s) => s.processedSeconds);
   const totalSeconds = useIndicatorsStore((s) => s.totalSeconds);
+  const etaSeconds = useIndicatorsStore((s) => s.etaSeconds);
   const layout = useIndicatorsStore((s) => s.layout);
   const events = useIndicatorsStore((s) => s.events);
   const error = useIndicatorsStore((s) => s.error);
@@ -464,6 +465,13 @@ export function IndicatorsScreen() {
                 <span className={styles.progressLabel}>{phaseLabel(phase)}</span>
                 <span className={styles.progressTime}>{progressText}</span>
               </div>
+              {/* #1140: 推定残り時間。算出は CLI (eta_s) が SSoT で、
+                  GUI は表示するだけ (逐次走査だった頃の実測と混ざらない)。 */}
+              {etaSeconds !== null && (
+                <div className={styles.progressEta} data-testid="indicators-eta">
+                  {`残り約 ${fmtTime(etaSeconds)}`}
+                </div>
+              )}
               <div className={styles.progressBar}>
                 <div
                   className={styles.progressFill}

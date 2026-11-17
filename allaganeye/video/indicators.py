@@ -452,6 +452,54 @@ def classify_text(
     return passed[0][1].kind, passed[0][1].score
 
 
+def band_crop_rect(
+    layout: IndicatorLayout, *, frame_width: int, frame_height: int
+) -> tuple[int, int, int, int]:
+    """テキストバンドの整数矩形 ``(x, y, w, h)`` を返す (#1140)。
+
+    ffmpeg の ``crop`` 座標と Python 側の切り出し窓を **同じ関数** から得る
+    ための入口。ここがずれると「crop 済みフレーム」と「フルフレーム」で別の
+    画素を見て、並列走査だけ結果が変わる。
+
+    バンドがフレームに収まらない / 小さすぎる場合は ``ValueError``
+    (黙って ``None`` を返すと検出 0 件と区別できない。 ``detect_indicator``)。
+    """
+    band = layout.text_band()
+    if band.x0 < 0 or band.y0 < 0 or band.x1 > frame_width or band.y1 > frame_height:
+        raise ValueError(
+            "テキストバンドがフレームに収まっていません "
+            f"(band={band}, frame={frame_width}x{frame_height})。"
+            "レイアウトの解決結果とフレームの解像度が食い違っています。"
+        )
+    x0 = max(0, round(band.x0))
+    y0 = max(0, round(band.y0))
+    x1 = min(frame_width, round(band.x1))
+    y1 = min(frame_height, round(band.y1))
+    if (x1 - x0) < _MIN_BAND_PX or (y1 - y0) < _MIN_BAND_PX:
+        raise ValueError(
+            f"テキストバンドが小さすぎます (band={band}, "
+            f"frame={frame_width}x{frame_height})。"
+        )
+    return x0, y0, x1 - x0, y1 - y0
+
+
+def detect_indicator_patch(
+    patch_gray: np.ndarray,
+    layout: IndicatorLayout,
+    templates: dict[str, np.ndarray] | None = None,
+) -> IndicatorHit | None:
+    """**バンドだけを切り出した** フレームから検出する (#1140)。
+
+    ffmpeg 側で ``crop`` したフレームをそのまま渡す経路で使う。切り出し範囲は
+    :func:`band_crop_rect` と同一なので、フルフレーム経路 (:func:`detect_indicator`)
+    と同じ画素を見る。
+    """
+    kind, score = classify_text(patch_gray, templates, scale=layout.scale)
+    if kind == "other":
+        return None
+    return IndicatorHit(kind=kind, score=score, band=layout.text_band())
+
+
 def detect_indicator(
     frame_gray: np.ndarray,
     layout: IndicatorLayout,
@@ -463,26 +511,9 @@ def detect_indicator(
     キャリブレーションの誤りが「インジケータが 1 回も出なかった」と区別できず、
     黙ってイベント 0 件になる。
     """
-    band = layout.text_band()
     height, width = frame_gray.shape[:2]
-    if band.x0 < 0 or band.y0 < 0 or band.x1 > width or band.y1 > height:
-        raise ValueError(
-            "テキストバンドがフレームに収まっていません "
-            f"(band={band}, frame={width}x{height})。"
-            "レイアウトの解決結果とフレームの解像度が食い違っています。"
-        )
-    x0 = max(0, round(band.x0))
-    y0 = max(0, round(band.y0))
-    x1 = min(width, round(band.x1))
-    y1 = min(height, round(band.y1))
-    if (x1 - x0) < _MIN_BAND_PX or (y1 - y0) < _MIN_BAND_PX:
-        raise ValueError(
-            f"テキストバンドが小さすぎます (band={band}, frame={width}x{height})。"
-        )
-    kind, score = classify_text(frame_gray[y0:y1, x0:x1], templates, scale=layout.scale)
-    if kind == "other":
-        return None
-    return IndicatorHit(kind=kind, score=score, band=band)
+    x, y, w, h = band_crop_rect(layout, frame_width=width, frame_height=height)
+    return detect_indicator_patch(frame_gray[y : y + h, x : x + w], layout, templates)
 
 
 # ---------------------------------------------------------------------------
@@ -882,9 +913,11 @@ __all__ = [
     "IndicatorLayout",
     "Rect",
     "TextMatch",
+    "band_crop_rect",
     "calibrate_layout",
     "classify_text",
     "detect_indicator",
+    "detect_indicator_patch",
     "event_to_payload",
     "group_detections",
     "layout_from_bar_region",
