@@ -178,6 +178,12 @@ export const HighlightEventSchema = z
     score: z.number().min(0).max(1),
     evidence: z.record(z.string(), z.unknown()),
     match_index: z.number().int().min(1).nullable(),
+    /**
+     * #1139 -- user-specified clip window (absolute seconds). Honoured by
+     * `allaganeye clips` only when both are present and `clip_end > clip_start`.
+     */
+    clip_start: z.number().min(0).optional(),
+    clip_end: z.number().min(0).optional(),
   })
   .passthrough();
 

@@ -27,7 +27,7 @@ import type { MatchType, TypeOverride } from '../types/metadata';
 import { DEFAULT_FPS } from '../types/metadata.schema';
 import { buildLocalBrightness } from '../utils/brightness';
 import { splitPath } from '../utils/path';
-import { fmtClockTime, fmtPreciseTime } from '../utils/time';
+import { fmtPreciseTime } from '../utils/time';
 import { isBoundaryValid } from '../utils/boundary';
 import pathStyles from '../styles/path-display.module.css';
 import styles from './PreviewScreen.module.css';
@@ -357,14 +357,42 @@ export function PreviewScreen() {
       ? rawClipRange
       : null;
 
+  const setEventClipRange = useMetadataStore((s) => s.setEventClipRange);
+
+  /** IN pane を指定位置へシークする (失敗してもバナーは残す)。 */
   function seekPreviewTo(seconds: number): void {
     const v = inVideoRef.current;
     if (v === null) return;
     try {
       v.currentTime = seconds;
     } catch {
-      // メタデータ未ロード時の seek 失敗は無視 (バナー表示はそのまま残す)
+      // メタデータ未ロード時の seek 失敗は無視
     }
+  }
+
+  /**
+   * #1139 -- クリップ範囲の編集。入力 / ± のたびに `metadata.events[position]` の
+   * `clip_start` / `clip_end` を更新する (`dirty` になり、既存の [適用] で保存)。
+   * 試合境界の編集バッファ (`startT` / `endT`) には触らない。
+   */
+  function commitClipWindow(start: number, end: number): void {
+    if (clipRange === null) return;
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+    if (end - start < 0.01) return;
+    const nextStart = Math.max(0, start);
+    setClipRange({ ...clipRange, start: nextStart, end });
+    if (clipRange.position !== null) {
+      setEventClipRange(clipRange.position, { start: nextStart, end });
+    }
+    seekPreviewTo(nextStart);
+  }
+
+  function resetClipWindow(): void {
+    if (clipRange === null) return;
+    if (clipRange.position !== null) {
+      setEventClipRange(clipRange.position, null);
+    }
+    setClipRange(null);
   }
   useEffect(() => {
     if (pendingSeekSeconds === null) return;
@@ -788,9 +816,60 @@ export function PreviewScreen() {
           role="status"
           data-testid="preview-clip-range"
         >
-          <span className={styles.clipRangeLabel}>
-            {`クリップ範囲 ${fmtClockTime(clipRange.start)} - ${fmtClockTime(clipRange.end)}`}
-            {` ・ ${Math.max(0, clipRange.end - clipRange.start).toFixed(1)} 秒`}
+          <span className={styles.clipRangeLabel}>クリップ範囲</span>
+          {/* #1139: クリップの IN/OUT をここで詰める。入力値は
+              `metadata.events[position].clip_start/clip_end` に入り、
+              既存の [適用] で metadata.json に保存される。 */}
+          {(['start', 'end'] as const).map((edge) => {
+            const value = edge === 'start' ? clipRange.start : clipRange.end;
+            const step = edge === 'start' ? [1, -1] : [-1, 1];
+            const commitText = (raw: string) => {
+              const next = Number(raw);
+              if (edge === 'start') {
+                commitClipWindow(next, clipRange.end);
+              } else {
+                commitClipWindow(clipRange.start, next);
+              }
+            };
+            return (
+              <span key={edge} className={styles.clipRangeField}>
+                <span>{edge === 'start' ? 'IN' : 'OUT'}</span>
+                {/* 編集中は自由入力 (controlled にすると中間値が弾かれる)、
+                    blur / Enter で確定する。確定すると `key` が変わり、
+                    clamp 後の値が表示に戻る。 */}
+                <input
+                  type="number"
+                  step={0.1}
+                  min={0}
+                  key={`clip-${edge}-${value}`}
+                  defaultValue={value.toFixed(2)}
+                  aria-label={`clip ${edge} seconds`}
+                  onBlur={(e) => commitText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.currentTarget.blur();
+                  }}
+                  data-testid={`preview-clip-${edge}-input`}
+                />
+                {step.map((delta) => (
+                  <button
+                    key={delta}
+                    type="button"
+                    className={styles.stepButton}
+                    onClick={() =>
+                      edge === 'start'
+                        ? commitClipWindow(clipRange.start + delta, clipRange.end)
+                        : commitClipWindow(clipRange.start, clipRange.end + delta)
+                    }
+                    aria-label={`clip ${edge} ${delta > 0 ? 'plus' : 'minus'} 1s`}
+                  >
+                    {delta > 0 ? '+1s' : '−1s'}
+                  </button>
+                ))}
+              </span>
+            );
+          })}
+          <span className={styles.clipRangeDuration}>
+            {`${Math.max(0, clipRange.end - clipRange.start).toFixed(1)} 秒`}
           </span>
           <button
             type="button"
@@ -811,10 +890,11 @@ export function PreviewScreen() {
           <button
             type="button"
             className={styles.secondaryButton}
-            onClick={() => setClipRange(null)}
+            onClick={resetClipWindow}
+            title="手動指定を消して --pre / --post の自動区間に戻す"
             data-testid="preview-clip-clear"
           >
-            範囲を解除
+            既定に戻す
           </button>
         </div>
       )}

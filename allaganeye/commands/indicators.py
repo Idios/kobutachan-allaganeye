@@ -572,7 +572,13 @@ def run_indicators(
             # #127: イベントも同じ write に入れる。`indicator_layout` だけ更新されると
             # 「どの layout で出したイベントか」が読めなくなる。差分マージはしない
             # (検出条件が変われば結果集合ごと変わるため、全件置換が正)。
-            payload["events"] = report.events
+            #
+            # #1139: ただしユーザーが決めた切り抜き範囲 (`clip_start` / `clip_end`) は
+            # 検出の再実行で消してはいけない (再検出のたびに手作業が振り出しになる)。
+            # `signal_id` + `timestamp` が一致するイベントにだけ引き継ぐ。
+            payload["events"] = _with_clip_overrides(
+                report.events, payload.get("events")
+            )
             write_metadata_atomic(metadata_path, payload)
         if staged is not None and output is not None:
             _publish_report(staged, output)
@@ -595,6 +601,58 @@ _SIGNAL_LABELS: dict[str, str] = {
     "ko_indicator": "KO",
     "assist_indicator": "ASSIST",
 }
+
+
+def _with_clip_overrides(
+    events: list[dict[str, Any]], previous: object
+) -> list[dict[str, Any]]:
+    """再検出の結果に、以前のユーザー指定クリップ範囲を引き継ぐ (#1139)。
+
+    `events[]` は全件置換が正 (検出条件が変われば集合ごと変わる) だが、
+    `clip_start` / `clip_end` は**ユーザーの手作業**なので、`signal_id` と
+    `timestamp` が一致するイベントにだけコピーする。両方が有限値のときだけ
+    引き継ぎ、片方だけ・逆転区間は捨てる (`plan_clips` の受理条件と揃える)。
+    """
+    if not isinstance(previous, list):
+        return events
+    saved: dict[tuple[str, float], dict[str, float]] = {}
+    for old in previous:
+        if not isinstance(old, dict):
+            continue
+        signal_id = old.get("signal_id")
+        timestamp = old.get("timestamp")
+        clip_start = old.get("clip_start")
+        clip_end = old.get("clip_end")
+        if not isinstance(signal_id, str) or not isinstance(timestamp, (int, float)):
+            continue
+        if isinstance(timestamp, bool):
+            continue
+        if not isinstance(clip_start, (int, float)) or isinstance(clip_start, bool):
+            continue
+        if not isinstance(clip_end, (int, float)) or isinstance(clip_end, bool):
+            continue
+        if not (math.isfinite(clip_start) and math.isfinite(clip_end)):
+            continue
+        if clip_end <= clip_start:
+            continue
+        saved[(signal_id, round(float(timestamp), 2))] = {
+            "clip_start": float(clip_start),
+            "clip_end": float(clip_end),
+        }
+    if not saved:
+        return events
+    merged: list[dict[str, Any]] = []
+    for event in events:
+        key = (
+            str(event.get("signal_id")),
+            round(float(event.get("timestamp", 0.0)), 2),
+        )
+        override = saved.get(key)
+        if override is None:
+            merged.append(event)
+            continue
+        merged.append({**event, **override})
+    return merged
 
 
 def print_summary(

@@ -32,6 +32,12 @@ import { useAppStateStore } from '../state/appStateStore';
 import { useClipsStore, type ClipsRequest } from '../state/clipsStore';
 import { useMetadataStore } from '../state/metadataStore';
 import type { HighlightEvent } from '../types/metadata.generated';
+import {
+  DEFAULT_GAP_SECONDS,
+  DEFAULT_MARGIN_SECONDS,
+  overrideWindowFor,
+  planClipWindows,
+} from '../utils/clipWindow';
 import { splitPath } from '../utils/path';
 import { fmtClockTime } from '../utils/time';
 import { signalLabel } from './IndicatorsScreen';
@@ -39,21 +45,8 @@ import styles from './ClipsScreen.module.css';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-/** CLI `clips` の `--pre` / `--post` 既定値 (allaganeye/export/clips.py)。 */
-export const DEFAULT_MARGIN_SECONDS = 10;
-
-/** CLI `clips` の `--gap` 既定値。束ね判定に使う。 */
-export const DEFAULT_GAP_SECONDS = 5;
-
-/**
- * クリップとして成立する最小幅 (秒)。
- *
- * CLI は区間を `round(..., 2)` してから `end <= start` を判定するので、丸めで
- * 潰れる区間は書き出されない。GUI は丸めない (下の `planClipWindows` の注記) ため、
- * **丸めたら潰れる幅 < 0.01 秒** を同じく「クリップにならない」として扱う
- * (fail-closed。codex review 2026-11-17)。
- */
-const MIN_WINDOW_SECONDS = 0.01;
+// 範囲算出の規則は `../utils/clipWindow.ts` (CLI `plan_clips` の鏡)。
+export { DEFAULT_GAP_SECONDS, DEFAULT_MARGIN_SECONDS, planClipWindows };
 
 const SECONDS_RE = /^\d+(\.\d+)?$/;
 
@@ -139,86 +132,6 @@ export function groupClipCandidates(
  *
  * 戻り値は **`metadata.events` の 1 始まり位置 -> 区間**。
  */
-export interface ClipWindow {
-  start: number;
-  end: number;
-}
-
-export function planClipWindows(
-  events: readonly HighlightEvent[] | undefined,
-  matches: readonly { index: number; start_time: number; end_time: number }[],
-  pre: number,
-  post: number,
-  gap: number = DEFAULT_GAP_SECONDS,
-): Map<number, ClipWindow> {
-  const spans = new Map<number, { start: number; end: number }>();
-  for (const match of matches) {
-    if (Number.isFinite(match.start_time) && Number.isFinite(match.end_time)) {
-      spans.set(match.index, { start: match.start_time, end: match.end_time });
-    }
-  }
-
-  interface Item {
-    position: number;
-    matchIndex: number;
-    start: number;
-    end: number;
-  }
-  const items: Item[] = [];
-  (events ?? []).forEach((event, index) => {
-    const matchIndex = event.match_index;
-    if (matchIndex === null || !spans.has(matchIndex)) return;
-    if (!Number.isFinite(event.timestamp) || !Number.isFinite(event.end)) return;
-    items.push({
-      position: index + 1,
-      matchIndex,
-      start: event.timestamp,
-      end: Math.max(event.end, event.timestamp),
-    });
-  });
-  items.sort((a, b) =>
-    a.matchIndex !== b.matchIndex
-      ? a.matchIndex - b.matchIndex
-      : a.start !== b.start
-        ? a.start - b.start
-        : a.end - b.end,
-  );
-
-  const windows = new Map<number, ClipWindow>();
-  let group: { matchIndex: number; start: number; end: number; positions: number[] } | null =
-    null;
-  const flush = () => {
-    if (group === null) return;
-    const span = spans.get(group.matchIndex)!;
-    const start = Math.max(0, span.start, group.start - pre);
-    const end = Math.min(span.end, group.end + post);
-    if (end - start >= MIN_WINDOW_SECONDS) {
-      for (const position of group.positions) windows.set(position, { start, end });
-    }
-    group = null;
-  };
-  for (const item of items) {
-    if (
-      group !== null &&
-      group.matchIndex === item.matchIndex &&
-      item.start - group.end <= gap
-    ) {
-      group.end = Math.max(group.end, item.end);
-      group.positions.push(item.position);
-      continue;
-    }
-    flush();
-    group = {
-      matchIndex: item.matchIndex,
-      start: item.start,
-      end: item.end,
-      positions: [item.position],
-    };
-  }
-  flush();
-  return windows;
-}
-
 /**
  * 前後秒数フォームの client-side 検証。CLI は 0 以上の有限値しか受け付けない
  * (負値 / nan / inf は exit 5)。問題なければ null。
@@ -416,7 +329,7 @@ export function ClipsScreen() {
     const range = windowFor(candidate.position);
     const matchIndex = candidate.event.match_index;
     if (range === null || matchIndex === null) return;
-    setClipRange({ ...range, matchIndex });
+    setClipRange({ ...range, matchIndex, position: candidate.position });
     setPendingSeekSeconds(range.start);
     openPreviewFor(matchIndex);
   }
@@ -650,6 +563,7 @@ export function ClipsScreen() {
                     const kindLabel = signalLabel(event.signal_id) ?? event.signal_id;
                     // 実際に書き出される区間 (束ね + 試合区間クランプ済)。
                     const range = windowFor(position);
+                    const manual = overrideWindowFor(event) !== null;
                     const duration =
                       range === null ? 0 : Math.max(0, range.end - range.start);
                     return (
@@ -669,6 +583,15 @@ export function ClipsScreen() {
                             ? '範囲外'
                             : `範囲 ${fmtClockTime(range.start)} - ${fmtClockTime(range.end)} ・ ${duration.toFixed(1)} 秒`}
                         </span>
+                        {manual && (
+                          <span
+                            className={styles.manualBadge}
+                            title="プレビューで指定したクリップ範囲"
+                            data-testid={`clips-manual-${position}`}
+                          >
+                            手動
+                          </span>
+                        )}
                         <button
                           type="button"
                           className={styles.secondaryButton}

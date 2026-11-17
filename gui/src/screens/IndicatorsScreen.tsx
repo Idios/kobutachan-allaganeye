@@ -39,6 +39,11 @@ import {
   type IndicatorsStatus,
 } from '../state/indicatorsStore';
 import { useMetadataStore } from '../state/metadataStore';
+import {
+  DEFAULT_MARGIN_SECONDS,
+  eventClipWindow,
+  overrideWindowFor,
+} from '../utils/clipWindow';
 import { splitPath } from '../utils/path';
 import { fmtClockTime, fmtTime } from '../utils/time';
 import styles from './IndicatorsScreen.module.css';
@@ -198,6 +203,7 @@ export function IndicatorsScreen() {
   const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
   const navigate = useAppStateStore((s) => s.navigate);
   const setPendingSeekSeconds = useAppStateStore((s) => s.setPendingSeekSeconds);
+  const setClipRange = useAppStateStore((s) => s.setClipRange);
   const openPreviewFor = useAppStateStore((s) => s.openPreviewFor);
 
   const status = useIndicatorsStore((s) => s.status);
@@ -321,11 +327,25 @@ export function IndicatorsScreen() {
   }
 
   /**
-   * 一覧行 → そのイベント時刻を preview で開く。`match_index` が null の区間は
-   * どの試合にも属さないため遷移先が無い (呼び出し側で行ごと分岐する)。
+   * #1139 -- 行クリックは「クリップ範囲の調整」モードでプレビューを開く。
+   *
+   * `metadata.events` の位置 (1 始まり) を `signal_id` + `timestamp` で引く。
+   * `indicatorsStore.events` は CLI の出力そのもので `metadata.events` とは
+   * 別オブジェクトなので、同一性ではなくキーで対応付ける。位置が見つからない
+   * (未適用の検出結果など) 場合は位置なしで開き、範囲は参照のみになる。
    */
   function openEvent(event: IndicatorsEvent): void {
     if (event.match_index === null) return;
+    const key = `${event.signal_id}@${Math.round(event.timestamp * 100)}`;
+    const stored = (metadata?.events ?? []).findIndex(
+      (candidate) =>
+        `${candidate.signal_id}@${Math.round(candidate.timestamp * 100)}` === key,
+    );
+    const position = stored >= 0 ? stored + 1 : null;
+    const override =
+      stored >= 0 ? overrideWindowFor(metadata!.events![stored]) : null;
+    const window = override ?? eventClipWindow(event, DEFAULT_MARGIN_SECONDS, DEFAULT_MARGIN_SECONDS);
+    setClipRange({ ...window, matchIndex: event.match_index, position });
     setPendingSeekSeconds(event.timestamp);
     openPreviewFor(event.match_index);
   }
@@ -547,7 +567,7 @@ export function IndicatorsScreen() {
                                 type="button"
                                 className={`${styles.eventRow} ${styles.eventRowButton}`}
                                 onClick={() => openEvent(event)}
-                                aria-label={`${kindLabel} ${range} をプレビューで開く`}
+                                aria-label={`${kindLabel} ${range} のクリップ範囲をプレビューで調整`}
                                 data-testid={`indicators-event-${group.matchIndex}-${i}`}
                               >
                                 {body}

@@ -916,18 +916,21 @@ describe('#1131 PreviewScreen clip range banner', () => {
   it('renders the clip window from appStateStore.clipRange', () => {
     useAppStateStore
       .getState()
-      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 4 });
+      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 4, position: 2 });
     render(<PreviewScreen />);
     const banner = screen.getByTestId('preview-clip-range');
-    expect(banner).toHaveTextContent('クリップ範囲 00:08:03 - 00:08:24');
+    expect(banner).toHaveTextContent('クリップ範囲');
     expect(banner).toHaveTextContent('21.5 秒');
+    // #1139: 範囲は IN/OUT の入力欄で編集できる
+    expect(screen.getByLabelText('clip start seconds')).toHaveValue(483.4);
+    expect(screen.getByLabelText('clip end seconds')).toHaveValue(504.9);
   });
 
   it('seeks the IN pane to the range start / end', async () => {
     const user = userEvent.setup();
     useAppStateStore
       .getState()
-      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 4 });
+      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 4, position: 2 });
     render(<PreviewScreen />);
     const video = await screen.findByLabelText<HTMLVideoElement>(
       'IN (start) video',
@@ -948,6 +951,7 @@ describe('#1131 PreviewScreen clip range banner', () => {
       start: match.start_time + 5,
       end: match.start_time + 30,
       matchIndex: 4,
+      position: 2,
     });
     render(<PreviewScreen />);
 
@@ -968,9 +972,84 @@ describe('#1131 PreviewScreen clip range banner', () => {
   it('hides the banner when the range belongs to another match', () => {
     useAppStateStore
       .getState()
-      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 1 });
+      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 1, position: null });
     render(<PreviewScreen />);
     expect(screen.queryByTestId('preview-clip-range')).not.toBeInTheDocument();
+  });
+
+  // #1139: ここで詰めた範囲を metadata.events に書き、[適用] で保存する。
+  function seedClipEvent() {
+    const base = useMetadataStore.getState().metadata!;
+    useMetadataStore.setState({
+      metadata: {
+        ...base,
+        events: [
+          {
+            signal_id: 'ko_indicator',
+            timestamp: 2500,
+            end: 2501.5,
+            score: 0.9,
+            evidence: { samples: 15 },
+            match_index: 4,
+          },
+        ],
+      },
+      filePath: 'C:/x/metadata.json',
+      dirty: false,
+    });
+    useAppStateStore.getState().setClipRange({
+      start: 2490,
+      end: 2511.5,
+      matchIndex: 4,
+      position: 1,
+    });
+  }
+
+  it('writes clip_start / clip_end to metadata when an edge is edited (#1139)', async () => {
+    const user = userEvent.setup();
+    seedClipEvent();
+    render(<PreviewScreen />);
+
+    const out = screen.getByLabelText('clip end seconds');
+    await user.clear(out);
+    await user.type(out, '2525');
+    await user.tab();
+
+    const event = useMetadataStore.getState().metadata!.events![0];
+    expect(event.clip_start).toBe(2490);
+    expect(event.clip_end).toBe(2525);
+    expect(useMetadataStore.getState().dirty).toBe(true);
+    expect(useAppStateStore.getState().clipRange?.end).toBe(2525);
+  });
+
+  it('nudges the window with ±1s without touching the match boundary (#1139)', async () => {
+    const user = userEvent.setup();
+    seedClipEvent();
+    const before = useMetadataStore.getState().metadata!.matches.find((m) => m.index === 4)!;
+    render(<PreviewScreen />);
+
+    await user.click(screen.getByLabelText('clip start minus 1s'));
+    expect(useAppStateStore.getState().clipRange?.start).toBe(2489);
+
+    await user.click(screen.getByLabelText('clip end plus 1s'));
+    expect(useAppStateStore.getState().clipRange?.end).toBe(2512.5);
+
+    const after = useMetadataStore.getState().metadata!.matches.find((m) => m.index === 4)!;
+    expect(after.edited?.start_time).toBe(before.edited?.start_time);
+    expect(after.edited?.end_time).toBe(before.edited?.end_time);
+    expect(useMetadataStore.getState().metadata!.events![0].clip_end).toBe(2512.5);
+  });
+
+  it('既定に戻す removes the override and closes the banner (#1139)', async () => {
+    const user = userEvent.setup();
+    seedClipEvent();
+    render(<PreviewScreen />);
+
+    await user.click(screen.getByTestId('preview-clip-clear'));
+
+    expect(useAppStateStore.getState().clipRange).toBeNull();
+    expect(screen.queryByTestId('preview-clip-range')).not.toBeInTheDocument();
+    expect(useMetadataStore.getState().metadata!.events![0].clip_start).toBeUndefined();
   });
 });
 

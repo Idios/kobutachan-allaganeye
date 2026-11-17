@@ -202,6 +202,50 @@ def test_indicators_replaces_previous_events(
     assert written["events"][0]["timestamp"] == pytest.approx(1.0)
 
 
+def test_indicators_preserves_user_clip_window_on_rewrite(
+    app: typer.Typer, metadata_path: Path, fake_video
+):
+    """#1139: 全件置換でもユーザー指定の切り抜き範囲は消さない。
+
+    再検出のたびに手作業の範囲が振り出しに戻らないよう、`signal_id` +
+    `timestamp` が一致するイベントに `clip_start` / `clip_end` を引き継ぐ。
+    """
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["events"] = [
+        {
+            # fake_video の検出結果は assist_indicator @ 1.0 秒
+            "signal_id": "assist_indicator",
+            "timestamp": 1.0,
+            "end": 1.5,
+            "score": 0.9,
+            "evidence": {"samples": 3},
+            "match_index": 1,
+            "clip_start": 0.5,
+            "clip_end": 12.0,
+        },
+        {
+            "signal_id": "ko_indicator",
+            "timestamp": 999.0,
+            "end": 1000.0,
+            "score": 0.5,
+            "evidence": {"samples": 2},
+            "match_index": 1,
+            "clip_start": 990.0,
+            "clip_end": 1005.0,
+        },
+    ]
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = runner.invoke(app, ["indicators", str(metadata_path)])
+    assert result.exit_code == 0, result.output
+    written = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert len(written["events"]) == 1
+    event = written["events"][0]
+    assert event["signal_id"] == "assist_indicator"
+    assert event["clip_start"] == pytest.approx(0.5)
+    assert event["clip_end"] == pytest.approx(12.0)
+
+
 def test_indicators_no_write_keeps_metadata_untouched(
     app: typer.Typer, metadata_path: Path, fake_video
 ):

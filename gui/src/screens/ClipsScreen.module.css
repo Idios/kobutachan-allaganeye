@@ -336,6 +336,17 @@
   font-family: var(--ae-font-mono);
 }
 
+/* #1139 -- プレビューで範囲を手動指定した行のバッジ。 */
+.manualBadge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--ae-cyan-bright);
+  color: var(--ae-cyan-bright);
+  font-family: var(--ae-font-ui);
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+
 .clipRange {
   flex: 1;
   min-width: 0;

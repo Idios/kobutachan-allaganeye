@@ -1386,9 +1386,9 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | --- | --- |
 | 種類 | `match_index` ごとのグループ (container の `data-testid="indicators-group-<index>"`。試合外は `indicators-group-outside`) + `<ul>` 内の行。行は `<button>` (試合に属する行) 又は `<div data-navigable="false">` (試合外) |
 | 状態 | `complete` かつ `events.length > 0` のとき描画。`events.length === 0` は §2.7.10 の明示的な空メッセージ |
-| 遷移トリガー | 行の `onClick` / Enter / Space (button の既定挙動) → `setPendingSeekSeconds(event.timestamp)` → `openPreviewFor(match_index)`。グループ順は match index 昇順 + 試合外 (`null`) が末尾、グループ内は `timestamp` 昇順 |
+| 遷移トリガー | 行の `onClick` / Enter / Space (button の既定挙動) → `setClipRange({...window, matchIndex, position})` + `setPendingSeekSeconds(event.timestamp)` → `openPreviewFor(match_index)`。**#1139 以降は試合境界ではなくクリップ範囲モードで開く**（`position` は `metadata.events` の 1 始まり位置、`window` は保存済みの上書き → 無ければ既定の前後 10 秒）。グループ順は match index 昇順 + 試合外 (`null`) が末尾、グループ内は `timestamp` 昇順 |
 | store mutation | `appStateStore.pendingSeekSeconds` (積む) / `openPreviewFor` 経由で `selectedMatchIndex` + `screen='preview'` |
-| 例外 / edge case | §2.4.17 の one-shot seek で消費される。`match_index === null` (試合外) の行は遷移先が無いため button にせず keyboard でも到達しない (tooltip で理由を出す)。行は `role="button"` を持つので Tab / Enter で全件操作できる (a11y: button の可視名は `KO 00:00:12 - 00:00:13 をプレビューで開く`)。時刻は `fmtEventTime` で `hh:mm:ss` (#127)。**未知の `signal_id` のイベントは行ごと描画しない** (前方互換、#127 §4-3) |
+| 例外 / edge case | §2.4.17 の one-shot seek で消費される。`match_index === null` (試合外) の行は遷移先が無いため button にせず keyboard でも到達しない (tooltip で理由を出す)。行は `role="button"` を持つので Tab / Enter で全件操作できる (a11y: button の可視名は `KO 00:00:12 - 00:00:13 をプレビューで開く`)。時刻は `fmtEventTime` で `hh:mm:ss` (#127)。**未知の `signal_id` のイベントは行ごと描画しない** (前方互換、#127 §4-3)。`clipRange.position` は `signal_id` + `timestamp` で `metadata.events` から引く（未適用の検出結果では見つからず `position: null` = 参照のみ） |
 
 #### §2.7.6 領域フォーム (X / Y / W / H + [この領域で再実行])
 
@@ -1474,7 +1474,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 **CLI 側の read-time CAS**: 上の照合と spawn の間にも外部変更は入り得るので、`start_clips` は `expectedMtime` (CLI `--expected-mtime`) を**常に**渡し、CLI が metadata.json の読み取り前後の mtime 一致を検証する。不一致は CLI exit 6 → `state.mtime_conflict` で、位置が古いまま別のイベントを切り抜く経路は閉じている。
 
-**表示する範囲 = 実際に書かれる範囲**: 行の「範囲」とプレビューの `clipRange` は `planClipWindows()` の戻り値を使う。これは CLI (`allaganeye/export/clips.py` の `plan_clips`) の **近接束ね (`--gap` 既定 5 秒) + 試合区間クランプ** を GUI 側で鏡にしたもの (codex review 2026-11-17)。単独イベントの前後だけを見せると「表示と違う長さのファイルが出る」ため。**四捨五入はしない** (JS の half-up と Python の half-even が 0.005 秒の端で食い違い、GUI だけが範囲外と判定する差になる)。鏡にしている都合上、CLI 側の束ね / クランプ規則を変えたら本関数も同時に直す必要がある。
+**表示する範囲 = 実際に書かれる範囲**: 行の「範囲」とプレビューの `clipRange` は `planClipWindows()` の戻り値を使う（`events[].clip_start` / `clip_end` が両方あればその区間を優先し、束ねの対象外にする — #1139）。これは CLI (`allaganeye/export/clips.py` の `plan_clips`) の **近接束ね (`--gap` 既定 5 秒) + 試合区間クランプ** を GUI 側で鏡にしたもの (codex review 2026-11-17)。単独イベントの前後だけを見せると「表示と違う長さのファイルが出る」ため。**四捨五入はしない** (JS の half-up と Python の half-even が 0.005 秒の端で食い違い、GUI だけが範囲外と判定する差になる)。鏡にしている都合上、CLI 側の束ね / クランプ規則を変えたら本関数も同時に直す必要がある。
 
 #### §2.8.1 前後秒数 / 形式のフォーム
 
@@ -1501,7 +1501,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | `match_index` ごとのグループ (`data-testid="clips-group-<index>"`) + `<li data-testid="clips-candidate-<position>">`。行内は badge (`KO` / `ASSIST`) + イベントの時刻範囲 (`hh:mm:ss - hh:mm:ss`) + 切り抜き範囲 (`範囲 hh:mm:ss - hh:mm:ss ・ N 秒`) + [この範囲を確認] (secondary) + [⬦ 切り抜く] (primary) |
-| 状態 | 候補が 1 件以上のとき常時描画。走行中は [⬦ 切り抜く] のみ disabled (別行の実行中に別の run を重ねない)。`planClipWindows()` が区間を返さない行 (クランプで 0 幅) は範囲を `範囲外` とし、両ボタンを disabled にする |
+| 状態 | 候補が 1 件以上のとき常時描画。走行中は [⬦ 切り抜く] のみ disabled (別行の実行中に別の run を重ねない)。`planClipWindows()` が区間を返さない行 (クランプで 0 幅) は範囲を `範囲外` とし、両ボタンを disabled にする。`events[].clip_start` / `clip_end` を持つ行は範囲の隣に `手動` バッジを出す (#1139) |
 | 遷移トリガー | [この範囲を確認] → `planClipWindows()` の区間を `appStateStore.clipRange` (`{start, end, matchIndex}`) に入れ、`pendingSeekSeconds = range.start` → `openPreviewFor(match_index)`。 [⬦ 切り抜く] → `cutOne(position, overwrite=false)` |
 | store mutation | `appStateStore.setClipRange` / `setPendingSeekSeconds` / `openPreviewFor`、または `clipsStore.start()` |
 | 例外 / edge case | 時刻は両方とも `hh:mm:ss` (1 秒切り捨て、出所は `utils/time.ts` の `fmtClockTime`)。`clipRange` の終端は `start` より前にならず、`start` は 0 秒でクランプする。試合区間へのクランプと近接イベントの束ねは `planClipWindows()` が担う (§2.8 ヘッダ)。`clipRange.matchIndex` はプレビュー側のスコープキーで、別の試合を開くとバナーが出ない。ボタンの可視名は `KO 00:08:13 の範囲をプレビューで確認` / `KO 00:08:13 を切り抜く` |

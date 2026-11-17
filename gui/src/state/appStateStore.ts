@@ -126,7 +126,13 @@ export interface AppState {
    * (`startT` / `endT`) とは別物**で、クリップは「イベントの前 `pre` 秒〜後 `post` 秒」
    * を試合区間へクランプした区間を指す。`null` なら通常の preview。
    */
-  clipRange: { start: number; end: number; matchIndex: number } | null;
+  clipRange: {
+    start: number;
+    end: number;
+    matchIndex: number;
+    /** #1139: 対象イベントの `metadata.events` の 1 始まり位置 (手動指定の書込先)。 */
+    position: number | null;
+  } | null;
 
   /** Switch to a different screen. */
   navigate: (screen: AppScreen) => void;
@@ -144,9 +150,14 @@ export interface AppState {
   setLastExportOutputDir: (dir: string | null) => void;
   /** Set / clear the one-shot preview seek position (#1106 Phase 2). */
   setPendingSeekSeconds: (seconds: number | null) => void;
-  /** Set / clear the preview clip range (#1131 Phase B2). */
+  /** Set / clear the preview clip range (#1131 Phase B2 / #1139). */
   setClipRange: (
-    range: { start: number; end: number; matchIndex: number } | null,
+    range: {
+      start: number;
+      end: number;
+      matchIndex: number;
+      position: number | null;
+    } | null,
   ) => void;
   /** Reset everything back to a freshly launched state (screen = 'drop'). */
   reset: () => void;

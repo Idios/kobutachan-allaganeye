@@ -79,6 +79,15 @@ export interface MetadataState {
 
   load: (path: string) => Promise<void>;
   updateMatch: (index: number, patch: MatchEditPatch) => void;
+  /**
+   * #1139 -- プレビューで決めたイベント単位の切り抜き範囲を metadata に書く。
+   * `position` は `metadata.events` の **1 始まり位置**。`range === null` は
+   * 上書きを消して自動区間 (`--pre` / `--post`) に戻す。
+   */
+  setEventClipRange: (
+    position: number,
+    range: { start: number; end: number } | null,
+  ) => void;
   apply: () => Promise<void>;
   reset: () => void;
   clear: () => void;
@@ -375,6 +384,33 @@ export const useMetadataStore = create<MetadataState>((set, get) => {
     });
     // #517: auto-save the edit buffer. Only makes sense when a real file is
     // loaded (sample mode has no backing path).
+    if (get().filePath) {
+      scheduleDraftSave(() => {
+        void get().saveDraft();
+      });
+    }
+  },
+
+  setEventClipRange: (position, range) => {
+    const state = get();
+    const metadata = state.metadata;
+    const events = metadata?.events;
+    if (!metadata || !events) return;
+    if (!Number.isInteger(position) || position < 1 || position > events.length) {
+      return;
+    }
+    const next = events.map((event, index) => {
+      if (index !== position - 1) return event;
+      if (range === null) {
+        // 上書きを消す (自動区間 `--pre` / `--post` に戻す)。
+        const next: Record<string, unknown> = { ...event };
+        delete next.clip_start;
+        delete next.clip_end;
+        return next as (typeof events)[number];
+      }
+      return { ...event, clip_start: range.start, clip_end: range.end };
+    });
+    set({ metadata: { ...metadata, events: next }, dirty: true });
     if (get().filePath) {
       scheduleDraftSave(() => {
         void get().saveDraft();

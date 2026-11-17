@@ -280,9 +280,9 @@ Metadata: <metadata.json path>
 | モード | 生成ファイル | 備考 |
 | --- | --- | --- |
 | default | stdout: 人間向け summary | `KO: N / ASSIST: M (K intervals)` + 1 行 1 区間。進捗は stderr |
-| `-o PATH` | `PATH` (JSON ドキュメント) | `{"metadata", "layout", "recalibrated", "events"}`。`events[]` は `{"signal_id", "timestamp", "end", "score", "evidence", "match_index"}` |
+| `-o PATH` | `PATH` (JSON ドキュメント) | `{"metadata", "layout", "recalibrated", "events"}`。`events[]` は `{"signal_id", "timestamp", "end", "score", "evidence", "match_index"}`（ユーザー指定の `clip_start` / `clip_end` があれば引き継ぐ・#1139） |
 | `--json` | stdout: JSON Lines | `progress` (calibrating / scanning) + 最終 `complete` 行。人間向け summary は出さない。エラー時は `{"type":"error","message":...}` を 1 行 |
-| `--write` (既定) | `metadata.json` 更新 | `indicator_layout` と `events` を同じ atomic write で書く（`events` は全件置換）。`--no-write` で無効化 |
+| `--write` (既定) | `metadata.json` 更新 | `indicator_layout` と `events` を同じ atomic write で書く（`events` は全件置換。ただし `clip_start` / `clip_end` は `signal_id` + `timestamp` 一致で引き継ぐ）。`--no-write` で無効化 |
 | `--recalibrate` | (なし) | 既存の `indicator_layout` を無視して再解決し、その結果で write-back する |
 | `--expected-mtime MS` | (なし) | write-back 前の CAS guard。不一致なら exit 6 |
 

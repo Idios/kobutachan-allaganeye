@@ -124,6 +124,34 @@
   color: var(--ae-gold-bright);
 }
 
+/* #1139 -- クリップ IN/OUT の編集欄。絞った幅で 2 組並ぶので小さめに。 */
+.clipRangeField {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+}
+
+.clipRangeField input {
+  width: 76px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.3);
+  color: var(--ae-text);
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  padding: 2px 4px;
+  text-align: right;
+}
+
+.clipRangeDuration {
+  font-family: var(--ae-font-mono);
+  font-size: 10px;
+  color: var(--ae-text-dim);
+  white-space: nowrap;
+}
+
 .pane {
   padding: 8px;
   background: var(--ae-bg-deep);

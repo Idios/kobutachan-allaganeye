@@ -54,7 +54,7 @@ stateDiagram-v2
     minimap --> complete: [◀ 一覧へ] (#893)
 
     indicators --> complete: [◀ 一覧へ] / [戻る] (#1106)
-    indicators --> preview: イベント行の click / Enter → openPreviewFor + pendingSeekSeconds (#1106)
+    indicators --> preview: イベント行の click / Enter → クリップ範囲モード (#1139) + pendingSeekSeconds
     indicators --> clips: [⬦ クリップを切り抜く] (既知イベントが 1 件以上あるとき、#1131)
 
     clips --> complete: [◀ 一覧へ] (#1131)
