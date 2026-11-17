@@ -11,7 +11,7 @@
  *
  * UI 部品 (`TimecodePane`) は試合境界のエディタと共有しているが、状態は共有しない。
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -217,6 +217,73 @@ describe('ClipRangeView', () => {
     expect(screen.getByLabelText('IN (clip start) timecode')).toBeDisabled();
     expect(screen.getByLabelText('OUT (clip end) timecode')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'この範囲を保存' })).toBeDisabled();
+  });
+
+  // codex review 2026-11-17 (P2): `position: null` の注意書きは「編集できません」
+  // と言っているのに、nudge ボタンは押せで、動画の再生 (timeupdate) でも値が
+  // 動いていた。保存はできないので metadata は壊れないが、**表示と振る舞いが
+  // 食い違う**ため両方を閉じる。
+  it('rejects playback and nudge mutation for an unlinked event', async () => {
+    selectClipRange(null);
+
+    render(<ClipRangeView />);
+
+    const video = (await screen.findByLabelText(
+      'IN (clip start) video',
+    )) as HTMLVideoElement;
+    Object.defineProperty(video, 'paused', { value: false, configurable: true });
+    Object.defineProperty(video, 'currentTime', {
+      value: 600,
+      configurable: true,
+    });
+    video.dispatchEvent(new Event('timeupdate'));
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(tcSeconds('IN (clip start)')).toBeCloseTo(CLIP_START, 1);
+    expect(screen.getByRole('button', { name: 'clip in +1s' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'clip out +1s' })).toBeDisabled();
+  });
+
+  // codex review 2026-11-17 (P1): `register_video` は axum の HTTP URL を返す。
+  // `convertFileSrc(url, 'asset')` に通すと asset プロトコルへ書き換えられ、
+  // ペインに動画が映らない (範囲を目視確認できない)。
+  it('uses the registered HTTP video URL as-is', async () => {
+    render(<ClipRangeView />);
+
+    const inVideo = await screen.findByLabelText('IN (clip start) video');
+    const outVideo = await screen.findByLabelText('OUT (clip end) video');
+    expect(inVideo.getAttribute('src')).toBe(
+      'http://127.0.0.1:0/video/test-token',
+    );
+    expect(outVideo.getAttribute('src')).toBe(
+      'http://127.0.0.1:0/video/test-token',
+    );
+  });
+
+  // codex review 2026-11-17 (P2): `parseTimecode` は時間フィールドの桁数を
+  // 制限しないので、極端に長い値は Infinity になる (`Math.max` が素通しにする)。
+  // そのまま保存すると JSON 化で null になった `clip_end` が metadata に
+  // 書かれる。既存の malformed 入力と同じく **入力ごと捨てて直前の値を保つ**。
+  it('ignores a non-finite endpoint instead of corrupting the range', async () => {
+    const user = userEvent.setup();
+    render(<ClipRangeView />);
+
+    const out = screen.getByLabelText('OUT (clip end) timecode');
+    fireEvent.change(out, {
+      target: { value: `${'9'.repeat(400)}:00:00.00` },
+    });
+
+    // 表示も保存値も直前の有効値のまま
+    expect(tcSeconds('OUT (clip end)')).toBeCloseTo(CLIP_END, 1);
+    expect(screen.getByTestId('clip-range-duration').textContent).toContain(
+      '21.5 秒',
+    );
+
+    await user.click(screen.getByRole('button', { name: 'この範囲を保存' }));
+    await waitFor(() => expect(applyMock).toHaveBeenCalledTimes(1));
+    const event = useMetadataStore.getState().metadata!.events![0];
+    expect(event.clip_start).toBeCloseTo(CLIP_START, 6);
+    expect(event.clip_end).toBeCloseTo(CLIP_END, 6);
   });
 
   it('falls back to the clips list when no clip range is selected', async () => {

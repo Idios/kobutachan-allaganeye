@@ -13,7 +13,7 @@
  * (`metadataStore.setEventClipRange`)、既存の `apply()` で metadata.json に書く。
  * `allaganeye clips` はこの区間で切り抜く（metadata が SSoT, #1139）。
  */
-import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import pathStyles from '../styles/path-display.module.css';
@@ -70,7 +70,10 @@ export function ClipRangeView() {
         const res = await invoke<{ url: string }>('register_video', {
           path: source,
         });
-        if (!cancelled) setVideoUrl(convertFileSrc(res.url, 'asset'));
+        // codex review 2026-11-17 (P1): `register_video` は axum が配信する
+        // **HTTP URL** を返す。`convertFileSrc(url, 'asset')` に通すと asset
+        // プロトコルへ書き換えられ、ペインに動画が映らない (範囲を目視できない)。
+        if (!cancelled) setVideoUrl(res.url);
       } catch (e) {
         if (!cancelled) setVideoError(String(e));
       }
@@ -106,12 +109,28 @@ export function ClipRangeView() {
     }
   }, [endT, videoUrl]);
 
+  // `position === null` は metadata に保存されていないイベント (未適用の検出結果)。
+  // 保存できないだけでなく、時間の編集も閉じる (codex review 2026-11-17 P2:
+  // 注意書きが「編集できません」と言っているのに、動画の再生や nudge で値が
+  // 動いていた)。
+  const editable = position !== null;
+
+  // 非有限値 (極端に長い時間フィールド等) は**入力ごと捨てる**。既存の
+  // `parseTimecode` 失敗時と同じ扱いで、直前の有効値を保つ。
+  // codex review 2026-11-17 (P2): 素通しすると `Infinity` が保存され、JSON 化で
+  // `null` になった `clip_end` が metadata に書かれる。
+  const applyStart = (next: number) => {
+    if (!editable || !Number.isFinite(next)) return;
+    setStartT(Math.max(0, Math.min(next, endT - 0.01)));
+  };
+  const applyEnd = (next: number) => {
+    if (!editable || !Number.isFinite(next)) return;
+    setEndT(Math.max(next, startT + 0.01));
+  };
+
   const nudge = (edge: 'start' | 'end', delta: number) => {
-    if (edge === 'start') {
-      setStartT((v) => Math.max(0, Math.min(v + delta, endT - 0.01)));
-    } else {
-      setEndT((v) => Math.max(v + delta, startT + 0.01));
-    }
+    if (edge === 'start') applyStart(startT + delta);
+    else applyEnd(endT + delta);
   };
 
   const manual = event !== null && event.clip_start !== undefined;
@@ -119,10 +138,17 @@ export function ClipRangeView() {
     clipRange !== null &&
     (Math.abs(startT - clipRange.start) > 0.005 ||
       Math.abs(endT - clipRange.end) > 0.005);
-  const canSave = position !== null && filePath !== null && !applying && endT - startT >= 0.01;
+  const canSave =
+    editable &&
+    filePath !== null &&
+    !applying &&
+    Number.isFinite(startT) &&
+    Number.isFinite(endT) &&
+    endT - startT >= 0.01;
 
   async function handleSave() {
     if (clipRange === null || position === null) return;
+    if (!Number.isFinite(startT) || !Number.isFinite(endT)) return;
     setEventClipRange(position, { start: startT, end: endT });
     setClipRange({
       start: startT,
@@ -197,12 +223,12 @@ export function ClipRangeView() {
           active={editing === 'start'}
           t={startT}
           onActivate={() => setEditing('start')}
-          onTChange={(v) => setStartT(Math.max(0, Math.min(v, endT - 0.01)))}
+          onTChange={applyStart}
           videoUrl={videoUrl}
           videoError={videoError}
           videoRef={inVideoRef}
           fps={fps}
-          disabled={position === null}
+          disabled={!editable}
           disabledReason="metadata に保存されていないイベントは編集できません"
         />
         <TimecodePane
@@ -210,12 +236,12 @@ export function ClipRangeView() {
           active={editing === 'end'}
           t={endT}
           onActivate={() => setEditing('end')}
-          onTChange={(v) => setEndT(Math.max(v, startT + 0.01))}
+          onTChange={applyEnd}
           videoUrl={videoUrl}
           videoError={videoError}
           videoRef={outVideoRef}
           fps={fps}
-          disabled={position === null}
+          disabled={!editable}
           disabledReason="metadata に保存されていないイベントは編集できません"
         />
       </div>
@@ -233,6 +259,7 @@ export function ClipRangeView() {
             className={styles.stepButton}
             onClick={() => nudge(step.edge as 'start', step.delta)}
             aria-label={`clip in ${step.label}`}
+            disabled={!editable}
           >
             {step.label}
           </button>
@@ -253,6 +280,7 @@ export function ClipRangeView() {
             className={styles.stepButton}
             onClick={() => nudge('end', step.delta)}
             aria-label={`clip out ${step.label}`}
+            disabled={!editable}
           >
             {step.label}
           </button>

@@ -356,9 +356,21 @@ export function PreviewScreen() {
     rawClipRange !== null && rawClipRange.matchIndex === match?.index
       ? rawClipRange
       : null;
+  // 早期 return しても hooks は生きている (React の仕様) ので、この flag で
+  // **見えない試合境界バッファへの書き込み経路**をすべて閉じる。
+  // codex review 2026-11-17 (P1): clip 範囲の編集中に矢印キーを押すと
+  // `startT` / `endT` が動き、200ms の debounce が `metadata.matches` を
+  // 書き換えていた。
+  const clipMode = clipRangeForThisMatch !== null;
 
   useEffect(() => {
     if (pendingSeekSeconds === null) return;
+    if (clipMode) {
+      // クリップ範囲の画面は自前で IN を clip の先頭へシークする。ここで
+      // 消費だけしておかないと、境界エディタに戻ったときに古い位置へ飛ぶ。
+      setPendingSeekSeconds(null);
+      return;
+    }
     const v = inVideoRef.current;
     if (v === null) {
       // register_video 未解決の間は待つ。登録に失敗した (videoError) 場合は
@@ -373,7 +385,7 @@ export function PreviewScreen() {
       // メタデータ未ロード時の seek 失敗は無視 (編集バッファは pristine のまま)
     }
     setPendingSeekSeconds(null);
-  }, [pendingSeekSeconds, videoUrl, videoError, setPendingSeekSeconds]);
+  }, [pendingSeekSeconds, videoUrl, videoError, setPendingSeekSeconds, clipMode]);
 
   // #465: fetch candidate-frame thumbnails around the start boundary. Runs
   // when the boundary moves by more than ~0.5s so ffmpeg calls aren't
@@ -535,20 +547,25 @@ export function PreviewScreen() {
   // The strict end > start guard at apply time (store + Rust) is the backstop.
   const commitStart = useCallback(
     (next: number) => {
+      // #1139 (codex review P1): クリップ範囲の編集中は試合境界を動かさない。
+      // ここが境界変更の単一の絞り込み点 (TC 入力 / nudge / frame step /
+      // FrameStrip / playback timeupdate) なので、一度閉じれば全経路が止まる。
+      if (clipMode) return;
       // #834 (codex) -- sample mode is read-only. Gate the single boundary-
       // mutation choke point so every path (keyboard nudge / frame step /
       // FrameStrip / TC input / playback timeupdate) is read-only at once.
       if (isSample) return;
       setStartT(Math.max(0, Math.min(next, endT - 1 / fps)));
     },
-    [endT, fps, isSample],
+    [endT, fps, isSample, clipMode],
   );
   const commitEnd = useCallback(
     (next: number) => {
+      if (clipMode) return;
       if (isSample) return;
       setEndT(Math.max(next, startT + 1 / fps));
     },
-    [startT, fps, isSample],
+    [startT, fps, isSample, clipMode],
   );
   const commitCurrentT = useCallback(
     (next: number) => (editing === 'start' ? commitStart(next) : commitEnd(next)),
@@ -577,6 +594,9 @@ export function PreviewScreen() {
   useEffect(() => {
     const interactiveTags = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
     function handleKey(e: KeyboardEvent) {
+      // クリップ範囲の編集中はキーボードショートカットを持たない
+      // (ペインも境界バッファも描画されていない、#1139)。
+      if (clipMode) return;
       // Let the TC input and other fields own their typing.
       const target = e.target as HTMLElement | null;
       if (target && interactiveTags.has(target.tagName)) return;
@@ -606,7 +626,7 @@ export function PreviewScreen() {
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [nudge, nudgeFrame, activeVideoRef, isSample]);
+  }, [nudge, nudgeFrame, activeVideoRef, isSample, clipMode]);
 
   const matchLabel = useMemo(
     () => (match ? `match_${String(match.index).padStart(3, '0')}` : ''),
@@ -686,7 +706,7 @@ export function PreviewScreen() {
   const exportNavReason = isSample ? sampleReason : '';
 
   // クリップ範囲モード: 試合境界のエディタとは別の画面状態で描画する。
-  if (clipRangeForThisMatch !== null) {
+  if (clipMode) {
     return <ClipRangeView />;
   }
 

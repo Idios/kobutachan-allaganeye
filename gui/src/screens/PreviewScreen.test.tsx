@@ -938,6 +938,56 @@ describe('#1131 / #1139 PreviewScreen delegates the clip range mode', () => {
     expect(screen.queryByTestId('clip-range-view')).not.toBeInTheDocument();
     expect(screen.getByLabelText('match name')).toBeInTheDocument();
   });
+
+  // codex review 2026-11-17 (P1): 早期 return しても PreviewScreen の hooks は
+  // 生きている。clip 範囲の編集中に矢印キーを押すと**見えない試合境界バッファ**
+  // (`startT` / `endT`) が動き、200ms の debounce が `metadata.matches` に書き込む。
+  // そのまま [この範囲を保存] すると、意図しない境界編集も一緒に永続化される。
+  it('keeps the match boundaries read-only while the clip range view is open', async () => {
+    useMetadataStore.setState({ filePath: '/x' }); // 実ファイル mode (sample の read-only gate を外す)
+    useAppStateStore.getState().setClipRange({
+      start: 2410,
+      end: 2440,
+      matchIndex: 4,
+      position: 1,
+    });
+    render(<PreviewScreen />);
+    expect(screen.getByTestId('clip-range-view')).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'ArrowRight', shiftKey: true }); // +10s
+    // debounce (200ms) を超えても store は汚れない
+    await new Promise((r) => setTimeout(r, 300));
+
+    const match = useMetadataStore
+      .getState()
+      .metadata!.matches.find((m) => m.index === 4)!;
+    expect(match.edited).toBeUndefined();
+    expect(useMetadataStore.getState().dirty).toBe(false);
+  });
+
+  // クリップ範囲の画面は自前て IN ペインを clip の先頭へシークするので、
+  // 一覧からの one-shot seek は消費だけする (持ち越すと、境界エディタに戻った
+  // ときに古い位置へ飛ぶ)。
+  it('consumes pendingSeekSeconds without seeking the hidden boundary panes', async () => {
+    useMetadataStore.setState({ filePath: '/x' });
+    useAppStateStore.getState().setClipRange({
+      start: 2410,
+      end: 2440,
+      matchIndex: 4,
+      position: 1,
+    });
+    useAppStateStore.getState().setPendingSeekSeconds(2438.75);
+
+    render(<PreviewScreen />);
+
+    await waitFor(() =>
+      expect(useAppStateStore.getState().pendingSeekSeconds).toBeNull(),
+    );
+    const match = useMetadataStore
+      .getState()
+      .metadata!.matches.find((m) => m.index === 4)!;
+    expect(match.edited).toBeUndefined();
+  });
 });
 
 describe('PreviewScreen sample mode banner + main CTAs (Task 1.6)', () => {
