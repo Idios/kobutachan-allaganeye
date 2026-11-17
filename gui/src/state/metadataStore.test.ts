@@ -597,6 +597,56 @@ describe('useMetadataStore.refreshBackupStatus (#516)', () => {
   });
 });
 
+describe('useMetadataStore.setEventClipRange (#1139)', () => {
+  function withEvents() {
+    const base = validMetadata();
+    useMetadataStore.setState({
+      metadata: {
+        ...base,
+        filePath: null,
+        events: [
+          {
+            signal_id: 'ko_indicator',
+            timestamp: 100,
+            end: 101.5,
+            score: 0.9,
+            evidence: { samples: 15 },
+            match_index: 1,
+          },
+        ],
+      } as Metadata,
+      filePath: 'C:/videos/metadata.json',
+      dirty: false,
+    });
+  }
+
+  it('writes clip_start / clip_end on the 1-based position and marks dirty', () => {
+    withEvents();
+    useMetadataStore.getState().setEventClipRange(1, { start: 95, end: 108 });
+    const event = useMetadataStore.getState().metadata!.events![0];
+    expect(event.clip_start).toBe(95);
+    expect(event.clip_end).toBe(108);
+    expect(useMetadataStore.getState().dirty).toBe(true);
+  });
+
+  it('clears the override when range is null', () => {
+    withEvents();
+    useMetadataStore.getState().setEventClipRange(1, { start: 95, end: 108 });
+    useMetadataStore.getState().setEventClipRange(1, null);
+    const event = useMetadataStore.getState().metadata!.events![0];
+    expect(event.clip_start).toBeUndefined();
+    expect(event.clip_end).toBeUndefined();
+  });
+
+  it('ignores out-of-range positions', () => {
+    withEvents();
+    useMetadataStore.getState().setEventClipRange(0, { start: 1, end: 2 });
+    useMetadataStore.getState().setEventClipRange(9, { start: 1, end: 2 });
+    expect(useMetadataStore.getState().dirty).toBe(false);
+    expect(useMetadataStore.getState().metadata!.events![0].clip_start).toBeUndefined();
+  });
+});
+
 describe('useMetadataStore.loadSample', () => {
   it('populates metadata with sample data and null filePath', () => {
     useMetadataStore.getState().loadSample();

@@ -301,6 +301,65 @@ def test_filter_clips_with_no_selection_keeps_everything() -> None:
     assert len(filter_clips(plan, []).clips) == 2
 
 
+# ---------------------------------------------------------------------------
+# イベント単位の範囲上書き (#1139)
+# ---------------------------------------------------------------------------
+
+
+def test_explicit_clip_window_overrides_pre_post() -> None:
+    event = {**_event(200.0), "clip_start": 193.0, "clip_end": 205.5}
+    plan = plan_clips([event], MATCHES, pre=30, post=30)
+    assert len(plan.clips) == 1
+    assert (plan.clips[0].start, plan.clips[0].end) == (193.0, 205.5)
+    assert plan.clips[0].event_indexes == (1,)
+
+
+def test_explicit_clip_window_is_clamped_to_the_match() -> None:
+    event = {**_event(110.0), "clip_start": 50.0, "clip_end": 120.0}
+    plan = plan_clips([event], MATCHES)  # match 1 = 100..400
+    assert (plan.clips[0].start, plan.clips[0].end) == (100.0, 120.0)
+
+
+def test_explicit_clip_window_is_not_merged_with_neighbours() -> None:
+    events = [
+        {**_event(200.0), "clip_start": 190.0, "clip_end": 210.0},
+        _event(201.0, signal_id="assist_indicator"),
+    ]
+    plan = plan_clips(events, MATCHES)
+    windows = [(c.start, c.end, c.event_indexes) for c in plan.clips]
+    # 上書き側は単独、もう片方は従来どおり pre/post 付き
+    assert (190.0, 210.0, (1,)) in windows
+    assert (191.0, 212.5, (2,)) in windows
+    assert plan.merged_events == 0
+
+
+def test_half_specified_clip_window_is_ignored() -> None:
+    """`clip_start` だけ / `clip_end` だけは無効 (両方揃って初めて有効)。"""
+    for key in ("clip_start", "clip_end"):
+        event = {**_event(200.0), key: 190.0}
+        plan = plan_clips([event], MATCHES)
+        assert (plan.clips[0].start, plan.clips[0].end) == (190.0, 211.5)
+
+
+def test_invalid_clip_window_is_ignored() -> None:
+    """逆転 / 非有限 / 潰れた区間は無視して自動区間に戻す。"""
+    for start, end in ((210.0, 200.0), (200.0, 200.0)):
+        event = {**_event(200.0), "clip_start": start, "clip_end": end}
+        plan = plan_clips([event], MATCHES)
+        assert (plan.clips[0].start, plan.clips[0].end) == (190.0, 211.5)
+
+
+def test_explicit_clip_keeps_plan_order_and_numbering() -> None:
+    events = [
+        {**_event(700.0, match_index=2), "clip_start": 690.0, "clip_end": 700.0},
+        _event(200.0),
+    ]
+    plan = plan_clips(events, MATCHES)
+    assert [c.index for c in plan.clips] == [1, 2]
+    assert [c.match_index for c in plan.clips] == [1, 2]
+    assert plan.clips[1].event_indexes == (1,)
+
+
 def test_filter_clips_recounts_merged_events_within_the_selection() -> None:
     """1 本だけ残すと `merged_events` もその 1 本分だけになる (過大報告しない)。"""
     events = [

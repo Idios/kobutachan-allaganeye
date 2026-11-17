@@ -239,6 +239,43 @@ describe('planClipWindows (CLI plan_clips の鏡)', () => {
     expectWindow(windows, 2, 310, 331);
   });
 
+  // #1139: metadata に保存されたユーザー指定の区間を優先する。
+  it('uses a persisted clip_start / clip_end override as-is (#1139)', () => {
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], clip_start: 470, clip_end: 500 },
+    ];
+    const windows = planClipWindows(events, MATCHES, 10, 10);
+    expectWindow(windows, 1, 470, 500);
+  });
+
+  it('does not merge an overridden event with its neighbours (#1139)', () => {
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], timestamp: 300, end: 301, clip_start: 295, clip_end: 310 },
+      { ...EVENTS[0], timestamp: 303, end: 304 },
+    ];
+    const windows = planClipWindows(events, MATCHES, 10, 10);
+    expectWindow(windows, 1, 295, 310); // 上書きは単独
+    expectWindow(windows, 2, 293, 314); // 隣は自動 (pre/post 付き)
+  });
+
+  it('clamps an override to the match span (#1139)', () => {
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], timestamp: 1300, end: 1301, match_index: 2, clip_start: 1100, clip_end: 1400 },
+    ];
+    const windows = planClipWindows(events, MATCHES, 0, 0);
+    expectWindow(windows, 1, 1129.5, 1400);
+  });
+
+  it('ignores an invalid override (half-specified / reversed) (#1139)', () => {
+    const half: HighlightEvent[] = [{ ...EVENTS[0], clip_start: 400 }];
+    expectWindow(planClipWindows(half, MATCHES, 10, 10), 1, 483.4, 504.9);
+
+    const reversed: HighlightEvent[] = [
+      { ...EVENTS[0], clip_start: 500, clip_end: 490 },
+    ];
+    expectWindow(planClipWindows(reversed, MATCHES, 10, 10), 1, 483.4, 504.9);
+  });
+
   it('clamps to the match span', () => {
     const events: HighlightEvent[] = [
       { ...EVENTS[0], timestamp: 5, end: 6 },
@@ -279,6 +316,22 @@ describe('planClipWindows (CLI plan_clips の鏡)', () => {
       { ...EVENTS[0], timestamp: 1129.621, end: 1129.624, match_index: 2 },
     ];
     expect(planClipWindows(events, MATCHES, 0, 0).size).toBe(0);
+  });
+
+  // 明示区間は CLI が端点を丸めてから判定するので、生の幅 < 0.01 秒でも
+  // 丸めた両端が違えば書き出される (codex review 2026-11-17)。
+  it('keeps an explicit window narrower than 0.01 s when rounding keeps it', () => {
+    const events: HighlightEvent[] = [
+      {
+        ...EVENTS[0],
+        timestamp: 100.004,
+        end: 100.011,
+        clip_start: 100.004,
+        clip_end: 100.011,
+      },
+    ];
+    const windows = planClipWindows(events, MATCHES, 0, 0);
+    expectWindow(windows, 1, 100.004, 100.011);
   });
 
   it('keeps windows of 0.01 s or wider (CLI writes them)', () => {
@@ -466,7 +519,12 @@ describe('ClipsScreen actions', () => {
     const app = useAppStateStore.getState();
     expect(app.screen).toBe('preview');
     expect(app.selectedMatchIndex).toBe(1);
-    expect(app.clipRange).toEqual({ start: 483.4, end: 504.9, matchIndex: 1 });
+    expect(app.clipRange).toEqual({
+      start: 483.4,
+      end: 504.9,
+      matchIndex: 1,
+      position: 1,
+    });
     expect(app.pendingSeekSeconds).toBe(483.4);
   });
 
@@ -481,6 +539,7 @@ describe('ClipsScreen actions', () => {
       start: 483.4,
       end: 497.9,
       matchIndex: 1,
+      position: 1,
     });
   });
 

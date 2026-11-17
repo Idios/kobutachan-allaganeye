@@ -11,7 +11,7 @@
     {
       "file": "01-drop.png",
       "screen": "drop",
-      "sha256": "d60de58c77044eeda44579577c6435be10cefcc7ef30695cb1170cd9f49e30b1"
+      "sha256": "9e496267552c2514e0a6445042ae0a63952e4b57df8e43570cd259e097a725ad"
     },
     {
       "file": "02-detecting.png",
@@ -21,7 +21,7 @@
     {
       "file": "03-complete.png",
       "screen": "complete",
-      "sha256": "0e21dfb78fdf25d13b56f298e5f3294cc4d92a5e3b7bdbb39780956f4c48fecb"
+      "sha256": "eceb444c2c65457a191697368bd34ce9847ae6caa31cf255af66d4db58b5e278"
     },
     {
       "file": "04-preview.png",
@@ -41,7 +41,7 @@
     {
       "file": "07-indicators.png",
       "screen": "indicators",
-      "sha256": "f329f223e13141ef5843500cedcbb86086e9625d7ff770558c1466b6cd9ef500"
+      "sha256": "09de190e250163629220d2ff3185934863ed6a75e56e881e7ec614ac0a83ca8b"
     },
     {
       "file": "08-clips.png",
@@ -62,7 +62,7 @@
     "gui/src/types/metadata.generated.ts",
     "gui/src/types/metadata.schema.ts"
   ],
-  "sources_sha256": "2eab268d254931a830cafb4a0c218ee295590ea07c44aae048f5a7f1bb13814d",
+  "sources_sha256": "2c917ef561dfcd82a638558e948c7ddf6590bace567801eabea184ee7ef8c80f",
   "notes": {
     "gui/src/types/metadata.generated.ts": "型定義のみの生成物 (scripts/codegen/generate.py)。TS の型は build で消えるため描画結果に影響しない。schema 変更のたびに撮り直しを要求しないよう exclude する。",
     "gui/src/types/metadata.schema.ts": "zod の検証定義のみ (画面を描画しない)。フィールド集合の追加/変更は表示に影響せず、JSON Schema との整合は zod-schema-integrity.test.ts が見る。schema 変更のたびに撮り直しを要求しないよう exclude する。"

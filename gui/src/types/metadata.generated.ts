@@ -329,5 +329,13 @@ export interface HighlightEvent {
    * `matches[].index` the event falls into, or null when it falls outside every match (the event is still reported). Always present so consumers only handle one shape.
    */
   match_index: number | null;
+  /**
+   * User-specified clip window start (absolute seconds, #1139). Set together with `clip_end`; when both are present `allaganeye clips` cuts this event to `[clip_start, clip_end]` (clamped to the match span) instead of `--pre` / `--post`, and the event is not merged with its neighbours. Omit to fall back to the automatic window.
+   */
+  clip_start?: number;
+  /**
+   * User-specified clip window end, same time basis as `clip_start`. Only honoured when both `clip_start` and `clip_end` are present and `clip_end > clip_start`.
+   */
+  clip_end?: number;
   [k: string]: unknown;
 }

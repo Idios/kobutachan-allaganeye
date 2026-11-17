@@ -1,0 +1,95 @@
+/*
+ * TimecodePane (#465 review / #1139)。
+ * PreviewScreen.module.css から切り出した（試合境界の編集とクリップ範囲の編集で
+ * 共有するため）。見た目は変えていない。
+ */
+
+.pane {
+  padding: 8px;
+  background: var(--ae-bg-deep);
+  border: var(--ae-panel-border);
+  transition: border-color 0.15s, background 0.15s;
+  width: 100%;
+}
+
+/*
+ * #587: cyan border when the IN pane is active, gold when OUT is active.
+ * Helps the user see at a glance which boundary they are editing.
+ */
+.paneActive[data-pane='in'] {
+  border-color: var(--ae-cyan);
+  box-shadow: 0 0 8px rgba(var(--ae-cyan-rgb), 0.15);
+}
+
+.paneActive[data-pane='out'] {
+  border-color: var(--ae-gold-bright);
+  box-shadow: 0 0 8px rgba(var(--ae-gold-rgb), 0.15);
+}
+
+.paneCaption {
+  font-family: var(--ae-font-ui);
+  font-size: 9px;
+  letter-spacing: 2.5px;
+  color: var(--ae-gold-dim);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.paneVideo {
+  aspect-ratio: 16 / 9;
+  background: #000;
+  position: relative;
+  overflow: hidden;
+}
+
+.paneVideoEl {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  background: #000;
+}
+
+.paneVideoError {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ae-danger);
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  padding: 12px;
+  text-align: center;
+  word-break: break-all;
+}
+
+.paneVideoLoading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ae-text-dim);
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+}
+
+.tcInput {
+  margin-top: 6px;
+  width: 100%;
+  background: var(--ae-bg);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-text);
+  padding: 6px 8px;
+  font-family: var(--ae-font-mono);
+  font-size: 12px;
+  outline: none;
+  text-align: center;
+}
+
+.paneActive .tcInput {
+  border-color: var(--ae-gold-bright);
+  background: rgba(var(--ae-gold-rgb), 0.08);
+  color: var(--ae-gold-bright);
+}

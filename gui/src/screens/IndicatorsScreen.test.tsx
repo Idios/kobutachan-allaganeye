@@ -423,6 +423,50 @@ describe('IndicatorsScreen complete', () => {
     expect(state.pendingSeekSeconds).toBe(12.3);
   });
 
+  // #1139: 行クリックは「クリップ範囲の調整」で開く（試合境界ではない）。
+  it('opens the clip range mode with the event window (#1139)', async () => {
+    const user = userEvent.setup();
+    renderIndicators(completePatch());
+    // metadata.events に同じイベントを置くと位置 (1 始まり) が引ける
+    const base = useMetadataStore.getState().metadata!;
+    useMetadataStore.setState({
+      metadata: {
+        ...base,
+        events: [
+          { ...EVENTS[1] },
+          { ...EVENTS[2], clip_start: 0.05, clip_end: 30 },
+        ],
+      },
+    });
+
+    await user.click(screen.getByTestId('indicators-event-1-0'));
+
+    const range = useAppStateStore.getState().clipRange;
+    expect(range).toEqual({
+      start: 0.05,
+      end: 30,
+      matchIndex: 1,
+      position: 2,
+    });
+  });
+
+  it('falls back to the default margins when no override is stored (#1139)', async () => {
+    const user = userEvent.setup();
+    renderIndicators(completePatch());
+    const base = useMetadataStore.getState().metadata!;
+    useMetadataStore.setState({
+      metadata: { ...base, events: [{ ...EVENTS[1] }] },
+    });
+
+    await user.click(screen.getByTestId('indicators-event-1-1'));
+
+    const range = useAppStateStore.getState().clipRange;
+    // EVENTS[1] は 12.3 - 13.0 秒、既定の前後 10 秒
+    expect(range?.start).toBeCloseTo(2.3, 6);
+    expect(range?.end).toBeCloseTo(23, 6);
+    expect(range?.position).toBe(1);
+  });
+
   it('activates a row from the keyboard (Enter) as well', async () => {
     const user = userEvent.setup();
     renderIndicators(completePatch());

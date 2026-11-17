@@ -21,6 +21,7 @@ import { DisabledTooltip } from '../components/DisabledTooltip';
 import { SampleModeBanner } from '../components/SampleModeBanner';
 import { useEscapeKey } from '../hooks/useEscapeKey';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { useRegisteredVideo } from '../hooks/useRegisteredVideo';
 import { isAppError } from '../lib/appError';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
@@ -77,7 +78,9 @@ export function MinimapScreen() {
   const [frameMatchIndex, setFrameMatchIndex] = useState<number | null>(
     eligible[0]?.index ?? null,
   );
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  // Register the video source with the Tauri backend (#465。`useRegisteredVideo` に
+  // 集約 — PreviewScreen / ClipRangeView と共通の呼び出し、#1139)。
+  const { videoUrl } = useRegisteredVideo(videoSource);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // Region state
@@ -210,25 +213,6 @@ export function MinimapScreen() {
       unlisten?.();
     };
   }, []);
-
-  // Register the video source with the Tauri backend (same pattern as PreviewScreen:266-293)
-  useEffect(() => {
-    if (!videoSource) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const reg = await invoke<{ url: string; token: string }>('register_video', {
-          path: videoSource,
-        });
-        if (!cancelled) setVideoUrl(reg.url);
-      } catch {
-        if (!cancelled) setVideoUrl(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [videoSource]);
 
   // Seek to the midpoint of the selected match whenever it or the URL changes
   useEffect(() => {

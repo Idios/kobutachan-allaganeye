@@ -11,8 +11,12 @@ import {
 import { DisabledTooltip } from '../components/DisabledTooltip';
 import { FrameStrip, type FrameStripThumb } from '../components/FrameStrip';
 import { InlineErrorHint } from '../components/InlineErrorHint';
+import { KeyboardHints } from '../components/KeyboardHints';
 import { RestoreButton } from '../components/RestoreButton';
 import { SampleModeBanner } from '../components/SampleModeBanner';
+import { TimecodePane } from '../components/TimecodePane';
+import { useRegisteredVideo } from '../hooks/useRegisteredVideo';
+import { ClipRangeView } from './ClipRangeView';
 import {
   isAppError,
   toErrorState,
@@ -27,7 +31,6 @@ import type { MatchType, TypeOverride } from '../types/metadata';
 import { DEFAULT_FPS } from '../types/metadata.schema';
 import { buildLocalBrightness } from '../utils/brightness';
 import { splitPath } from '../utils/path';
-import { fmtClockTime, fmtPreciseTime } from '../utils/time';
 import { isBoundaryValid } from '../utils/boundary';
 import pathStyles from '../styles/path-display.module.css';
 import styles from './PreviewScreen.module.css';
@@ -40,11 +43,6 @@ import styles from './PreviewScreen.module.css';
  * inside metadataStore.
  */
 const UPDATE_DEBOUNCE_MS = 200;
-
-interface RegisteredVideo {
-  url: string;
-  token: string;
-}
 
 interface ThumbnailEntry {
   t_seconds: number;
@@ -99,6 +97,8 @@ function resolveFps(sourceFps: number | undefined): number {
 export function PreviewScreen() {
   const metadata = useMetadataStore((s) => s.metadata);
   const dirty = useMetadataStore((s) => s.dirty);
+  // #1139: [適用] の実行中はクリップ範囲の編集も受け付けない。apply は開始時の
+  // snapshot を保存して `dirty` を落とすので、走行中の編集は静かに失われる。
   const applying = useMetadataStore((s) => s.applying);
   const applyErrorState = useMetadataStore((s) => s.applyErrorState);
   const filePath = useMetadataStore((s) => s.filePath);
@@ -222,8 +222,9 @@ export function PreviewScreen() {
 
   // #465: per-mount video URL fetched from the axum server. One registration
   // covers both panes (HTMLVideoElement instances can share the same URL).
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [videoError, setVideoError] = useState<string | null>(null);
+  // #1139: `register_video` の呼び出しは `useRegisteredVideo` に集約した
+  // (MinimapScreen / ClipRangeView と共通)。呼び出し位置は `videoSource` の
+  // 宣言より後に置く (hooks の評価順は毎 render で同じ)。
 
   // #465: thumbnail cache fetched from the Rust `generate_match_thumbnails`
   // command (via ffmpeg). Keyed per boundary side; falls back to [] while
@@ -262,35 +263,7 @@ export function PreviewScreen() {
   // register_video / generate_match_thumbnails を発行する。
   const selectedVideoPath = useAppStateStore((s) => s.selectedVideoPath);
   const videoSource = selectedVideoPath ?? metadata?.source ?? null;
-
-  useEffect(() => {
-    if (!videoSource) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const registered = await invoke<RegisteredVideo>('register_video', {
-          path: videoSource,
-        });
-        if (!cancelled) {
-          setVideoUrl(registered.url);
-          setVideoError(null);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setVideoUrl(null);
-          // #678 Lane II-b §2.1 — AppError struct (Tauri Result<T, AppError>) /
-          // Error / raw string / null/undefined を toErrorState で統一処理。
-          // 旧実装 `e instanceof Error ? e.message : String(e)` は AppError 流入時に
-          // `[object Object]` 表示になっていた。
-          // PreviewScreen には videoErrorHint 枠なし → hint UI は追加しない (spec §2.1 規約)。
-          setVideoError(toErrorState(e).message);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [videoSource]);
+  const { videoUrl, videoError } = useRegisteredVideo(videoSource);
 
   // Keep each video's currentTime in sync with the edit buffer so a keyboard
   // nudge immediately seeks the frame preview. We only seek when the numeric
@@ -343,31 +316,31 @@ export function PreviewScreen() {
   const pendingSeekSeconds = useAppStateStore((s) => s.pendingSeekSeconds);
   const setPendingSeekSeconds = useAppStateStore((s) => s.setPendingSeekSeconds);
 
-  // #1131 Phase B2: ClipsScreen からの「クリップ範囲モード」。`clipRange` がある
-  // 間だけ範囲バナーを出し、先頭 / 末尾へ IN pane をシークする。試合境界
-  // (`startT` / `endT`) には触らないので、境界調整の編集内容は汚れない。
-  //
-  // `clipRange.matchIndex` が開いている match と一致しないときは出さない
-  // (クリップ範囲は特定のイベントのものなので、別の試合の preview に前の範囲が
-  //  残ると存在しない時刻へシークさせる — codex review 2026-11-17)。
+  // #1139: クリップ範囲の調整は **状態を共有しない別画面** (`ClipRangeView`) が
+  // 担当する。以前はこの画面にバナーを足していたが、動画ペインもタイムコードも
+  // 試合境界の値のままだったため「どの状態の画面か読めない」問題があった
+  // (Idios 指摘 2026-11-17)。ここでは該当 match のクリップ範囲が選ばれている
+  // ときだけ描画を切り替える。
   const rawClipRange = useAppStateStore((s) => s.clipRange);
-  const setClipRange = useAppStateStore((s) => s.setClipRange);
-  const clipRange =
+  const clipRangeForThisMatch =
     rawClipRange !== null && rawClipRange.matchIndex === match?.index
       ? rawClipRange
       : null;
+  // 早期 return しても hooks は生きている (React の仕様) ので、この flag で
+  // **見えない試合境界バッファへの書き込み経路**をすべて閉じる。
+  // codex review 2026-11-17 (P1): clip 範囲の編集中に矢印キーを押すと
+  // `startT` / `endT` が動き、200ms の debounce が `metadata.matches` を
+  // 書き換えていた。
+  const clipMode = clipRangeForThisMatch !== null;
 
-  function seekPreviewTo(seconds: number): void {
-    const v = inVideoRef.current;
-    if (v === null) return;
-    try {
-      v.currentTime = seconds;
-    } catch {
-      // メタデータ未ロード時の seek 失敗は無視 (バナー表示はそのまま残す)
-    }
-  }
   useEffect(() => {
     if (pendingSeekSeconds === null) return;
+    if (clipMode) {
+      // クリップ範囲の画面は自前で IN を clip の先頭へシークする。ここで
+      // 消費だけしておかないと、境界エディタに戻ったときに古い位置へ飛ぶ。
+      setPendingSeekSeconds(null);
+      return;
+    }
     const v = inVideoRef.current;
     if (v === null) {
       // register_video 未解決の間は待つ。登録に失敗した (videoError) 場合は
@@ -382,7 +355,7 @@ export function PreviewScreen() {
       // メタデータ未ロード時の seek 失敗は無視 (編集バッファは pristine のまま)
     }
     setPendingSeekSeconds(null);
-  }, [pendingSeekSeconds, videoUrl, videoError, setPendingSeekSeconds]);
+  }, [pendingSeekSeconds, videoUrl, videoError, setPendingSeekSeconds, clipMode]);
 
   // #465: fetch candidate-frame thumbnails around the start boundary. Runs
   // when the boundary moves by more than ~0.5s so ffmpeg calls aren't
@@ -544,20 +517,25 @@ export function PreviewScreen() {
   // The strict end > start guard at apply time (store + Rust) is the backstop.
   const commitStart = useCallback(
     (next: number) => {
+      // #1139 (codex review P1): クリップ範囲の編集中は試合境界を動かさない。
+      // ここが境界変更の単一の絞り込み点 (TC 入力 / nudge / frame step /
+      // FrameStrip / playback timeupdate) なので、一度閉じれば全経路が止まる。
+      if (clipMode) return;
       // #834 (codex) -- sample mode is read-only. Gate the single boundary-
       // mutation choke point so every path (keyboard nudge / frame step /
       // FrameStrip / TC input / playback timeupdate) is read-only at once.
       if (isSample) return;
       setStartT(Math.max(0, Math.min(next, endT - 1 / fps)));
     },
-    [endT, fps, isSample],
+    [endT, fps, isSample, clipMode],
   );
   const commitEnd = useCallback(
     (next: number) => {
+      if (clipMode) return;
       if (isSample) return;
       setEndT(Math.max(next, startT + 1 / fps));
     },
-    [startT, fps, isSample],
+    [startT, fps, isSample, clipMode],
   );
   const commitCurrentT = useCallback(
     (next: number) => (editing === 'start' ? commitStart(next) : commitEnd(next)),
@@ -586,6 +564,9 @@ export function PreviewScreen() {
   useEffect(() => {
     const interactiveTags = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
     function handleKey(e: KeyboardEvent) {
+      // クリップ範囲の編集中はキーボードショートカットを持たない
+      // (ペインも境界バッファも描画されていない、#1139)。
+      if (clipMode) return;
       // Let the TC input and other fields own their typing.
       const target = e.target as HTMLElement | null;
       if (target && interactiveTags.has(target.tagName)) return;
@@ -615,7 +596,7 @@ export function PreviewScreen() {
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [nudge, nudgeFrame, activeVideoRef, isSample]);
+  }, [nudge, nudgeFrame, activeVideoRef, isSample, clipMode]);
 
   const matchLabel = useMemo(
     () => (match ? `match_${String(match.index).padStart(3, '0')}` : ''),
@@ -693,6 +674,11 @@ export function PreviewScreen() {
 
   const exportNavDisabled = isSample;
   const exportNavReason = isSample ? sampleReason : '';
+
+  // クリップ範囲モード: 試合境界のエディタとは別の画面状態で描画する。
+  if (clipMode) {
+    return <ClipRangeView />;
+  }
 
   return (
     <div className={styles.screen} data-testid="preview-screen">
@@ -782,45 +768,8 @@ export function PreviewScreen() {
         </DisabledTooltip>
       </div>
 
-      {clipRange !== null && (
-        <div
-          className={styles.clipRange}
-          role="status"
-          data-testid="preview-clip-range"
-        >
-          <span className={styles.clipRangeLabel}>
-            {`クリップ範囲 ${fmtClockTime(clipRange.start)} - ${fmtClockTime(clipRange.end)}`}
-            {` ・ ${Math.max(0, clipRange.end - clipRange.start).toFixed(1)} 秒`}
-          </span>
-          <button
-            type="button"
-            className={styles.secondaryButton}
-            onClick={() => seekPreviewTo(clipRange.start)}
-            data-testid="preview-clip-start"
-          >
-            先頭へ
-          </button>
-          <button
-            type="button"
-            className={styles.secondaryButton}
-            onClick={() => seekPreviewTo(clipRange.end)}
-            data-testid="preview-clip-end"
-          >
-            末尾へ
-          </button>
-          <button
-            type="button"
-            className={styles.secondaryButton}
-            onClick={() => setClipRange(null)}
-            data-testid="preview-clip-clear"
-          >
-            範囲を解除
-          </button>
-        </div>
-      )}
-
       <div className={styles.panes}>
-        <Pane
+        <TimecodePane
           label="IN (start)"
           active={editing === 'start'}
           t={startT}
@@ -833,7 +782,7 @@ export function PreviewScreen() {
           disabled={isSample}
           disabledReason={sampleReason}
         />
-        <Pane
+        <TimecodePane
           label="OUT (end)"
           active={editing === 'end'}
           t={endT}
@@ -905,23 +854,9 @@ export function PreviewScreen() {
         })}
       </div>
 
-      {/* #465 review: キーボードショートカット可視化 (UX item 3)。stepRow 下に
-       *  インライン hint を出し、はじめてのユーザーにも操作方法が伝わる。 */}
-      <div className={styles.keyHint} role="note" aria-label="keyboard shortcuts">
-        <span className={styles.keyHintItem}>
-          <kbd className={styles.kbd}>←</kbd>
-          <kbd className={styles.kbd}>→</kbd> 1s
-        </span>
-        <span className={styles.keyHintItem}>
-          <kbd className={styles.kbd}>Shift</kbd>+<kbd className={styles.kbd}>←→</kbd> 10s
-        </span>
-        <span className={styles.keyHintItem}>
-          <kbd className={styles.kbd}>Alt</kbd>+<kbd className={styles.kbd}>←→</kbd> 1F
-        </span>
-        <span className={styles.keyHintItem}>
-          <kbd className={styles.kbd}>Space</kbd> / クリック: 再生/停止
-        </span>
-      </div>
+      {/* #465 review: キーボードショートカット可視化 (UX item 3)。
+       *  #1139: クリップ範囲の画面と共通の部品に切り出した。 */}
+      <KeyboardHints />
 
       <div className={styles.strip}>
         {/* #645 Chapter 2 (overlay pivot): brightness data is now an SVG
@@ -996,134 +931,4 @@ export function PreviewScreen() {
       </div>
     </div>
   );
-}
-
-interface PaneProps {
-  label: string;
-  active: boolean;
-  t: number;
-  onActivate: () => void;
-  onTChange: (v: number) => void;
-  videoUrl: string | null;
-  videoError: string | null;
-  videoRef: React.RefObject<HTMLVideoElement | null>;
-  /** #465 review: fps for TC formatting / parsing on this pane. */
-  fps: number;
-  /** When true, the timecode input is read-only (sample mode). */
-  disabled?: boolean;
-  /** Tooltip reason shown on the timecode input when disabled. */
-  disabledReason?: string;
-}
-
-function Pane({
-  label,
-  active,
-  t,
-  onActivate,
-  onTChange,
-  videoUrl,
-  videoError,
-  videoRef,
-  fps,
-  disabled = false,
-  disabledReason = '',
-}: PaneProps) {
-  // #587: data-pane drives the active border color (cyan for IN, gold
-  // for OUT) via CSS attribute selectors. The label is the single source
-  // of truth for which pane this is.
-  const paneKind = label.startsWith('IN') ? 'in' : 'out';
-  return (
-    <button
-      type="button"
-      onClick={onActivate}
-      className={`${styles.pane}${active ? ` ${styles.paneActive}` : ''}`}
-      aria-pressed={active}
-      data-pane={paneKind}
-    >
-      <div className={styles.paneCaption}>{label}</div>
-      <div className={styles.paneVideo}>
-        {videoUrl ? (
-          <video
-            ref={videoRef}
-            src={videoUrl}
-            preload="metadata"
-            playsInline
-            controls={false}
-            className={styles.paneVideoEl}
-            aria-label={`${label} video`}
-            title="クリックで再生/停止 (Space キーでも同じ)"
-            // #465 review: クリックで再生・停止 (UX item 4)。stopPropagation で
-            // Pane の activate 遷移は抑え、pane はすでに active な状態で
-            // play/pause を切り替える。inactive pane をクリックした場合は
-            // activate を先に呼ぶため、もう一度クリックで play/pause できる。
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!active) {
-                onActivate();
-                return;
-              }
-              const v = videoRef.current;
-              if (v) {
-                if (v.paused) void v.play().catch(() => undefined);
-                else v.pause();
-              }
-            }}
-            // #465 review 追加: 再生中は TC 表示 (onTChange) を video.currentTime
-            // に同期させる (UX 追加: ユーザー期待)。paused 中は nudge / 手入力
-            // した t を残したいので guard。paused 状態の最終 timeupdate も読む
-            // ので、pause 後の TC は「停止したフレームの時刻」になる。
-            // 逆方向の sync (t → video.currentTime) は外側の useEffect が 0.001
-            // 閾値付きで担当しており feedback loop は起きない。
-            onTimeUpdate={(e) => {
-              const v = e.currentTarget;
-              if (!v.paused) {
-                onTChange(v.currentTime);
-              }
-            }}
-          />
-        ) : videoError ? (
-          <div className={styles.paneVideoError} role="alert">
-            {videoError}
-          </div>
-        ) : (
-          <div className={styles.paneVideoLoading}>loading video…</div>
-        )}
-      </div>
-      <DisabledTooltip disabled={disabled} reason={disabledReason}>
-        {(p) => (
-          <input
-            className={styles.tcInput}
-            value={fmtPreciseTime(t, fps)}
-            onChange={(e) => {
-              const parsed = parseTimecode(e.target.value, fps);
-              if (parsed !== null) onTChange(parsed);
-            }}
-            aria-label={`${label} timecode`}
-            onClick={(e) => e.stopPropagation()}
-            disabled={disabled}
-            {...p}
-          />
-        )}
-      </DisabledTooltip>
-    </button>
-  );
-}
-
-/**
- * Parse H:MM:SS.FF back into seconds. Returns null on malformed input.
- *
- * #465 review: fps is required so 120 / 240 fps recordings parse the `.FF`
- * portion as actual frame numbers in their respective denominator.
- */
-function parseTimecode(value: string, fps: number): number | null {
-  const match = value
-    .trim()
-    .match(/^(-)?(\d+):(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?$/);
-  if (!match) return null;
-  const [, sign, h, m, s, f] = match;
-  const frames = f ? parseInt(f, 10) / fps : 0;
-  let total =
-    parseInt(h, 10) * 3600 + parseInt(m, 10) * 60 + parseInt(s, 10) + frames;
-  if (sign === '-') total = -total;
-  return total;
 }

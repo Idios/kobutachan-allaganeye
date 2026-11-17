@@ -11,6 +11,9 @@ ffmpeg を呼ばない (実行は `allaganeye.export.pool.export_matches` を再
   なら同一クリップへ畳む
 - 前後マージンは `--pre` / `--post` (既定 10 秒ずつ)
 - 切り出し元は**元録画**で、範囲は試合区間 `matches[i]` にクランプする
+- **イベント単位の範囲上書き** (`events[].clip_start` / `clip_end`、#1139) があれば、
+  その区間を `--pre` / `--post` の代わりに使う。上書き区間は**近接束ねの対象外**
+  (ユーザーが明示した範囲を隣のイベントと合成しない)
 - どの試合にも属さないイベント (`match_index: null`) は**対象外**（クランプ先が無い）。
   件数は `ClipPlan.outside_events` で返し、呼び出し側が warning として出す
 - 既知でない `signal_id` も切り抜く（前方互換）。表示・ファイル名の種別は
@@ -172,6 +175,7 @@ def plan_clips(
     """
     spans = _match_spans(matches)
     ordered: list[tuple[int, float, float, str, int]] = []
+    explicit: list[tuple[int, float, float, str, int]] = []
     outside = 0
     for position, event in enumerate(events, start=1):
         if not isinstance(event, Mapping):
@@ -199,6 +203,13 @@ def plan_clips(
             continue
         start_s = timestamp
         end_s = max(end, start_s)
+        clip_start = _finite_seconds(event.get("clip_start"))
+        clip_end = _finite_seconds(event.get("clip_end"))
+        if clip_start is not None and clip_end is not None and clip_end > clip_start:
+            # #1139: ユーザーが明示した区間。`--pre` / `--post` も束ねも適用せず、
+            # そのまま試合区間へクランプするだけ。
+            explicit.append((match_index, clip_start, clip_end, signal_id, position))
+            continue
         ordered.append((match_index, start_s, end_s, signal_id, position))
 
     ordered.sort(key=lambda item: (item[0], item[1], item[2]))
@@ -228,7 +239,7 @@ def plan_clips(
             }
         )
 
-    clips: list[Clip] = []
+    clips: list[tuple[int, float, float, tuple[str, ...], tuple[int, ...]]] = []
     for group in groups:
         span_start, span_end = spans[group["match_index"]]
         # 録画先頭より前は切り抜けない (壊れた metadata で match start が負でも
@@ -238,18 +249,45 @@ def plan_clips(
         if end <= start:
             continue
         clips.append(
-            Clip(
-                index=len(clips) + 1,
-                match_index=int(group["match_index"]),
-                start=start,
-                end=end,
-                signal_ids=tuple(sorted(group["signal_ids"])),
-                event_indexes=tuple(sorted(int(p) for p in group["positions"])),
+            (
+                int(group["match_index"]),
+                start,
+                end,
+                tuple(sorted(group["signal_ids"])),
+                tuple(sorted(int(p) for p in group["positions"])),
             )
         )
 
+    for match_index, start_s, end_s, signal_id, position in explicit:
+        span_start, span_end = spans[match_index]
+        start = round(max(0.0, span_start, start_s), 2)
+        end = round(min(span_end, end_s), 2)
+        if end <= start:
+            continue
+        clips.append((match_index, start, end, (signal_id,), (position,)))
+
+    # 1 つのリストにまとめてから番号を振る (計画全体で match 昇順 -> 開始昇順)。
+    clips.sort(key=lambda item: (item[0], item[1], item[2]))
+    plan = tuple(
+        Clip(
+            index=index,
+            match_index=match_index,
+            start=start,
+            end=end,
+            signal_ids=signal_ids,
+            event_indexes=event_indexes,
+        )
+        for index, (
+            match_index,
+            start,
+            end,
+            signal_ids,
+            event_indexes,
+        ) in enumerate(clips, start=1)
+    )
+
     merged = sum(int(group["events"]) - 1 for group in groups)
-    return ClipPlan(clips=tuple(clips), outside_events=outside, merged_events=merged)
+    return ClipPlan(clips=plan, outside_events=outside, merged_events=merged)
 
 
 __all__ = [

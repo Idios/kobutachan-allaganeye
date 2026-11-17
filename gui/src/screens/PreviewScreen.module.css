@@ -105,114 +105,10 @@
   gap: 14px;
 }
 
-/* #1131 Phase B2 -- ClipsScreen からのクリップ範囲バナー。試合境界の編集とは
-   独立で、先頭 / 末尾へのシークだけを提供する。 */
-.clipRange {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
-  background: rgba(var(--ae-gold-rgb), 0.08);
-  border: 1px solid rgba(var(--ae-gold-rgb), 0.3);
-}
-
-.clipRangeLabel {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--ae-font-mono);
-  font-size: 11px;
-  color: var(--ae-gold-bright);
-}
-
-.pane {
-  padding: 8px;
-  background: var(--ae-bg-deep);
-  border: var(--ae-panel-border);
-  transition: border-color 0.15s, background 0.15s;
-}
-
-/*
- * #587: cyan border when the IN pane is active, gold when OUT is active.
- * Helps the user see at a glance which boundary they are editing —
- * matches the cyan / gold motif used elsewhere for IN / OUT state.
- */
-.paneActive[data-pane='in'] {
-  border-color: var(--ae-cyan);
-  box-shadow: 0 0 8px rgba(var(--ae-cyan-rgb), 0.15);
-}
-
-.paneActive[data-pane='out'] {
-  border-color: var(--ae-gold-bright);
-  box-shadow: 0 0 8px rgba(var(--ae-gold-rgb), 0.15);
-}
-
-.paneCaption {
-  font-family: var(--ae-font-ui);
-  font-size: 9px;
-  letter-spacing: 2.5px;
-  color: var(--ae-gold-dim);
-  margin-bottom: 6px;
-  text-transform: uppercase;
-}
-
-.paneVideo {
-  aspect-ratio: 16 / 9;
-  background: #000;
-  position: relative;
-  overflow: hidden;
-}
-
-.paneVideoEl {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: contain;
-  background: #000;
-}
-
-.paneVideoError {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ae-danger);
-  font-family: var(--ae-font-mono);
-  font-size: 11px;
-  padding: 12px;
-  text-align: center;
-  word-break: break-all;
-}
-
-.paneVideoLoading {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ae-text-dim);
-  font-family: var(--ae-font-mono);
-  font-size: 11px;
-}
-
-.tcInput {
-  margin-top: 6px;
-  width: 100%;
-  background: var(--ae-bg);
-  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
-  color: var(--ae-text);
-  padding: 6px 8px;
-  font-family: var(--ae-font-mono);
-  font-size: 12px;
-  outline: none;
-  text-align: center;
-}
-
-.paneActive .tcInput {
-  border-color: var(--ae-gold-bright);
-  background: rgba(var(--ae-gold-rgb), 0.08);
-  color: var(--ae-gold-bright);
-}
+/* NOTE (#1139): .clipRange / .pane* / .tcInput は TimecodePane / ClipRangeView と
+   共有する部品のため、それぞれの CSS Module へ移した (状態は分けたまま見た目だけ共有)。
+   試合境界の編集は TimecodePane (components/TimecodePane.module.css) と
+   この画面の .panes グリッドで構成する。 */
 
 .paneToggle {
   display: flex;
@@ -262,42 +158,8 @@
   border-color: var(--ae-gold-bright);
 }
 
-/*
- * #465 review: キーボードショートカット hint (UX item 3)。stepRow の下に
- * 薄めに表示しユーザーに操作方法を伝える。kbd は実際のキー入力を模した
- * boxed スタイル。
- */
-.keyHint {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  justify-content: center;
-  align-items: center;
-  margin-top: 4px;
-  padding: 4px 8px;
-  font-family: var(--ae-font-ui);
-  font-size: 10px;
-  color: var(--ae-text-dim);
-}
-
-.keyHintItem {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  letter-spacing: 0.5px;
-}
-
-.kbd {
-  display: inline-block;
-  padding: 1px 6px;
-  background: var(--ae-bg-deep);
-  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
-  border-radius: 3px;
-  font-family: var(--ae-font-mono);
-  font-size: 10px;
-  color: var(--ae-gold);
-  line-height: 1.3;
-}
+/* .keyHint / .keyHintItem / .kbd は components/KeyboardHints.module.css に
+   移した (#1139、境界エディタとクリップ範囲の画面で共有)。 */
 
 .strip {
   background: var(--ae-bg-deep);

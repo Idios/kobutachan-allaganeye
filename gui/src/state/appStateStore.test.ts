@@ -140,22 +140,23 @@ describe('useAppStateStore.clipRange (#1131 Phase B2)', () => {
   it('setClipRange stores the absolute seconds window', () => {
     useAppStateStore
       .getState()
-      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 3 });
+      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 3, position: 7 });
     expect(useAppStateStore.getState().clipRange).toEqual({
       start: 483.4,
       end: 504.9,
       matchIndex: 3,
+      position: 7,
     });
   });
 
   it('setClipRange accepts null to clear', () => {
-    useAppStateStore.getState().setClipRange({ start: 1, end: 2, matchIndex: 1 });
+    useAppStateStore.getState().setClipRange({ start: 1, end: 2, matchIndex: 1, position: null });
     useAppStateStore.getState().setClipRange(null);
     expect(useAppStateStore.getState().clipRange).toBeNull();
   });
 
   it('reset() clears clipRange', () => {
-    useAppStateStore.getState().setClipRange({ start: 1, end: 2, matchIndex: 1 });
+    useAppStateStore.getState().setClipRange({ start: 1, end: 2, matchIndex: 1, position: null });
     useAppStateStore.getState().reset();
     expect(useAppStateStore.getState().clipRange).toBeNull();
   });

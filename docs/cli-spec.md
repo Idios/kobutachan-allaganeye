@@ -530,6 +530,10 @@ allaganeye minimap <metadata.json> --region X,Y,W,H [-o DIR] [--include I,J,K]
 - 走査範囲は**動画全体**。`matches` はキャリブレーションのサンプリングと、各イベントへの
   `match_index` 注記に使う（試合境界外の検出も落とさずに返す）
 - `BOOSTED!`（ドローン撃破による戦意値上昇）など未知の表示は既定で無視する
+- `events[]` の形は `{ signal_id, timestamp, end, score, evidence, match_index }`。
+  `allaganeye clips` が使うユーザー指定の `clip_start` / `clip_end` はこのコマンドの
+  出力には含まれないが、write-back のときは `signal_id` + `timestamp` 一致で既存値を
+  引き継ぐ（#1139）
 
 ### 構文
 
@@ -606,6 +610,9 @@ KO: 1 / ASSIST: 2 (3 intervals)
 - 既定は **`--codec copy`（無劣化）**。キーフレーム境界に丸められるため、指定した秒数は
   最大 ~2 秒ずれる（L1 の分割と同じ性質）。**秒数を厳密に守りたいときは `--codec h264`**
 - 近接イベントは `--gap`（既定 5 秒）以内なら 1 本のクリップに束ねる。束ね幅も指定できる
+- **イベント単位の範囲上書き**（`events[].clip_start` / `clip_end`、#1139）があれば、
+  その区間を `--pre` / `--post` の代わりに使う。上書き区間は束ねの対象外
+  （ユーザーが明示した範囲を隣のイベントと合成しない）。GUI のプレビューから書き込む
 - 前後マージンは `--pre` / `--post`（既定 10 秒ずつ）。どちらもイベントごとに `--gap` と独立
 - 範囲は**試合区間 `matches[i]` にクランプ**する。どの試合にも入らないイベント
   （`match_index: null`）は対象外で、件数を warning に出す（イベント自体は metadata に残る）

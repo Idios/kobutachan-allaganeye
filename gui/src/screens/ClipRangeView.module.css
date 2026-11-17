@@ -1,0 +1,173 @@
+/*
+ * ClipRangeView (#1139)。
+ * 画面骨格は PreviewScreen / IndicatorsScreen の vocabulary に揃え、
+ * クリップ範囲の編集に必要な行だけを持つ。
+ */
+
+.screen {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  gap: 14px;
+  overflow: auto;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.backButton {
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--ae-gold-dim);
+  background: none;
+  border: 1px solid var(--ae-gold-dim);
+  border-radius: 2px;
+  padding: 6px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.backButton:hover {
+  color: var(--ae-gold-bright);
+  border-color: var(--ae-gold-bright);
+}
+
+.headerFileName {
+  font-family: var(--ae-font-body);
+  font-size: 13px;
+  color: var(--ae-text-bright);
+  margin-bottom: 4px;
+}
+
+.caption {
+  font-family: var(--ae-font-ui);
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: var(--ae-gold-dim);
+  text-transform: uppercase;
+}
+
+.title {
+  font-family: var(--ae-font-ui);
+  font-size: 18px;
+  color: var(--ae-gold-bright);
+  margin-top: 2px;
+  letter-spacing: 1px;
+}
+
+.purpose {
+  font-family: var(--ae-font-body);
+  font-size: 12px;
+  color: var(--ae-text-dim);
+  margin-top: 4px;
+  max-width: 80ch;
+}
+
+.note {
+  padding: 8px;
+  background: rgba(var(--ae-bg-rgb), 0.4);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.18);
+  color: var(--ae-text-dim);
+  font-family: var(--ae-font-body);
+  font-size: 12px;
+}
+
+.panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.stepRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.stepButton {
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-text-dim);
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.stepButton:hover {
+  color: var(--ae-gold-bright);
+  border-color: var(--ae-gold-bright);
+}
+
+.duration {
+  margin: 0 8px;
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  color: var(--ae-gold-bright);
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.primaryButton {
+  padding: 10px 22px;
+  background: linear-gradient(180deg, var(--ae-gold), var(--ae-gold-dim));
+  border: none;
+  color: var(--ae-bg);
+  font-family: var(--ae-font-ui);
+  font-size: 12px;
+  letter-spacing: 2px;
+  cursor: pointer;
+}
+
+.primaryButton:disabled {
+  background: var(--ae-gold-dim);
+  cursor: default;
+}
+
+.secondaryButton {
+  padding: 8px 14px;
+  background: transparent;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.27);
+  color: var(--ae-gold);
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  cursor: pointer;
+}
+
+.dirty {
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  color: var(--ae-gold-bright);
+}
+
+.errorMessage {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: rgba(var(--ae-danger-rgb), 0.1);
+  border: 1px solid var(--ae-danger);
+  color: var(--ae-danger);
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+}
+
+.errorHint {
+  color: var(--ae-text-dim);
+  font-family: var(--ae-font-body);
+}

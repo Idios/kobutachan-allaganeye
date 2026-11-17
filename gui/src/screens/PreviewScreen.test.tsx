@@ -912,65 +912,104 @@ describe('#1106 PreviewScreen pendingSeekSeconds handoff', () => {
   });
 });
 
-describe('#1131 PreviewScreen clip range banner', () => {
-  it('renders the clip window from appStateStore.clipRange', () => {
-    useAppStateStore
-      .getState()
-      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 4 });
-    render(<PreviewScreen />);
-    const banner = screen.getByTestId('preview-clip-range');
-    expect(banner).toHaveTextContent('クリップ範囲 00:08:03 - 00:08:24');
-    expect(banner).toHaveTextContent('21.5 秒');
-  });
-
-  it('seeks the IN pane to the range start / end', async () => {
-    const user = userEvent.setup();
-    useAppStateStore
-      .getState()
-      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 4 });
-    render(<PreviewScreen />);
-    const video = await screen.findByLabelText<HTMLVideoElement>(
-      'IN (start) video',
-    );
-
-    await user.click(screen.getByTestId('preview-clip-start'));
-    await waitFor(() => expect(video.currentTime).toBeCloseTo(483.4, 3));
-
-    await user.click(screen.getByTestId('preview-clip-end'));
-    await waitFor(() => expect(video.currentTime).toBeCloseTo(504.9, 3));
-  });
-
-  it('clears the range without touching the boundary edit buffer', async () => {
-    const user = userEvent.setup();
-    const before = useMetadataStore.getState().metadata!;
-    const match = before.matches.find((m) => m.index === 4)!;
+describe('#1131 / #1139 PreviewScreen delegates the clip range mode', () => {
+  it('renders the clip range view when the range belongs to this match', () => {
     useAppStateStore.getState().setClipRange({
-      start: match.start_time + 5,
-      end: match.start_time + 30,
+      start: 2410,
+      end: 2440,
       matchIndex: 4,
+      position: null,
     });
     render(<PreviewScreen />);
+    // 試合境界のエディタではなく、クリップ範囲専用の画面状態になる
+    expect(screen.getByTestId('clip-range-view')).toBeInTheDocument();
+    expect(screen.queryByLabelText('match name')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('apply')).not.toBeInTheDocument();
+  });
 
-    await user.click(screen.getByTestId('preview-clip-clear'));
+  // Space で active ペインの再生 / 停止 (境界エディタの既存 UX)。clip 範囲の画面に
+  // 分けてもこちらが壊れていないことを pin する。
+  it('toggles play/pause with Space on the active boundary pane', async () => {
+    useMetadataStore.setState({ filePath: '/x' });
+    render(<PreviewScreen />);
 
-    expect(useAppStateStore.getState().clipRange).toBeNull();
-    expect(screen.queryByTestId('preview-clip-range')).not.toBeInTheDocument();
+    const video = (await screen.findByLabelText(
+      'IN (start) video',
+    )) as HTMLVideoElement;
+    const play = vi.fn().mockResolvedValue(undefined);
+    const pause = vi.fn();
+    video.play = play;
+    video.pause = pause;
+    Object.defineProperty(video, 'paused', { value: true, configurable: true });
+
+    fireEvent.keyDown(window, { key: ' ' });
+    expect(play).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(video, 'paused', { value: false, configurable: true });
+    fireEvent.keyDown(window, { key: ' ' });
+    expect(pause).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the boundary editor when the range belongs to another match', () => {
+    useAppStateStore.getState().setClipRange({
+      start: 483.4,
+      end: 504.9,
+      matchIndex: 1,
+      position: null,
+    });
+    render(<PreviewScreen />);
+    expect(screen.queryByTestId('clip-range-view')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('match name')).toBeInTheDocument();
+  });
+
+  // codex review 2026-11-17 (P1): 早期 return しても PreviewScreen の hooks は
+  // 生きている。clip 範囲の編集中に矢印キーを押すと**見えない試合境界バッファ**
+  // (`startT` / `endT`) が動き、200ms の debounce が `metadata.matches` に書き込む。
+  // そのまま [この範囲を保存] すると、意図しない境界編集も一緒に永続化される。
+  it('keeps the match boundaries read-only while the clip range view is open', async () => {
+    useMetadataStore.setState({ filePath: '/x' }); // 実ファイル mode (sample の read-only gate を外す)
+    useAppStateStore.getState().setClipRange({
+      start: 2410,
+      end: 2440,
+      matchIndex: 4,
+      position: 1,
+    });
+    render(<PreviewScreen />);
+    expect(screen.getByTestId('clip-range-view')).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'ArrowRight', shiftKey: true }); // +10s
+    // debounce (200ms) を超えても store は汚れない
+    await new Promise((r) => setTimeout(r, 300));
+
+    const match = useMetadataStore
+      .getState()
+      .metadata!.matches.find((m) => m.index === 4)!;
+    expect(match.edited).toBeUndefined();
     expect(useMetadataStore.getState().dirty).toBe(false);
   });
 
-  it('renders no banner while clipRange is null', () => {
-    render(<PreviewScreen />);
-    expect(screen.queryByTestId('preview-clip-range')).not.toBeInTheDocument();
-  });
+  // クリップ範囲の画面は自前て IN ペインを clip の先頭へシークするので、
+  // 一覧からの one-shot seek は消費だけする (持ち越すと、境界エディタに戻った
+  // ときに古い位置へ飛ぶ)。
+  it('consumes pendingSeekSeconds without seeking the hidden boundary panes', async () => {
+    useMetadataStore.setState({ filePath: '/x' });
+    useAppStateStore.getState().setClipRange({
+      start: 2410,
+      end: 2440,
+      matchIndex: 4,
+      position: 1,
+    });
+    useAppStateStore.getState().setPendingSeekSeconds(2438.75);
 
-  // codex review 2026-11-17: クリップ範囲は特定のイベントのもの。別の試合の
-  // preview に前の範囲が残ると、存在しない時刻へシークさせてしまう。
-  it('hides the banner when the range belongs to another match', () => {
-    useAppStateStore
-      .getState()
-      .setClipRange({ start: 483.4, end: 504.9, matchIndex: 1 });
     render(<PreviewScreen />);
-    expect(screen.queryByTestId('preview-clip-range')).not.toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(useAppStateStore.getState().pendingSeekSeconds).toBeNull(),
+    );
+    const match = useMetadataStore
+      .getState()
+      .metadata!.matches.find((m) => m.index === 4)!;
+    expect(match.edited).toBeUndefined();
   });
 });
 

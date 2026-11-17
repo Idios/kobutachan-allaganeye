@@ -153,6 +153,8 @@ class HighlightEvent(TypedDict):
     score: float
     evidence: dict[str, Any]
     match_index: int | None
+    clip_start: NotRequired[float]
+    clip_end: NotRequired[float]
 
 
 class Metadata(TypedDict):

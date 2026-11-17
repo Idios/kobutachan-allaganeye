@@ -76,6 +76,11 @@ spread で保持**し、**match 配列だけを許可リストで組み直す**�
 }
 ```
 
+> **追記 (#1139, 2026-11-17)**: `events[]` にはユーザー指定のクリップ範囲
+> `clip_start` / `clip_end`（絶対秒、任意。両方揃って初めて有効）が加わった。
+> 本 spec の確定時には無かったフィールドで、形の正は
+> `schemas/metadata.schema.json` の `$defs/HighlightEvent`。
+
 ## 3. spec §5.1 との差分
 
 | spec §5.1 | 本 note | 理由 |

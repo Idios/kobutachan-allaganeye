@@ -384,6 +384,16 @@ UNCHECKED_PROSE: dict[tuple[str, ...], str] = {
         "unknown 値を受容すること自体は tests/test_indicators.py の"
         "test_layout_payload_accepts_unknown_source が pin している"
     ),
+    ("$defs", "HighlightEvent", "properties", "clip_start"): (
+        "「両方揃って初めて有効」「束ねない」は **consumer が守る解釈の契約**で、writer の"
+        "payload 単体では違反状態を作れない (writer は常に両方書くか両方書かないか)。"
+        "片方だけ / 逆転区間を無視する挙動は tests/test_clips.py の"
+        "test_half_specified_clip_window_is_ignored / test_invalid_clip_window_is_ignored と、"
+        "gui/src/utils/clipWindow.ts の overrideWindowFor のテストが pin している"
+    ),
+    ("$defs", "HighlightEvent", "properties", "clip_end"): (
+        "clip_start と同一の主張 (ペアで有効 / end > start) の再掲。同上"
+    ),
     ("$defs", "CaptureRegions"): (
         "coarse がどの検出器由来かの説明 (OBS は FULL_FRAME 等) は検出経路の記述であり、"
         "payload の形の契約ではない。検出経路の pin は tests/test_capture_region.py 側"
