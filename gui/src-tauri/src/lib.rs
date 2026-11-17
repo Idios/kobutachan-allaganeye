@@ -4395,6 +4395,10 @@ pub struct StartClipsRequest {
     pub event_indexes: Vec<u32>,
     #[serde(default)]
     pub overwrite: bool,
+    /// CLI `--expected-mtime` (read-time CAS)。GUI が load 時の mtime を渡し、
+    /// `--event-index` の位置が古いまま実行されるのを防ぐ。
+    #[serde(default)]
+    pub expected_mtime: Option<i64>,
 }
 
 /// #1131 -- `allaganeye clips --json` の stdout 1 行の分類結果。
@@ -4473,6 +4477,10 @@ fn build_clips_argv(req: &StartClipsRequest) -> Vec<String> {
         argv.push("--event-index".to_string());
         argv.push(index.to_string());
     }
+    if let Some(mtime) = req.expected_mtime {
+        argv.push("--expected-mtime".to_string());
+        argv.push(mtime.to_string());
+    }
     if req.overwrite {
         argv.push("--overwrite".to_string());
     }
@@ -4492,6 +4500,8 @@ pub struct ClipsResult {
 
 /// #1131 -- CLI の exit code を AppError に写す (spawn 後の失敗経路)。
 ///
+/// - exit 6 (metadata.json の read-time CAS 不一致 = 読み取り前に外部変更) →
+///   `state.mtime_conflict` (GUI は候補を読み直して再クリックを促す)
 /// - exit 5 (オプション値不正 / 既存出力があり `--overwrite` 未指定) →
 ///   `validation.range_invalid` (message に CLI の理由文がそのまま入る)
 /// - exit 130 (Ctrl+C / kill による中断) → `subprocess.cancelled`
@@ -4514,6 +4524,8 @@ fn clips_exit_error(code: Option<i32>, cli_error: Option<&str>, stderr_tail: &[u
         ),
     };
     match code {
+        // 読み取り前に metadata.json が外部変更された (--expected-mtime CAS)。
+        Some(6) => AppError::new("state.mtime_conflict", detail).with_default_hint(),
         Some(5) => AppError::new("validation.range_invalid", detail).with_default_hint(),
         Some(130) => AppError::new("subprocess.cancelled", detail).with_default_hint(),
         _ => AppError::new("subprocess.exit_failed", detail).with_default_hint(),
@@ -7870,6 +7882,7 @@ mod start_clips_tests {
             name_pattern: None,
             event_indexes: Vec::new(),
             overwrite: false,
+            expected_mtime: None,
         }
     }
 
@@ -7890,13 +7903,14 @@ mod start_clips_tests {
     #[test]
     fn request_deserializes_event_indexes_and_overwrite() {
         let req: StartClipsRequest = serde_json::from_str(
-            r#"{"metadataPath":"m.json","eventIndexes":[2,5],"overwrite":true,"pre":3.5,"codec":"h264"}"#,
+            r#"{"metadataPath":"m.json","eventIndexes":[2,5],"overwrite":true,"pre":3.5,"codec":"h264","expectedMtime":1700000000123}"#,
         )
         .expect("deserialize");
         assert_eq!(req.event_indexes, vec![2, 5]);
         assert!(req.overwrite);
         assert_eq!(req.pre, Some(3.5));
         assert_eq!(req.codec.as_deref(), Some("h264"));
+        assert_eq!(req.expected_mtime, Some(1_700_000_000_123));
     }
 
     // -- build_clips_argv -----------------------------------------------------
@@ -7923,6 +7937,7 @@ mod start_clips_tests {
             name_pattern: Some("clip_{idx:03}.mp4".into()),
             event_indexes: vec![7],
             overwrite: true,
+            expected_mtime: Some(1_700_000_000_123),
         };
         let argv = build_clips_argv(&req);
         assert!(argv
@@ -7939,6 +7954,9 @@ mod start_clips_tests {
             .windows(2)
             .any(|w| w[0] == "--event-index" && w[1] == "7"));
         assert!(argv.contains(&"--overwrite".to_string()));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--expected-mtime" && w[1] == "1700000000123"));
     }
 
     /// `--event-index` は索引ごとに 1 回ずつ出す (CLI 側は repeatable)。
@@ -8100,6 +8118,16 @@ mod start_clips_tests {
         let err = clips_exit_error(Some(130), Some("cancelled"), b"");
         assert_eq!(err.code, "subprocess.cancelled");
         assert!(err.hint.is_none());
+    }
+
+    /// exit 6 = `--expected-mtime` の read-time CAS 不一致。GUI は
+    /// ConflictModal 系の code として扱えるよう mtime_conflict に写す。
+    #[test]
+    fn exit_6_maps_to_mtime_conflict() {
+        let err = clips_exit_error(Some(6), Some("metadata.json changed on disk"), b"");
+        assert_eq!(err.code, "state.mtime_conflict");
+        assert!(err.message.contains("changed on disk"));
+        assert!(err.hint.is_some());
     }
 
     #[test]

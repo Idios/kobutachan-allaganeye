@@ -624,7 +624,7 @@ KO: 1 / ASSIST: 2 (3 intervals)
 ```bash
 allaganeye clips <metadata.json> [-o DIR] [--pre SEC] [--post SEC] [--gap SEC]
                  [--codec copy|h264] [--name-pattern PATTERN] [--concurrency N]
-                 [--event-index N ...] [--overwrite] [--json] [--quiet]
+                 [--event-index N ...] [--expected-mtime MS] [--overwrite] [--json] [--quiet]
 ```
 
 ### 引数
@@ -645,6 +645,7 @@ allaganeye clips <metadata.json> [-o DIR] [--pre SEC] [--post SEC] [--gap SEC]
 | `--name-pattern PATTERN` | `clip_{idx:03}_{type}_{start}.mp4` | 出力名。トークンは `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}`。`output-dir` の外へ抜ける名前は **exit 5** |
 | `--concurrency N` | (なし = 全スロット) | `--codec h264` の並列数（1 以上。`copy` は常に 1） |
 | `--event-index N` | (なし = 全クリップ) | `events[]` の **1 始まりの位置**を指定し、そのイベントを含むクリップだけ書き出す（繰り返し指定可。GUI の「選択した 1 件だけ切り抜く」用）。1 未満は **exit 5**。どのクリップにも含まれない索引だけを指定すると 0 件（**exit 0**） |
+| `--expected-mtime MS` | (なし = 照合しない) | metadata.json の mtime (ms) を指定し、**読み取りの前後**で一致することを検証する read-time CAS。不一致なら計画せず **exit 6**（CLI は読み取り専用だが、`--event-index` が `events[]` の並び位置なので、表示後に外部で並びが変わると別のイベントを切り抜き得るため。GUI が `loadedMtimeMs` を渡す） |
 | `--overwrite` | `false` | 既存の出力を置き換える。**既定は拒否**（既存ファイルがあれば **exit 5**）。共有 runner は ffmpeg `-y` で開いた瞬間に truncate するため、途中で失敗すると前回のクリップが壊れたまま残る |
 | `--json` | `false` | stdout に JSON Lines を出す（`export` と同じ wire 形状、`match_index` = クリップ番号） |
 | `--quiet` | `false` | 進捗を抑制する（`--json` とは排他） |
@@ -673,6 +674,7 @@ warning: 2 event(s) fall outside every match and were skipped (a clip range cann
 | 2 | 入力エラー（`metadata.json` 不在 / `source` 不在 / `events` が無い / `source` 動画が見つからない） |
 | 3 | ffmpeg / ffprobe エラー（全クリップが失敗した場合は 1） |
 | 5 | 設定値不正（`--pre` / `--post` / `--gap` が負値・非有限 / `--codec` が未知 / `--concurrency` < 1 / `--event-index` < 1 / `--name-pattern` が出力先の外を指す / 同一ファイルに衝突 / 既存出力があり `--overwrite` 未指定） |
+| 6 | `--expected-mtime` と実 mtime の不一致（読み取り中に外部変更された場合も含む） |
 | 130 | SIGINT（Ctrl+C）によるキャンセル |
 
 ## debug-brightness コマンド

@@ -1,6 +1,6 @@
 # Allagan Eye GUI — UI Interaction Spec
 
-> **スコープ**: 7 画面 (drop / detecting / complete / preview / export / minimap / indicators) の **UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理**を明文化する source of truth。画面間遷移は [ui-architecture.md](ui-architecture.md)、画面レイアウトとデザインシステムは [design/README.md](design/README.md)、metadata.json データ契約は [metadata-spec.md](metadata-spec.md) を参照。
+> **スコープ**: 8 画面 (drop / detecting / complete / preview / export / minimap / indicators / clips) の **UI 部品ごとの操作 → 状態遷移 / store mutation / 例外処理**を明文化する source of truth。画面間遷移は [ui-architecture.md](ui-architecture.md)、画面レイアウトとデザインシステムは [design/README.md](design/README.md)、metadata.json データ契約は [metadata-spec.md](metadata-spec.md) を参照。
 >
 > **a11y 方針**: focus visible / キーボード全機能操作 / disabled 理由表示 / screen reader scope 等の cross-cutting 方針は [a11y-policy.md](a11y-policy.md) を参照 (#587)。本 doc は UI 部品レベルの仕様、a11y-policy.md は application-wide 方針を担当。
 
@@ -14,7 +14,7 @@
 
 ## 1. 共通原則
 
-7 画面すべての UI 部品は本節の原則に準拠する。違反は #589 系統のバグとして扱い、レビュー時は本節を逐条照合する。
+8 画面すべての UI 部品は本節の原則に準拠する。違反は #589 系統のバグとして扱い、レビュー時は本節を逐条照合する。
 
 ### 1.1 state mutation flow: input → store → dirty 即時反映
 
@@ -173,7 +173,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 
 ## 2. 画面別 UI 部品状態機械
 
-§2 は 7 画面それぞれを **1 画面 = 1 PR** で順次追加する (#590 着手フローに従う)。
+§2 は 8 画面それぞれを **1 画面 = 1 PR** で順次追加する (#590 着手フローに従う)。
 
 | 節 | 画面 | 主要 UI 部品 | 進捗 |
 | --- | --- | --- | --- |
@@ -1400,6 +1400,102 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | store mutation | `indicatorsStore.cancel()` |
 | 例外 / edge case | 進捗 (phase / `processed_s`) も run のものなので **出さない**。store は run の重なりを拒否する (`indicators.busy`) ので、待つか中止するしかないことを明示するため [中断] を必ず出す。run は止めずに放置しても state は壊れない (結果は別 path のまま隠れる) |
 
+### §2.8 clips (#1131 Phase B2)
+
+**status**: `idle | running | complete | error`。画面ローカルの reducer ではなく [`clipsStore.ts`](../gui/src/state/clipsStore.ts) の `ClipsStatus` をそのまま表示する (§2.7 と同じ設計)。
+
+- `idle` → `running`: 行の [⬦ 切り抜く] (§2.8.3) が `start(req)` を呼ぶ
+- `running` → `complete`: `start_clips` が summary で resolve (`failure > 0` でも resolve し、結果ボックスで件数を見せる)
+- `running` → `error`: 非 0 exit で reject (`subprocess.exit_failed` / `validation.range_invalid` / `subprocess.cancelled` 等)
+- `complete` / `error` → `running`: 別の行の [⬦ 切り抜く] / §2.8.6 の [上書きして切り抜く] が再び `start(req)` を呼ぶ (`reset()` は挟まない)
+- `running` 中の `start()` / `reset()` は store が拒否する (code `clips.busy`)。run を重ねると run id を持たない進捗 payload が混線するため
+
+**store**: `clipsStore` から `status` / `metadataPath` / `progress` / `result` / `error` を読み `start` / `cancel` を呼ぶ。`appStateStore` から `navigate` / `setPendingSeekSeconds` / `setClipRange` / `openPreviewFor` / `selectedVideoPath` を、`metadataStore` から `metadata` (`events`) / `filePath` / `dirty` を読む。
+
+**候補の正は `metadata.events`**: `indicatorsStore.events` ではなく metadata.json を SSoT にする (再起動しても候補が残る)。`collectClipCandidates()` は 1. 未知の `signal_id` (§1.5 の前方互換 §4-3)、2. `match_index === null` (`試合区間へクランプできない`) を落とし、`position` は **元の `events[]` の 1 始まり位置** を保つ。
+
+**実行は 1 件ずつ (Q2 C)**: `eventIndexes: [position]` を渡す。CLI は索引を含むクリップ全体 (束ねられた仲間を含む) を書き出し、クリップ番号は計画時のまま (振り直さない — 別のイベントが同じ `{idx}` を指して既存ファイルを潰さないため)。
+
+**session-local config**: 前後秒数 (`pre` / `post`)・形式 (`codec`) は match 編集ではない一時設定なので `metadataStore` に commit しない (§3.4 の §1.1 例外と同じ扱い)。
+
+**dirty / sample mode**: [⬦ 切り抜く] は `filePath === null` (§1.4) または `dirty === true` で disabled。CLI は **disk の metadata.json** を読むため、未適用の編集があると in-memory の `events[]` と位置がずれて**別のイベントを切り抜き得る**。理由文は §2.8.2 のノートに出す。
+
+**spawn 直前の mtime 照合**: 同じ理由で、`dirty` が false でも `events[]` が**外部プロセスに書き換えられて**いる可能性がある (別端末で `allaganeye indicators` を回す等)。[⬦ 切り抜く] は spawn 前に `get_metadata_mtime` で disk の mtime を照合し、`loadedMtimeMs` と一致しなければ実行せず `refreshFromDiskPreservingEdits()` で候補を読み直して注意書き (`data-testid="clips-stale-note"`) を出す。mtime を取れないときも fail-closed で実行しない。
+
+**CLI 側の read-time CAS**: 上の照合と spawn の間にも外部変更は入り得るので、`start_clips` は `expectedMtime` (CLI `--expected-mtime`) を**常に**渡し、CLI が metadata.json の読み取り前後の mtime 一致を検証する。不一致は CLI exit 6 → `state.mtime_conflict` で、位置が古いまま別のイベントを切り抜く経路は閉じている。
+
+**表示する範囲 = 実際に書かれる範囲**: 行の「範囲」とプレビューの `clipRange` は `planClipWindows()` の戻り値を使う。これは CLI (`allaganeye/export/clips.py` の `plan_clips`) の **近接束ね (`--gap` 既定 5 秒) + 試合区間クランプ** を GUI 側で鏡にしたもの (codex review 2026-11-17)。単独イベントの前後だけを見せると「表示と違う長さのファイルが出る」ため。**四捨五入はしない** (JS の half-up と Python の half-even が 0.005 秒の端で食い違い、GUI だけが範囲外と判定する差になる)。鏡にしている都合上、CLI 側の束ね / クランプ規則を変えたら本関数も同時に直す必要がある。
+
+#### §2.8.1 前後秒数 / 形式のフォーム
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | 数値入力 ×2 (`aria-label` は `前 (秒)` / `後 (秒)`) + セレクト (`aria-label="形式"`、`無劣化 (copy)` / `再エンコード (h264)`)。初期値は CLI 既定の 10 / 10 秒・`copy` |
+| 状態 | 常時 enabled (走行中も値を変えられるが、実行中の run には影響しない) |
+| 遷移トリガー | 入力 → local state (文字列のまま保持) → §2.8.2 / §2.8.3 のクリック時に `validateMargins()` で検証 |
+| store mutation | なし (session-local、§2.8 ヘッダ) |
+| 例外 / edge case | 受理値は `^\d+(\.\d+)?$` (0 以上の整数 / 小数)。負値・空・指数表記はCLI が exit 5 で拒否するため、`validateMargins()` が先に弾く。違反は §2.8.4 の `role="alert"` に出す |
+
+#### §2.8.2 実行不可ノート / 試合外ノート
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | `role="status"` のノート (`data-testid="clips-run-disabled"`) / 試合外件数 (`data-testid="clips-outside-note"`) |
+| 状態 | 前者は `filePath === null` / `dirty` / 前後秒数が不正 のいずれか。後者は試合外イベントが 1 件以上のとき (§1.2: disabled 理由は必ず文言で出す) |
+| 遷移トリガー | なし (表示専用) |
+| store mutation | なし |
+| 例外 / edge case | 理由文は優先順で 1 つだけ出す (sample mode → dirty → 前後秒数の不正)。§1.2 の DisabledTooltip ではなく inline ノートにしたのは、行ごとの [⬦ 切り抜く] が複数あり、行ごとに tooltip を付けると重複するため |
+
+#### §2.8.3 候補行 ([この範囲を確認] / [⬦ 切り抜く])
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | `match_index` ごとのグループ (`data-testid="clips-group-<index>"`) + `<li data-testid="clips-candidate-<position>">`。行内は badge (`KO` / `ASSIST`) + イベントの時刻範囲 (`hh:mm:ss - hh:mm:ss`) + 切り抜き範囲 (`範囲 hh:mm:ss - hh:mm:ss ・ N 秒`) + [この範囲を確認] (secondary) + [⬦ 切り抜く] (primary) |
+| 状態 | 候補が 1 件以上のとき常時描画。走行中は [⬦ 切り抜く] のみ disabled (別行の実行中に別の run を重ねない)。`planClipWindows()` が区間を返さない行 (クランプで 0 幅) は範囲を `範囲外` とし、両ボタンを disabled にする |
+| 遷移トリガー | [この範囲を確認] → `planClipWindows()` の区間を `appStateStore.clipRange` (`{start, end, matchIndex}`) に入れ、`pendingSeekSeconds = range.start` → `openPreviewFor(match_index)`。 [⬦ 切り抜く] → `cutOne(position, overwrite=false)` |
+| store mutation | `appStateStore.setClipRange` / `setPendingSeekSeconds` / `openPreviewFor`、または `clipsStore.start()` |
+| 例外 / edge case | 時刻は両方とも `hh:mm:ss` (1 秒切り捨て、出所は `utils/time.ts` の `fmtClockTime`)。`clipRange` の終端は `start` より前にならず、`start` は 0 秒でクランプする。試合区間へのクランプと近接イベントの束ねは `planClipWindows()` が担う (§2.8 ヘッダ)。`clipRange.matchIndex` はプレビュー側のスコープキーで、別の試合を開くとバナーが出ない。ボタンの可視名は `KO 00:08:13 の範囲をプレビューで確認` / `KO 00:08:13 を切り抜く` |
+
+#### §2.8.4 前後秒数の検証エラー
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | `role="alert"` のフィールドエラー (`data-testid="clips-margins-error"`) |
+| 状態 | `validateMargins()` が非 null を返したときのみ。入力変更で null に戻す |
+| 遷移トリガー | [この範囲を確認] のクリックで検証し、不正なら `start()` も遷移もせずにここに出す |
+| store mutation | なし |
+| 例外 / edge case | [⬦ 切り抜く] は同じ条件で disabled になる (§2.8.2) ため、ここに出るのは実質「範囲確認」のクリック経路。二重の防御だが、disabled の理由表示だけでなく操作結果としてもフィードバックを返す |
+
+#### §2.8.5 progressBox / 結果ボックス
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | `running` 時は `role="status"` の progress block (`data-testid="clips-progress"`) + [中断]、`complete` 時は件数 (`data-testid="clips-result"`) + 書き出した絶対パスの一覧 |
+| 状態 | `running` / `complete` のときのみ。`complete` の結果は `clipsStore.metadataPath === metadataStore.filePath` のときだけ出す (§2.7 と同じスコープ則) |
+| 遷移トリガー | `clips-progress` event (`{ match_index, percent, stage, message?, fallback_from? }` — export と同じ wire)。`stage` は `encoding` / `done` / `error` / `fallback` |
+| store mutation | なし (表示のみ) |
+| 例外 / edge case | `match_index` は**クリップ番号** (計画順) なので `clip 003` のように飛ぶことがある (§2.8 ヘッダ)。`failure > 0` でも store は `complete` に着地し、件数で失敗を見せる (`export` と同じ契約)。`fallback` は `message` に `h264_nvenc -> libx264` が入る |
+
+#### §2.8.6 errorMessage / 上書き再実行 / 中断ノート
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | `role="alert"` のエラーボックス (`data-testid="clips-error"`、`error.message` + hint) + 条件付き [上書きして切り抜く] (`data-testid="clips-overwrite-retry"`)。中断は `role="status"` の中立ノート (`data-testid="clips-cancelled"`) |
+| 状態 | `status === 'error'` のとき。上書き再実行は `error.message` に `already exist` を含むとき**だけ**出す |
+| 遷移トリガー | [上書きして切り抜く] → 直前に実行した `position` を `overwrite: true` で再実行 |
+| store mutation | `clipsStore.start()` |
+| 例外 / edge case | CLI は既存出力を既定で拒否する (exit 5、無確認の truncate 防止)。exit 5 はオプション値不正と共用なので、`already exist` の文言でのみ上書き導線を出す (秒数のミスで勝手に上書きしない)。上書き再実行も `cutOne()` を通るので、`dirty` / mtime 不一致 / sample mode では同じく止まる (§2.8 ヘッダ)。exit 6 (read-time CAS) は `state.mtime_conflict` として `error.message` に出る。中断で書きかけの MP4 が残る件は [#1132](https://github.com/Idios/kobutachan-allaganeye/issues/1132) |
+
+#### §2.8.7 [◀ 一覧へ] / [⬦ KO / ASSIST を検出] / header
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | header の常設 back、候補 0 件時の導線、path 表示 (`data-testid="clips-path"`) + caption `CLIPS` + title + purpose |
+| 状態 | 常時 enabled。候補 0 件ノート (`data-testid="clips-empty"`) は `candidates.length === 0` |
+| 遷移トリガー | [◀ 一覧へ] → `navigate('complete')` / [⬦ KO / ASSIST を検出] → `navigate('indicators')` |
+| store mutation | `appStateStore.screen` |
+| 例外 / edge case | sample mode では [⬦ KO / ASSIST を検出] を出さない (§1.4: 検出自体が実行できないため)。§1.6 準拠の path 表示 (`splitPath` + `title`)。`metadata === null` の entry 特殊状態は `clips-metadata-missing` note + [◀ 一覧へ] のみ |
+
 ## 3. 既存 doc との分担 + クロスリファレンス
 
 ### 3.1 doc 分担
@@ -1419,7 +1515,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 ### 3.2 状態名と mermaid 対応表
 
-7 画面の便宜状態名 (§2 各画面ヘッダで定義) と [ui-architecture.md](ui-architecture.md) §各画面 mermaid の状態を対応付ける。差異は意図的な分担 (§3.3 で集約) であり矛盾ではない。
+8 画面の便宜状態名 (§2 各画面ヘッダで定義) と [ui-architecture.md](ui-architecture.md) §各画面 mermaid の状態を対応付ける。差異は意図的な分担 (§3.3 で集約) であり矛盾ではない。
 
 | 画面 | reducer | 本 doc 状態 (§2.x ヘッダ) | mermaid 状態 ([ui-architecture.md](ui-architecture.md)) | 差異 |
 | --- | --- | --- | --- | --- |
@@ -1430,6 +1526,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | export (§2.5) | あり ([reducers/export.ts](../gui/src/screens/reducers/export.ts)) | `idle / running / cancelling / completed / error` | `export_idle / export_running / export_cancelling / export_completed / export_error` | 本 doc は接頭辞 `export_` 省略 (実装の `phase: ExportPhase` 直値に揃える)。mermaid `export_cancelling → export_idle: ffmpeg 停止` / `export_cancelling → export_completed: PROGRESS_COMPLETE` ([#837](https://github.com/Idios/kobutachan-allaganeye/issues/837)) と内部 reducer `cancelling → idle (CANCEL_CONFIRMED)` / `cancelling → completed (PROGRESS_COMPLETE)` は同形状 |
 | minimap (§2.6) | あり ([reducers/minimap.ts](../gui/src/screens/reducers/minimap.ts)) | `idle / running / cancelling / completed / error` | `minimap_idle / minimap_running / minimap_cancelling / minimap_completed / minimap_error` | 本 doc は接頭辞 `minimap_` 省略。CONFLICT_RESOLVED は running→idle 特殊経路で mermaid に注記 |
 | indicators (§2.7) | なし (store の `status`) | `idle / running / complete / error` | `indicators_idle / indicators_running / indicators_complete / indicators_error` | 本 doc は接頭辞 `indicators_` 省略。reducer を持たず `IndicatorsStatus` を store が持つ点が他 6 画面との違い |
+| clips (§2.8) | なし (store の `status`) | `idle / running / complete / error` | `clips_idle / clips_running / clips_complete / clips_error` | 本 doc は接頭辞 `clips_` 省略。indicators と同じく `ClipsStatus` を store が持つ |
 
 ### 3.3 「entry-time 特殊状態」「sub-component エラー」の扱い
 

@@ -40,7 +40,7 @@ import {
 } from '../state/indicatorsStore';
 import { useMetadataStore } from '../state/metadataStore';
 import { splitPath } from '../utils/path';
-import { fmtTime } from '../utils/time';
+import { fmtClockTime, fmtTime } from '../utils/time';
 import styles from './IndicatorsScreen.module.css';
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -80,17 +80,12 @@ export function isLayoutResolutionFailure(error: ErrorState | null): boolean {
 /**
  * 録画先頭からの絶対秒を `hh:mm:ss` で表示する (#127)。
  *
+ * 実体は `utils/time.ts` の `fmtClockTime` (#1131 でクリップ画面と共用)。
  * 保存値は 0.01 秒精度のままで、表示だけ 1 秒未満を切り捨てる。試合相対で読みたければ
  * `matches[i].start_time` を引けばよい。
  */
 export function fmtEventTime(seconds: number): string {
-  const clamped = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
-  const total = Math.floor(clamped);
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const secs = total % 60;
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return `${pad(hours)}:${pad(minutes)}:${pad(secs)}`;
+  return fmtClockTime(seconds);
 }
 
 /**
@@ -584,6 +579,17 @@ export function IndicatorsScreen() {
                 </button>
               )}
             </DisabledTooltip>
+            {/* #1131 Phase B2: 検出済みイベントをそのまま切り抜き画面へ渡す。 */}
+            {knownEvents.length > 0 && (
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={() => navigate('clips')}
+                aria-label="クリップを切り抜く"
+              >
+                ⬦ クリップを切り抜く
+              </button>
+            )}
           </div>
         )}
 

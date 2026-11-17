@@ -30,6 +30,7 @@ from allaganeye.exceptions import (
     AllaganEyeError,
     ConfigValidationError,
     InputFileError,
+    MetadataConflictError,
 )
 from allaganeye.export.clips import (
     DEFAULT_GAP_SECONDS,
@@ -60,6 +61,39 @@ def _require_non_negative(name: str, value: float) -> float:
     return float(value)
 
 
+def _mtime_ms(path: Path) -> int | None:
+    """mtime を ms で返す (取れなければ None)。GUI の `loadedMtimeMs` と同じ基準。"""
+    try:
+        return path.stat().st_mtime_ns // 1_000_000
+    except OSError:
+        return None
+
+
+def _guard_read_mtime(
+    metadata_path: Path,
+    expected_mtime: int | None,
+    before: int | None,
+    after: int | None,
+) -> None:
+    """GUI が見ていた metadata.json を読んでいることを read の**前後**で確かめる。
+
+    `clips` は読み取り専用だが、`--event-index` は `events[]` の**並び位置**なので、
+    GUI がロードした後で別プロセスが `events[]` を書き換えると、別のイベントを
+    切り抜き（--overwrite 併用時は無関係のクリップを溃し）得る。read の前後で
+    同じ mtime であることまで見れば、計画に使った payload が照合した時点の内容と
+    一致することが保証できる。
+
+    `expected_mtime` 未指定 (CLI 単体) では何もしない。
+    """
+    if expected_mtime is None:
+        return
+    if before != expected_mtime or after != expected_mtime:
+        raise MetadataConflictError(
+            f"metadata.json changed on disk (expected mtime {expected_mtime}, "
+            f"got {before} -> {after}); reload the metadata before cutting clips"
+        )
+
+
 def load_clip_plan(
     metadata_path: Path,
     *,
@@ -67,6 +101,7 @@ def load_clip_plan(
     post: float,
     gap: float,
     event_indexes: Sequence[int] | None = None,
+    expected_mtime: int | None = None,
 ) -> tuple[dict[str, Any], ClipPlan]:
     """metadata.json を読み、クリップ計画まで作る (ffmpeg は起動しない)。"""
     _require_non_negative("--pre", pre)
@@ -78,7 +113,10 @@ def load_clip_plan(
                 f"--event-index must be >= 1 (1-based position in events[]), got {index}"
             )
 
+    before = _mtime_ms(metadata_path)
     payload = read_metadata(metadata_path)
+    after = _mtime_ms(metadata_path)
+    _guard_read_mtime(metadata_path, expected_mtime, before, after)
     events = payload.get("events")
     if not isinstance(events, list) or not events:
         raise InputFileError(
@@ -299,6 +337,17 @@ def register(app: typer.Typer) -> None:
                 ),
             ),
         ] = None,
+        expected_mtime: Annotated[
+            int | None,
+            typer.Option(
+                "--expected-mtime",
+                help=(
+                    "Refuse to plan (exit 6) when metadata.json's mtime differs from "
+                    "this ms value. The GUI uses it so --event-index cannot resolve "
+                    "an event that changed on disk after it was displayed."
+                ),
+            ),
+        ] = None,
         overwrite: Annotated[
             bool,
             typer.Option(
@@ -384,6 +433,7 @@ def register(app: typer.Typer) -> None:
                 post=post,
                 gap=gap,
                 event_indexes=event_indexes,
+                expected_mtime=expected_mtime,
             )
             by_index.update({clip.index: clip for clip in plan.clips})
             summary = run_clip_plan(

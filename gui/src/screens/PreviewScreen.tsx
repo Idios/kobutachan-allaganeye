@@ -27,7 +27,7 @@ import type { MatchType, TypeOverride } from '../types/metadata';
 import { DEFAULT_FPS } from '../types/metadata.schema';
 import { buildLocalBrightness } from '../utils/brightness';
 import { splitPath } from '../utils/path';
-import { fmtPreciseTime } from '../utils/time';
+import { fmtClockTime, fmtPreciseTime } from '../utils/time';
 import { isBoundaryValid } from '../utils/boundary';
 import pathStyles from '../styles/path-display.module.css';
 import styles from './PreviewScreen.module.css';
@@ -342,6 +342,30 @@ export function PreviewScreen() {
   // ので境界も dirty も動かず、「その瞬間を表示する」だけになる。
   const pendingSeekSeconds = useAppStateStore((s) => s.pendingSeekSeconds);
   const setPendingSeekSeconds = useAppStateStore((s) => s.setPendingSeekSeconds);
+
+  // #1131 Phase B2: ClipsScreen からの「クリップ範囲モード」。`clipRange` がある
+  // 間だけ範囲バナーを出し、先頭 / 末尾へ IN pane をシークする。試合境界
+  // (`startT` / `endT`) には触らないので、境界調整の編集内容は汚れない。
+  //
+  // `clipRange.matchIndex` が開いている match と一致しないときは出さない
+  // (クリップ範囲は特定のイベントのものなので、別の試合の preview に前の範囲が
+  //  残ると存在しない時刻へシークさせる — codex review 2026-11-17)。
+  const rawClipRange = useAppStateStore((s) => s.clipRange);
+  const setClipRange = useAppStateStore((s) => s.setClipRange);
+  const clipRange =
+    rawClipRange !== null && rawClipRange.matchIndex === match?.index
+      ? rawClipRange
+      : null;
+
+  function seekPreviewTo(seconds: number): void {
+    const v = inVideoRef.current;
+    if (v === null) return;
+    try {
+      v.currentTime = seconds;
+    } catch {
+      // メタデータ未ロード時の seek 失敗は無視 (バナー表示はそのまま残す)
+    }
+  }
   useEffect(() => {
     if (pendingSeekSeconds === null) return;
     const v = inVideoRef.current;
@@ -757,6 +781,43 @@ export function PreviewScreen() {
           )}
         </DisabledTooltip>
       </div>
+
+      {clipRange !== null && (
+        <div
+          className={styles.clipRange}
+          role="status"
+          data-testid="preview-clip-range"
+        >
+          <span className={styles.clipRangeLabel}>
+            {`クリップ範囲 ${fmtClockTime(clipRange.start)} - ${fmtClockTime(clipRange.end)}`}
+            {` ・ ${Math.max(0, clipRange.end - clipRange.start).toFixed(1)} 秒`}
+          </span>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            onClick={() => seekPreviewTo(clipRange.start)}
+            data-testid="preview-clip-start"
+          >
+            先頭へ
+          </button>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            onClick={() => seekPreviewTo(clipRange.end)}
+            data-testid="preview-clip-end"
+          >
+            末尾へ
+          </button>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            onClick={() => setClipRange(null)}
+            data-testid="preview-clip-clear"
+          >
+            範囲を解除
+          </button>
+        </div>
+      )}
 
       <div className={styles.panes}>
         <Pane

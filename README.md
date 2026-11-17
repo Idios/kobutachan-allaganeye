@@ -135,7 +135,7 @@ flowchart LR
 
 <br/>
 
-### GUI の 7 画面
+### GUI の 8 画面
 
 <table align="center">
 <tr>
@@ -202,6 +202,12 @@ flowchart LR
   <sub>試合ごとの KO / ASSIST を一覧し、行を選ぶとプレビューが該当時刻にシーク。探索領域の自動解決に失敗したときはバー矩形を指定して再実行。<sub>v0.4.0</sub></sub>
 </td>
 <td width="50%" valign="top" align="center">
+  <a href="image/08-clips.png">
+    <img src="image/08-clips.png" alt="⑧ Clips — KO / ASSIST を切り抜く" width="100%"/>
+  </a>
+  <br/>
+  <b>⑧ クリップ切り抜き&nbsp;&nbsp;·&nbsp;&nbsp;C L I P S</b><br/>
+  <sub>KO / ASSIST の前後秒数を指定して 1 件ずつ切り抜く。範囲はプレビューで先頭 / 末尾へシークして確認できる。<sub>v0.4.0</sub></sub>
 </td>
 </tr>
 </table>
