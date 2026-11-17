@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -123,5 +124,63 @@ describe('DetectionParamsPanel (#613)', () => {
     expect(useAppStateStore.getState().detectionParams).toEqual(
       DEFAULT_DETECTION_PARAMS,
     );
+  });
+});
+
+// #1135: 3 項目の意味・効果の help (docs/ui-interaction-spec.md §1.7)。
+describe('DetectionParamsPanel field help (#1135)', () => {
+  async function openPanel() {
+    const user = userEvent.setup();
+    render(<DetectionParamsPanel />);
+    await user.click(screen.getByTestId('detection-params-toggle'));
+    return user;
+  }
+
+  it('renders a help trigger for each of the three settings', async () => {
+    await openPanel();
+    expect(
+      screen.getByTestId('detection-params-blackout-help-trigger'),
+    ).toHaveAccessibleName('検知しきい値の説明');
+    expect(
+      screen.getByTestId('detection-params-workers-help-trigger'),
+    ).toHaveAccessibleName('ワーカー数の説明');
+    expect(
+      screen.getByTestId('detection-params-gpu-help-trigger'),
+    ).toHaveAccessibleName('GPU の説明');
+  });
+
+  it('reveals the threshold explanation on hover', async () => {
+    const user = await openPanel();
+    await user.hover(screen.getByTestId('detection-params-blackout-help-trigger'));
+    expect(
+      screen.getByTestId('detection-params-blackout-help-popover'),
+    ).toHaveTextContent('平均輝度');
+  });
+
+  it('reveals every explanation through the keyboard alone', async () => {
+    const user = await openPanel();
+    // 詳細設定 toggle → blackout help → slider → workers help →
+    // workers input → gpu help
+    await user.tab();
+    expect(
+      screen.getByTestId('detection-params-blackout-help-popover'),
+    ).toHaveTextContent('平均輝度');
+    await user.tab();
+    await user.tab();
+    expect(
+      screen.getByTestId('detection-params-workers-help-popover'),
+    ).toHaveTextContent('CPU コア数');
+    await user.tab();
+    await user.tab();
+    expect(
+      screen.getByTestId('detection-params-gpu-help-popover'),
+    ).toHaveTextContent('コーデック');
+  });
+
+  it('has no axe violations with the panel expanded', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<DetectionParamsPanel />);
+    await user.click(screen.getByTestId('detection-params-toggle'));
+    expect(await axe(container)).toHaveNoViolations();
   });
 });

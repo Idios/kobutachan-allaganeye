@@ -99,6 +99,14 @@ scope 外で扱う `aria-describedby` は使わず、title 属性 (mouse hover) 
 `title` 属性 (hover tooltip) で full path を出し、`aria-label` は新規追加しない方針 (a11y-policy 「scope 外」整合)。
 （#1106 Phase 2 で indicators 画面にも同じ 2 段構造を適用した。）
 
+## 設定項目の help 表示
+
+**正は [docs/ui-interaction-spec.md §1.7](ui-interaction-spec.md)**。
+
+- hover とキーボード focus の両方で開く (mouse 専用にしない)
+- 本文は visible text として DOM に置く。screen reader 専用属性は追加せず、icon-only trigger の `aria-label` のみ許可する (本 policy の scope 外/例外に従う)
+- 共通実装: `gui/src/components/HelpTip.tsx`
+
 ## 動きの抑止 (prefers-reduced-motion)
 
 ```css

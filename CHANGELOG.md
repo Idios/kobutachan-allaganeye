@@ -16,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      scripts/check_changelog_style.py は `## [Unreleased]` があればそこだけを
      走査するため、空節を残すとリリース節が**検査対象から外れて緑になる**。 -->
 
+## [Unreleased]
+
+### Added
+
+- **検知設定の意味が画面上で読めるようになりました**
+  ([#1135](https://github.com/Idios/kobutachan-allaganeye/issues/1135)):
+  録画を選んだあとの「詳細設定」にある「検知しきい値」「ワーカー数」「GPU」の横に
+  `?` を追加しました。マウスを乗せるか Tab キーで選択すると、その値が何を決めて
+  いるのか、値を変えると検知結果がどう変わるのか、どういうときに変えるべきかの
+  説明が出ます。あわせて知りたいときは
+  [パラメータ調整ガイド](docs/tuning-guide.md) を参照してください。
+
 ## [0.3.2] - 2026-09-03
 
 ### Changed
