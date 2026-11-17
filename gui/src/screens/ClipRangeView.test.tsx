@@ -114,6 +114,18 @@ describe('ClipRangeView', () => {
     expect(inValue).not.toBe(fmtPreciseTime(2438.75, FPS));
   });
 
+  // #1139 受け入れ条件: 行クリックのシーク位置はイベント開始。IN ペインは
+  // イベントの発生時刻を映し、TC はクリップの IN (編集バッファ) のまま。
+  it('opens the IN pane at the event moment, not at the clip start', async () => {
+    render(<ClipRangeView />);
+
+    const video = (await screen.findByLabelText(
+      'IN (clip start) video',
+    )) as HTMLVideoElement;
+    await waitFor(() => expect(video.currentTime).toBeCloseTo(493.2, 1));
+    expect(tcSeconds('IN (clip start)')).toBeCloseTo(CLIP_START, 1);
+  });
+
   it('labels the screen as the clip range so the state is readable', () => {
     render(<ClipRangeView />);
 

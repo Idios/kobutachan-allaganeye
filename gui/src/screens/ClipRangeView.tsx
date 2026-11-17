@@ -128,6 +128,25 @@ export function ClipRangeView() {
     setEndT(Math.max(next, startT + 0.01));
   };
 
+  // 一覧の行から開いた直後は、IN ペインを **イベントの発生時刻** に置く (#1139
+  // 受け入れ条件: シーク位置はイベント開始)。TC はクリップの IN のまま (編集
+  // バッファは動かさない) で、KO の瞬間を見せる。nudge / 入力すると以降は
+  // 上の sync effect が IN の位置を反映する。
+  const seekedToEventRef = useRef(false);
+  useEffect(() => {
+    if (seekedToEventRef.current) return;
+    const v = inVideoRef.current;
+    if (!v || videoUrl === null) return;
+    const target = event?.timestamp;
+    if (typeof target !== 'number' || !Number.isFinite(target)) return;
+    try {
+      v.currentTime = target;
+    } catch {
+      // メタデータ未ロード時の seek 失敗は無視
+    }
+    seekedToEventRef.current = true;
+  }, [videoUrl, event]);
+
   const nudge = (edge: 'start' | 'end', delta: number) => {
     if (edge === 'start') applyStart(startT + delta);
     else applyEnd(endT + delta);
