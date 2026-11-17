@@ -349,7 +349,7 @@ allaganeye clips "C:\out\metadata.json" --codec h264
 allaganeye debug-brightness "C:\videos\recording.mkv"
 ```
 
-**録画形式が特殊な場合**: チャット欄を画像でマスクした録画は `--masked`、ゲーム画面が画面全体でない配信レイアウトの録画は `--vtuber` を `detect` / `split` に付けます。試合終了後のロビー・街の映像は既定では MP4 に出力されません (`metadata.json` には残ります) — 出力するには `--keep-trailing` を付けます。
+**録画形式が特殊な場合**: チャット欄を画像でマスクした録画は `--masked`、ゲーム画面が画面全体でない配信レイアウトの録画は `--vtuber` を `detect` / `split` に付けます。GUI では、録画を選んだあとの [詳細設定] の「検知経路」で「マスク録画」/「配信レイアウト」を選べます。試合終了後のロビー・街の映像は既定では MP4 に出力されません (`metadata.json` には残ります) — 出力するには `--keep-trailing` を付けます。
 
 詳細は [CLI コマンド仕様](docs/cli-spec.md) と [出力仕様マトリクス](docs/output-spec.md) を参照。
 
