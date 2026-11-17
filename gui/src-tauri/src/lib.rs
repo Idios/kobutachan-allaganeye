@@ -4368,6 +4368,399 @@ async fn start_indicators(
     ))
 }
 
+/// #1131 -- Request payload for the `start_clips` Tauri command.
+///
+/// `pre` / `post` / `gap` / `codec` / `name_pattern` は CLI 既定に委ねるとき
+/// `None` にする (GUI が値を入れたときだけ argv に載せる)。`event_indexes` は
+/// **1 始まりの `events[]` 位置**で、GUI の「選択した 1 件だけ切り抜く」を担う
+/// (空 = 全クリップ)。`overwrite` は既定 false で、既存クリップがあると CLI が
+/// exit 5 で拒否する (無確認の truncate を防ぐ)。
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartClipsRequest {
+    pub metadata_path: String,
+    #[serde(default)]
+    pub output_dir: Option<String>,
+    #[serde(default)]
+    pub pre: Option<f64>,
+    #[serde(default)]
+    pub post: Option<f64>,
+    #[serde(default)]
+    pub gap: Option<f64>,
+    #[serde(default)]
+    pub codec: Option<String>,
+    #[serde(default)]
+    pub name_pattern: Option<String>,
+    #[serde(default)]
+    pub event_indexes: Vec<u32>,
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+/// #1131 -- `allaganeye clips --json` の stdout 1 行の分類結果。
+///
+/// `progress` / `result` / `fallback` / `summary` は `export` と同じ wire 形状
+/// ([`WireEvent`]) なのでそのまま共有する。計画段階の失敗だけは
+/// `{"type":"error","message":"..."}` (match_index を持たない) なので、
+/// [`WireEvent::Error`] では deserialize できず、専用の variant で受ける
+/// (これを取りこぼすと GUI には exit code だけが届き、`events` が無い等の
+/// 理由が消える)。
+#[derive(Debug)]
+pub enum ClipsLine {
+    Event(WireEvent),
+    /// 計画段階の失敗 (exit 2 / 5 の直前に 1 行だけ出る)。
+    PlanningError {
+        message: String,
+    },
+    /// 空行 / malformed JSON / 未知の type (forward-compat)。
+    Ignore,
+}
+
+/// #1131 -- Parse one stdout line from `allaganeye clips --json`.
+fn parse_clips_line(line: &str) -> ClipsLine {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return ClipsLine::Ignore;
+    }
+    let value: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(v) => v,
+        Err(_) => return ClipsLine::Ignore,
+    };
+    if value.get("type").and_then(|t| t.as_str()) == Some("error") {
+        // 計画段階の error 行は `message` だけを持つ。per-clip の error 行は
+        // `match_index` / `error_message` を持つので下の WireEvent 側で受ける。
+        if let Some(message) = value.get("message").and_then(|m| m.as_str()) {
+            return ClipsLine::PlanningError {
+                message: message.to_string(),
+            };
+        }
+    }
+    match serde_json::from_value::<WireEvent>(value) {
+        Ok(event) => ClipsLine::Event(event),
+        Err(_) => ClipsLine::Ignore,
+    }
+}
+
+/// #1131 -- Build the argv for `allaganeye clips`.
+///
+/// spawn を伴わずに検証できるよう pure 関数に切り出す (build_indicators_argv と
+/// 同じ方針)。`--json` は常に付ける (JSON Lines を 1 行ずつ parse する前提)。
+fn build_clips_argv(req: &StartClipsRequest) -> Vec<String> {
+    let mut argv = vec![
+        "clips".to_string(),
+        req.metadata_path.clone(),
+        "--json".to_string(),
+    ];
+    if let Some(output_dir) = &req.output_dir {
+        argv.push("--output-dir".to_string());
+        argv.push(output_dir.clone());
+    }
+    for (flag, value) in [("--pre", req.pre), ("--post", req.post), ("--gap", req.gap)] {
+        if let Some(seconds) = value {
+            argv.push(flag.to_string());
+            argv.push(format!("{}", seconds));
+        }
+    }
+    if let Some(codec) = &req.codec {
+        argv.push("--codec".to_string());
+        argv.push(codec.clone());
+    }
+    if let Some(pattern) = &req.name_pattern {
+        argv.push("--name-pattern".to_string());
+        argv.push(pattern.clone());
+    }
+    for index in &req.event_indexes {
+        argv.push("--event-index".to_string());
+        argv.push(index.to_string());
+    }
+    if req.overwrite {
+        argv.push("--overwrite".to_string());
+    }
+    argv
+}
+
+/// #1131 -- `start_clips` の戻り値。`summary` 相当の件数に加えて、実際に
+/// 書き出したクリップの絶対パスを返す (GUI が「どこに出たか」を出すため)。
+#[derive(Debug, serde::Serialize)]
+pub struct ClipsResult {
+    pub success: u32,
+    pub failure: u32,
+    pub skipped: u32,
+    pub cancelled: bool,
+    pub output_paths: Vec<String>,
+}
+
+/// #1131 -- CLI の exit code を AppError に写す (spawn 後の失敗経路)。
+///
+/// - exit 5 (オプション値不正 / 既存出力があり `--overwrite` 未指定) →
+///   `validation.range_invalid` (message に CLI の理由文がそのまま入る)
+/// - exit 130 (Ctrl+C / kill による中断) → `subprocess.cancelled`
+/// - exit 2 (metadata 不在 / `events` 無し / source 不在) とその他 →
+///   `subprocess.exit_failed` (CLI の `{"type":"error"}` 行の message を
+///   detail に載せるので、`allaganeye indicators` を先に実行する等の
+///   案内は GUI にそのまま届く)
+fn clips_exit_error(code: Option<i32>, cli_error: Option<&str>, stderr_tail: &[u8]) -> AppError {
+    let tail = String::from_utf8_lossy(stderr_tail).trim().to_string();
+    let detail = match (cli_error, tail.is_empty()) {
+        (Some(message), true) => message.to_string(),
+        (Some(message), false) => format!("{}: {}", message, tail),
+        (None, true) => format!(
+            "python clips subprocess exited unexpectedly (status: {:?})",
+            code
+        ),
+        (None, false) => format!(
+            "python clips subprocess exited unexpectedly (status: {:?}): {}",
+            code, tail
+        ),
+    };
+    match code {
+        Some(5) => AppError::new("validation.range_invalid", detail).with_default_hint(),
+        Some(130) => AppError::new("subprocess.cancelled", detail).with_default_hint(),
+        _ => AppError::new("subprocess.exit_failed", detail).with_default_hint(),
+    }
+}
+
+/// #1131 -- Launch `allaganeye clips <path> --json ...` and stream
+/// `clips-progress` events to the frontend until the process exits, then
+/// return the aggregate (counts + written paths).
+///
+/// metadata はパス渡し (stdin 不使用) なので、GUI 側で metadata 全体を Rust に
+/// 持ち上げる必要がない (start_indicators と同じ経路)。`--json` の wire 形状は
+/// `export` と同一なので `WireEvent` / `ExportProgress` を再利用する。
+#[tauri::command]
+async fn start_clips(
+    app: tauri::AppHandle,
+    req: StartClipsRequest,
+) -> Result<ClipsResult, AppError> {
+    let cmd_spec = resolve_allaganeye_command(&app);
+    let mut cmd = tokio::process::Command::new(&cmd_spec.program);
+    for arg in &cmd_spec.prefix_args {
+        cmd.arg(arg);
+    }
+    for a in build_clips_argv(&req) {
+        cmd.arg(a);
+    }
+    if let Some(cwd) = &cmd_spec.cwd {
+        cmd.current_dir(cwd);
+    }
+    cmd.env("PYTHONIOENCODING", "utf-8:replace")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    process_util::apply_no_window(&mut cmd);
+
+    let mut child = cmd.spawn().map_err(|e| {
+        AppError::new(
+            "subprocess.spawn_failed",
+            format!("start_clips spawn: {}", e),
+        )
+        .with_default_hint()
+    })?;
+
+    // #837 (P2-16) -- start_minimap / start_indicators と同じ順序: pipe を track 前に取る。
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let stderr_handle =
+        stderr.map(|stderr| tokio::spawn(async move { drain_to_bounded_tail(stderr, 2048).await }));
+
+    // clips は Python が N 本の ffmpeg を並列 spawn する (export と同じ)。
+    // キャンセル時に孫 ffmpeg を取りこぼさないよう Job Object で束ねる。
+    #[cfg(windows)]
+    let job: Option<process_util::job_object::ProcessJob> = {
+        match process_util::job_object::ProcessJob::new() {
+            Ok(j) => {
+                if let Some(raw) = child.raw_handle() {
+                    if let Err(e) = j.assign(raw) {
+                        eprintln!(
+                            "warning: AssignProcessToJobObject failed: {} \
+                             (clips descendants may be orphaned on cancel)",
+                            e
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "warning: child.raw_handle() returned None for clips \
+                         spawn (clips descendants may be orphaned on cancel)"
+                    );
+                }
+                Some(j)
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: CreateJobObject failed: {} \
+                     (clips descendants may be orphaned on cancel)",
+                    e
+                );
+                None
+            }
+        }
+    };
+    let tracked = TrackedChild {
+        child,
+        #[cfg(windows)]
+        job,
+    };
+    let tracked_id = track_child(tracked).await;
+
+    let mut summary: Option<(u32, u32, u32, bool)> = None;
+    let mut output_paths: Vec<String> = Vec::new();
+    let mut cli_error: Option<String> = None;
+    if let Some(stdout) = stdout {
+        // #656 -- PYTHONIOENCODING=utf-8:replace を primary の保証とし、ここでも
+        // lossy UTF-8 で decode する defensive 層を重ねる (start_export と同じ)。
+        let mut reader = BufReader::new(stdout);
+        let mut line_buf: Vec<u8> = Vec::with_capacity(1024);
+
+        loop {
+            line_buf.clear();
+            match reader.read_until(b'\n', &mut line_buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    while matches!(line_buf.last(), Some(b'\n') | Some(b'\r')) {
+                        line_buf.pop();
+                    }
+                    let line = String::from_utf8_lossy(&line_buf);
+                    match parse_clips_line(&line) {
+                        ClipsLine::Event(WireEvent::Progress {
+                            match_index,
+                            percent,
+                            stage,
+                        }) => {
+                            let _ = app.emit(
+                                "clips-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent,
+                                    stage,
+                                    message: None,
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        ClipsLine::Event(WireEvent::Fallback {
+                            match_index,
+                            fallback_from,
+                            fallback_to,
+                            message,
+                        }) => {
+                            let _ = app.emit(
+                                "clips-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 0.0,
+                                    stage: "fallback".to_string(),
+                                    message: Some(message),
+                                    fallback_from: Some(format!(
+                                        "{} -> {}",
+                                        fallback_from, fallback_to
+                                    )),
+                                },
+                            );
+                        }
+                        ClipsLine::Event(WireEvent::Result {
+                            match_index,
+                            output_path,
+                            ..
+                        }) => {
+                            output_paths.push(output_path);
+                            let _ = app.emit(
+                                "clips-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 100.0,
+                                    stage: "done".to_string(),
+                                    message: None,
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        ClipsLine::Event(WireEvent::Error {
+                            match_index,
+                            error_kind: _,
+                            error_message,
+                            error_hint,
+                        }) => {
+                            let _ = app.emit(
+                                "clips-progress",
+                                ExportProgress {
+                                    match_index,
+                                    percent: 0.0,
+                                    stage: "error".to_string(),
+                                    message: Some(if let Some(hint) = error_hint {
+                                        format!("{} ({})", error_message, hint)
+                                    } else {
+                                        error_message
+                                    }),
+                                    fallback_from: None,
+                                },
+                            );
+                        }
+                        ClipsLine::Event(WireEvent::Summary {
+                            success,
+                            failure,
+                            skipped,
+                            cancelled,
+                        }) => {
+                            summary = Some((success, failure, skipped, cancelled));
+                        }
+                        ClipsLine::Event(WireEvent::Unknown) | ClipsLine::Ignore => {
+                            // forward-compat: 空行 / malformed / 未知 type は捨てる
+                        }
+                        ClipsLine::PlanningError { message } => cli_error = Some(message),
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
+    let mut child = match untrack_child(tracked_id).await {
+        Some(c) => c,
+        None => {
+            return Err(
+                AppError::new("subprocess.cancelled", "clips cancelled").with_default_hint()
+            );
+        }
+    };
+    let status = child.wait().await.map_err(|e| {
+        AppError::new("subprocess.wait_failed", format!("start_clips wait: {}", e))
+            .with_default_hint()
+    })?;
+
+    let stderr_tail = match stderr_handle {
+        Some(h) => h.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+
+    if let Some((success, failure, skipped, cancelled)) = summary {
+        return Ok(ClipsResult {
+            success,
+            failure,
+            skipped,
+            cancelled,
+            output_paths,
+        });
+    }
+
+    if status.success() {
+        // Python は `--json` で必ず summary 行を出す (0 件でも)。ここに来るのは
+        // 出力が truncate された等の異常系。
+        return Err(AppError::new(
+            "subprocess.exit_failed",
+            "python clips subprocess exited cleanly without emitting a summary line",
+        )
+        .with_default_hint());
+    }
+
+    Err(clips_exit_error(
+        status.code(),
+        cli_error.as_deref(),
+        &stderr_tail,
+    ))
+}
+
 pub fn run() {
     // #614 -- Rotate stale panic logs (>7 days) and detect unclean shutdown
     // from the previous session, BEFORE the Tauri builder runs so the
@@ -4455,6 +4848,7 @@ pub fn run() {
         start_minimap,
         detect_minimap_regions,
         start_indicators,
+        start_clips,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -4487,6 +4881,7 @@ pub fn run() {
         start_minimap,
         detect_minimap_regions,
         start_indicators,
+        start_clips,
         load_metadata,
         get_metadata_mtime,
         apply_changes,
@@ -7457,5 +7852,261 @@ mod start_indicators_tests {
         let err = indicators_exit_error(Some(130), None, b"");
         assert_eq!(err.code, "subprocess.cancelled");
         assert!(err.message.contains("status: Some(130)"));
+    }
+}
+
+#[cfg(test)]
+mod start_clips_tests {
+    use super::*;
+
+    fn base_request() -> StartClipsRequest {
+        StartClipsRequest {
+            metadata_path: "C:/x/metadata.json".into(),
+            output_dir: None,
+            pre: None,
+            post: None,
+            gap: None,
+            codec: None,
+            name_pattern: None,
+            event_indexes: Vec::new(),
+            overwrite: false,
+        }
+    }
+
+    // -- request deserialization (frontend contract) ---------------------------
+
+    /// frontend が送る camelCase payload をそのまま受ける。未指定の
+    /// `eventIndexes` / `overwrite` は既定 (全クリップ / 上書きしない) になる。
+    #[test]
+    fn request_deserializes_camel_case_with_defaults() {
+        let req: StartClipsRequest =
+            serde_json::from_str(r#"{"metadataPath":"C:/x/metadata.json"}"#).expect("deserialize");
+        assert_eq!(req.metadata_path, "C:/x/metadata.json");
+        assert!(req.output_dir.is_none());
+        assert!(req.event_indexes.is_empty());
+        assert!(!req.overwrite);
+    }
+
+    #[test]
+    fn request_deserializes_event_indexes_and_overwrite() {
+        let req: StartClipsRequest = serde_json::from_str(
+            r#"{"metadataPath":"m.json","eventIndexes":[2,5],"overwrite":true,"pre":3.5,"codec":"h264"}"#,
+        )
+        .expect("deserialize");
+        assert_eq!(req.event_indexes, vec![2, 5]);
+        assert!(req.overwrite);
+        assert_eq!(req.pre, Some(3.5));
+        assert_eq!(req.codec.as_deref(), Some("h264"));
+    }
+
+    // -- build_clips_argv -----------------------------------------------------
+
+    /// 既定リクエストは `clips <path> --json` だけを渡す
+    /// (未指定 option は CLI 既定 = pre 10 / post 10 / gap 5 / copy に委ねる)。
+    #[test]
+    fn argv_minimal_passes_only_json() {
+        let argv = build_clips_argv(&base_request());
+        let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+        assert_eq!(args, vec!["clips", "C:/x/metadata.json", "--json"]);
+    }
+
+    /// 全 option 指定時に CLI のフラグ名・値の対応が崩れていないことを pin する。
+    #[test]
+    fn argv_emits_every_option_when_present() {
+        let req = StartClipsRequest {
+            metadata_path: "m.json".into(),
+            output_dir: Some("C:/out".into()),
+            pre: Some(3.0),
+            post: Some(4.0),
+            gap: Some(2.0),
+            codec: Some("h264".into()),
+            name_pattern: Some("clip_{idx:03}.mp4".into()),
+            event_indexes: vec![7],
+            overwrite: true,
+        };
+        let argv = build_clips_argv(&req);
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--output-dir" && w[1] == "C:/out"));
+        assert!(argv.windows(2).any(|w| w[0] == "--pre" && w[1] == "3"));
+        assert!(argv.windows(2).any(|w| w[0] == "--post" && w[1] == "4"));
+        assert!(argv.windows(2).any(|w| w[0] == "--gap" && w[1] == "2"));
+        assert!(argv.windows(2).any(|w| w[0] == "--codec" && w[1] == "h264"));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--name-pattern" && w[1] == "clip_{idx:03}.mp4"));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--event-index" && w[1] == "7"));
+        assert!(argv.contains(&"--overwrite".to_string()));
+    }
+
+    /// `--event-index` は索引ごとに 1 回ずつ出す (CLI 側は repeatable)。
+    #[test]
+    fn argv_repeats_event_index_flag_per_index() {
+        let mut req = base_request();
+        req.event_indexes = vec![1, 4, 9];
+        let argv = build_clips_argv(&req);
+        let flags = argv.iter().filter(|a| *a == "--event-index").count();
+        assert_eq!(flags, 3);
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--event-index" && w[1] == "9"));
+    }
+
+    /// `overwrite: false` (既定) はフラグを出さない = CLI が既存出力を拒否する。
+    #[test]
+    fn argv_omits_overwrite_by_default() {
+        let argv = build_clips_argv(&base_request());
+        assert!(!argv.iter().any(|a| a == "--overwrite"));
+    }
+
+    /// 整数値の秒数は `3.0` ではなく `3` として渡す
+    /// (Python 側は float で受けるので値は同じ、argv を短く保つ)。
+    #[test]
+    fn argv_formats_integral_seconds_without_decimal_point() {
+        let mut req = base_request();
+        req.pre = Some(10.0);
+        req.post = Some(0.0);
+        let argv = build_clips_argv(&req);
+        assert!(argv.windows(2).any(|w| w[0] == "--pre" && w[1] == "10"));
+        assert!(argv.windows(2).any(|w| w[0] == "--post" && w[1] == "0"));
+    }
+
+    // -- parse_clips_line -----------------------------------------------------
+
+    #[test]
+    fn parses_progress_line_as_wire_event() {
+        let line = r#"{"type":"progress","match_index":1,"percent":42.5,"stage":"encoding"}"#;
+        match parse_clips_line(line) {
+            ClipsLine::Event(WireEvent::Progress {
+                match_index,
+                percent,
+                stage,
+            }) => {
+                assert_eq!(match_index, 1);
+                assert!((percent - 42.5).abs() < 1e-9);
+                assert_eq!(stage, "encoding");
+            }
+            other => panic!("expected Progress, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_result_line_with_output_path() {
+        let line = r#"{"type":"result","match_index":1,"output_path":"C:/out/clip_001_ko_00-03-10.mp4","duration_ms":1200,"encoder_used":"copy"}"#;
+        match parse_clips_line(line) {
+            ClipsLine::Event(WireEvent::Result {
+                match_index,
+                output_path,
+                ..
+            }) => {
+                assert_eq!(match_index, 1);
+                assert_eq!(output_path, "C:/out/clip_001_ko_00-03-10.mp4");
+            }
+            other => panic!("expected Result, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_summary_line() {
+        let line = r#"{"type":"summary","success":1,"failure":0,"skipped":0,"cancelled":false}"#;
+        match parse_clips_line(line) {
+            ClipsLine::Event(WireEvent::Summary {
+                success,
+                failure,
+                skipped,
+                cancelled,
+            }) => {
+                assert_eq!((success, failure, skipped, cancelled), (1, 0, 0, false));
+            }
+            other => panic!("expected Summary, got {:?}", other),
+        }
+    }
+
+    /// 計画段階の error 行 (`match_index` を持たない) は planning error として
+    /// 受ける。ここで取りこぼすと GUI には exit code しか届かず、
+    /// 「events が無い」等の理由が消える (#1131)。
+    #[test]
+    fn parses_planning_error_line() {
+        let line = r#"{"type":"error","message":"no events; run allaganeye indicators first"}"#;
+        match parse_clips_line(line) {
+            ClipsLine::PlanningError { message } => {
+                assert!(message.contains("run allaganeye indicators first"));
+            }
+            other => panic!("expected PlanningError, got {:?}", other),
+        }
+    }
+
+    /// per-clip の error 行は `match_index` を持つので WireEvent 側で受ける。
+    #[test]
+    fn parses_per_clip_error_line_as_wire_event() {
+        let line = r#"{"type":"error","match_index":2,"error_kind":"encoder","error_message":"boom","error_hint":null}"#;
+        match parse_clips_line(line) {
+            ClipsLine::Event(WireEvent::Error {
+                match_index,
+                error_message,
+                ..
+            }) => {
+                assert_eq!(match_index, 2);
+                assert_eq!(error_message, "boom");
+            }
+            other => panic!("expected Error event, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn ignores_empty_malformed_and_unknown_lines() {
+        assert!(matches!(parse_clips_line(""), ClipsLine::Ignore));
+        assert!(matches!(parse_clips_line("  \t "), ClipsLine::Ignore));
+        assert!(matches!(parse_clips_line("not json {"), ClipsLine::Ignore));
+        // 未知 type は serde の `#[serde(other)]` で `WireEvent::Unknown` になり、
+        // 読み手 (start_clips のループ) が Ignore と同じく捨てる (forward-compat)。
+        assert!(matches!(
+            parse_clips_line(r#"{"type":"future_unknown","extra":1}"#),
+            ClipsLine::Event(WireEvent::Unknown)
+        ));
+    }
+
+    // -- clips_exit_error -----------------------------------------------------
+
+    #[test]
+    fn exit_5_maps_to_validation_range_invalid() {
+        let err = clips_exit_error(
+            Some(5),
+            Some("1 clip output(s) already exist; pass --overwrite"),
+            b"",
+        );
+        assert_eq!(err.code, "validation.range_invalid");
+        assert!(err.message.contains("--overwrite"));
+        assert!(err.hint.is_some());
+    }
+
+    /// exit 2 (metadata 不在 / `events` 無し) は専用 code がないため
+    /// exit_failed に載せ、CLI の案内文 (indicators を先に実行する等) を失わない。
+    #[test]
+    fn exit_2_keeps_cli_error_message() {
+        let err = clips_exit_error(
+            Some(2),
+            Some("metadata.json has no events; run allaganeye indicators first"),
+            b"",
+        );
+        assert_eq!(err.code, "subprocess.exit_failed");
+        assert!(err.message.contains("run allaganeye indicators first"));
+    }
+
+    #[test]
+    fn exit_130_maps_to_cancelled() {
+        let err = clips_exit_error(Some(130), Some("cancelled"), b"");
+        assert_eq!(err.code, "subprocess.cancelled");
+        assert!(err.hint.is_none());
+    }
+
+    #[test]
+    fn exit_without_cli_error_falls_back_to_stderr_tail() {
+        let err = clips_exit_error(Some(1), None, b"ffmpeg: boom");
+        assert_eq!(err.code, "subprocess.exit_failed");
+        assert!(err.message.contains("status: Some(1)"));
+        assert!(err.message.contains("ffmpeg: boom"));
     }
 }

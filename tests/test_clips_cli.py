@@ -427,6 +427,101 @@ def test_clips_tolerates_malformed_system_info(
     assert export_stub.matches
 
 
+def test_clips_event_index_cuts_only_the_selected_clip(
+    app: typer.Typer, tmp_path: Path, export_stub: _Call
+) -> None:
+    """GUI の 1 件ずつ切り抜き (#1131 Q2 C)。索引は `events[]` の 1 始まり位置。"""
+    metadata = _metadata(tmp_path)
+    result = runner.invoke(app, ["clips", str(metadata), "--event-index", "3"])
+    assert result.exit_code == 0, result.output
+    # 3 件目 (700 秒) だけ。クリップ番号は計画時の 2 番目のまま (振り直さない)。
+    assert [(m.index, m.start, m.end) for m in export_stub.matches] == [
+        (2, 690.0, 711.5)
+    ]
+    assert export_stub.matches[0].type_label == "ko"
+
+
+def test_clips_event_index_selects_the_whole_merged_group(
+    app: typer.Typer, tmp_path: Path, export_stub: _Call
+) -> None:
+    """束ねられた仲間の 1 件を指定すると、そのクリップ全体を書き出す。"""
+    metadata = _metadata(tmp_path)
+    result = runner.invoke(app, ["clips", str(metadata), "--event-index", "2"])
+    assert result.exit_code == 0, result.output
+    assert [(m.start, m.end) for m in export_stub.matches] == [(190.0, 214.5)]
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_clips_event_index_rejects_below_one(
+    app: typer.Typer, tmp_path: Path, export_stub: _Call, value: str
+) -> None:
+    metadata = _metadata(tmp_path)
+    result = runner.invoke(app, ["clips", str(metadata), "--event-index", value])
+    assert result.exit_code == 5
+    assert "--event-index" in result.output
+    assert export_stub.matches == []
+
+
+def test_clips_event_index_out_of_range_writes_nothing(
+    app: typer.Typer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """範囲外の索引は 0 件計画として summary だけ返す (exit 0)。"""
+    called = False
+
+    def fake_export_matches(*args: Any, **kwargs: Any) -> ExportSummary:
+        nonlocal called
+        called = True
+        return ExportSummary()
+
+    monkeypatch.setattr(clips_cmd, "export_matches", fake_export_matches)
+    metadata = _metadata(tmp_path)
+    result = runner.invoke(app, ["clips", str(metadata), "--event-index", "99"])
+    assert result.exit_code == 0, result.output
+    assert "no clips to write" in result.output
+    assert called is False
+
+
+def test_clips_event_index_is_repeatable(
+    app: typer.Typer, tmp_path: Path, export_stub: _Call
+) -> None:
+    """複数指定できる (CLI 単体では束ね選択も可能)。番号は計画時のまま。"""
+    metadata = _metadata(tmp_path)
+    result = runner.invoke(
+        app,
+        [
+            "clips",
+            str(metadata),
+            "--event-index",
+            "1",
+            "--event-index",
+            "3",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert [m.index for m in export_stub.matches] == [1, 2]
+
+
+def test_clips_event_index_keeps_names_stable_across_single_cuts(
+    app: typer.Typer, tmp_path: Path, export_stub: _Call
+) -> None:
+    """1 件ずつ切り抜いても、別のイベントが同じ `{idx}` を使わない。
+
+    振り直すと 2 回目の `--event-index 3` が `clip_001.mp4` を指し、
+    `--overwrite` 併用時に先に切り抜いた 1 番を潰す (Codex review 2026-11-16)。
+    """
+    metadata = _metadata(tmp_path)
+    runner.invoke(app, ["clips", str(metadata), "--event-index", "1"])
+    first = [m.index for m in export_stub.matches]
+
+    export_stub.matches = []
+    runner.invoke(app, ["clips", str(metadata), "--event-index", "3"])
+    second = [m.index for m in export_stub.matches]
+
+    assert first == [1]
+    assert second == [2]
+    assert set(first).isdisjoint(second)
+
+
 def test_clips_reports_output_dir_creation_failure(
     app: typer.Typer, tmp_path: Path, export_stub: _Call
 ) -> None:

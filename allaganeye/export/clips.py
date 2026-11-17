@@ -55,6 +55,8 @@ class Clip:
     start: float
     end: float
     signal_ids: tuple[str, ...]
+    event_indexes: tuple[int, ...] = ()
+    """このクリップに含まれるイベントの **1 始まりの並び順** (元 `events[]` の位置)。"""
 
     @property
     def duration(self) -> float:
@@ -75,6 +77,31 @@ class ClipPlan:
     """試合区間を持たないため対象外にしたイベント数。"""
     merged_events: int
     """他のイベントと束ねた結果、単独クリップにならなかったイベント数。"""
+
+
+def filter_clips(plan: ClipPlan, event_indexes: Iterable[int]) -> ClipPlan:
+    """`event_indexes` (1 始まりの `events[]` 位置) を含むクリップだけ残す。
+
+    GUI の「選択した 1 件だけ切り抜く」用 (#1131 Q2 C)。**クリップ番号は元の
+    計画のまま保つ** (振り直さない)。`--name-pattern` の `{idx}` が番号を決める
+    ので、振り直すと「全件切り抜き -> 2 番目だけ再切り抜き」が 1 番のファイル名を
+    指し、`--overwrite` 併用時に**別のクリップを潰す**。番号を保てば、同じ
+    イベントの再切り抜きは同じファイル名 (自分の前回出力) に当たるだけで済む。
+
+    `merged_events` は **残したクリップの中だけ** で数え直す (全件時の値を
+    そのまま出すと、1 本だけ切り抜いたのに「3 件を束ねた」と報告してしまう)。
+    試合区間の外にあるイベント数 `outside_events` は選択と無関係なので保持する。
+    """
+    wanted = set(event_indexes)
+    if not wanted:
+        # 未指定 = 絞り込まない (CLI の `--event-index` 省略と同じ意味)。
+        return plan
+    kept = tuple(clip for clip in plan.clips if wanted.intersection(clip.event_indexes))
+    return ClipPlan(
+        clips=kept,
+        outside_events=plan.outside_events,
+        merged_events=sum(len(clip.event_indexes) - 1 for clip in kept),
+    )
 
 
 def clip_type_label(signal_ids: Iterable[str]) -> str:
@@ -144,9 +171,9 @@ def plan_clips(
     始まるか」で行う（イベントを畳むたびに終端が伸びるので、連鎖も 1 本になる）。
     """
     spans = _match_spans(matches)
-    ordered: list[tuple[int, float, float, str]] = []
+    ordered: list[tuple[int, float, float, str, int]] = []
     outside = 0
-    for event in events:
+    for position, event in enumerate(events, start=1):
         if not isinstance(event, Mapping):
             # metadata は手編集されうる。`[null]` で AttributeError を投げると
             # exit code が入力エラー (2) から外れるので、型で弾く。
@@ -172,12 +199,12 @@ def plan_clips(
             continue
         start_s = timestamp
         end_s = max(end, start_s)
-        ordered.append((match_index, start_s, end_s, signal_id))
+        ordered.append((match_index, start_s, end_s, signal_id, position))
 
     ordered.sort(key=lambda item: (item[0], item[1], item[2]))
 
     groups: list[dict[str, Any]] = []
-    for match_index, start_s, end_s, signal_id in ordered:
+    for match_index, start_s, end_s, signal_id, position in ordered:
         current = groups[-1] if groups else None
         if (
             current is not None
@@ -188,6 +215,7 @@ def plan_clips(
             if signal_id not in current["signal_ids"]:
                 current["signal_ids"].append(signal_id)
             current["events"] += 1
+            current["positions"].append(position)
             continue
         groups.append(
             {
@@ -196,6 +224,7 @@ def plan_clips(
                 "end": end_s,
                 "signal_ids": [signal_id],
                 "events": 1,
+                "positions": [position],
             }
         )
 
@@ -215,6 +244,7 @@ def plan_clips(
                 start=start,
                 end=end,
                 signal_ids=tuple(sorted(group["signal_ids"])),
+                event_indexes=tuple(sorted(int(p) for p in group["positions"])),
             )
         )
 
@@ -229,5 +259,6 @@ __all__ = [
     "Clip",
     "ClipPlan",
     "clip_type_label",
+    "filter_clips",
     "plan_clips",
 ]

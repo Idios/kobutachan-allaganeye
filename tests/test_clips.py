@@ -13,6 +13,7 @@ from allaganeye.export.clips import (
     DEFAULT_POST_SECONDS,
     DEFAULT_PRE_SECONDS,
     clip_type_label,
+    filter_clips,
     plan_clips,
 )
 
@@ -232,3 +233,89 @@ def test_oversized_integer_match_bounds_are_ignored() -> None:
     plan = plan_clips([_event(200.0)], matches)
     assert plan.clips == ()
     assert plan.outside_events == 1
+
+
+# ---------------------------------------------------------------------------
+# 選択した 1 件だけ (#1131 Q2 C / --event-index)
+# ---------------------------------------------------------------------------
+
+
+def test_clip_records_one_based_event_indexes() -> None:
+    plan = plan_clips(
+        [_event(200.0), _event(203.0, signal_id="assist_indicator")], MATCHES
+    )
+    assert plan.clips[0].event_indexes == (1, 2)
+    assert plan.clips[0].signal_ids == ("assist_indicator", "ko_indicator")
+
+
+def test_event_indexes_keep_original_positions() -> None:
+    """試合外 / 壊れたイベントを挟んでも位置は元の `events[]` の並び。"""
+    events = [_event(50.0, match_index=None), _event(200.0), None]  # type: ignore[list-item]
+    plan = plan_clips(events, MATCHES)
+    assert plan.clips[0].event_indexes == (2,)
+
+
+def test_filter_clips_keeps_only_the_selected_clip() -> None:
+    events = [_event(200.0), _event(700.0, match_index=2)]
+    plan = plan_clips(events, MATCHES)
+    assert [c.index for c in plan.clips] == [1, 2]
+
+    filtered = filter_clips(plan, [2])
+    assert len(filtered.clips) == 1
+    assert filtered.clips[0].match_index == 2
+    # 番号は計画時のまま (振り直さない)。`--name-pattern` の `{idx}` が
+    # 別のクリップを指さないようにするため (Codex review 2026-11-16)。
+    assert filtered.clips[0].index == 2
+    assert filtered.clips[0].event_indexes == (2,)
+
+
+def test_filter_clips_never_maps_two_selections_to_one_name() -> None:
+    """別のイベントを選んだのに同じ `{idx}` にならない (全件 -> 1 件再切り抜き)。"""
+    events = [_event(200.0), _event(700.0, match_index=2)]
+    plan = plan_clips(events, MATCHES)
+
+    first = filter_clips(plan, [1]).clips[0]
+    second = filter_clips(plan, [2]).clips[0]
+
+    assert first.index != second.index
+    assert first.index == plan.clips[0].index
+    assert second.index == plan.clips[1].index
+
+
+def test_filter_clips_selects_the_whole_merged_group() -> None:
+    """束ねられた仲間のうち 1 件を選ぶと、そのクリップ全体（束ね結果）を返す。"""
+    events = [_event(200.0), _event(203.0), _event(700.0, match_index=2)]
+    plan = plan_clips(events, MATCHES)
+    filtered = filter_clips(plan, [2])
+    assert len(filtered.clips) == 1
+    assert filtered.clips[0].event_indexes == (1, 2)
+
+
+def test_filter_clips_with_unknown_index_is_empty() -> None:
+    plan = plan_clips([_event(200.0)], MATCHES)
+    assert filter_clips(plan, [99]).clips == ()
+
+
+def test_filter_clips_with_no_selection_keeps_everything() -> None:
+    plan = plan_clips([_event(200.0), _event(700.0, match_index=2)], MATCHES)
+    assert len(filter_clips(plan, []).clips) == 2
+
+
+def test_filter_clips_recounts_merged_events_within_the_selection() -> None:
+    """1 本だけ残すと `merged_events` もその 1 本分だけになる (過大報告しない)。"""
+    events = [
+        _event(200.0),
+        _event(203.0),
+        _event(206.0),
+        _event(700.0, match_index=2),
+        _event(703.0, match_index=2),
+    ]
+    plan = plan_clips(events, MATCHES)
+    assert plan.merged_events == 3
+
+    assert filter_clips(plan, [4]).merged_events == 1
+    assert filter_clips(plan, [1]).merged_events == 2
+    assert filter_clips(plan, [99]).merged_events == 0
+    # `outside_events` は選択と無関係なので保持する
+    plan_with_outside = plan_clips([*events, _event(50.0, match_index=None)], MATCHES)
+    assert filter_clips(plan_with_outside, [1]).outside_events == 1

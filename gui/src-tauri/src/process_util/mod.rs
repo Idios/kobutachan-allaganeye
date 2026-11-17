@@ -29,17 +29,13 @@ pub mod job_object;
 /// 1.x で `std::os::windows::process::CommandExt::creation_flags` 相当の
 /// 専用 method を提供している ([tokio 1.52 docs](https://docs.rs/tokio/1.52.1/tokio/process/struct.Command.html#method.creation_flags))。
 #[cfg(target_os = "windows")]
-pub(crate) fn apply_no_window(
-    cmd: &mut tokio::process::Command,
-) -> &mut tokio::process::Command {
+pub(crate) fn apply_no_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     cmd.creation_flags(CREATE_NO_WINDOW)
 }
 
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn apply_no_window(
-    cmd: &mut tokio::process::Command,
-) -> &mut tokio::process::Command {
+pub(crate) fn apply_no_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
     cmd
 }
 
@@ -102,6 +98,7 @@ mod tests {
             "pub async fn extract_brightness_window_impl",
             "async fn start_export",            // #761 new
             "async fn enumerate_h264_encoders", // #761 new
+            "async fn start_clips",             // #1131 new
         ] {
             let pos = src
                 .find(func)

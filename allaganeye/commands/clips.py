@@ -37,6 +37,7 @@ from allaganeye.export.clips import (
     DEFAULT_PRE_SECONDS,
     Clip,
     ClipPlan,
+    filter_clips,
     plan_clips,
 )
 from allaganeye.export.encoder import enumerate_h264_encoders
@@ -65,11 +66,17 @@ def load_clip_plan(
     pre: float,
     post: float,
     gap: float,
+    event_indexes: Sequence[int] | None = None,
 ) -> tuple[dict[str, Any], ClipPlan]:
     """metadata.json を読み、クリップ計画まで作る (ffmpeg は起動しない)。"""
     _require_non_negative("--pre", pre)
     _require_non_negative("--post", post)
     _require_non_negative("--gap", gap)
+    for index in event_indexes or ():
+        if index < 1:
+            raise ConfigValidationError(
+                f"--event-index must be >= 1 (1-based position in events[]), got {index}"
+            )
 
     payload = read_metadata(metadata_path)
     events = payload.get("events")
@@ -89,6 +96,10 @@ def load_clip_plan(
             f"{metadata_path}: 'matches' must be a list, got {type(matches).__name__}"
         )
     plan = plan_clips(events, matches, pre=pre, post=post, gap=gap)
+    if event_indexes:
+        # GUI の「選択した 1 件だけ切り抜く」(#1131 Q2 C)。索引は `events[]` の
+        # 1 始まり位置で、束ねられた仲間も含めて 1 本まるごと切り抜く。
+        plan = filter_clips(plan, event_indexes)
     return payload, plan
 
 
@@ -278,6 +289,16 @@ def register(app: typer.Typer) -> None:
                 help="Max parallel encoders for --codec h264 (default: all slots).",
             ),
         ] = None,
+        event_indexes: Annotated[
+            list[int] | None,
+            typer.Option(
+                "--event-index",
+                help=(
+                    "Cut only the clip that contains this 1-based events[] position "
+                    "(repeatable). Omit to cut every clip."
+                ),
+            ),
+        ] = None,
         overwrite: Annotated[
             bool,
             typer.Option(
@@ -357,7 +378,13 @@ def register(app: typer.Typer) -> None:
         signal.signal(signal.SIGINT, lambda signum, frame: cancel_event.set())
         summary: ExportSummary | None = None
         try:
-            payload, plan = load_clip_plan(metadata_path, pre=pre, post=post, gap=gap)
+            payload, plan = load_clip_plan(
+                metadata_path,
+                pre=pre,
+                post=post,
+                gap=gap,
+                event_indexes=event_indexes,
+            )
             by_index.update({clip.index: clip for clip in plan.clips})
             summary = run_clip_plan(
                 plan,
