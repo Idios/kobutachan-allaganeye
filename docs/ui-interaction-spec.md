@@ -717,7 +717,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 
 - `applyError` → inline `role="alert"` 表示済み ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `styles.applyError`)
 - `restoreError` → RestoreButton 内 inline `role="alert"` 表示済み (§2.3.4 と共通)
-- `videoError` (register_video 失敗) → Pane 内 inline `role="alert"` 表示済み ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `Pane` 内 `styles.paneVideoError`)
+- `videoError` (register_video 失敗) → Pane 内 inline `role="alert"` 表示済み ([TimecodePane.tsx](../gui/src/components/TimecodePane.tsx) の `TimecodePane` 内 `styles.paneVideoError`、#1139 で PreviewScreen から共通部品へ移設)
 
 global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutachan-allaganeye/issues/569) で complete 画面と統一する。
 
@@ -761,7 +761,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 | 項目 | 内容 |
 | --- | --- |
-| 種類 | button ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `Pane` component root、`styles.pane` + `data-pane="in\|out"`)。IN (start) / OUT (end) の 2 個。`aria-pressed={active}` |
+| 種類 | button ([TimecodePane.tsx](../gui/src/components/TimecodePane.tsx) の `TimecodePane` component root、`styles.pane` + `data-pane="in\|out"`)。IN (start) / OUT (end) の 2 個。`aria-pressed={active}`。試合境界 (§2.4) とクリップ範囲 (§2.4.18) で同じ部品を使う (#1139) |
 | 状態 | `inactive` / `active` (`editing === 'start'` で IN、`'end'` で OUT) |
 | 遷移トリガー | `onClick` → `props.onActivate()` → `setEditing('start' \| 'end')` |
 | store mutation | なし (local state) |
@@ -771,7 +771,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 | 項目 | 内容 |
 | --- | --- |
-| 種類 | `<video>` ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `Pane` 内 `styles.paneVideoEl`、`aria-label="${label} video"`)。axum 配信 URL を `src` に持つ HTML5 player、`controls={false}` |
+| 種類 | `<video>` ([TimecodePane.tsx](../gui/src/components/TimecodePane.tsx) の `TimecodePane` 内 `styles.paneVideoEl`、`aria-label="${label} video"`)。axum 配信 URL を `src` に持つ HTML5 player、`controls={false}` |
 | 状態 | `loading` (videoUrl null && videoError null → `loading video…` 表示) / `error` (videoError あり → inline `role="alert"`) / `paused` (default、currentTime ↔ startT/endT 双方向同期) / `playing` (`onTimeUpdate` で startT/endT を currentTime に追従) |
 | 遷移トリガー | `onClick` → stopPropagation。inactive なら `onActivate()` のみ、active なら `play()` / `pause()` toggle。`onTimeUpdate` (playing 時のみ) → `onTChange(v.currentTime)` で local state に sync |
 | store mutation | なし。local state `setStartT` / `setEndT` を介して TC を更新 (debounce 経由で 200ms 後に store dirty へ反映、§2.4.6 と同じ機構) |
@@ -781,7 +781,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 | 項目 | 内容 |
 | --- | --- |
-| 種類 | text input ([PreviewScreen.tsx](../gui/src/screens/PreviewScreen.tsx) の `Pane` 内 `styles.tcInput`、`aria-label="${label} timecode"`)。`H:MM:SS.FF` 形式 (FF は frame portion、`source_fps` 連動) |
+| 種類 | text input ([TimecodePane.tsx](../gui/src/components/TimecodePane.tsx) の `TimecodePane` 内 `styles.tcInput`、`aria-label="${label} timecode"`)。`H:MM:SS.FF` 形式 (FF は frame portion、`source_fps` 連動) |
 | 状態 | `idle` / `disabled` (sample mode: `isSample=true` で disabled + tooltip 理由「サンプル動画では保存できません」、[#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済 → §1.4) |
 | 遷移トリガー | `onChange` → `parseTimecode(value, fps)` → 解析成功時 `onTChange(parsed)` (= local `setStartT` / `setEndT`) → schedule effect が pendingPatchRef に `{ edited: { start_time, end_time } }` を merge → 200ms 後に `updateMatch` を 1 回 commit (§1.1 準拠)。`onClick` → stopPropagation で Pane の activate を抑止 |
 | store mutation | debounce 完了時 `metadataStore.metadata.matches[i].edited.start_time/end_time`、`dirty=true`、`draft.json` (#517 別 debounce 500ms) |
@@ -896,6 +896,16 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | 遷移トリガー | マウント直後 / `videoUrl` 解決時に 1 回だけ実行: `inVideoRef.current.currentTime = pendingSeekSeconds` → `setPendingSeekSeconds(null)`。`register_video` 未解決の間は待機し、登録失敗 (`videoError`) 時はシークせず消費だけする |
 | store mutation | `appStateStore.setPendingSeekSeconds(null)` (§1.1 の例外: match 編集ではないため `metadataStore` は触らない) |
 | 例外 / edge case | **IN / OUT の編集バッファ (`startT` / `endT`) には触らない**。値から `currentTime` を再同期する既存 effect は deps 不変なら走らないため、境界も dirty も動かない。§2.4.5 の再生中 sync は `paused` 中のみ `t → currentTime` を書くので、シーク後の TC 表示は境界のまま (「その瞬間を見る」専用) |
+
+#### §2.4.18 クリップ範囲の調整画面 (ClipRangeView、#1139)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | PreviewScreen の**画面状態の差し替え** (`data-testid="clip-range-view"`)。`appStateStore.clipRange.matchIndex` が開いている試合と一致するとき、試合境界エディタの代わりに早期 return で描画する。動画ペインと TC 入力は共通部品 `TimecodePane` を流用 |
+| 状態 | `clipRange.start` / `end` を local state の初期値にし、編集中は local state だけが動く（`metadata.events` は [保存] まで触らない）。`position === null` (metadata に未適用) のときは TC 入力を disabled |
+| 遷移トリガー | TC 入力 / ±1s・±10s nudge（IN は `OUT - 0.01` で止まり追い越さない）/ [⬦ この範囲を保存] → `setEventClipRange(position, {start, end})` + `apply()` / [保存せず戻る]・[◀ クリップ一覧へ] → `navigate('clips')` |
+| store mutation | `metadataStore.setEventClipRange` (`events[position-1].clip_start` / `clip_end` を書いて `dirty`) + `apply()`、`appStateStore.setClipRange` |
+| 例外 / edge case | 試合境界のエディタとは **状態を共有しない**（部品だけ共有）。`clipRange` が `null` で直接来たときは「クリップ範囲が選択されていません」+ [◀ クリップ一覧へ]。`position === null` は保存不可（`clip-range-unlinked`）。`events[position-1]` に `clip_start` があるときは `手動` の注記（`clip-range-manual`）。時刻表示は `fmtPreciseTime`（フレーム付き、編集 precision のため）で、一覧の `hh:mm:ss` とは別 |
 
 ### §2.5 export
 
@@ -1504,7 +1514,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | 候補が 1 件以上のとき常時描画。走行中は [⬦ 切り抜く] のみ disabled (別行の実行中に別の run を重ねない)。`planClipWindows()` が区間を返さない行 (クランプで 0 幅) は範囲を `範囲外` とし、両ボタンを disabled にする。`events[].clip_start` / `clip_end` を持つ行は範囲の隣に `手動` バッジを出す (#1139) |
 | 遷移トリガー | [この範囲を確認] → `planClipWindows()` の区間を `appStateStore.clipRange` (`{start, end, matchIndex}`) に入れ、`pendingSeekSeconds = range.start` → `openPreviewFor(match_index)`。 [⬦ 切り抜く] → `cutOne(position, overwrite=false)` |
 | store mutation | `appStateStore.setClipRange` / `setPendingSeekSeconds` / `openPreviewFor`、または `clipsStore.start()` |
-| 例外 / edge case | 時刻は両方とも `hh:mm:ss` (1 秒切り捨て、出所は `utils/time.ts` の `fmtClockTime`)。`clipRange` の終端は `start` より前にならず、`start` は 0 秒でクランプする。試合区間へのクランプと近接イベントの束ねは `planClipWindows()` が担う (§2.8 ヘッダ)。`clipRange.matchIndex` はプレビュー側のスコープキーで、別の試合を開くとバナーが出ない。ボタンの可視名は `KO 00:08:13 の範囲をプレビューで確認` / `KO 00:08:13 を切り抜く` |
+| 例外 / edge case | 時刻は両方とも `hh:mm:ss` (1 秒切り捨て、出所は `utils/time.ts` の `fmtClockTime`)。`clipRange` の終端は `start` より前にならず、`start` は 0 秒でクランプする。試合区間へのクランプと近接イベントの束ねは `planClipWindows()` が担う (§2.8 ヘッダ)。`clipRange.matchIndex` はクリップ範囲の調整画面 (§2.4.18) のスコープキーで、別の試合を開くと試合境界のエディタに戻る。ボタンの可視名は `KO 00:08:13 の範囲をプレビューで確認` / `KO 00:08:13 を切り抜く` |
 
 #### §2.8.4 前後秒数の検証エラー
 

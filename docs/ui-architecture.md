@@ -54,12 +54,12 @@ stateDiagram-v2
     minimap --> complete: [◀ 一覧へ] (#893)
 
     indicators --> complete: [◀ 一覧へ] / [戻る] (#1106)
-    indicators --> preview: イベント行の click / Enter → クリップ範囲モード (#1139) + pendingSeekSeconds
+    indicators --> preview: イベント行の click / Enter → クリップ範囲の調整画面 (#1139) + pendingSeekSeconds
     indicators --> clips: [⬦ クリップを切り抜く] (既知イベントが 1 件以上あるとき、#1131)
 
     clips --> complete: [◀ 一覧へ] (#1131)
     clips --> indicators: [⬦ KO / ASSIST を検出] (候補 0 件のとき、#1131)
-    clips --> preview: [この範囲を確認] → openPreviewFor + clipRange + pendingSeekSeconds (#1131)
+    clips --> preview: [この範囲を確認] → openPreviewFor + clipRange + pendingSeekSeconds (#1131, クリップ範囲の調整画面 #1139)
     preview --> clips: [◀ 一覧へ] の遷移先は complete (clips へは戻らない、#1131)
 ```
 
@@ -71,7 +71,7 @@ stateDiagram-v2
 >
 > **indicators 画面内の status 遷移** (`idle / running / complete / error`) は §5 の indicators 節および [ui-interaction-spec.md §2.7](ui-interaction-spec.md) を参照 (#1106 Phase 2)。`indicators --> preview` は画面遷移と同時に `appStateStore.pendingSeekSeconds` を積み、PreviewScreen が IN pane の `video.currentTime` に一度だけ反映する (§5 indicators 節)。
 >
-- **clips 画面内の status 遷移** (`idle / running / complete / error`) は §5 の clips 節および [ui-interaction-spec.md §2.8](ui-interaction-spec.md) を参照 (#1131 Phase B2)。`clips --> preview` は `appStateStore.clipRange` (イベントの前後秒数で計算した絶対秒の区間 + `matchIndex`) と `pendingSeekSeconds` を同時に積み、PreviewScreen が範囲バナーと先頭 / 末尾シークを出す。試合境界 (`startT` / `endT`) には触らない。
+- **clips 画面内の status 遷移** (`idle / running / complete / error`) は §5 の clips 節および [ui-interaction-spec.md §2.8](ui-interaction-spec.md) を参照 (#1131 Phase B2)。`clips --> preview` は `appStateStore.clipRange` (イベントの前後秒数で計算した絶対秒の区間 + `matchIndex`) と `pendingSeekSeconds` を同時に積む。**PreviewScreen は `clipRange.matchIndex` が開いている試合と一致するとき、試合境界のエディタではなく `ClipRangeView`（クリップ範囲の調整画面）を描画する**（#1139、[ui-interaction-spec.md §2.4.18](ui-interaction-spec.md)）。試合境界の編集バッファ (`startT` / `endT`) は作らないので、両者の状態は混ざらない。
 
 **アプリ終了**: ウィンドウ右上 `×` (Tauri chrome) = 即時 app exit。任意の screen / phase から `[*]` への遷移は暗黙。Phase 2 では警告なし (dummy のため)。Phase 3/4 で running 中の confirm + process kill を追加予定 (**#523** で追跡)。
 
@@ -484,6 +484,7 @@ App (App.tsx)
 │       └── (screen === 'detecting') DetectingScreen
 │       └── (screen === 'complete') CompleteScreen
 │       └── (screen === 'preview') PreviewScreen (key=selectedMatchIndex で reset)
+│           └── (clipRange.matchIndex === selectedMatchIndex) ClipRangeView (#1139、試合境界エディタの代わりに描画)
 │       └── (screen === 'export') ExportScreen
 │       └── (screen === 'minimap') MinimapScreen (#893)
 │       └── (screen === 'indicators') IndicatorsScreen (#1106 Phase 2)
@@ -505,6 +506,7 @@ components/
 ├── ErrorBoundary / ErrorModal                    (#614、§4 参照。main.tsx で render)
 ├── InlineErrorHint                               (#693 / #694、§4.7 参照)
 ├── DisabledTooltip                               (#587、disabled 理由の提示)
+├── TimecodePane                                  (#1139、IN / OUT の動画ペイン + TC 入力。試合境界とクリップ範囲で共有)
 ├── HelpTip                                       (#1135、設定項目の hover / focus help。ui-interaction-spec §1.7)
 └── LoadingSpinner                                (#587、待機表示)
 

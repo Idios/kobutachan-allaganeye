@@ -21,7 +21,7 @@
     {
       "file": "03-complete.png",
       "screen": "complete",
-      "sha256": "0e21dfb78fdf25d13b56f298e5f3294cc4d92a5e3b7bdbb39780956f4c48fecb"
+      "sha256": "eceb444c2c65457a191697368bd34ce9847ae6caa31cf255af66d4db58b5e278"
     },
     {
       "file": "04-preview.png",
@@ -41,7 +41,7 @@
     {
       "file": "07-indicators.png",
       "screen": "indicators",
-      "sha256": "f329f223e13141ef5843500cedcbb86086e9625d7ff770558c1466b6cd9ef500"
+      "sha256": "09de190e250163629220d2ff3185934863ed6a75e56e881e7ec614ac0a83ca8b"
     },
     {
       "file": "08-clips.png",
