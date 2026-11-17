@@ -272,14 +272,21 @@ describe('planClipWindows (CLI plan_clips の鏡)', () => {
     expect(planClipWindows(events, MATCHES, 10, 10).size).toBe(0);
   });
 
-  // codex review 2026-11-17: JS の half-up 四捨五入と Python の half-even は
-  // 0.005 秒の端で食い違う。丸めなければその差は生じない (表示は秒切り捨て)。
-  it('does not round, so half-centisecond boundaries keep end > start', () => {
+  // codex review 2026-11-17: CLI は round(...,2) してから 0 幅を判定する。GUI は
+  // 丸めない代わりに、丸めたら潰れる幅 (< 0.01 秒) を先に落として揃える。
+  it('drops windows narrower than 0.01 s (CLI rounding would collapse them)', () => {
     const events: HighlightEvent[] = [
-      { ...EVENTS[0], timestamp: 1129.625, end: 1129.626, match_index: 2 },
+      { ...EVENTS[0], timestamp: 1129.621, end: 1129.624, match_index: 2 },
+    ];
+    expect(planClipWindows(events, MATCHES, 0, 0).size).toBe(0);
+  });
+
+  it('keeps windows of 0.01 s or wider (CLI writes them)', () => {
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], timestamp: 1300, end: 1300.02, match_index: 2 },
     ];
     const windows = planClipWindows(events, MATCHES, 0, 0);
-    expectWindow(windows, 1, 1129.625, 1129.626);
+    expectWindow(windows, 1, 1300, 1300.02);
   });
 
   it('counts unknown signal_id events in the merge (CLI does)', () => {

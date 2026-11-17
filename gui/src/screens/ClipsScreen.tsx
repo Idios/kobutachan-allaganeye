@@ -45,6 +45,16 @@ export const DEFAULT_MARGIN_SECONDS = 10;
 /** CLI `clips` の `--gap` 既定値。束ね判定に使う。 */
 export const DEFAULT_GAP_SECONDS = 5;
 
+/**
+ * クリップとして成立する最小幅 (秒)。
+ *
+ * CLI は区間を `round(..., 2)` してから `end <= start` を判定するので、丸めで
+ * 潰れる区間は書き出されない。GUI は丸めない (下の `planClipWindows` の注記) ため、
+ * **丸めたら潰れる幅 < 0.01 秒** を同じく「クリップにならない」として扱う
+ * (fail-closed。codex review 2026-11-17)。
+ */
+const MIN_WINDOW_SECONDS = 0.01;
+
 const SECONDS_RE = /^\d+(\.\d+)?$/;
 
 /** CLI が既存出力を拒否したときの文言 (allaganeye/commands/clips.py)。 */
@@ -121,10 +131,11 @@ export function groupClipCandidates(
  *    `[0, 試合開始, 試合終了]` でクランプする
  * 3. クランプ後に `end <= start` になるグループはクリップにならない
  *
- * **四捨五入はしない**。CLI は argv / `-ss` の精度のために `round(..., 2)` するが、
- * JS の half-up と Python の half-even は 0.005 秒の端で食い違い、その差で
- * 「GUI では範囲外 / CLI では書かれる」が生じる (codex review 2026-11-17)。
- * 表示はどちらも秒未満を切り捨てるので、丸めなくても見た目は変わらない。
+ * **四捨五入はしない**代わりに、**0.01 秒未満の区間はクリップにしない**。CLI は
+ * argv / `-ss` の精度のために `round(..., 2)` してから 0 幅を判定する。JS の
+ * half-up と Python の half-even を完全に再現するより、「丸めたら潰れる幅」を
+ * 先に落とすほうが単純で、CLI が書かないクリップを GUI が提供しないことを保証できる
+ * (codex review 2026-11-17)。0.01 秒以上の区間では表示 (秒切り捨て) が変わらない。
  *
  * 戻り値は **`metadata.events` の 1 始まり位置 -> 区間**。
  */
@@ -181,7 +192,7 @@ export function planClipWindows(
     const span = spans.get(group.matchIndex)!;
     const start = Math.max(0, span.start, group.start - pre);
     const end = Math.min(span.end, group.end + post);
-    if (end > start) {
+    if (end - start >= MIN_WINDOW_SECONDS) {
       for (const position of group.positions) windows.set(position, { start, end });
     }
     group = null;
