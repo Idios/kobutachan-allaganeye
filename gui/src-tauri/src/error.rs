@@ -113,8 +113,8 @@ impl From<String> for AppError {
 }
 
 /// AppError code に対する日本語 default hint を返す。未登録 code は None。
-/// 25 codes (or-pattern `io.would_block | io.timed_out` を 2 codes に展開後、23 hint
-/// + 2 None = 25)。現在の lib.rs inventory: io.* / parse.* / state.* / subprocess.* /
+/// 26 codes (or-pattern `io.would_block | io.timed_out` を 2 codes に展開後、24 hint
+/// + 2 None = 26)。現在の lib.rs inventory: io.* / parse.* / state.* / subprocess.* /
 /// validation.* / path.* / platform.* / internal.*。
 /// 文言は `docs/tauri-commands.md` の AppError default hint mapping table と一致させる
 /// (本 fn が source of truth、docs は mirror、`.github/scripts/check-error-hint-drift.sh`
@@ -187,6 +187,10 @@ fn default_hint_for_code(code: &str) -> Option<&'static str> {
         ),
         "validation.range_invalid" => Some(
             "入力された数値が許容範囲外です。フォーム下のヒント表示を確認してください"
+        ),
+        // #1136 -- 検知経路 (`--masked` / `--vtuber`) の同時指定
+        "validation.detection_path_conflict" => Some(
+            "検知経路は 1 つだけ選んでください。「マスク録画」と「配信レイアウト」は同時に指定できません"
         ),
         // path / platform / internal
         "path.install_dir_unresolved" => Some(
@@ -308,6 +312,7 @@ mod tests {
             "subprocess.spawn_failed", "subprocess.exit_failed",
             "validation.path_invalid", "validation.not_a_file", "validation.range_invalid",
             "validation.boundary_invalid",
+            "validation.detection_path_conflict",
             "path.install_dir_unresolved", "platform.unsupported",
         ];
         for code in with_hint {

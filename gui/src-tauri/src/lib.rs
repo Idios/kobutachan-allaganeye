@@ -2134,6 +2134,15 @@ pub struct DetectParams {
     /// `Some(true)` -> `--gpu`, `Some(false)` -> `--no-gpu`, `None` -> auto.
     pub gpu: Option<bool>,
     pub gpu_vendor: Option<String>,
+    /// #1136 -- `Some(true)` -> `--masked` (chat-overlay masked recordings).
+    /// Any other value leaves the flag off the argv so the CLI default
+    /// (standard detection + zero-blackout masked fallback) applies.
+    pub masked: Option<bool>,
+    /// #1136 -- `Some(true)` -> `--vtuber` (inset game-area stream layouts).
+    /// Mutually exclusive with `masked` (CLI exit 5); `start_detect` rejects
+    /// the pair before spawning so a caller that bypasses the frontend's
+    /// single-choice radio cannot reach the subprocess.
+    pub vtuber: Option<bool>,
 }
 
 /// #569 -- one progress event emitted on channel `detect-progress`.
@@ -2423,7 +2432,35 @@ fn detect_command_args(video_path: &str, output_dir: &str, params: &DetectParams
             args.push(vendor.to_string());
         }
     }
+    // #1136 -- 検知経路。`standard` では両方 omit なので、`--gpu-vendor` まで
+    // の argv は #1136 以前と 1 バイトも変わらない (unit test で pin)。
+    if params.masked.unwrap_or(false) {
+        args.push("--masked".to_string());
+    }
+    if params.vtuber.unwrap_or(false) {
+        args.push("--vtuber".to_string());
+    }
     args
+}
+
+/// #1136 -- 検知経路の排他検証。`--masked` と `--vtuber` は CLI で相互排他
+/// (同時指定は exit 5) なので、subprocess を起動する前に Rust 側で拒否する。
+///
+/// フロントエンドは 3 値 radio (`detectionPath`) なので両方を送る経路は無いが、
+/// `start_detect` は Tauri command として直接 invoke できるため、frontend の型に
+/// 依存しない fail-closed を Rust 側にも置く (多層防御)。argv 組み立てと同じく
+/// 純関数にして unit test で pin する。
+fn detect_params_conflict(params: &DetectParams) -> Option<AppError> {
+    if params.masked == Some(true) && params.vtuber == Some(true) {
+        return Some(
+            AppError::new(
+                "validation.detection_path_conflict",
+                "masked and vtuber are mutually exclusive",
+            )
+            .with_default_hint(),
+        );
+    }
+    None
 }
 
 /// #569 -- spawn `allaganeye detect --progress-format json` and stream
@@ -2444,6 +2481,10 @@ async fn start_detect(
     params: DetectParams,
     run_id: String,
 ) -> Result<DetectResult, AppError> {
+    // #1136 -- 引数検証は副作用 (output dir 作成 / spawn) より前に済ませる。
+    if let Some(err) = detect_params_conflict(&params) {
+        return Err(err);
+    }
     let video = PathBuf::from(&video_path);
     if !video.exists() {
         return Err(AppError::new(
@@ -7018,6 +7059,116 @@ mod tests {
             },
         );
         assert!(!args.iter().any(|a| a == "--gpu-vendor"));
+    }
+
+    // -- #1136 detection path (--masked / --vtuber) -----------------------
+
+    /// #1136 -- 「標準」経路 (`masked` / `vtuber` とも未指定) の argv が
+    /// #1136 以前と完全一致すること。差分が 1 要素でも出たら (完了条件
+    /// 「1 バイトも変わらない」) この assert が落ちる。
+    #[test]
+    fn detect_command_args_omits_both_for_standard() {
+        let args = detect_command_args("in.mkv", "out", &DetectParams::default());
+        assert_eq!(
+            args,
+            vec!["detect", "in.mkv", "-o", "out", "--progress-format", "json",]
+        );
+    }
+
+    #[test]
+    fn detect_command_args_emits_masked_only_when_true() {
+        let args_on = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                masked: Some(true),
+                ..Default::default()
+            },
+        );
+        assert!(args_on.iter().any(|a| a == "--masked"));
+        assert!(!args_on.iter().any(|a| a == "--vtuber"));
+        assert_eq!(args_on.last().map(String::as_str), Some("--masked"));
+
+        // `Some(false)` は「標準」と同じ (flag を載せない)。
+        let args_off = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                masked: Some(false),
+                ..Default::default()
+            },
+        );
+        assert!(!args_off.iter().any(|a| a == "--masked"));
+        assert_eq!(
+            args_off,
+            detect_command_args("in.mkv", "out", &DetectParams::default())
+        );
+    }
+
+    #[test]
+    fn detect_command_args_emits_vtuber_only_when_true() {
+        let args_on = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                vtuber: Some(true),
+                ..Default::default()
+            },
+        );
+        assert!(args_on.iter().any(|a| a == "--vtuber"));
+        assert!(!args_on.iter().any(|a| a == "--masked"));
+
+        let args_off = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                vtuber: Some(false),
+                ..Default::default()
+            },
+        );
+        assert!(!args_off.iter().any(|a| a == "--vtuber"));
+    }
+
+    /// #1136 -- `--masked` と `--vtuber` の同時指定は Rust 側で拒否する
+    /// (CLI の exit 5 に到達する前に、frontend の型に依存せずに止める)。
+    #[test]
+    fn detect_params_conflict_rejects_masked_and_vtuber() {
+        let err = detect_params_conflict(&DetectParams {
+            masked: Some(true),
+            vtuber: Some(true),
+            ..Default::default()
+        })
+        .expect("both flags must be rejected");
+        assert_eq!(err.code, "validation.detection_path_conflict");
+        assert!(err.hint.is_some(), "conflict must carry the default hint");
+    }
+
+    /// 単独選択と「未指定 = 標準」は通す (過剰拒否しないことの pin)。
+    #[test]
+    fn detect_params_conflict_allows_single_or_no_path() {
+        for params in [
+            DetectParams::default(),
+            DetectParams {
+                masked: Some(true),
+                ..Default::default()
+            },
+            DetectParams {
+                vtuber: Some(true),
+                ..Default::default()
+            },
+            // `Some(false)` は flag を載せない = 標準と同じなので衝突しない。
+            DetectParams {
+                masked: Some(false),
+                vtuber: Some(true),
+                ..Default::default()
+            },
+        ] {
+            assert!(
+                detect_params_conflict(&params).is_none(),
+                "unexpected conflict for {:?}",
+                params
+            );
+        }
     }
 
     // -- #646 resolve_allaganeye_command parts -----------------------------

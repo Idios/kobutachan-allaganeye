@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **マスク録画・配信レイアウト録画の検知経路を GUI から選べるようになりました**
+  ([#1136](https://github.com/Idios/kobutachan-allaganeye/issues/1136)):
+  録画を選んだあとの「詳細設定」に「検知経路」を追加しました。「標準」は従来どおりの
+  暗転検知、「マスク録画」はチャット欄を画像でマスクした録画向け（CLI の `--masked`
+  相当）、「配信レイアウト」はゲーム画面が画面全体でない配信録画向け（CLI の
+  `--vtuber` 相当）です。これまではこの 2 つを指定する手段が CLI しかなく、GUI だけで
+  検知を完結できませんでした。2 つは同時に選べません（CLI でも排他エラーになります）。
+  あわせて、検知に失敗したときの案内と完了画面の通知を、CLI ではなく詳細設定の
+  検知経路を指す文言に変えました。
+
 - **検知設定の意味が画面上で読めるようになりました**
   ([#1135](https://github.com/Idios/kobutachan-allaganeye/issues/1135)):
   録画を選んだあとの「詳細設定」にある「検知しきい値」「ワーカー数」「GPU」の横に

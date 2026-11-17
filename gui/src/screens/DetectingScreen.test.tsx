@@ -988,6 +988,38 @@ describe('DetectingScreen', () => {
     expect(useAppStateStore.getState().screen).toBe('detecting');
   });
 
+  // #1136 -- 検知失敗時の案内が CLI ではなく GUI の詳細設定を指す。
+  // 旧文言 (#944 §D) は「GUI からは指定できません」と CLI へ逃がしていた。
+  it('points the failure advice at the GUI detection path (#1136)', async () => {
+    invokeMock.mockImplementation((cmd) => {
+      if (cmd === 'start_detect') {
+        return new Promise(() => {
+          /* never resolves */
+        });
+      }
+      return Promise.resolve(null);
+    });
+    render(<DetectingScreen />);
+    await waitFor(() => {
+      expect(listenMock).toHaveBeenCalled();
+    });
+    act(() => {
+      emitDetectProgress({
+        phase: 'error',
+        message: 'No match boundaries detected.',
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('detecting-error')).toBeInTheDocument();
+    });
+    const advice = screen.getByTestId('detecting-error-advice');
+    // JSX の折り返しで空白が入るので正規表現で突き合わせる。
+    expect(advice).toHaveTextContent(/\[詳細設定\] の\s*検知経路/);
+    expect(advice).toHaveTextContent('マスク録画');
+    expect(advice).toHaveTextContent('配信レイアウト');
+    expect(advice).not.toHaveTextContent('GUI からは指定できません');
+  });
+
   it('falls back to loadSample when no video is selected (StateSwitcher dev mode)', async () => {
     // Reset to a clean state without selectedVideoPath -- mimics the
     // StateSwitcher hopping straight into "detecting" without going

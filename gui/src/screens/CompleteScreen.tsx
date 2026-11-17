@@ -113,8 +113,12 @@ export function CompleteScreen() {
   // #944 §D: masked fallback は 0 暗転時に自動発火するが、GUI へは何も伝えて
   // いなかった (`masked_fallback_used` は schema にあるのにどこにも描画されて
   // いない)。ユーザーは通常経路との違いを知る手段が無かった。
+  // #1136: 明示的に「マスク録画」を選んだ場合 (`masked=true`) も resolved な
+  // `masked_fallback_used` は true になるため、文言を分けないと「選んだのに
+  // 自動で切り替えたと書かれる」矛盾になる。
   const maskedFallbackUsed =
     metadata.detection_params?.masked_fallback_used === true;
+  const maskedRequestedExplicitly = metadata.detection_params?.masked === true;
 
   return (
     <div className={styles.screen} data-testid="complete-screen">
@@ -124,11 +128,25 @@ export function CompleteScreen() {
           className={styles.fallbackNotice}
           role="status"
           data-testid="complete-masked-fallback-notice"
+          data-detection-path={
+            maskedRequestedExplicitly ? 'masked-explicit' : 'masked-auto'
+          }
         >
-          通常の検知で暗転が見つからなかったため、<b>マスク録画向けの経路</b>
-          （CLI の <code>--masked</code> 相当）に自動で切り替えて検知しました。
-          結果が期待と違う場合は、CLI で <code>--masked</code> や{' '}
-          <code>--vtuber</code> を明示して再検知してください。
+          {maskedRequestedExplicitly ? (
+            <>
+              選択した <b>マスク録画</b> の経路（<code>--masked</code> 相当）で
+              検知しました。結果が期待と違う場合は、[詳細設定] の検知しきい値を
+              調整するか、配信レイアウトの録画なら検知経路で「配信レイアウト」を
+              選んで再検知してください。
+            </>
+          ) : (
+            <>
+              通常の検知で暗転が見つからなかったため、<b>マスク録画向けの経路</b>
+              （<code>--masked</code> 相当）に自動で切り替えて検知しました。
+              結果が期待と違う場合は、[詳細設定] の検知経路で「マスク録画」または
+              「配信レイアウト」を選んで再検知してください。
+            </>
+          )}
         </div>
       )}
       <div className={styles.topBar}>
