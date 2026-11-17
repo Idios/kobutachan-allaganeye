@@ -28,7 +28,7 @@
 | error-hints | Tauri error と hint の対応 | gui/src-tauri/src/error.rs | docs/tauri-commands.md | checked | ci:doc-error-hint-drift | active |
 | shipped-commands | 出荷サブコマンド集合 | allaganeye/cli.py | README.md, docs/quickstart.md | checked | ci:feature-announcement | active |
 | model-routing | 用途別モデル割当 | AGENTS.md | docs/l2-workflow.md, .claude/agents/ | prose-only | none | active |
-| gui-screens | GUI 画面数 6 | gui/src/screens | AGENTS.md, docs/gui-development.md, docs/ui-architecture.md, docs/ui-interaction-spec.md | prose-only | none | active |
+| gui-screens | GUI 画面数 7 | gui/src/screens | AGENTS.md, docs/gui-development.md, docs/ui-architecture.md, docs/ui-interaction-spec.md | prose-only | none | active |
 | detection-modules | allaganeye モジュール一覧 | allaganeye | AGENTS.md | prose-only | none | active |
 | codex-invocation | codex CLI の focus 渡し方 (`--base` と `[PROMPT]` の併用不可 / PROMPT 単独形式) | docs/l2-workflow.md | .agents/skills/review-pr/SKILL.md, .agents/skills/iterate-review/SKILL.md | prose-only | none | active |
 | sweep-classes | 用語 sweep checker の検出 class 5 種 | scripts/check_agent_migration_sweep.py | AGENTS.md, .github/workflows/ci.yml, tests/scripts/test_check_agent_migration_sweep.py | prose-only | none | active |
@@ -51,7 +51,7 @@
 ### prose-only の理由
 
 - `model-routing`: モデル名は外部サービス側の名称で、repo 内に機械可読な正が無い。**再確認トリガー**: モデルの追加・廃止 / ルーティング表の行追加・削除 / Zed の `spawn_agent` 仕様変更。変更時は `AGENTS.md` §モデルルーティング を起点に手動照合する
-- `gui-screens`: 画面数はディレクトリから数えられるが、doc 側の「6 画面」は文脈付きの主張で、機械抽出すると誤検出が多い。**再確認トリガー**: `gui/src/screens/` への画面追加・削除。追加・削除時に ls して確認する
+- `gui-screens`: 画面数の正は `gui/src/state/appStateStore.ts` の `AppScreen`（現在 7）。`gui/src/screens/` には画面でないコンポーネント (`DetectionParamsPanel.tsx`) も同居するため、**ディレクトリの `.tsx` 数とは一致しない**（実測 8）。doc 側の画面数の主張は文脈付きで機械抽出すると誤検出が多いため prose-only。**再確認トリガー**: `AppScreen` への追加・削除。変更時に台帳の数と doc の「N 画面」を照合する
 - `detection-modules`: `AGENTS.md` §モジュール構成 は索引であり、`detection/*` は行内で列挙される。完全一致を強制すると索引の自由度を失う。**再確認トリガー**: `allaganeye/` への module 追加・削除・rename。`scripts/check_doc_code_refs.py` の symbol 検査が rename を拾う
 - `codex-invocation`: 検証対象は **外部 CLI (`codex`) の受理仕様**であり、CI に `codex` を持ち込まない方針のため機械検証しない。**再実測トリガー**: `codex` CLI を version up したとき / `codex review --help` の `[PROMPT]`・`--base` の記述が変わったとき。実測記録は `docs/l2-workflow.md` §Step 5 の invocation path の注記 (日付・version 付き)
 - `sweep-classes`: class 名の列挙と一致検査の詳細は `tests/scripts/test_check_agent_migration_sweep.py` の `_DETECTION_CLASS_TOKENS` と `test_declarations_are_consistent_across_spots` を正とする。**台帳の gate では検証しない** (`gate: none`)。`ci:<job>` は job 単位、`script:<path>::<func>` は関数単位でしか指せず、同 test の一致検査を `checked` として表せない (弱い gate を `checked` と提示すると、何を検査しているかを誤読させる)。**再確認トリガー**: checker に検出 class を追加・削除したとき / `AGENTS.md` の sweep 種別列挙を編集したとき
