@@ -501,6 +501,39 @@ def test_clips_event_index_is_repeatable(
     assert [m.index for m in export_stub.matches] == [1, 2]
 
 
+def test_clips_expected_mtime_matches_and_proceeds(
+    app: typer.Typer, tmp_path: Path, export_stub: _Call
+) -> None:
+    metadata = _metadata(tmp_path)
+    mtime = metadata.stat().st_mtime_ns // 1_000_000
+    result = runner.invoke(
+        app, ["clips", str(metadata), "--expected-mtime", str(mtime)]
+    )
+    assert result.exit_code == 0, result.output
+    assert export_stub.matches
+
+
+def test_clips_expected_mtime_mismatch_exits_6(
+    app: typer.Typer, tmp_path: Path, export_stub: _Call
+) -> None:
+    """GUI が見ていた metadata.json と違うなら計画しない (位置が古い)。"""
+    metadata = _metadata(tmp_path)
+    result = runner.invoke(app, ["clips", str(metadata), "--expected-mtime", "1"])
+    assert result.exit_code == 6
+    assert "changed on disk" in result.output
+    assert export_stub.matches == []
+
+
+def test_clips_without_expected_mtime_does_not_compare(
+    app: typer.Typer, tmp_path: Path, export_stub: _Call
+) -> None:
+    """CLI 単体 (--expected-mtime 無し) は従来どおり動く。"""
+    metadata = _metadata(tmp_path)
+    result = runner.invoke(app, ["clips", str(metadata)])
+    assert result.exit_code == 0, result.output
+    assert export_stub.matches
+
+
 def test_clips_event_index_keeps_names_stable_across_single_cuts(
     app: typer.Typer, tmp_path: Path, export_stub: _Call
 ) -> None:

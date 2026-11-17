@@ -31,7 +31,6 @@ import {
   ClipsScreen,
   DEFAULT_GAP_SECONDS,
   DEFAULT_MARGIN_SECONDS,
-  clipRangeFor,
   collectClipCandidates,
   groupClipCandidates,
   parseMargins,
@@ -201,10 +200,23 @@ describe('planClipWindows (CLI plan_clips の鏡)', () => {
     { index: 2, start_time: 1129.5, end_time: 2089.375 },
   ];
 
+  /** 浮動小数の誤差を許して比較する (`round` しないので端数が残る)。 */
+  function expectWindow(
+    windows: ReturnType<typeof planClipWindows>,
+    position: number,
+    start: number,
+    end: number,
+  ): void {
+    const window = windows.get(position);
+    expect(window).toBeDefined();
+    expect(window!.start).toBeCloseTo(start, 6);
+    expect(window!.end).toBeCloseTo(end, 6);
+  }
+
   it('expands each isolated event by pre / post', () => {
     const windows = planClipWindows(EVENTS, MATCHES, 10, 10);
-    expect(windows.get(1)).toEqual({ start: 483.4, end: 504.9 });
-    expect(windows.get(4)).toEqual({ start: 196.4, end: 217.9 });
+    expectWindow(windows, 1, 483.4, 504.9);
+    expectWindow(windows, 4, 196.4, 217.9);
   });
 
   it('merges neighbours within gap into one window (CLI default 5 s)', () => {
@@ -213,8 +225,8 @@ describe('planClipWindows (CLI plan_clips の鏡)', () => {
       { ...EVENTS[0], timestamp: 303, end: 304 },
     ];
     const windows = planClipWindows(events, MATCHES, 10, 10);
-    expect(windows.get(1)).toEqual({ start: 290, end: 314 });
-    expect(windows.get(2)).toEqual({ start: 290, end: 314 });
+    expectWindow(windows, 1, 290, 314);
+    expectWindow(windows, 2, 290, 314);
   });
 
   it('does not merge across a gap larger than gap', () => {
@@ -223,8 +235,8 @@ describe('planClipWindows (CLI plan_clips の鏡)', () => {
       { ...EVENTS[0], timestamp: 320, end: 321 },
     ];
     const windows = planClipWindows(events, MATCHES, 10, 10);
-    expect(windows.get(1)).toEqual({ start: 290, end: 311 });
-    expect(windows.get(2)).toEqual({ start: 310, end: 331 });
+    expectWindow(windows, 1, 290, 311);
+    expectWindow(windows, 2, 310, 331);
   });
 
   it('clamps to the match span', () => {
@@ -233,8 +245,8 @@ describe('planClipWindows (CLI plan_clips の鏡)', () => {
       { ...EVENTS[0], timestamp: 900, end: 910 },
     ];
     const windows = planClipWindows(events, MATCHES, 10, 10);
-    expect(windows.get(1)).toEqual({ start: 0, end: 16 });
-    expect(windows.get(2)).toEqual({ start: 890, end: 915.5 });
+    expectWindow(windows, 1, 0, 16);
+    expectWindow(windows, 2, 890, 915.5);
   });
 
   it('drops events outside every match span', () => {
@@ -249,7 +261,7 @@ describe('planClipWindows (CLI plan_clips の鏡)', () => {
       10,
     );
     expect(windows.size).toBe(1);
-    expect(windows.get(1)).toEqual({ start: 1190, end: 1211 });
+    expectWindow(windows, 1, 1190, 1211);
   });
 
   it('returns no window when the clamp leaves nothing', () => {
@@ -260,41 +272,23 @@ describe('planClipWindows (CLI plan_clips の鏡)', () => {
     expect(planClipWindows(events, MATCHES, 10, 10).size).toBe(0);
   });
 
+  // codex review 2026-11-17: JS の half-up 四捨五入と Python の half-even は
+  // 0.005 秒の端で食い違う。丸めなければその差は生じない (表示は秒切り捨て)。
+  it('does not round, so half-centisecond boundaries keep end > start', () => {
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], timestamp: 1129.625, end: 1129.626, match_index: 2 },
+    ];
+    const windows = planClipWindows(events, MATCHES, 0, 0);
+    expectWindow(windows, 1, 1129.625, 1129.626);
+  });
+
   it('counts unknown signal_id events in the merge (CLI does)', () => {
     const events: HighlightEvent[] = [
       { ...EVENTS[0], timestamp: 300, end: 301 },
       { ...EVENTS[1], timestamp: 303, end: 304 },
     ];
     const windows = planClipWindows(events, MATCHES, 10, 10);
-    expect(windows.get(2)).toEqual({ start: 290, end: 314 });
-  });
-});
-
-describe('clipRangeFor', () => {
-  it('expands the event by pre / post', () => {
-    expect(clipRangeFor({ timestamp: 493.4, end: 494.9 }, 10, 10)).toEqual({
-      start: 483.4,
-      end: 504.9,
-    });
-  });
-
-  it('clamps the start at 0', () => {
-    expect(clipRangeFor({ timestamp: 3, end: 4 }, 10, 10)).toEqual({
-      start: 0,
-      end: 14,
-    });
-  });
-
-  it('never produces end < start', () => {
-    const range = clipRangeFor({ timestamp: 3, end: 4 }, 100, 0);
-    expect(range.end).toBeGreaterThanOrEqual(range.start);
-  });
-
-  it('rounds to 0.01 s like the CLI', () => {
-    expect(clipRangeFor({ timestamp: 12.345, end: 13.456 }, 0.111, 0.222)).toEqual({
-      start: 12.23,
-      end: 13.68,
-    });
+    expectWindow(windows, 2, 290, 314);
   });
 });
 
@@ -496,6 +490,8 @@ describe('ClipsScreen actions', () => {
         codec: 'copy',
         eventIndexes: [4],
         overwrite: false,
+        // read-time CAS (読み取り前後の mtime 一致を CLI が検証する)
+        expectedMtime: 42,
       },
     });
   });

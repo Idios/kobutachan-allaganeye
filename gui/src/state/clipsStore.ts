@@ -75,6 +75,12 @@ export interface ClipsRequest {
    * 同意があるときだけ true にする。
    */
   overwrite?: boolean;
+  /**
+   * CLI `--expected-mtime` (read-time CAS)。GUI がロード時の mtime を渡すと、
+   * 読み取りの前後で `events[]` が変わっていないことを CLI が検証する
+   * (`--event-index` の位置が古いまま別のイベントを切り抜くのを防ぐ)。
+   */
+  expectedMtime?: number | null;
 }
 
 export type ClipsStatus = 'idle' | 'running' | 'complete' | 'error';

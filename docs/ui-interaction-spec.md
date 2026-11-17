@@ -1422,7 +1422,9 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 **spawn 直前の mtime 照合**: 同じ理由で、`dirty` が false でも `events[]` が**外部プロセスに書き換えられて**いる可能性がある (別端末で `allaganeye indicators` を回す等)。[⬦ 切り抜く] は spawn 前に `get_metadata_mtime` で disk の mtime を照合し、`loadedMtimeMs` と一致しなければ実行せず `refreshFromDiskPreservingEdits()` で候補を読み直して注意書き (`data-testid="clips-stale-note"`) を出す。mtime を取れないときも fail-closed で実行しない。
 
-**表示する範囲 = 実際に書かれる範囲**: 行の「範囲」とプレビューの `clipRange` は `planClipWindows()` の戻り値を使う。これは CLI (`allaganeye/export/clips.py` の `plan_clips`) の **近接束ね (`--gap` 既定 5 秒) + 試合区間クランプ** を GUI 側で鏡にしたもので、自前の `clipRangeFor()` (単独イベントの前後) を表示に使うと「表示と違う長さのファイルが出る」ことになる (codex review 2026-11-17)。鏡にしている都合上、CLI 側の束ね規則を変えたら本関数も同時に直す必要がある。
+**CLI 側の read-time CAS**: 上の照合と spawn の間にも外部変更は入り得るので、`start_clips` は `expectedMtime` (CLI `--expected-mtime`) を**常に**渡し、CLI が metadata.json の読み取り前後の mtime 一致を検証する。不一致は CLI exit 6 → `state.mtime_conflict` で、位置が古いまま別のイベントを切り抜く経路は閉じている。
+
+**表示する範囲 = 実際に書かれる範囲**: 行の「範囲」とプレビューの `clipRange` は `planClipWindows()` の戻り値を使う。これは CLI (`allaganeye/export/clips.py` の `plan_clips`) の **近接束ね (`--gap` 既定 5 秒) + 試合区間クランプ** を GUI 側で鏡にしたもの (codex review 2026-11-17)。単独イベントの前後だけを見せると「表示と違う長さのファイルが出る」ため。**四捨五入はしない** (JS の half-up と Python の half-even が 0.005 秒の端で食い違い、GUI だけが範囲外と判定する差になる)。鏡にしている都合上、CLI 側の束ね / クランプ規則を変えたら本関数も同時に直す必要がある。
 
 #### §2.8.1 前後秒数 / 形式のフォーム
 
@@ -1482,7 +1484,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | `status === 'error'` のとき。上書き再実行は `error.message` に `already exist` を含むとき**だけ**出す |
 | 遷移トリガー | [上書きして切り抜く] → 直前に実行した `position` を `overwrite: true` で再実行 |
 | store mutation | `clipsStore.start()` |
-| 例外 / edge case | CLI は既存出力を既定で拒否する (exit 5、無確認の truncate 防止)。exit 5 はオプション値不正と共用なので、`already exist` の文言でのみ上書き導線を出す (秒数のミスで勝手に上書きしない)。上書き再実行も `cutOne()` を通るので、`dirty` / mtime 不一致 / sample mode では同じく止まる (§2.8 ヘッダ)。中断で書きかけの MP4 が残る件は [#1132](https://github.com/Idios/kobutachan-allaganeye/issues/1132) |
+| 例外 / edge case | CLI は既存出力を既定で拒否する (exit 5、無確認の truncate 防止)。exit 5 はオプション値不正と共用なので、`already exist` の文言でのみ上書き導線を出す (秒数のミスで勝手に上書きしない)。上書き再実行も `cutOne()` を通るので、`dirty` / mtime 不一致 / sample mode では同じく止まる (§2.8 ヘッダ)。exit 6 (read-time CAS) は `state.mtime_conflict` として `error.message` に出る。中断で書きかけの MP4 が残る件は [#1132](https://github.com/Idios/kobutachan-allaganeye/issues/1132) |
 
 #### §2.8.7 [◀ 一覧へ] / [⬦ KO / ASSIST を検出] / header
 

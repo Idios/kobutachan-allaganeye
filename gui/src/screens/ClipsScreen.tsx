@@ -109,33 +109,6 @@ export function groupClipCandidates(
 }
 
 /**
- * イベント 1 件の切り抜き区間 (元録画の絶対秒)。CLI と同じく 0 秒でクランプし、
- * 終端が開始より前にならないようにする。
- *
- * これは **単独イベント** の区間で、実際に書き出されるクリップは近接イベントを
- * 束ねて試合区間へクランプした結果になる。画面表示 / プレビューには
- * [`planClipWindows`] の戻り値を使うこと。
- */
-export function clipRangeFor(
-  event: Pick<HighlightEvent, 'timestamp' | 'end'>,
-  pre: number,
-  post: number,
-): { start: number; end: number } {
-  const start = Math.max(0, event.timestamp - pre);
-  const end = Math.max(start, event.end + post);
-  return { start: round2(start), end: round2(end) };
-}
-
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
-export interface ClipWindow {
-  start: number;
-  end: number;
-}
-
-/**
  * CLI (`allaganeye/export/clips.py` の `plan_clips` + `filter_clips`) と同じ規則で
  * **実際に書き出される区間** を求める。
  *
@@ -148,8 +121,18 @@ export interface ClipWindow {
  *    `[0, 試合開始, 試合終了]` でクランプする
  * 3. クランプ後に `end <= start` になるグループはクリップにならない
  *
+ * **四捨五入はしない**。CLI は argv / `-ss` の精度のために `round(..., 2)` するが、
+ * JS の half-up と Python の half-even は 0.005 秒の端で食い違い、その差で
+ * 「GUI では範囲外 / CLI では書かれる」が生じる (codex review 2026-11-17)。
+ * 表示はどちらも秒未満を切り捨てるので、丸めなくても見た目は変わらない。
+ *
  * 戻り値は **`metadata.events` の 1 始まり位置 -> 区間**。
  */
+export interface ClipWindow {
+  start: number;
+  end: number;
+}
+
 export function planClipWindows(
   events: readonly HighlightEvent[] | undefined,
   matches: readonly { index: number; start_time: number; end_time: number }[],
@@ -196,8 +179,8 @@ export function planClipWindows(
   const flush = () => {
     if (group === null) return;
     const span = spans.get(group.matchIndex)!;
-    const start = round2(Math.max(0, span.start, group.start - pre));
-    const end = round2(Math.min(span.end, group.end + post));
+    const start = Math.max(0, span.start, group.start - pre);
+    const end = Math.min(span.end, group.end + post);
     if (end > start) {
       for (const position of group.positions) windows.set(position, { start, end });
     }
@@ -403,6 +386,9 @@ export function ClipsScreen() {
       codec,
       eventIndexes: [position],
       overwrite,
+      // read-time CAS: 読み取り直前に CLI が同じ mtime を見ることを強制する
+      // (上の mtime 照合と spawn の間に外部変更が入っても、CLI 側で exit 6 になる)。
+      expectedMtime: knownMtime,
     };
     try {
       await start(request);
