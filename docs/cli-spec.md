@@ -613,13 +613,16 @@ KO: 1 / ASSIST: 2 (3 intervals)
 - 出力は `export` と同じ並列実行 / encoder fallback / path sandbox を共有する
 - **既存ファイルは既定で置き換えない**（`--overwrite` で明示的に許可）。失敗した再実行が
   前回のクリップを壊さないようにするため
+- `--event-index N` で **1 本だけ切り抜ける**（繰り返し可）。索引は `events[]` の
+  1 始まりの位置で、束ねられた仲間のどれを指定してもそのクリップ全体を書き出す
+  （GUI の「選択した 1 件だけ切り抜く」がこの経路を使う・#1131）
 
 ### 構文
 
 ```bash
 allaganeye clips <metadata.json> [-o DIR] [--pre SEC] [--post SEC] [--gap SEC]
                  [--codec copy|h264] [--name-pattern PATTERN] [--concurrency N]
-                 [--json] [--quiet]
+                 [--event-index N ...] [--overwrite] [--json] [--quiet]
 ```
 
 ### 引数
@@ -639,6 +642,7 @@ allaganeye clips <metadata.json> [-o DIR] [--pre SEC] [--post SEC] [--gap SEC]
 | `--codec MODE` | `copy` | `copy` = 無劣化（キーフレーム丸め）/ `h264` = 再エンコード（NVENC・QSV・AMF・libx264 を自動選択し、失敗時は libx264 へ fallback）。`copy` / `h264` 以外は **exit 5** |
 | `--name-pattern PATTERN` | `clip_{idx:03}_{type}_{start}.mp4` | 出力名。トークンは `{idx}` / `{idx:03}` / `{type}` / `{start}` / `{date}`。`output-dir` の外へ抜ける名前は **exit 5** |
 | `--concurrency N` | (なし = 全スロット) | `--codec h264` の並列数（1 以上。`copy` は常に 1） |
+| `--event-index N` | (なし = 全クリップ) | `events[]` の **1 始まりの位置**を指定し、そのイベントを含むクリップだけ書き出す（繰り返し指定可。GUI の「選択した 1 件だけ切り抜く」用）。1 未満は **exit 5**。どのクリップにも含まれない索引だけを指定すると 0 件（**exit 0**） |
 | `--overwrite` | `false` | 既存の出力を置き換える。**既定は拒否**（既存ファイルがあれば **exit 5**）。共有 runner は ffmpeg `-y` で開いた瞬間に truncate するため、途中で失敗すると前回のクリップが壊れたまま残る |
 | `--json` | `false` | stdout に JSON Lines を出す（`export` と同じ wire 形状、`match_index` = クリップ番号） |
 | `--quiet` | `false` | 進捗を抑制する（`--json` とは排他） |
@@ -654,8 +658,9 @@ warning: 2 event(s) fall outside every match and were skipped (a clip range cann
 ```
 
 `--json` モードは `export` と同じ行（`progress` / `result` / `error` / `fallback` / `summary`）を出す。
-`match_index` は**クリップ番号**（1 始まり）。計画段階の失敗は
-`{"type":"error","message":"..."}` を 1 行出してから exit code を返す。
+`match_index` は**クリップ番号**（1 始まり）。`--event-index` で絞り込んだ場合も
+**書き出す順に 1 から振り直す**（`--name-pattern` の `{idx:03}` が飛ばない）。
+計画段階の失敗は `{"type":"error","message":"..."}` を 1 行出してから exit code を返す。
 
 ### Exit Codes
 
@@ -665,7 +670,7 @@ warning: 2 event(s) fall outside every match and were skipped (a clip range cann
 | 1 | 1 本以上のクリップの書き出しに失敗 |
 | 2 | 入力エラー（`metadata.json` 不在 / `source` 不在 / `events` が無い / `source` 動画が見つからない） |
 | 3 | ffmpeg / ffprobe エラー（全クリップが失敗した場合は 1） |
-| 5 | 設定値不正（`--pre` / `--post` / `--gap` が負値・非有限 / `--codec` が未知 / `--concurrency` < 1 / `--name-pattern` が出力先の外を指す / 同一ファイルに衝突 / 既存出力があり `--overwrite` 未指定） |
+| 5 | 設定値不正（`--pre` / `--post` / `--gap` が負値・非有限 / `--codec` が未知 / `--concurrency` < 1 / `--event-index` < 1 / `--name-pattern` が出力先の外を指す / 同一ファイルに衝突 / 既存出力があり `--overwrite` 未指定） |
 | 130 | SIGINT（Ctrl+C）によるキャンセル |
 
 ## debug-brightness コマンド
