@@ -704,3 +704,75 @@ describe('#944 CompleteScreen masked fallback notice', () => {
     expect(screen.queryByTestId('complete-masked-fallback-notice')).toBeNull();
   });
 });
+
+// #1136: 詳細設定の「検知経路」から「マスク録画」を明示選択した場合、
+// `masked_fallback_used` も true になる (resolved 経路)。#944 の文言をそのまま
+// 出すと「選んだのに自動で切り替えた」と読めて矛盾するので、文言を分ける。
+describe('#1136 CompleteScreen masked fallback notice x explicit path', () => {
+  const match = {
+    index: 1,
+    start_time: 100,
+    end_time: 1000,
+    start_display: '01:40',
+    end_display: '16:40',
+    duration: 900,
+    duration_display: '15m00s',
+    type: 'fl_match' as const,
+    output_file: 'match_001.mp4',
+  };
+
+  function mount(params: {
+    masked?: boolean;
+    vtuber?: boolean;
+    masked_fallback_used?: boolean;
+  }) {
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.setState({
+      metadata: {
+        source: 'C:\\videos\\rec.mkv',
+        source_duration: 1200,
+        source_duration_display: '20:00',
+        detected_at: '2026-11-17T00:00:00Z',
+        detection_params: {
+          sample_interval: 2,
+          blackout_threshold: 15,
+          min_match_duration: 300,
+          min_blackout_duration: 3,
+          no_audio: false,
+          use_gpu: null,
+          workers: null,
+          ...params,
+        },
+        matches: [match],
+        gaps: [],
+      } as never,
+      hasBackup: false,
+    });
+    useAppStateStore.getState().navigate('complete');
+    return render(<CompleteScreen />);
+  }
+
+  it('explains the selected path instead of claiming an automatic switch', () => {
+    mount({ masked: true, masked_fallback_used: true });
+    const notice = screen.getByTestId('complete-masked-fallback-notice');
+    expect(notice).toHaveAttribute('data-detection-path', 'masked-explicit');
+    expect(notice).toHaveTextContent('選択した');
+    expect(notice).not.toHaveTextContent('自動で切り替えて検知しました');
+  });
+
+  it('keeps the automatic-switch wording when the user left the path on standard', () => {
+    mount({ masked_fallback_used: true });
+    const notice = screen.getByTestId('complete-masked-fallback-notice');
+    expect(notice).toHaveAttribute('data-detection-path', 'masked-auto');
+    expect(notice).toHaveTextContent('自動で切り替えて検知しました');
+    // 再実行の導線は CLI ではなく GUI の詳細設定を指す (#1136)。
+    expect(notice).toHaveTextContent('[詳細設定] の検知経路');
+    expect(notice).not.toHaveTextContent('CLI で');
+  });
+
+  it('stays silent for the vtuber path (no masked fallback involved)', () => {
+    mount({ vtuber: true, masked_fallback_used: false });
+    expect(screen.queryByTestId('complete-masked-fallback-notice')).toBeNull();
+  });
+});

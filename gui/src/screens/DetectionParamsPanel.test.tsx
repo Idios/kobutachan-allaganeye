@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -181,6 +181,112 @@ describe('DetectionParamsPanel field help (#1135)', () => {
     const user = userEvent.setup();
     const { container } = render(<DetectionParamsPanel />);
     await user.click(screen.getByTestId('detection-params-toggle'));
+    expect(await axe(container)).toHaveNoViolations();
+  });
+});
+
+// #1136: 検知経路 (`--masked` / `--vtuber`) の radio 3 択。
+// 相互排他を型で表すため store は 3 値 1 本 (`detectionPath`)。
+describe('DetectionParamsPanel detection path (#1136)', () => {
+  async function openPanel() {
+    const user = userEvent.setup();
+    render(<DetectionParamsPanel />);
+    await user.click(screen.getByTestId('detection-params-toggle'));
+    return user;
+  }
+
+  it('renders a radiogroup with the three paths and standard checked by default', async () => {
+    await openPanel();
+    const group = screen.getByTestId('detection-params-path');
+    expect(group).toHaveAttribute('role', 'radiogroup');
+    expect(within(group).getAllByRole('radio')).toHaveLength(3);
+    expect(screen.getByTestId('detection-params-path-standard')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.getByTestId('detection-params-path-masked')).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+    expect(screen.getByTestId('detection-params-path-vtuber')).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+  });
+
+  it.each([
+    { testid: 'detection-params-path-masked', expected: 'masked' as const },
+    { testid: 'detection-params-path-vtuber', expected: 'vtuber' as const },
+    { testid: 'detection-params-path-standard', expected: 'standard' as const },
+  ])('$testid sets detectionPath=$expected', async ({ testid, expected }) => {
+    const user = await openPanel();
+    // 最初に別の値を入れておき、standard を押したときに戻ることが観測できるようにする。
+    useAppStateStore.getState().setDetectionParams({ detectionPath: 'masked' });
+    await user.click(screen.getByTestId(testid));
+    expect(useAppStateStore.getState().detectionParams.detectionPath).toBe(
+      expected,
+    );
+  });
+
+  it('keeps exactly one path checked after selecting another', async () => {
+    const user = await openPanel();
+    await user.click(screen.getByTestId('detection-params-path-vtuber'));
+    const group = screen.getByTestId('detection-params-path');
+    const checked = within(group)
+      .getAllByRole('radio')
+      .filter((el) => el.getAttribute('aria-checked') === 'true');
+    expect(checked).toHaveLength(1);
+    expect(checked[0]).toBe(screen.getByTestId('detection-params-path-vtuber'));
+  });
+
+  it('does not touch the other detection fields when switching path', async () => {
+    const user = await openPanel();
+    useAppStateStore.getState().setDetectionParams({
+      blackoutThreshold: 22,
+      workers: 8,
+      gpu: true,
+    });
+    await user.click(screen.getByTestId('detection-params-path-masked'));
+    const dp = useAppStateStore.getState().detectionParams;
+    expect(dp.blackoutThreshold).toBe(22);
+    expect(dp.workers).toBe(8);
+    expect(dp.gpu).toBe(true);
+  });
+
+  it('shows the "(変更あり)" hint while collapsed when only the path differs', () => {
+    useAppStateStore.getState().setDetectionParams({ detectionPath: 'vtuber' });
+    render(<DetectionParamsPanel />);
+    expect(screen.getByLabelText('変更あり')).toBeInTheDocument();
+  });
+
+  it('exposes a help trigger labelled 検知経路の説明 that explains the three choices', async () => {
+    const user = await openPanel();
+    const trigger = screen.getByTestId('detection-params-path-help-trigger');
+    expect(trigger).toHaveAccessibleName('検知経路の説明');
+    await user.hover(trigger);
+    const popover = screen.getByTestId('detection-params-path-help-popover');
+    expect(popover).toHaveTextContent('マスクのない領域');
+    expect(popover).toHaveTextContent('スコアバー');
+    expect(popover).toHaveTextContent('同時に選べません');
+  });
+
+  it('reveals the path explanation through the keyboard alone', async () => {
+    const user = await openPanel();
+    // toggle → blackout help → slider → workers help → numeric → gpu help
+    // → gpu auto → gpu on → gpu off → path help
+    for (let i = 0; i < 9; i += 1) {
+      await user.tab();
+    }
+    expect(
+      screen.getByTestId('detection-params-path-help-popover'),
+    ).toHaveTextContent('配信レイアウト');
+  });
+
+  it('has no axe violations with the path radio group', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<DetectionParamsPanel />);
+    await user.click(screen.getByTestId('detection-params-toggle'));
+    await user.click(screen.getByTestId('detection-params-path-vtuber'));
     expect(await axe(container)).toHaveNoViolations();
   });
 });

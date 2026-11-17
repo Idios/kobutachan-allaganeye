@@ -57,12 +57,28 @@ export interface DetectionParams {
    * — Rust side picks vendor by preference order).
    */
   gpu: boolean | null;
+  /**
+   * #1136: 検知経路。CLI の `--masked` / `--vtuber` は相互排他 (同時指定は
+   * exit 5) なので、真偽値 2 本ではなく 3 値の enum 1 本で表す。
+   *
+   * - `standard`: 両 flag とも argv に載せない (従来と同一の argv)
+   * - `masked`: `--masked` のみ
+   * - `vtuber`: `--vtuber` のみ
+   */
+  detectionPath: DetectionPath;
 }
+
+/**
+ * #1136: 検知経路の 3 値。UI の radio 3 択と 1:1 対応する
+ * (`docs/ui-interaction-spec.md` §2.1.10.8)。
+ */
+export type DetectionPath = 'standard' | 'masked' | 'vtuber';
 
 export const DEFAULT_DETECTION_PARAMS: DetectionParams = {
   blackoutThreshold: 15.0,
   workers: 0,
   gpu: null,
+  detectionPath: 'standard',
 };
 
 export interface AppState {

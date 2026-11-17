@@ -201,4 +201,29 @@ describe('useAppStateStore.detectionParams', () => {
     // selectedVideoPath must NOT be cleared by resetDetectionParams.
     expect(state.selectedVideoPath).toBe('C:/video.mkv');
   });
+
+  // #1136 -- 検知経路 (--masked / --vtuber) は排他なので 3 値 1 本。
+  it('defaults detectionPath to standard (#1136)', () => {
+    expect(useAppStateStore.getState().detectionParams.detectionPath).toBe(
+      'standard',
+    );
+  });
+
+  it('setDetectionParams switches detectionPath without touching the rest (#1136)', () => {
+    useAppStateStore.getState().setDetectionParams({ detectionPath: 'masked' });
+    const dp = useAppStateStore.getState().detectionParams;
+    expect(dp.detectionPath).toBe('masked');
+    expect(dp.blackoutThreshold).toBe(
+      DEFAULT_DETECTION_PARAMS.blackoutThreshold,
+    );
+    expect(dp.gpu).toBe(DEFAULT_DETECTION_PARAMS.gpu);
+  });
+
+  it('resetDetectionParams clears detectionPath back to standard (#1136)', () => {
+    useAppStateStore.getState().setDetectionParams({ detectionPath: 'vtuber' });
+    useAppStateStore.getState().resetDetectionParams();
+    expect(useAppStateStore.getState().detectionParams.detectionPath).toBe(
+      'standard',
+    );
+  });
 });

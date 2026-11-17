@@ -175,6 +175,13 @@
   gap: 4px;
 }
 
+/* #1136: 検知経路はラベルが長い (「配信レイアウト」) ので、幅が足りないときは
+   折り返す。GPU 行 (自動 / ON / OFF) は折り返し不要のため影響させない。 */
+.pathRow {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
 .triStateButton {
   font-family: var(--ae-font-ui);
   font-size: 10px;
@@ -203,23 +210,6 @@
 .triStateButtonActive:hover,
 .triStateButtonActive:focus-visible {
   color: var(--ae-bg);
-}
-
-/* #944 §D: CLI にしかないフラグ (--masked / --vtuber) の案内。 */
-.cliOnlyNote {
-  grid-column: 1 / -1;
-  font-family: var(--ae-font-body);
-  font-size: 11px;
-  line-height: 1.7;
-  color: var(--ae-text-dim);
-  border-top: 1px solid rgba(var(--ae-gold-rgb), 0.18);
-  padding-top: 10px;
-  margin-top: 4px;
-}
-
-.cliOnlyNote code {
-  font-family: var(--ae-font-mono, monospace);
-  color: var(--ae-gold);
 }
 
 .resetRow {

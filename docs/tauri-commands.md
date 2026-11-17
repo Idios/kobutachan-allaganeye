@@ -45,7 +45,7 @@
 | 18 | `open_folder_in_explorer` | `path: String` | `Result<(), AppError>` | subprocess | (a) フォルダ不在、(b) explorer 起動失敗 | (a) `io.file_not_found`、(b) `subprocess.spawn_failed` |
 | 19 | `enumerate_h264_encoders` | `req: { vendors: string[], preference: string[], gpuModels: string[] }` (camelCase) | `Result<Vec<EncoderSlotJson>, AppError>` | subprocess | (a) python CLI 不在、(b) encoder-slots 異常終了、(c) JSON parse 失敗 | (a) `python.not_found`、(b) `subprocess.exit_failed`、(c) `parse.json_invalid` |
 | 20 | `start_export` | `req: { metadataJson: object, outputDir: string, codec: "copy"\|"h264", namePattern: string, excludedIndexes: number[] }` | `Result<ExportSummary, AppError>` | subprocess + I/O | (a) python CLI 不在、(b) export 異常終了 (per-match error は `export-progress` event 経由)、(c) output dir 書き込み失敗 | (a) `python.not_found`、(b) `subprocess.exit_failed`、(c) `io.write_failed` |
-| 21 | `start_detect` | `app: AppHandle, video_path: String, output_dir: String, params: DetectParams, run_id: String` | `Result<DetectResult, AppError>` | subprocess | (a) python CLI 不在、(b) python -m fallback 失敗、(c) detect 実行中エラー、(d) ユーザー中断 (kill_tracked_processes による drain) | (a) `python.not_found`、(b) `subprocess.spawn_failed`、(c) `subprocess.exit_failed`、(d) `subprocess.cancelled` |
+| 21 | `start_detect` | `app: AppHandle, video_path: String, output_dir: String, params: DetectParams, run_id: String` | `Result<DetectResult, AppError>` | subprocess | (a) python CLI 不在、(b) python -m fallback 失敗、(c) detect 実行中エラー、(d) ユーザー中断 (kill_tracked_processes による drain)、(e) 検知経路の排他 (`masked` と `vtuber` の同時指定、spawn 前検証、#1136) | (a) `python.not_found`、(b) `subprocess.spawn_failed`、(c) `subprocess.exit_failed`、(d) `subprocess.cancelled`、(e) `validation.detection_path_conflict` |
 | 22 | `get_log_dir` | (なし) | `Result<String, AppError>` | pure | (a) install_dir 取得失敗 (極端ケース) | (a) `path.install_dir_unresolved` |
 | 23 | `read_error_log_tail` | `line_count: usize` | `Result<String, AppError>` | I/O | (a) install_dir 取得失敗、(b) log file の open / read 失敗 | (a) `path.install_dir_unresolved`、(b) `io.read_failed` |
 | 24 | `probe_environment_info` | (なし) | `EnvironmentProbe` | pure | (常に struct で返却、エラーケースなし — 個別 field は `None` で degrade) | - |
@@ -101,6 +101,13 @@ PR #669 で追加した 2 command (`read_error_log_tail` / `probe_environment_in
 - **設計理由**: 既存 `metadata.system_info` (Python `_build_system_info` 由来) は GPU 3 field のみ書く。bug_report.yml `environment` placeholder の format (`allaganeye 0.2.0 (Windows 11) / CPU: ... / Memory: ...`) を満たすため Tauri 側で live probe する (PR #669 の plan 修正、Option B 採用)
 - **frontend 側 helper**: `gui/src/lib/systemInfo.ts` `formatSystemInfo(probe, metadata.system_info)` で probe + GPU vendor list を結合し environment 文字列を組み立てる
 - **Disk metrics**: install dir (`<exe-parent>`) を含む disk を `mount_point` の longest prefix で選択。マッチしない場合は disk_* fields 全て `None`
+
+## `start_detect` の `params` (`DetectParams`)
+
+フロントエンドは [detection.ts](../gui/src/utils/detection.ts) の `toStartDetectParams` で組み立てた object を渡す。全 field が optional で、未指定 (`None`) は対応する `--flag` を argv に載せない (= CLI 既定を使う)。**field の正は [lib.rs](../gui/src-tauri/src/lib.rs) の `DetectParams`** で、本節はその補足である。
+
+- `blackoutThreshold` / `minBlackoutDuration` / `minMatchDuration` / `workers` / `noAudio` / `noCache` / `gpu` / `gpuVendor` (#569)
+- `masked` / `vtuber` (#1136): `Some(true)` のときだけ `--masked` / `--vtuber`。両方 `Some(true)` は **spawn 前に `validation.detection_path_conflict` で拒否**する (frontend は 3 値 radio なので通常起きないが、command を直接 invoke する経路に対する多層防御。CLI 単体では exit 5)
 
 ## `start_detect` stdout schema と parse 失敗時の挙動 (#648)
 
@@ -183,6 +190,7 @@ frontend 側の購読 store と画面統合は **Phase B2** で追加する (B1 
 | `validation.not_a_file` | 指定されたパスはファイルではありません (フォルダや symlink ではなく動画ファイルを選択してください) |
 | `validation.range_invalid` | 入力された数値が許容範囲外です。フォーム下のヒント表示を確認してください |
 | `validation.boundary_invalid` | 試合の終了 (OUT) が開始 (IN) 以前になっています。終了が開始より後になるよう境界を調整してください |
+| `validation.detection_path_conflict` | 検知経路は 1 つだけ選んでください。「マスク録画」と「配信レイアウト」は同時に指定できません |
 | `path.install_dir_unresolved` | Portable ZIP の install dir を特定できませんでした。allaganeye-gui.exe を ZIP 展開後の元のフォルダ構成のまま起動してください |
 | `platform.unsupported` | 本機能は現在の OS では未対応です。Windows での起動が必要です |
 | `internal.error` | (hint なし: 内部エラーで具体的アクションがない、message 側で logs 参照を案内) |

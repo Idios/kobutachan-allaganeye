@@ -18,6 +18,11 @@ import {
  * - `blackoutThreshold` is always sent — the user always sees a concrete
  *   value on the slider, and the CLI default (15.0) is harmless when
  *   echoed back.
+ * - `detectionPath` (#1136) is **omitted entirely** for `'standard'`, so the
+ *   "標準" path keeps the pre-#1136 argv byte-for-byte. `'masked'` sends
+ *   `masked: true`, `'vtuber'` sends `vtuber: true`; the two are mutually
+ *   exclusive by construction (single enum, not two booleans), which the
+ *   CLI enforces with exit 5 and `start_detect` re-checks before spawning.
  *
  * NOTE: `noAudio` is intentionally not in `DetectionParams` (audio module
  * frozen -- `AUDIO_FROZEN` in `allaganeye/audio/__init__.py`, which skips the
@@ -29,11 +34,17 @@ import {
  * reversed.
  */
 export function toStartDetectParams(p: DetectionParams): Record<string, unknown> {
-  return {
+  const args: Record<string, unknown> = {
     blackoutThreshold: p.blackoutThreshold,
     workers: p.workers > 0 ? p.workers : null,
     gpu: p.gpu,
   };
+  if (p.detectionPath === 'masked') {
+    args.masked = true;
+  } else if (p.detectionPath === 'vtuber') {
+    args.vtuber = true;
+  }
+  return args;
 }
 
 /**
@@ -44,6 +55,7 @@ export function isDetectionParamsModified(p: DetectionParams): boolean {
   return (
     p.blackoutThreshold !== DEFAULT_DETECTION_PARAMS.blackoutThreshold ||
     p.workers !== DEFAULT_DETECTION_PARAMS.workers ||
-    p.gpu !== DEFAULT_DETECTION_PARAMS.gpu
+    p.gpu !== DEFAULT_DETECTION_PARAMS.gpu ||
+    p.detectionPath !== DEFAULT_DETECTION_PARAMS.detectionPath
   );
 }

@@ -190,7 +190,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | a11y | screen reader 専用属性 (`aria-describedby` / `role="tooltip"`) は追加しない ([a11y-policy.md](a11y-policy.md) の scope に従う) |
 | アンチパターン | ネイティブ `title` のみで済ませる (キーボードから読めず、表示まで約 1 秒待たされる) / 説明を常時表示してレイアウトを押し広げる |
 
-**適用箇所**: §2.1.10 (詳細設定パネルの 3 項目) — 他画面は同種の不足が見つかった時点で追加する。
+**適用箇所**: §2.1.10 (詳細設定パネルの 4 項目) — 他画面は同種の不足が見つかった時点で追加する。
 
 ## 2. 画面別 UI 部品状態機械
 
@@ -331,7 +331,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 
 **目的**: `start_detect` (#569) に渡す検知パラメータを GUI 上で調整。値は `appStateStore.detectionParams` に保存され、`reset()` まで session 中保持される (localStorage 永続化なし、再起動時は default に戻る)。
 
-**スコープ (3 パラメータ)**: `blackout_threshold` / `workers` / `gpu`。`--no-audio` は audio module frozen (#327、`allaganeye/audio/__init__.py` の `AUDIO_FROZEN`) のため UI 不公開。解凍は #865 で「期限なし凍結」に決着しており、再追加の予定はない（方針が変われば再検討）。
+**スコープ (4 パラメータ)**: `blackout_threshold` / `workers` / `gpu` / `detectionPath` (#1136)。`detectionPath` は CLI の `--masked` / `--vtuber` に対応する 3 値 (「標準 / マスク録画 / 配信レイアウト」) で、両 flag が相互排他 (CLI exit 5) なので boolean 2 本ではなく enum 1 本で持つ §2.1.10.8。`--no-audio` は audio module frozen (#327、`allaganeye/audio/__init__.py` の `AUDIO_FROZEN`) のため UI 不公開。解凍は #865 で「期限なし凍結」に決着しており、再追加の予定はない（方針が変われば再検討）。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -398,20 +398,35 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
   - header: `aria-expanded` / `aria-controls` で expand 状態を AT に通知
   - 各 input: `<label htmlFor>` (slider / numeric) で関連付け、tri-state は `aria-label="gpu mode"` + `role="radio"`
   - リセット button: `aria-label` で disabled 理由 (default 値) を明示
-- Tab order: header toggle → (展開時) blackout slider → workers numeric → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ。**#1135 以降**: 各項目の help トリガーが label の直後に入るため、header toggle → blackout help → blackout slider → workers help → workers numeric → gpu help → gpu の 3 button → reset button の順になる (§1.7)
+- Tab order: header toggle → (展開時) blackout slider → workers numeric → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ。**#1135 以降**: 各項目の help トリガーが label の直後に入るため、header toggle → blackout help → blackout slider → workers help → workers numeric → gpu help → gpu の 3 button → path help → 検知経路の 3 button (§2.1.10.8) → reset button の順になる (§1.7)
 - **`--no-audio` UI 不採用**: `allaganeye/audio/__init__.py` の `AUDIO_FROZEN` により audio module は frozen 状態 (#327、`split_matches.py` の `_run_audio_scan` が live probe して skip) のため `--no-audio` flag は実質 no-op。GUI 側でのみ控え (Rust `DetectParams.no_audio` field 自体は #569 で実装済み。再公開は解凍が前提だが、#865 で期限なし凍結に決着済み)
 
 ##### §2.1.10.7 help トリガー (HelpTip、#1135)
 
-3 項目すべての label 右に `?` の help トリガーを置き、hover / focus / click で説明を出す (§1.7)。
+4 項目すべての label 右に `?` の help トリガーを置き、hover / focus / click で説明を出す (§1.7)。
 
 | 項目 | 内容 |
 | --- | --- |
-| 種類 | icon-only button (`aria-label` は「検知しきい値の説明」/「ワーカー数の説明」/「GPU の説明」) + popover (`<span>`) |
+| 種類 | icon-only button (`aria-label` は「検知しきい値の説明」/「ワーカー数の説明」/「GPU の説明」/「検知経路の説明」) + popover (`<span>`) |
 | 状態 | `closed` (default) / `open` (hover / focus / click pin のいずれか) |
 | 遷移トリガー | `mouseenter` → open / `mouseleave` → close / `focus` → open / `blur` → close / `Escape` → close + blur (open 中は document capture で消費) / `click` → pin toggle |
 | store mutation | なし ([HelpTip.tsx](../gui/src/components/HelpTip.tsx) の `HelpTip` 内部の local state) |
 | 例外 / edge case | 本文の数値は [DetectionParamsPanel.tsx](../gui/src/screens/DetectionParamsPanel.tsx) の `BLACKOUT_SLIDER_MIN` / `BLACKOUT_SLIDER_MAX` / `WORKERS_INPUT_MIN` / `WORKERS_INPUT_MAX` と [appStateStore.ts](../gui/src/state/appStateStore.ts) の `DEFAULT_DETECTION_PARAMS` から組み立てる (JSX と文言が同じ定数を共有する)。popover は label 列の下に absolute 配置し、スクロール領域の下端に近いときは上向きに反転する (§1.7 の「配置」)。`z-index` は重なり順のみを担い、祖先の `overflow` は越えられない |
+
+##### §2.1.10.8 検知経路 radio (detectionPath、#1136)
+
+[#1136](https://github.com/Idios/kobutachan-allaganeye/issues/1136) で追加。CLI の `--masked` (チャット欄マスク録画) / `--vtuber` (ゲーム画面が inset の配信レイアウト録画) を GUI から選べるようにする。両 flag は CLI で相互排他 (同時指定は exit 5) なので、boolean 2 本ではなく 3 値 1 本 ([appStateStore.ts](../gui/src/state/appStateStore.ts) の `DetectionPath`) で持つ。
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | button group (`role="radiogroup"` + 3 つの `role="radio"`)。GPU と同じ `triStateRow` / `triStateButton` を再利用し、行だけ折り返し可 (`pathRow`) |
+| 状態 | `標準` (detectionPath=`standard`、両 flag とも argv に載せない = 従来と同一 argv) / `マスク録画` (`masked`、`--masked` のみ) / `配信レイアウト` (`vtuber`、`--vtuber` のみ) |
+| 遷移トリガー | 各 button `onClick` → `setDetectionParams({ detectionPath })` |
+| store mutation | `appStateStore.detectionParams.detectionPath` (他の 3 field は触らない) |
+| 例外 / edge case | 3 択 radio なので「両方選択」は UI から作れない。さらに `toStartDetectParams` ([detection.ts](../gui/src/utils/detection.ts)) が選択に応じて片方だけを送り、`start_detect` 側も両方 `Some(true)` を `validation.detection_path_conflict` で拒否する (spawn 前検証、frontend の型に依存しない多層防御)。`standard` では `masked` / `vtuber` キー自体を送らないため、`start_detect` の argv は #1136 以前と 1 バイトも変わらない (Rust unit test `detect_command_args_omits_both_for_standard` が pin) |
+| 結果表示 | `metadata.json` の `detection_params.masked` / `vtuber` に選択が記録される。masked 経路では 0 暗転時の自動 fallback (`masked_fallback_used`) と明示選択を区別して完了画面の通知文言を分ける (§2.3 complete の masked fallback 通知) |
+
+> **help 本文の役割**: 「標準」でも 0 暗転時にはマスク向け fallback が自動発動する (#821) ため、help でその事実を書かないと「マスク録画を選ぶ意味」が伝わらない。文言は [DetectionParamsPanel.tsx](../gui/src/screens/DetectionParamsPanel.tsx) の `DETECTION_PATH_HELP`。
 
 ### §2.2 detecting
 
@@ -532,6 +547,8 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 **sample mode**: `metadataStore.filePath === null` の sample mode では `[元に戻す]` は `hasBackup=false` で disabled、complete 画面では `SampleModeBanner` を上部 `topBar` 直下に表示する ([#633](https://github.com/Idios/kobutachan-allaganeye/issues/633) で実装済)。
 
 **エラー表示**: §1.5 inline + toast 併用。complete 画面の主要エラー源は `restoreErrorState` ([RestoreButton.tsx](../gui/src/components/RestoreButton.tsx) の `styles.error` `role="alert"` + `InlineErrorHint`)。global toast 兼任設計は [#614](https://github.com/Idios/kobutachan-allaganeye/issues/614) (panic / error / log 構造化、`ErrorBoundary` / `ErrorModal`) で実装する。
+
+**masked fallback 通知** (`data-testid="complete-masked-fallback-notice"`、`role="status"`、[#944](https://github.com/Idios/kobutachan-allaganeye/issues/944) §D で追加、[#1136](https://github.com/Idios/kobutachan-allaganeye/issues/1136) で文言分岐): `detection_params.masked_fallback_used === true` のときだけ topBar の上に出す (`styles.fallbackNotice`)。同じ `masked_fallback_used=true` でも、詳細設定の検知経路で「マスク録画」を明示選択した場合 (`detection_params.masked === true`) は自動切替ではないので、「選んだのに自動で切り替えた」と読める文言を出さない。両者を `data-detection-path` (`masked-explicit` / `masked-auto`) で区別し、再検知の導線はどちらも CLI ではなく GUI の [詳細設定] の検知経路を指す。
 
 **実装段階**:
 

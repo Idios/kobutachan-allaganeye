@@ -48,6 +48,47 @@ describe('toStartDetectParams (#613)', () => {
       'workers',
     ]);
   });
+
+  // #1136 -- 検知経路。`standard` は両 flag を omit するので、上記の
+  // 「3 keys」pin がそのまま「従来と同一 argv」の証明になる。
+  describe('detectionPath (#1136)', () => {
+    it('omits both masked and vtuber for standard', () => {
+      const args = toStartDetectParams({
+        ...DEFAULT_DETECTION_PARAMS,
+        detectionPath: 'standard',
+      });
+      expect(args).not.toHaveProperty('masked');
+      expect(args).not.toHaveProperty('vtuber');
+    });
+
+    it('sends masked: true (and no vtuber) for masked', () => {
+      const args = toStartDetectParams({
+        ...DEFAULT_DETECTION_PARAMS,
+        detectionPath: 'masked',
+      });
+      expect(args.masked).toBe(true);
+      expect(args).not.toHaveProperty('vtuber');
+    });
+
+    it('sends vtuber: true (and no masked) for vtuber', () => {
+      const args = toStartDetectParams({
+        ...DEFAULT_DETECTION_PARAMS,
+        detectionPath: 'vtuber',
+      });
+      expect(args.vtuber).toBe(true);
+      expect(args).not.toHaveProperty('masked');
+    });
+
+    it('never sends both flags at once (mutually exclusive by construction)', () => {
+      for (const detectionPath of ['standard', 'masked', 'vtuber'] as const) {
+        const args = toStartDetectParams({
+          ...DEFAULT_DETECTION_PARAMS,
+          detectionPath,
+        });
+        expect(args.masked === true && args.vtuber === true).toBe(false);
+      }
+    });
+  });
 });
 
 describe('isDetectionParamsModified (#613)', () => {
@@ -60,6 +101,8 @@ describe('isDetectionParamsModified (#613)', () => {
     ['workers', { workers: 8 }],
     ['gpu (true)', { gpu: true }],
     ['gpu (false)', { gpu: false }],
+    ['detectionPath (masked, #1136)', { detectionPath: 'masked' }],
+    ['detectionPath (vtuber, #1136)', { detectionPath: 'vtuber' }],
   ])('returns true when only %s differs', (_label, patch) => {
     expect(
       isDetectionParamsModified({ ...DEFAULT_DETECTION_PARAMS, ...patch }),
