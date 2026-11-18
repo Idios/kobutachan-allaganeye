@@ -560,6 +560,7 @@ allaganeye indicators <metadata.json> [-o events.json] [--json]
 | `--write` / `--no-write` | `--write` | 解決した `indicator_layout` と検出した `events` を `metadata.json` に write-back する（`events` は全件置換） |
 | `--expected-mtime MS` | (なし) | write-back 前の CAS guard。`metadata.json` の現在 mtime (Unix ms) と不一致なら **exit 6**（GUI ConflictModal 対応） |
 | `--region X,Y,W,H` | (なし) | **自動キャリブレーションをスキップ**し、指定した矩形を**ゲージバーの外枠**として使う（px）。バー幅から `scale`、左上からアンカー位置を逆算する（`layout_from_bar_region`）。想定外 HUD で自動解決が失敗する場合の fallback。`--recalibrate` と併用不可（exit 5）。不正な値（4 要素でない / 数値でない / 小さすぎる / アスペクト比が大きく外れる）は exit 5。注意: `scale` は指定矩形から逆算するので、矩形が実際のバーとずれていると走査のスケール許容（±5%、#1147）を外れて**取り逃しうる**。取り逃しが疑われるときは矩形を測り直すか `--recalibrate` で自動解決させる |
+| `--gpu` | (なし) | **デコードをハードウェア化**する（NVIDIA = NVDEC/cuvid、AMD = D3D11VA、Intel = QSV。vendor 選択は `detect --gpu` と同じ表）。GPU 不在 / 未対応 codec / デコード失敗のときは **CPU に自動フォールバック**する（`GPU decode failed (...); falling back to CPU`）。出力（イベント列）は CPU デコードと同一であることを実測済み |
 
 ### 出力
 

@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from allaganeye.video.frames import build_frame_command
+from allaganeye.video import frames
+from allaganeye.video.frames import HwaccelSpec, build_frame_command
 
 
 def _index_of(command: list[str], token: str) -> int:
@@ -61,6 +62,77 @@ def test_command_crops_the_band_after_grayscale_conversion(tmp_path: Path) -> No
 def test_command_rejects_a_degenerate_crop(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         build_frame_command(tmp_path / "in.mp4", fps=2.0, crop=(0, 0, 0, 10))
+
+
+# #1151 -- ハードウェアデコード。hwaccel 引数は `-ss` / `-i` より前、
+# hwdownload が必要な vendor (d3d11va / qsv) は filter の先頭に挿入する。
+def test_command_puts_hwaccel_args_before_input(tmp_path: Path) -> None:
+    hw = HwaccelSpec(
+        vendor="nvidia",
+        args=("-hwaccel", "cuda", "-c:v", "h264_cuvid"),
+    )
+    command = build_frame_command(tmp_path / "in.mp4", fps=10.0, start=5.0, hwaccel=hw)
+
+    assert _index_of(command, "cuda") < _index_of(command, "-ss")
+    assert _index_of(command, "-c:v") < _index_of(command, "-i")
+    # crop しないときの filter は fps だけ (gray 化は -pix_fmt が担う)。
+    assert command[command.index("-vf") + 1] == "fps=10.0"
+
+
+def test_command_prefixes_hwdownload_for_gpu_surface_vendors(tmp_path: Path) -> None:
+    hw = HwaccelSpec(
+        vendor="amd",
+        args=("-hwaccel", "d3d11va", "-hwaccel_output_format", "d3d11"),
+        filter_prefix="hwdownload,format=nv12,",
+    )
+    command = build_frame_command(
+        tmp_path / "in.mp4", fps=10.0, crop=(10, 20, 30, 40), hwaccel=hw
+    )
+
+    assert command[command.index("-vf") + 1] == (
+        "hwdownload,format=nv12,format=gray,crop=30:40:10:20,fps=10.0"
+    )
+
+
+# ---------------------------------------------------------------------------
+# resolve_hwaccel
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_hwaccel_uses_the_available_vendor(monkeypatch) -> None:
+    monkeypatch.setattr(frames, "probe_gpu_vendors", lambda: ["nvidia"])
+
+    spec = frames.resolve_hwaccel("h264")
+
+    assert spec is not None
+    assert spec.vendor == "nvidia"
+    assert "h264_cuvid" in spec.args
+    assert spec.filter_prefix == ""
+
+
+def test_resolve_hwaccel_adds_hwdownload_for_amd(monkeypatch) -> None:
+    monkeypatch.setattr(frames, "probe_gpu_vendors", lambda: ["amd"])
+
+    spec = frames.resolve_hwaccel("h264")
+
+    assert spec is not None
+    assert spec.vendor == "amd"
+    assert "d3d11" in spec.args
+    assert spec.filter_prefix == "hwdownload,format=nv12,"
+
+
+def test_resolve_hwaccel_returns_none_without_a_gpu(monkeypatch) -> None:
+    monkeypatch.setattr(frames, "probe_gpu_vendors", lambda: [])
+
+    assert frames.resolve_hwaccel("h264") is None
+
+
+def test_resolve_hwaccel_returns_none_for_unsupported_codecs(monkeypatch) -> None:
+    """未登録の codec は CPU に倒す (誤った decoder を渡して落とさない)。"""
+    monkeypatch.setattr(frames, "probe_gpu_vendors", lambda: ["nvidia"])
+
+    assert frames.resolve_hwaccel("theora") is None
+    assert frames.resolve_hwaccel(None) is None
 
 
 @pytest.mark.parametrize(

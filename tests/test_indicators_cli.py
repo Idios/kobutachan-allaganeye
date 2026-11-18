@@ -462,6 +462,81 @@ def test_indicators_uses_user_region_without_calibration(
     assert "ASSIST: 1" in result.output
 
 
+def test_indicators_gpu_passes_hwaccel_to_the_decoder(
+    app: typer.Typer, metadata_path: Path, fake_video, monkeypatch
+):
+    """`--gpu` でデコードがハードウェアに切り替わる (#1151)。"""
+    from allaganeye.video.frames import HwaccelSpec
+
+    spec = HwaccelSpec(vendor="nvidia", args=("-hwaccel", "cuda"))
+    monkeypatch.setattr(indicators_cmd, "resolve_hwaccel", lambda _codec: spec)
+
+    seen: dict[str, object] = {}
+    times = [round(index * DEFAULT_INTERVAL, 2) for index in range(30)]
+    frames = _frames_with_assist(times, hit_from=1.0, hit_to=1.4)
+
+    def fake_iter(*_args, **kwargs):
+        seen.update(kwargs)
+        return iter(frames)
+
+    monkeypatch.setattr(indicators_cmd, "iter_gray_frames", fake_iter)
+
+    result = runner.invoke(
+        app, ["indicators", str(metadata_path), "--no-write", "--gpu"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["hwaccel"] is spec
+    assert "GPU decode enabled" in result.output
+
+
+def test_indicators_gpu_falls_back_to_cpu(
+    app: typer.Typer, metadata_path: Path, fake_video, monkeypatch
+):
+    """GPU デコードが落ちたら CPU で 1 回だけやり直す (#1151)。"""
+    from allaganeye.exceptions import VideoProcessingError
+    from allaganeye.video.frames import HwaccelSpec
+
+    spec = HwaccelSpec(vendor="nvidia", args=("-hwaccel", "cuda"))
+    monkeypatch.setattr(indicators_cmd, "resolve_hwaccel", lambda _codec: spec)
+
+    calls: list[object] = []
+
+    def fake_scan(*_args, **kwargs):
+        calls.append(kwargs.get("hwaccel"))
+        if len(calls) == 1:
+            raise VideoProcessingError("cuda decode failed")
+        return []
+
+    monkeypatch.setattr(indicators_cmd, "scan_detections", fake_scan)
+
+    result = runner.invoke(
+        app, ["indicators", str(metadata_path), "--no-write", "--gpu"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [spec, None]
+    assert "falling back to CPU" in result.output
+
+
+def test_indicators_without_gpu_keeps_cpu_decode(
+    app: typer.Typer, metadata_path: Path, fake_video, monkeypatch
+):
+    """`--gpu` を付けなければハードウェアデコードを使わない。"""
+    calls: list[object] = []
+
+    def fake_scan(*_args, **kwargs):
+        calls.append(kwargs.get("hwaccel"))
+        return []
+
+    monkeypatch.setattr(indicators_cmd, "scan_detections", fake_scan)
+
+    result = runner.invoke(app, ["indicators", str(metadata_path), "--no-write"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [None]
+
+
 def test_indicators_writes_user_layout_source(
     app: typer.Typer, metadata_path: Path, fake_video
 ):

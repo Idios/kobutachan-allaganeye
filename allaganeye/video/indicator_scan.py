@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-from allaganeye.video.frames import iter_gray_frames
+from allaganeye.video.frames import HwaccelSpec, iter_gray_frames
 
 __all__ = [
     "MAX_SCAN_WORKERS",
@@ -136,6 +136,7 @@ def scan_detections(
     on_progress: Callable[[float], None] | None = None,
     progress_step: float = 30.0,
     stop: threading.Event | None = None,
+    hwaccel: HwaccelSpec | None = None,
 ) -> list[Detection]:
     """`[0, total)` を並列走査して ``(時刻, 種類, スコア)`` の列を返す。
 
@@ -159,6 +160,9 @@ def scan_detections(
 
     def run(index: int, chunk: ScanChunk) -> None:
         nonlocal processed, next_progress
+        factory_kwargs: dict[str, object] = {}
+        if hwaccel is not None:
+            factory_kwargs["hwaccel"] = hwaccel
         frames = frames_factory(
             video,
             fps=1.0 / interval,
@@ -166,6 +170,7 @@ def scan_detections(
             start=chunk.start,
             duration=chunk.duration,
             crop=crop,
+            **factory_kwargs,
         )
         collected: list[Detection] = []
         try:
