@@ -379,14 +379,23 @@ def _bright_map_from(bright: np.ndarray, core: np.ndarray) -> np.ndarray:
 
 @lru_cache(maxsize=1)
 def _prefilter_threshold() -> float:
-    """明度プリフィルタのしきい値 (画素数)。**ここが SSoT**。
+    """同梱テンプレートでの明度プリフィルタしきい値 (画素数)。診断 / 記録用。
+
+    実際の判定は :func:`match_text` が **照合に使うテンプレート** から毎回導出する
+    (カスタムテンプレートでも同じ保証を保つため、codex review 2026-11-18 P2)。
+    """
+    templates = load_templates()
+    return _prefilter_threshold_for(templates)
+
+
+def _prefilter_threshold_for(templates: dict[str, np.ndarray]) -> float:
+    """与えられたテンプレート集合でのしきい値。**ここが SSoT**。
 
     テンプレートごとの `bright_fraction >= _MIN_BRIGHT_FRACTION` は「位置を切り出した
     窓の中でグリフ core 画素のうち何割が明るいか」を見ている。窓はバンドの部分集合
     なので、**バンド全体の明るい画素がこのしきい値未満ならどの位置でも合格しない**。
     判定を変えないことが数学的に保証されるのはこの 1 行のおかげ (#1149)。
     """
-    templates = load_templates()
     smallest = min(int(_glyph_core(templates[kind]).sum()) for kind in _TEXT_KINDS)
     return _MIN_BRIGHT_FRACTION * smallest
 
@@ -426,7 +435,12 @@ def match_text(
     }
     qualified: dict[str, TextMatch] = dict(unset)
     overall: dict[str, TextMatch] = dict(unset)
-    skip_below = _prefilter_threshold() if prefilter else -1.0
+    # core / mask は倍率に依存しないので 1 回だけ作る (#1149)。
+    cores = {kind: _glyph_core(tpls[kind]) for kind in _TEXT_KINDS}
+    masks = {kind: _glyph_mask(tpls[kind]) for kind in _TEXT_KINDS}
+    # しきい値は **実際に照合するテンプレート** から導出する (カスタムテンプレートでも
+    # 「判定を変えない」保証を保つ)。
+    skip_below = _prefilter_threshold_for(tpls) if prefilter else -1.0
     for factor in scale_factors:
         effective = scale * factor
         normalised = _resize(
@@ -438,16 +452,14 @@ def match_text(
         p = normalised.astype(np.float32)
         p2 = p * p
         bright = normalised >= _BRIGHT_CORE
-        bright_total = float(bright.sum())
-        if bright_total < skip_below:
+        if float(bright.sum()) < skip_below:
             # どの位置でも bright_fraction が基準未満 = この倍率では合格しえない。
             continue
         for kind in _TEXT_KINDS:
-            tpl = tpls[kind]
-            ncc = _ncc_map_from(p, p2, tpl, _glyph_mask(tpl))
+            ncc = _ncc_map_from(p, p2, tpls[kind], masks[kind])
             if ncc.size == 0:
                 continue
-            bright_map = _bright_map_from(bright, _glyph_core(tpl))
+            bright_map = _bright_map_from(bright, cores[kind])
             gated = np.where(bright_map >= _MIN_BRIGHT_FRACTION, ncc, _GATED_OUT)
             overall[kind] = _better(overall[kind], ncc, factor, bright_map)
             qualified[kind] = _better(qualified[kind], gated, factor, bright_map)

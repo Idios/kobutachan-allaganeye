@@ -15,11 +15,14 @@ import pytest
 
 from allaganeye.exceptions import InputFileError
 from allaganeye.video.indicators import (
+    _BRIGHT_CORE,
     _DEFAULT_SCALE_FACTORS,
     _GATED_OUT,
     _MIN_BRIGHT_FRACTION,
     _MIN_SCORE,
     _SCAN_SCALE_FACTORS,
+    _prefilter_threshold,
+    _prefilter_threshold_for,
     IndicatorEvent,
     IndicatorLayout,
     Rect,
@@ -320,6 +323,33 @@ def test_prefilter_keeps_hit_scores_identical() -> None:
 
     assert with_prefilter == without
     assert with_prefilter["assist"].score >= 0.55
+
+
+def test_prefilter_threshold_follows_custom_templates() -> None:
+    """しきい値は**照合するテンプレート**から導出する (codex review P2)。
+
+    同梱テンプレートの core 画素数を固定値で使うと、小さいカスタムテンプレートでは
+    「合格しうるバンド」をスキップしてしまう。ここでは 8x8 の市松模様 (core 32 px) を
+    暗いバンドに貼り、同じ判定になることを確かめる。
+    """
+    grid = np.indices((8, 8)).sum(axis=0) % 2
+    ko = (grid * 255).astype(np.uint8)
+    assist = ((1 - grid) * 255).astype(np.uint8)
+    templates = {"ko": ko, "assist": assist}
+
+    patch = _noise(54, 252, seed=5, level=30)
+    _paste(patch, ko, 60, 20)
+
+    # 同梱テンプレートのしきい値ならスキップされ、このカスタム集合ならされない状況。
+    bright_px = float((patch >= _BRIGHT_CORE).sum())
+    assert bright_px < _prefilter_threshold()
+    assert bright_px >= _prefilter_threshold_for(templates)
+
+    with_prefilter = classify_text(patch, templates)
+    without = _classify_from_matches(match_text(patch, templates, prefilter=False))
+
+    assert with_prefilter[0] == without
+    assert with_prefilter[0] == "ko"
 
 
 def test_scan_scale_factors_reject_far_off_scales() -> None:

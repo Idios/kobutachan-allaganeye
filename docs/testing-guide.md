@@ -342,8 +342,9 @@ def _ffmpeg_interval(request: pytest.FixtureRequest) -> None:
 `match_text` は倍率ごとに「バンド全体の明るい画素が `0.45 x 最小 core` 未満なら
 **その倍率の NCC をすべて飛ばす**」プリフィルタを持つ。テンプレートごとの
 `bright_fraction >= 0.45` は窓の中の割合を見ているので、バンド全体で足りなければ
-どの位置でも合格しえない (**判定を変えない**ことが保証される)。しきい値の
-SSoT は `allaganeye/video/indicators.py` の `_prefilter_threshold()`。
+どの位置でも合格しえない (**判定を変えない**ことが保証される)。しきい値は
+**実際に照合するテンプレート**から毎回導出する (カスタムテンプレートでも同じ保証を保つ。
+SSoT は `allaganeye/video/indicators.py` の `_prefilter_threshold_for()`)。
 
 #### 実測 (2026-11-18、`20260116_1.mp4`、8 ワーカー + ±5% 3 段)
 
