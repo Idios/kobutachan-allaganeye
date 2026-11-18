@@ -337,6 +337,37 @@ def _ffmpeg_interval(request: pytest.FixtureRequest) -> None:
 再検討する (`tests/test_indicators.py` の
 `test_scan_scale_factors_reject_far_off_scales` が現在の許容幅を pin している)。
 
+### 明度プリフィルタ (#1149)
+
+`match_text` は倍率ごとに「バンド全体の明るい画素が `0.45 x 最小 core` 未満なら
+**その倍率の NCC をすべて飛ばす**」プリフィルタを持つ。テンプレートごとの
+`bright_fraction >= 0.45` は窓の中の割合を見ているので、バンド全体で足りなければ
+どの位置でも合格しえない (**判定を変えない**ことが保証される)。しきい値は
+**実際に照合するテンプレート**から毎回導出する (カスタムテンプレートでも同じ保証を保つ。
+SSoT は `allaganeye/video/indicators.py` の `_prefilter_threshold_for()`)。
+
+#### 実測 (2026-11-18、`20260116_1.mp4`、8 ワーカー + ±5% 3 段)
+
+| 項目 | 値 |
+| --- | --- |
+| スキップ率 (全編 9441 フレーム) | **23.4%** (2208 フレーム、しきい値 349.2 px) |
+| スキップ率 (先頭 300 秒だけ) | 47.4% (試合開始前の暗い区間が多いため。全体とは違う) |
+| 走査時間 | 28.0 秒 -> **25.0 秒** (37.7 倍速) |
+| イベント数 | 30 件 (変化なし) |
+
+#### デコードが次の上限
+
+同じ 944 秒のデコードのみ (crop あり、8 ワーカー) は 300 秒スライスで 4.7 秒。
+944 秒に換算すると約 **14.8 秒**で、25.0 秒のうち過半を占める。つまり
+照合をこれ以上削っても **残りは 10 秒程度**しかない。更に速くするには
+ハードウェアデコード (NVDEC / QSV / D3D11VA) が必要で、`gpu_detector.py` に
+同じパターンがある (crop と併用するときは `-hwaccel_output_format` +
+`hwdownload` が要る。 #899 参照)。
+
+#### 2.8 時間換算
+
+37.7 倍速なので 10,080 秒は **約 4.5 分** (並列化前は約 41 分)。
+
 ## baseline drift の判定
 
 `tests/test_scorebar_regression.py::TestNoResolutionCompat` 系の baseline mismatch が発生した場合、(A) 検知ロジック退行 vs (B) ffmpeg version 依存差異 を以下の手順で判別する。
