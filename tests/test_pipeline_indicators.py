@@ -338,12 +338,19 @@ def test_cli_rejects_indicators_with_from_metadata(tmp_path):
     assert "--indicators is not compatible with --from-metadata" in result.output
 
 
-def test_cli_detect_accepts_both_indicator_flags():
-    """`--indicators` / `--no-indicators` の両形がヘルプに載る (既定 OFF)。"""
-    result = runner.invoke(cli_app, ["detect", "--help"])
-    assert result.exit_code == 0
-    assert "--indicators" in result.output
-    assert "--no-indicators" in result.output
+def test_cli_accepts_both_indicator_flags(tmp_path):
+    """`--indicators` / `--no-indicators` の両形が CLI で受理される (既定 OFF)。
+
+    `--help` の描画は端末幅 (CI は 80 桁) で折り返されて assertion が壊れやすいので、
+    実際に argv を渡して「未定義オプションではない」ことを確かめる。ファイル不在の
+    exit 2 まで進めば、フラグ自体は受理されている。
+    """
+    missing = tmp_path / "missing.mp4"
+    for flag in ("--indicators", "--no-indicators"):
+        result = runner.invoke(cli_app, ["detect", str(missing), flag])
+        assert "No such option" not in result.output, flag
+        assert result.exit_code == 2, (flag, result.output)
+        assert "File not found" in result.output, flag
 
 
 # --- Codex adversarial-review (2026-11-18) の P2 3 件の regression pin --------
