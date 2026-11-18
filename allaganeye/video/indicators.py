@@ -313,8 +313,12 @@ def _glyph_mask(tpl: np.ndarray) -> np.ndarray:
     return cv2.dilate(_glyph_core(tpl), np.ones((3, 3), np.uint8))
 
 
-def _ncc_map(patch: np.ndarray, tpl: np.ndarray, mask: np.ndarray) -> np.ndarray:
+def _ncc_map_from(
+    p: np.ndarray, p2: np.ndarray, tpl: np.ndarray, mask: np.ndarray
+) -> np.ndarray:
     """マスク画素だけの正規化相互相関マップ (各位置の左上が添字)。
+
+    `p` / `p2` は倍率ごとに 1 回だけ作ってテンプレート間で共有する (#1149)。
 
     OpenCV の masked matching は TM_CCORR / TM_SQDIFF 専用で平均を引かないため、
     「マスク内平均を引いた NCC」を filter2D + TM_CCORR で直接組む。
@@ -322,7 +326,6 @@ def _ncc_map(patch: np.ndarray, tpl: np.ndarray, mask: np.ndarray) -> np.ndarray
     暗い高スコア位置が本物の明るい位置を隱す)。
     """
     cv2 = _import_cv2()
-    p = patch.astype(np.float32)
     t = tpl.astype(np.float32)
     m = mask.astype(np.float32)
     m_sum = float(m.sum())
@@ -338,7 +341,7 @@ def _ncc_map(patch: np.ndarray, tpl: np.ndarray, mask: np.ndarray) -> np.ndarray
     sum_p = cv2.filter2D(p, -1, m, anchor=(0, 0), borderType=cv2.BORDER_REFLECT)[
         :res_h, :res_w
     ]
-    sum_p2 = cv2.filter2D(p * p, -1, m, anchor=(0, 0), borderType=cv2.BORDER_REFLECT)[
+    sum_p2 = cv2.filter2D(p2, -1, m, anchor=(0, 0), borderType=cv2.BORDER_REFLECT)[
         :res_h, :res_w
     ]
     corr = cv2.matchTemplate(p, m * t, cv2.TM_CCORR)
@@ -351,24 +354,41 @@ def _ncc_map(patch: np.ndarray, tpl: np.ndarray, mask: np.ndarray) -> np.ndarray
     ).astype(np.float32)
 
 
-def _bright_map(patch: np.ndarray, core: np.ndarray) -> np.ndarray:
-    """各位置での「グリフ画素が実際に明るい割合」マップ (0..1)。"""
+def _bright_map_from(bright: np.ndarray, core: np.ndarray) -> np.ndarray:
+    """各位置での「グリフ画素が実際に明るい割合」マップ (0..1)。
+
+    `bright` は `patch >= _BRIGHT_CORE` の bool 配列。倍率ごとに 1 回だけ
+    作ってテンプレート間で共有する (#1149)。
+    """
     cv2 = _import_cv2()
     height, width = core.shape[:2]
-    res_h = patch.shape[0] - height + 1
-    res_w = patch.shape[1] - width + 1
+    res_h = bright.shape[0] - height + 1
+    res_w = bright.shape[1] - width + 1
     total = float(core.sum())
     if total < 1.0 or res_h < 1 or res_w < 1:
         return np.zeros((0, 0), np.float32)
-    bright = (patch >= _BRIGHT_CORE).astype(np.float32)
     sums = cv2.filter2D(
-        bright,
+        bright.astype(np.float32),
         -1,
         core.astype(np.float32),
         anchor=(0, 0),
         borderType=cv2.BORDER_REFLECT,
     )[:res_h, :res_w]
     return (sums / total).astype(np.float32)
+
+
+@lru_cache(maxsize=1)
+def _prefilter_threshold() -> float:
+    """明度プリフィルタのしきい値 (画素数)。**ここが SSoT**。
+
+    テンプレートごとの `bright_fraction >= _MIN_BRIGHT_FRACTION` は「位置を切り出した
+    窓の中でグリフ core 画素のうち何割が明るいか」を見ている。窓はバンドの部分集合
+    なので、**バンド全体の明るい画素がこのしきい値未満ならどの位置でも合格しない**。
+    判定を変えないことが数学的に保証されるのはこの 1 行のおかげ (#1149)。
+    """
+    templates = load_templates()
+    smallest = min(int(_glyph_core(templates[kind]).sum()) for kind in _TEXT_KINDS)
+    return _MIN_BRIGHT_FRACTION * smallest
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +402,7 @@ def match_text(
     *,
     scale: float = 1.0,
     scale_factors: Sequence[float] = _DEFAULT_SCALE_FACTORS,
+    prefilter: bool = True,
 ) -> dict[str, TextMatch]:
     """バンドパッチを全テンプレートで照合し、種類ごとの最良一致を返す。
 
@@ -392,6 +413,9 @@ def match_text(
     不変なので、減光したコピーや暗い背景のほうが高スコアになりうる。ゲート通過後に
     選ぶと本物を取り逃すため、通過候補が一つも無い場合だけ全体最良に落とす
     (その場合は `bright_fraction` が基準未満になるので判定側で棄却される)。
+
+    ``prefilter=False`` は**診断用**: 明度プリフィルタ (#1149) を切って、スキップ
+    されたフレームでも NCC の実スコアを見たいときだけ使う (判定は変わらない)。
     """
     tpls = templates if templates is not None else load_templates()
     unset = {
@@ -402,6 +426,7 @@ def match_text(
     }
     qualified: dict[str, TextMatch] = dict(unset)
     overall: dict[str, TextMatch] = dict(unset)
+    skip_below = _prefilter_threshold() if prefilter else -1.0
     for factor in scale_factors:
         effective = scale * factor
         normalised = _resize(
@@ -409,15 +434,23 @@ def match_text(
             round(patch.shape[1] / effective),
             round(patch.shape[0] / effective),
         )
+        # 倍率ごとに 1 回で足りる変換はここで hoist する (#1149)。
+        p = normalised.astype(np.float32)
+        p2 = p * p
+        bright = normalised >= _BRIGHT_CORE
+        bright_total = float(bright.sum())
+        if bright_total < skip_below:
+            # どの位置でも bright_fraction が基準未満 = この倍率では合格しえない。
+            continue
         for kind in _TEXT_KINDS:
             tpl = tpls[kind]
-            ncc = _ncc_map(normalised, tpl, _glyph_mask(tpl))
+            ncc = _ncc_map_from(p, p2, tpl, _glyph_mask(tpl))
             if ncc.size == 0:
                 continue
-            bright = _bright_map(normalised, _glyph_core(tpl))
-            gated = np.where(bright >= _MIN_BRIGHT_FRACTION, ncc, _GATED_OUT)
-            overall[kind] = _better(overall[kind], ncc, factor, bright)
-            qualified[kind] = _better(qualified[kind], gated, factor, bright)
+            bright_map = _bright_map_from(bright, _glyph_core(tpl))
+            gated = np.where(bright_map >= _MIN_BRIGHT_FRACTION, ncc, _GATED_OUT)
+            overall[kind] = _better(overall[kind], ncc, factor, bright_map)
+            qualified[kind] = _better(qualified[kind], gated, factor, bright_map)
     return {
         kind: (qualified[kind] if qualified[kind].score > _GATED_OUT else overall[kind])
         for kind in _TEXT_KINDS

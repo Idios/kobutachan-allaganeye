@@ -16,6 +16,9 @@ import pytest
 from allaganeye.exceptions import InputFileError
 from allaganeye.video.indicators import (
     _DEFAULT_SCALE_FACTORS,
+    _GATED_OUT,
+    _MIN_BRIGHT_FRACTION,
+    _MIN_SCORE,
     _SCAN_SCALE_FACTORS,
     IndicatorEvent,
     IndicatorLayout,
@@ -254,6 +257,69 @@ def test_scan_scale_factors_cover_the_measured_hud_range() -> None:
     """
     assert _SCAN_SCALE_FACTORS == (0.95, 1.00, 1.05)
     assert set(_SCAN_SCALE_FACTORS) <= set(_DEFAULT_SCALE_FACTORS)
+
+
+def _classify_from_matches(matches: dict) -> str:
+    """`match_text` の戻り値から `classify_text` と同じ判定を再現する (テスト用)。"""
+    passed = [
+        (match.score / _MIN_SCORE[match.kind], match)
+        for match in matches.values()
+        if match.score >= _MIN_SCORE[match.kind]
+        and match.bright_fraction >= _MIN_BRIGHT_FRACTION
+    ]
+    if not passed:
+        return "other"
+    passed.sort(key=lambda item: item[0], reverse=True)
+    return passed[0][1].kind
+
+
+def test_bright_prefilter_never_changes_the_classification() -> None:
+    """明度プリフィルタは判定を変えない (#1149)。
+
+    バンド全体の明るい画素が `0.45 x 最小 core` 未満なら、どの位置でも
+    `bright_fraction` は基準に届かない。プリフィルタ無しの結果と種類が一致することを、
+    暗い / 明るい / テンプレート入り の合成パッチで確かめる。
+    """
+    cases = []
+    for seed in range(4):
+        cases.append(_noise(54, 252, seed=seed, level=40))  # ほぼ暗い
+        cases.append(_noise(54, 252, seed=100 + seed, level=240))  # 明るい画素多め
+    for kind in ("ko", "assist"):
+        patch = _noise(54, 252, seed=200, level=36)
+        _paste(patch, load_templates()[kind], 60, 6)
+        cases.append(patch)
+        faded = (patch.astype(np.float32) * 0.5).astype(np.uint8)
+        cases.append(faded)
+
+    for patch in cases:
+        with_prefilter = classify_text(patch)
+        without = _classify_from_matches(match_text(patch, prefilter=False))
+        assert with_prefilter[0] == without
+
+
+def test_bright_prefilter_skips_bands_that_cannot_qualify() -> None:
+    """暗いバンドは実際にスキップされている (最適化が死んでいないことの確認)。
+
+    スキップしたフレームは診断用のスコアを返さないので `_GATED_OUT` になる。
+    プリフィルタ無しなら NCC の実スコアが入る。
+    """
+    patch = _noise(54, 252, seed=7, level=30)
+
+    assert classify_text(patch) == ("other", _GATED_OUT)
+    ungated = match_text(patch, prefilter=False)
+    assert max(match.score for match in ungated.values()) > _GATED_OUT
+
+
+def test_prefilter_keeps_hit_scores_identical() -> None:
+    """当たるフレームはスキップされず、スコアも変換の hoist 前後で同一。"""
+    patch = _noise(54, 252, seed=11, level=40)
+    _paste(patch, load_templates()["assist"], 60, 32)
+
+    with_prefilter = match_text(patch)
+    without = match_text(patch, prefilter=False)
+
+    assert with_prefilter == without
+    assert with_prefilter["assist"].score >= 0.55
 
 
 def test_scan_scale_factors_reject_far_off_scales() -> None:
