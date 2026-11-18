@@ -44,6 +44,11 @@ export function toStartDetectParams(p: DetectionParams): Record<string, unknown>
   } else if (p.detectionPath === 'vtuber') {
     args.vtuber = true;
   }
+  // #1141: OFF のときはキー自体を送らない (Rust 側も `Some(false)` では flag を
+  // 載せない)。これで従来の argv が 1 バイトも変わらない。
+  if (p.indicators) {
+    args.indicators = true;
+  }
   return args;
 }
 
@@ -56,6 +61,7 @@ export function isDetectionParamsModified(p: DetectionParams): boolean {
     p.blackoutThreshold !== DEFAULT_DETECTION_PARAMS.blackoutThreshold ||
     p.workers !== DEFAULT_DETECTION_PARAMS.workers ||
     p.gpu !== DEFAULT_DETECTION_PARAMS.gpu ||
-    p.detectionPath !== DEFAULT_DETECTION_PARAMS.detectionPath
+    p.detectionPath !== DEFAULT_DETECTION_PARAMS.detectionPath ||
+    p.indicators !== DEFAULT_DETECTION_PARAMS.indicators
   );
 }

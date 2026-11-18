@@ -49,6 +49,36 @@ describe('toStartDetectParams (#613)', () => {
     ]);
   });
 
+  // #1141 -- KO / ASSIST 統合。OFF ではキー自体を送らないので、既存の argv は
+  // 1 バイトも変わらない (この pin がその証明)。
+  describe('indicators (#1141)', () => {
+    it('omits the key when off', () => {
+      const args = toStartDetectParams({
+        ...DEFAULT_DETECTION_PARAMS,
+        indicators: false,
+      });
+      expect(args).not.toHaveProperty('indicators');
+    });
+
+    it('sends indicators: true when enabled', () => {
+      const args = toStartDetectParams({
+        ...DEFAULT_DETECTION_PARAMS,
+        indicators: true,
+      });
+      expect(args.indicators).toBe(true);
+    });
+
+    it('counts as a modification', () => {
+      expect(isDetectionParamsModified(DEFAULT_DETECTION_PARAMS)).toBe(false);
+      expect(
+        isDetectionParamsModified({
+          ...DEFAULT_DETECTION_PARAMS,
+          indicators: true,
+        }),
+      ).toBe(true);
+    });
+  });
+
   // #1136 -- 検知経路。`standard` は両 flag を omit するので、上記の
   // 「3 keys」pin がそのまま「従来と同一 argv」の証明になる。
   describe('detectionPath (#1136)', () => {

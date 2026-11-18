@@ -234,6 +234,15 @@ def split(
             "excluded from the split output (#805).",
         ),
     ] = False,
+    indicators: Annotated[
+        bool,
+        typer.Option(
+            "--indicators/--no-indicators",
+            help="Also detect KO / ASSIST indicator intervals and write them into "
+            "metadata.json in the same atomic write as the boundaries (#1141). "
+            "Default: off. Not compatible with --from-metadata.",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -270,6 +279,11 @@ def split(
             raise ConfigValidationError(
                 "--dry-run is not compatible with --from-metadata "
                 "(use `allaganeye detect` to regenerate metadata)"
+            )
+        if from_metadata is not None and indicators:
+            raise ConfigValidationError(
+                "--indicators is not compatible with --from-metadata "
+                "(run `allaganeye indicators <metadata.json>` instead)"
             )
 
         # Collapse the two independent flags back into the tri-state
@@ -336,7 +350,9 @@ def split(
 
         from allaganeye.commands.split_matches import run_split
 
-        run_split(video_path, config, verbose=verbose, quiet=quiet)
+        run_split(
+            video_path, config, verbose=verbose, quiet=quiet, indicators=indicators
+        )
 
     except AllaganEyeError as e:
         _report_app_error(e, verbose=verbose, quiet=quiet)
@@ -440,6 +456,15 @@ def detect(
             "excluded from the split output (#805).",
         ),
     ] = False,
+    indicators: Annotated[
+        bool,
+        typer.Option(
+            "--indicators/--no-indicators",
+            help="Also detect KO / ASSIST indicator intervals and write them into "
+            "metadata.json in the same atomic write as the boundaries (#1141). "
+            "Default: off.",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -524,6 +549,7 @@ def detect(
             verbose=verbose,
             quiet=quiet,
             progress_format=progress_format,
+            indicators=indicators,
         )
 
     except AllaganEyeError as e:

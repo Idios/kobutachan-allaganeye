@@ -127,6 +127,81 @@ describe('DetectingScreen', () => {
     render(<DetectingScreen />);
     expect(screen.getByText('Detecting')).toBeInTheDocument();
     expect(screen.getByText('Refining')).toBeInTheDocument();
+    // #1141 -- OFF のランでは KO / ASSIST の行を出さない。
+    expect(screen.queryByTestId('phase-row-indicators')).toBeNull();
+  });
+
+  // #1141 -- KO / ASSIST 統合。要求したランでは 3 段目 (indicators) を出し、
+  // 走査の進捗と ETA を表示する。
+  describe('indicators phase (#1141)', () => {
+    it('buildLogText summarises the scan and carries the ETA', () => {
+      const entry = buildLogText({
+        phase: 'indicators',
+        completed: 900,
+        total: 1800,
+        eta_s: 12,
+      });
+      expect(entry?.text).toContain('KO / ASSIST');
+      expect(entry?.text).toContain('1800s');
+      expect(entry?.text).toContain('残り');
+    });
+
+    it('maps the phase inside the pre-write window', () => {
+      const start = computeOverallPercent({
+        phase: 'indicators',
+        completed: 0,
+        total: 1800,
+      });
+      expect(start).toBe(PHASE_WINDOWS.indicators[0]);
+      const mid = computeOverallPercent({
+        phase: 'indicators',
+        completed: 900,
+        total: 1800,
+      });
+      expect(mid).toBeGreaterThan(start);
+      expect(mid).toBeLessThan(PHASE_WINDOWS.indicators[1]);
+    });
+
+    it('shows a third row with progress when the stage was requested', async () => {
+      useAppStateStore.getState().setDetectionParams({ indicators: true });
+      // start_detect を未解決のままにして、進捗バーが 100% に飛ぶのを防ぐ。
+      invokeMock.mockImplementation((cmd) => {
+        if (cmd === 'start_detect') {
+          return new Promise(() => {
+            /* never resolves */
+          });
+        }
+        return Promise.resolve(null);
+      });
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(listenMock).toHaveBeenCalled();
+      });
+      act(() => {
+        emitDetectProgress({
+          phase: 'indicators',
+          completed: 900,
+          total: 1800,
+          eta_s: 12,
+        });
+      });
+      const row = screen.getByTestId('phase-row-indicators');
+      expect(row.textContent).toContain('KO / ASSIST');
+      expect(row.textContent).toContain('50%');
+    });
+
+    it('forwards indicators only when enabled', async () => {
+      useAppStateStore.getState().setDetectionParams({ indicators: true });
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'start_detect',
+          expect.objectContaining({
+            params: expect.objectContaining({ indicators: true }),
+          }),
+        );
+      });
+    });
   });
 
   it('invokes start_detect with the derived output dir on mount', async () => {

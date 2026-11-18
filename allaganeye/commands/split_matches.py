@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import Any, TypedDict, cast
 
 import typer
 from click._termui_impl import ProgressBar as _ClickProgressBar  # subclass 用 (#365)
@@ -22,8 +22,13 @@ from allaganeye.audio.matcher import BgmHit
 from allaganeye.config import SplitConfig
 from allaganeye.detection.format import (
     format_duration as _format_duration,
+    format_indicator_summary,
     format_timestamp as _format_timestamp,
     iso_utc_now as _iso_utc_now,
+)
+from allaganeye.detection.indicator_stage import (
+    StageNotice,
+    attach_indicators,
 )
 from allaganeye.detection.metadata_writer import (
     read_metadata,
@@ -166,6 +171,7 @@ def run_split(
     *,
     verbose: bool = False,
     quiet: bool = False,
+    indicators: bool = False,
 ) -> None:
     """Run the split pipeline: probe -> detect -> split.
 
@@ -173,6 +179,9 @@ def run_split(
     - Default: probe status, progress bar, match list, output files
     - ``verbose``: adds metadata details, gap info, interval adjustment
     - ``quiet``: suppresses all output except output file list
+
+    ``indicators`` (#1141) runs the KO / ASSIST stage between detection and the
+    metadata write, so boundaries and events land in **one** atomic write.
     """
     show = not quiet
 
@@ -201,6 +210,44 @@ def run_split(
     # Auto-adjust sample_interval for long videos (C strategy from #68)
     effective_interval = _auto_sample_interval(
         metadata["duration"], config.sample_interval
+    )
+
+    def write_indicators_into(payload: dict[str, Any]) -> None:
+        """KO / ASSIST を metadata payload に足す (#1141 受け入れ条件 2 / 3)。
+
+        境界検出と同じ payload をその場で書き換えるので、atomic write は 1 回。
+        GPU は明示指定 (``--gpu``) のときだけ使う (``indicators --gpu`` と同じ
+        opt-in。end-to-end の利得は実測で約 4%)。失敗は warning に記録されて
+        戻るので、境界の結果は失われない。
+        """
+        if show:
+            typer.echo("\nDetecting KO / ASSIST indicators ...")
+        warning = attach_indicators(
+            payload,
+            source=video_path,
+            frame_size=(int(metadata["width"]), int(metadata["height"])),
+            duration=float(metadata["duration"]),
+            codec=metadata.get("codec"),
+            gpu=config.use_gpu is True,
+            notice=(lambda n: _display_indicator_notice(n, show=show, verbose=verbose)),
+            progress=(
+                lambda message: typer.echo(f"  {message}") if show and verbose else None
+            ),
+        )
+        if not show:
+            return
+        if warning is None:
+            events = payload.get("events")
+            if isinstance(events, list):
+                typer.echo(f"  {format_indicator_summary(events)}")
+        else:
+            typer.echo(
+                "  KO / ASSIST detection failed "
+                f"(recorded in warnings[]): {warning.get('context')}"
+            )
+
+    before_write: Callable[[dict[str, Any]], None] | None = (
+        write_indicators_into if indicators else None
     )
 
     # Check detection cache
@@ -257,6 +304,7 @@ def run_split(
                 masked_fallback_used=hit.masked_fallback_used,
                 capture_regions=hit.capture_regions,
                 quiet=quiet,
+                before_write=before_write,
             )
             # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
             _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
@@ -425,6 +473,7 @@ def run_split(
         warnings=build_warnings(),
         capture_regions=captured_region,
         quiet=quiet,
+        before_write=before_write,
     )
     # #805 段階2: MP4 化したのは active のみ (post_match は除外)。verbose の
     # split 件数は書き出した MP4 数を報告する。
@@ -599,6 +648,26 @@ def run_split_from_metadata(
         available_vendors=probe_gpu_vendors(),
         vendor_used=None,
     )
+
+    # #1141 -- `detect --indicators` が書いた `indicator_layout` / `events` を
+    # `--from-metadata` の再書き込みで失わない。本ランは再検知しないので元
+    # metadata が SSoT (#586 timing / #644 brightness / #805 warnings /
+    # #810 capture_regions と同じ preserve パターン)。
+    old_layout = payload.get("indicator_layout")
+    preserve_layout = old_layout if isinstance(old_layout, dict) else None
+    old_events = payload.get("events")
+    preserve_events: list[dict[str, Any]] | None = (
+        [event for event in old_events if isinstance(event, dict)]
+        if isinstance(old_events, list)
+        else None
+    )
+
+    def preserve_indicator_payload(target: dict[str, Any]) -> None:
+        if preserve_layout is not None:
+            target["indicator_layout"] = dict(preserve_layout)
+        if preserve_events is not None:
+            target["events"] = [dict(event) for event in preserve_events]
+
     split_start = time.monotonic()
     _split_and_write_metadata(
         source_path,
@@ -621,10 +690,36 @@ def run_split_from_metadata(
         warnings=preserve_warnings,
         capture_regions=preserve_capture_regions,
         quiet=quiet,
+        before_write=preserve_indicator_payload,
     )
     # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
     _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
     _emit_total_time(total_start, verbose, show)
+
+
+def _display_indicator_notice(
+    notice: StageNotice, *, show: bool, verbose: bool
+) -> None:
+    """KO / ASSIST 走査の途中経過を人間向けに出す (#1141)。
+
+    ``split`` には ``--progress-format json`` が無いので text だけ。走査の
+    進捗行は ``verbose`` のときだけ出す (2.8 時間の録画で 300 行を超えるため)。
+    """
+    if not show:
+        return
+    if notice.kind == "calibrating":
+        if verbose:
+            typer.echo("  resolving indicator layout ...")
+        return
+    if notice.kind != "progress" or not verbose:
+        return
+    suffix = (
+        f" [ETA {_format_timestamp(notice.eta_s)}]" if notice.eta_s is not None else ""
+    )
+    typer.echo(
+        f"  KO / ASSIST: {notice.processed_s or 0:.0f}s / "
+        f"{notice.total_s or 0:.0f}s{suffix}"
+    )
 
 
 def _display_results(
@@ -1522,6 +1617,7 @@ def _split_and_write_metadata(
     warnings: list[MetadataWarning] | None = None,
     capture_regions: CaptureRegions | None = None,
     quiet: bool = False,
+    before_write: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
     """Split video and write metadata.json (#591: system_info required).
 
@@ -1529,8 +1625,13 @@ def _split_and_write_metadata(
     optional. ``None`` means「本ランで取得」(started = detected_at の値、
     completed = writer 直前の ``_iso_utc_now()``)。``run_split`` /
     ``run_detect`` は新規検知なので両方 ``None`` を渡し fresh capture を
-    使う。``run_split_from_metadata`` は元 metadata の値を保持して GUI
+    ``run_split_from_metadata`` は元 metadata の値を保持して GUI
     「所要」が「検知時の所要」を表示し続けるよう、明示的に値を渡す。
+
+    ``before_write`` (#1141): payload を組んだ直後、``write_metadata_atomic``
+    の直前に呼ばれるフック。KO / ASSIST の検出結果を差し込むために使う
+    (境界とイベントを **1 回の atomic write** に載せるため、2 回目の write を
+    作らない)。引数の dict はその場で書き換えてよい。
     """
     show = not quiet
     source_duration = metadata["duration"]
@@ -1592,6 +1693,8 @@ def _split_and_write_metadata(
         capture_regions=capture_regions,
     )
     metadata_path = config.output_dir / "metadata.json"
+    if before_write is not None:
+        before_write(cast("dict[str, Any]", result))
     write_metadata_atomic(metadata_path, result)
 
     # Report where the files actually landed, not the raw ``-o`` string

@@ -2143,6 +2143,12 @@ pub struct DetectParams {
     /// the pair before spawning so a caller that bypasses the frontend's
     /// single-choice radio cannot reach the subprocess.
     pub vtuber: Option<bool>,
+    /// #1141 -- `Some(true)` -> `--indicators` (KO / ASSIST detection folded
+    /// into the same detect run, one atomic metadata write). Any other value
+    /// leaves the flag off the argv, i.e. the CLI default (off) applies.
+    /// `--no-indicators` is never sent: it is the default, so omitting the
+    /// flag keeps the pre-#1141 argv byte-for-byte.
+    pub indicators: Option<bool>,
 }
 
 /// #569 -- one progress event emitted on channel `detect-progress`.
@@ -2439,6 +2445,11 @@ fn detect_command_args(video_path: &str, output_dir: &str, params: &DetectParams
     }
     if params.vtuber.unwrap_or(false) {
         args.push("--vtuber".to_string());
+    }
+    // #1141 -- KO / ASSIST 検出の統合。既定 OFF なので true のときだけ載せる
+    // (`--no-indicators` は送らない = 従来の argv が 1 バイトも変わらない)。
+    if params.indicators.unwrap_or(false) {
+        args.push("--indicators".to_string());
     }
     args
 }
@@ -6945,6 +6956,36 @@ mod tests {
         assert!(!joined.contains("--gpu"));
         assert!(!joined.contains("--no-gpu"));
         assert!(!joined.contains("--workers"));
+        assert!(!joined.contains("--indicators"));
+    }
+
+    /// #1141 -- KO / ASSIST 統合は true のときだけ argv に載る。
+    #[test]
+    fn detect_command_args_emits_indicators_only_when_true() {
+        let args_on = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                indicators: Some(true),
+                ..Default::default()
+            },
+        );
+        assert!(args_on.iter().any(|a| a == "--indicators"));
+
+        // Some(false) は「既定」と同じ (flag を載せない)。
+        let args_off = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                indicators: Some(false),
+                ..Default::default()
+            },
+        );
+        assert!(!args_off.iter().any(|a| a == "--indicators"));
+        assert_eq!(
+            args_off,
+            detect_command_args("in.mkv", "out", &DetectParams::default())
+        );
     }
 
     #[test]

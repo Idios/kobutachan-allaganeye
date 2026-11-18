@@ -18,7 +18,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import typer
 
@@ -47,6 +47,14 @@ from allaganeye.commands.split_matches import (
     build_brightness_samples,
 )
 from allaganeye.config import SplitConfig
+from allaganeye.detection.format import (
+    format_indicator_summary,
+    format_timestamp,
+)
+from allaganeye.detection.indicator_stage import (
+    StageNotice,
+    attach_indicators,
+)
 from allaganeye.detection.metadata_writer import write_metadata_atomic
 from allaganeye.detection.progress_emitter import ProgressEmitter
 from allaganeye.detection.warnings import build_warnings
@@ -64,6 +72,7 @@ def run_detect(
     verbose: bool = False,
     quiet: bool = False,
     progress_format: str = "text",
+    indicators: bool = False,
 ) -> None:
     """Run detection and write ``metadata.json`` without splitting (#463).
 
@@ -80,6 +89,10 @@ def run_detect(
       wrapper.  Suppresses every other stdout write (``Probing: ...``,
       ``Metadata: ...``, etc.) so the GUI can parse cleanly.  Errors and
       ``-v`` traceback still go to stderr.
+
+    ``indicators`` (#1141) runs the KO / ASSIST stage **inside** this run so the
+    boundaries and the event list land in one atomic write.  A failure of that
+    stage is recorded in ``warnings[]`` and does not lose the boundary result.
     """
     json_mode = progress_format == "json"
     # In json mode the GUI consumes stdout as a structured stream, so we
@@ -326,6 +339,69 @@ def run_detect(
         capture_regions=captured_region,
     )
     metadata_path = config.output_dir / "metadata.json"
+
+    # #1141: KO / ASSIST を**同じ payload に乗せてから** 1 回だけ書く。境界と
+    # イベントが別プロセスの write-back になると CAS 競合と ffprobe の二重実行が
+    # 起きるため。GPU は明示指定 (--gpu) のときだけ使う (indicators --gpu と
+    # 同じ opt-in。end-to-end の利得は実測で約 4%)。
+    if indicators:
+        if show:
+            typer.echo("\nDetecting KO / ASSIST indicators ...")
+
+        def indicator_diagnostic(message: str) -> None:
+            """どの経路で layout を決めたか / GPU が使えたかを verbose で出す。"""
+            if show and verbose:
+                typer.echo(f"  {message}")
+
+        def on_indicator_notice(notice: StageNotice) -> None:
+            if notice.kind == "calibrating":
+                indicator_diagnostic("resolving indicator layout ...")
+                if progress_emitter is not None:
+                    progress_emitter.emit(
+                        "indicators", completed=0, total=int(metadata["duration"])
+                    )
+                return
+            if notice.kind != "progress":
+                return
+            if progress_emitter is not None:
+                progress_emitter.emit(
+                    "indicators",
+                    completed=int(notice.processed_s or 0),
+                    total=int(notice.total_s or 0),
+                    eta_s=notice.eta_s,
+                )
+            elif show and verbose:
+                suffix = (
+                    f" [ETA {format_timestamp(notice.eta_s)}]"
+                    if notice.eta_s is not None
+                    else ""
+                )
+                typer.echo(
+                    f"  KO / ASSIST: {notice.processed_s or 0:.0f}s / "
+                    f"{notice.total_s or 0:.0f}s{suffix}"
+                )
+
+        indicator_warning = attach_indicators(
+            cast("dict[str, Any]", payload),
+            source=video_path,
+            frame_size=(int(metadata["width"]), int(metadata["height"])),
+            duration=float(metadata["duration"]),
+            codec=metadata.get("codec"),
+            gpu=config.use_gpu is True,
+            notice=on_indicator_notice,
+            progress=indicator_diagnostic,
+        )
+        if show:
+            if indicator_warning is None:
+                events = payload.get("events")
+                if isinstance(events, list):
+                    typer.echo(f"  {format_indicator_summary(events)}")
+            else:
+                typer.echo(
+                    "  KO / ASSIST detection failed "
+                    f"(recorded in warnings[]): {indicator_warning.get('context')}"
+                )
+
     write_metadata_atomic(metadata_path, payload)
 
     # Report where the file actually landed, not the raw ``-o`` string

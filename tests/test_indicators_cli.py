@@ -12,6 +12,7 @@ import typer
 from typer.testing import CliRunner
 
 from allaganeye.commands import indicators as indicators_cmd
+from allaganeye.detection import indicator_stage
 from allaganeye.commands.indicators import (
     DEFAULT_INTERVAL,
     IndicatorReport,
@@ -129,7 +130,7 @@ def fake_video(monkeypatch: pytest.MonkeyPatch) -> None:
         """crop 付き = 走査 / crop なし = キャリブレーション。"""
         return iter(frames if crop is not None else full_frames)
 
-    monkeypatch.setattr(indicators_cmd, "iter_gray_frames", fake_iter)
+    monkeypatch.setattr(indicator_stage, "iter_gray_frames", fake_iter)
 
 
 def test_indicators_reports_events(app: typer.Typer, metadata_path: Path, fake_video):
@@ -283,7 +284,7 @@ def test_indicators_calibrates_when_layout_missing(
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
     del payload["indicator_layout"]
     metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    monkeypatch.setattr(indicators_cmd, "calibrate_layout", lambda _frames: LAYOUT)
+    monkeypatch.setattr(indicator_stage, "calibrate_layout", lambda _frames: LAYOUT)
     result = runner.invoke(app, ["indicators", str(metadata_path), "--no-write"])
     assert result.exit_code == 0, result.output
     assert "ASSIST: 1" in result.output
@@ -296,7 +297,7 @@ def test_indicators_fails_when_calibration_fails(
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
     del payload["indicator_layout"]
     metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    monkeypatch.setattr(indicators_cmd, "calibrate_layout", lambda _frames: None)
+    monkeypatch.setattr(indicator_stage, "calibrate_layout", lambda _frames: None)
     result = runner.invoke(app, ["indicators", str(metadata_path), "--no-write"])
     assert result.exit_code == 4
     assert "解決できませんでした" in result.output
@@ -311,7 +312,7 @@ def test_indicators_recalibrate_ignores_cache(
         calls.append(len(list(frames)))
         return LAYOUT
 
-    monkeypatch.setattr(indicators_cmd, "calibrate_layout", fake_calibrate)
+    monkeypatch.setattr(indicator_stage, "calibrate_layout", fake_calibrate)
     result = runner.invoke(
         app, ["indicators", str(metadata_path), "--no-write", "--recalibrate"]
     )
@@ -453,7 +454,7 @@ def test_indicators_uses_user_region_without_calibration(
     def explode(_frames):
         raise AssertionError("calibrate_layout must not run when --region is given")
 
-    monkeypatch.setattr(indicators_cmd, "calibrate_layout", explode)
+    monkeypatch.setattr(indicator_stage, "calibrate_layout", explode)
     result = runner.invoke(
         app,
         ["indicators", str(metadata_path), "--region", "626,618,153,13", "--no-write"],
@@ -469,7 +470,7 @@ def test_indicators_gpu_passes_hwaccel_to_the_decoder(
     from allaganeye.video.frames import HwaccelSpec
 
     spec = HwaccelSpec(vendor="nvidia", args=("-hwaccel", "cuda"))
-    monkeypatch.setattr(indicators_cmd, "resolve_hwaccel", lambda _codec: spec)
+    monkeypatch.setattr(indicator_stage, "resolve_hwaccel", lambda _codec: spec)
 
     seen: dict[str, object] = {}
     times = [round(index * DEFAULT_INTERVAL, 2) for index in range(30)]
@@ -479,7 +480,7 @@ def test_indicators_gpu_passes_hwaccel_to_the_decoder(
         seen.update(kwargs)
         return iter(frames)
 
-    monkeypatch.setattr(indicators_cmd, "iter_gray_frames", fake_iter)
+    monkeypatch.setattr(indicator_stage, "iter_gray_frames", fake_iter)
 
     result = runner.invoke(
         app, ["indicators", str(metadata_path), "--no-write", "--gpu"]
@@ -498,7 +499,7 @@ def test_indicators_gpu_falls_back_to_cpu(
     from allaganeye.video.frames import HwaccelSpec
 
     spec = HwaccelSpec(vendor="nvidia", args=("-hwaccel", "cuda"))
-    monkeypatch.setattr(indicators_cmd, "resolve_hwaccel", lambda _codec: spec)
+    monkeypatch.setattr(indicator_stage, "resolve_hwaccel", lambda _codec: spec)
 
     calls: list[object] = []
 
@@ -508,7 +509,7 @@ def test_indicators_gpu_falls_back_to_cpu(
             raise VideoProcessingError("cuda decode failed")
         return []
 
-    monkeypatch.setattr(indicators_cmd, "scan_detections", fake_scan)
+    monkeypatch.setattr(indicator_stage, "scan_detections", fake_scan)
 
     result = runner.invoke(
         app, ["indicators", str(metadata_path), "--no-write", "--gpu"]
@@ -529,7 +530,7 @@ def test_indicators_without_gpu_keeps_cpu_decode(
         calls.append(kwargs.get("hwaccel"))
         return []
 
-    monkeypatch.setattr(indicators_cmd, "scan_detections", fake_scan)
+    monkeypatch.setattr(indicator_stage, "scan_detections", fake_scan)
 
     result = runner.invoke(app, ["indicators", str(metadata_path), "--no-write"])
 

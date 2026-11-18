@@ -75,6 +75,8 @@ const PHASE_WINDOWS: Record<string, [number, number]> = {
   refine: [70, 88],
   scorebar: [88, 97],
   audio: [3, 60],
+  // #1141 -- KO / ASSIST の走査。scorebar の後、metadata 書き込みの前に来る。
+  indicators: [97, 99],
   cache_hit: [0, 99],
   writing_metadata: [99, 100],
   done: [100, 100],
@@ -105,7 +107,7 @@ function computeOverallPercent(event: DetectProgressEvent): number {
  * log can highlight terminal / faulty / warned events without the user
  * having to read every line.
  *
- * - `info`: routine progress (start / probing / scan / refine / scorebar / chunk* / audio / writing_metadata)
+ * - `info`: routine progress (start / probing / scan / refine / scorebar / chunk* / audio / indicators / writing_metadata)
  * - `done`: terminal success (`phase="done"`) -- styled cyan-bright
  * - `error`: terminal failure (`phase="error"`) -- styled `--ae-danger`
  * - `warn`: notable non-fatal events (`phase="cache_hit"` for now;
@@ -191,6 +193,24 @@ function buildLogText(event: DetectProgressEvent): BuildLogResult | null {
       return { text: 'scorebar 分類', kind: 'info' };
     case 'audio':
       return { text: 'audio Fanfare scan', kind: 'info' };
+    case 'indicators':
+      // #1141 -- `completed` / `total` は秒。scan と同じく 10% 刻みで出す。
+      if (
+        event.completed !== undefined &&
+        event.total !== undefined &&
+        event.total > 0
+      ) {
+        const pct = (event.completed / event.total) * 100;
+        if (pct % 10 < 0.5 || event.completed === event.total) {
+          const eta =
+            event.eta_s !== undefined ? ` · 残り ~${fmtElapsed(event.eta_s)}` : '';
+          return {
+            text: `KO / ASSIST 走査: ${event.completed}/${event.total}s (${pct.toFixed(0)}%)${eta}`,
+            kind: 'info',
+          };
+        }
+      }
+      return null;
     case 'writing_metadata':
       return { text: 'metadata.json 書き込み中…', kind: 'info' };
     case 'done':
@@ -645,6 +665,17 @@ function DetectingRunningView({
     Math.min(100, ((progress - refineStart) * 100) / (refiningEnd - refineStart)),
   );
   const refiningSub = phaseLabel === 'scorebar' ? '分類' : 'refine';
+  // #1141 -- KO / ASSIST の 3 段目。ステージを要求したランでだけ表示する
+  // (OFF のランでは指標のバーが「待機 0%」で残るのは誤解を生む)。
+  const indicatorStart = PHASE_WINDOWS.indicators[0];
+  const indicatorEnd = PHASE_WINDOWS.indicators[1];
+  const pct3 = Math.max(
+    0,
+    Math.min(
+      100,
+      ((progress - indicatorStart) * 100) / (indicatorEnd - indicatorStart),
+    ),
+  );
 
   const eta = computeEta(progress, elapsed);
   // #569 review Round 1 課題 1: probing event 受信後は実 ffprobe 結果を
@@ -686,6 +717,14 @@ function DetectingRunningView({
       <div className={styles.phases}>
         <PhaseRow name="Detecting" jp="粗スキャン" pct={pct1} sub="scan" />
         <PhaseRow name="Refining" jp="精密計測" pct={pct2} sub={refiningSub} />
+        {detectionParams.indicators && (
+          <PhaseRow
+            name="Indicators"
+            jp="KO / ASSIST"
+            pct={pct3}
+            sub={phaseLabel === 'indicators' ? 'scan' : 'wait'}
+          />
+        )}
       </div>
 
       <div className={styles.divider} />

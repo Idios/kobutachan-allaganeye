@@ -66,6 +66,14 @@ export interface DetectionParams {
    * - `vtuber`: `--vtuber` のみ
    */
   detectionPath: DetectionPath;
+  /**
+   * #1141: `--indicators` を渡すか。ON にすると境界検出と同じ metadata.json に
+   * KO / ASSIST のイベント列が 1 回の atomic write で入る (CLI の既定は OFF)。
+   *
+   * OFF のときはフラグ自体を送らない (`--no-indicators` は送らない) ので、
+   * 従来の argv は 1 バイトも変わらない。
+   */
+  indicators: boolean;
 }
 
 /**
@@ -79,6 +87,7 @@ export const DEFAULT_DETECTION_PARAMS: DetectionParams = {
   workers: 0,
   gpu: null,
   detectionPath: 'standard',
+  indicators: false,
 };
 
 export interface AppState {

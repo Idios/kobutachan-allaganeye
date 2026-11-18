@@ -290,3 +290,61 @@ describe('DetectionParamsPanel detection path (#1136)', () => {
     expect(await axe(container)).toHaveNoViolations();
   });
 });
+
+describe('DetectionParamsPanel indicators (#1141)', () => {
+  async function openPanel() {
+    const user = userEvent.setup();
+    render(<DetectionParamsPanel />);
+    await user.click(screen.getByTestId('detection-params-toggle'));
+    return user;
+  }
+
+  it('defaults to OFF and writes the flag through the store', async () => {
+    const user = await openPanel();
+    expect(
+      screen.getByTestId('detection-params-indicators-off'),
+    ).toHaveAttribute('aria-checked', 'true');
+    expect(useAppStateStore.getState().detectionParams.indicators).toBe(false);
+
+    await user.click(screen.getByTestId('detection-params-indicators-on'));
+    expect(useAppStateStore.getState().detectionParams.indicators).toBe(true);
+    expect(
+      screen.getByTestId('detection-params-indicators-on'),
+    ).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('leaves the other detection fields untouched', async () => {
+    const user = await openPanel();
+    useAppStateStore.getState().setDetectionParams({
+      blackoutThreshold: 22,
+      workers: 8,
+      gpu: true,
+      detectionPath: 'masked',
+    });
+    await user.click(screen.getByTestId('detection-params-indicators-on'));
+    const dp = useAppStateStore.getState().detectionParams;
+    expect(dp.blackoutThreshold).toBe(22);
+    expect(dp.workers).toBe(8);
+    expect(dp.gpu).toBe(true);
+    expect(dp.detectionPath).toBe('masked');
+    expect(dp.indicators).toBe(true);
+  });
+
+  it('counts as a modification for the reset button', async () => {
+    const user = await openPanel();
+    const reset = screen.getByTestId('detection-params-reset');
+    expect(reset).toBeDisabled();
+    await user.click(screen.getByTestId('detection-params-indicators-on'));
+    expect(reset).toBeEnabled();
+    await user.click(reset);
+    expect(useAppStateStore.getState().detectionParams.indicators).toBe(false);
+  });
+
+  it('has no axe violations with the indicators toggle on', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<DetectionParamsPanel />);
+    await user.click(screen.getByTestId('detection-params-toggle'));
+    await user.click(screen.getByTestId('detection-params-indicators-on'));
+    expect(await axe(container)).toHaveNoViolations();
+  });
+});
