@@ -541,3 +541,31 @@ def test_preserve_sanitizers_agree_with_the_json_schema() -> None:
         assert (_sanitize_indicator_layout(case) is not None) == (
             layout_validator.is_valid(case)
         ), case
+
+
+def test_preserve_sanitizers_reject_nested_non_finite_numbers() -> None:
+    """`evidence` の入れ子の NaN / Infinity も落とす (#1141 codex review P2)。
+
+    `read_metadata` (json.loads) は非標準 token を受理し、writer はそれを再 emit
+    する。GUI の strict reader は metadata.json 全体を拒否するので、preserve 時に
+    再帰的に検査する。JSON Schema の type check は NaN を number として通すため、
+    この検査は schema 一致テストとは別に pin する。
+    """
+    from allaganeye.commands.split_matches import _sanitize_highlight_events
+
+    event = {
+        "signal_id": "ko_indicator",
+        "timestamp": 1.0,
+        "end": 2.0,
+        "score": 0.9,
+        "evidence": {"samples": 3},
+        "match_index": 1,
+    }
+    assert _sanitize_highlight_events([event]) == [event]
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        poisoned = {**event, "evidence": {"samples": bad}}
+        assert _sanitize_highlight_events([poisoned]) is None
+        nested = {**event, "evidence": {"nested": [{"x": bad}]}}
+        assert _sanitize_highlight_events([nested]) is None
+        unknown = {**event, "forward_compat": {"x": bad}}
+        assert _sanitize_highlight_events([unknown]) is None

@@ -2483,6 +2483,8 @@ def _sanitize_indicator_layout(value: object) -> dict[str, Any] | None:
         return None
     if set(value.keys()) != _INDICATOR_LAYOUT_KEYS:
         return None
+    if not _is_finite_json(value):
+        return None
     for key in ("anchor_x", "anchor_y", "confidence"):
         number = _finite_number(value.get(key))
         if number is None or not 0.0 <= number <= 1.0:
@@ -2554,8 +2556,39 @@ def _sanitize_highlight_events(value: object) -> list[dict[str, Any]] | None:
                 break
         if not bounds_ok:
             continue
+        # `evidence` や未知キーの**入れ子**に NaN / Infinity が残ると、
+        # `json.dumps` が非標準 token を再 emit して GUI の strict reader が
+        # metadata.json 全体を拒否する (codex review 2026-11-18 P2)。
+        if not _is_finite_json(entry):
+            continue
         kept.append({**entry, "match_index": match_index})
     return kept or None
+
+
+def _is_finite_json(value: object, *, depth: int = 0) -> bool:
+    """NaN / Infinity を含まない JSON 値か (dict / list を再帰的に検査)。
+
+    `read_metadata` は Python の `json.loads` なので NaN / Infinity を受理するが、
+    `write_metadata_atomic` は `allow_nan=True` でそのまま再 emit する。GUI の
+    strict reader (serde_json / JSON.parse) は metadata.json **全体**を拒否する
+    ため、preserve 経路で塞ぐ (#1141 codex review P2)。
+
+    `depth` の上限は手編集で作られた極端に深い構造での再帰爆発を避けるため
+    (`json.loads` は循環を作れないので、これで十分)。
+    """
+    if depth > 32:
+        return False
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, dict):
+        return all(
+            _is_finite_json(key, depth=depth + 1)
+            and _is_finite_json(item, depth=depth + 1)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return all(_is_finite_json(item, depth=depth + 1) for item in value)
+    return True
 
 
 def _integral_number(value: object) -> int | None:
