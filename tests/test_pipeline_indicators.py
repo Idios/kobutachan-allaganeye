@@ -80,7 +80,9 @@ runner = CliRunner()
 
 
 def _run(events: list[dict[str, object]] | None = None) -> IndicatorRun:
-    return IndicatorRun(layout=dict(LAYOUT), events=[dict(e) for e in (events or EVENTS)])
+    return IndicatorRun(
+        layout=dict(LAYOUT), events=[dict(e) for e in (events or EVENTS)]
+    )
 
 
 def _fake_stage(result: IndicatorRun | None = None, *, notices: bool = True):
@@ -467,3 +469,75 @@ def test_split_from_metadata_drops_malformed_indicator_fields(tmp_path):
     assert "indicator_layout" not in fresh
     assert "events" not in fresh
     assert len(fresh["matches"]) == 1
+
+
+# --- schema 一致 (sanitizer は schema 妥当性と同値であること) ------------------
+
+
+def test_preserve_sanitizers_agree_with_the_json_schema() -> None:
+    """preserve sanitizer の受理判定が JSON Schema と一致する (codex P2 #4-#6)。
+
+    緩すぎると GUI が metadata.json 全体を拒否し、厳しすぎると妥当なイベントを
+    `--from-metadata` で silent に落とす。ケース表で両方向を pin する。
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from jsonschema import Draft202012Validator
+
+    from allaganeye.commands.split_matches import (
+        _sanitize_highlight_events,
+        _sanitize_indicator_layout,
+    )
+
+    schema = _json.loads(
+        _Path("schemas/metadata.schema.json").read_text(encoding="utf-8")
+    )
+    event_validator = Draft202012Validator(schema["$defs"]["HighlightEvent"])
+    layout_validator = Draft202012Validator(schema["$defs"]["IndicatorLayout"])
+
+    event = {
+        "signal_id": "ko_indicator",
+        "timestamp": 1,
+        "end": 2,
+        "score": 0.9,
+        "evidence": {},
+        "match_index": 1,
+    }
+    layout = {
+        "anchor_x": 0.3,
+        "anchor_y": 0.5,
+        "scale": 1,
+        "support": 6,
+        "confidence": 0.9,
+        "source": "anchor",
+    }
+    event_cases = [
+        event,
+        {**event, "match_index": None},
+        {**event, "match_index": 1.0},
+        {k: v for k, v in event.items() if k != "match_index"},
+        {**event, "clip_start": None},
+        {**event, "clip_end": -1},
+        {**event, "clip_start": 1.5, "clip_end": 3.5},
+        {**event, "score": 1.5},
+        {**event, "evidence": "x"},
+        {},
+    ]
+    layout_cases = [
+        layout,
+        {**layout, "support": 6.0},
+        {**layout, "anchor_x": 1.5},
+        {**layout, "scale": 0},
+        {**layout, "junk": 1},
+        {},
+    ]
+
+    for case in event_cases:
+        assert (_sanitize_highlight_events([case]) is not None) == (
+            event_validator.is_valid(case)
+        ), case
+    for case in layout_cases:
+        assert (_sanitize_indicator_layout(case) is not None) == (
+            layout_validator.is_valid(case)
+        ), case

@@ -2490,13 +2490,17 @@ def _sanitize_indicator_layout(value: object) -> dict[str, Any] | None:
     scale = _finite_number(value.get("scale"))
     if scale is None or scale <= 0.0:
         return None
-    support = value.get("support")
-    if isinstance(support, bool) or not isinstance(support, int) or support < 1:
+    support = _integral_number(value.get("support"))
+    if support is None or support < 1:
         return None
     source = value.get("source")
     if not isinstance(source, str) or not source:
         return None
-    return dict(value)
+    sanitized = dict(value)
+    # `6.0` のような整数値 float は schema (`integer`) / GUI zod (`.int()`) とも
+    # 通るので int に正規化して返す (codex review 2026-11-18 P2)。
+    sanitized["support"] = support
+    return sanitized
 
 
 def _sanitize_highlight_events(value: object) -> list[dict[str, Any]] | None:
@@ -2528,26 +2532,42 @@ def _sanitize_highlight_events(value: object) -> list[dict[str, Any]] | None:
             continue
         if not isinstance(entry.get("evidence"), dict):
             continue
-        match_index = entry.get("match_index")
-        if match_index is not None and (
-            isinstance(match_index, bool)
-            or not isinstance(match_index, int)
-            or match_index < 1
-        ):
+        # `match_index` は required (明示 null は許容) なので、**キーの存在**と
+        # 値の検査を分ける (codex review 2026-11-18 P2)。
+        if "match_index" not in entry:
             continue
-        clipped = True
+        match_index = entry["match_index"]
+        if match_index is not None:
+            normalized = _integral_number(match_index)
+            if normalized is None or normalized < 1:
+                continue
+            match_index = normalized
+        # `clip_start` / `clip_end` は optional だが、あるなら有限かつ >= 0 の
+        # 数値でなければならない (null / 負値は schema / zod が拒否する)。
+        bounds_ok = True
         for key in ("clip_start", "clip_end"):
-            if (
-                key in entry
-                and entry[key] is not None
-                and _finite_number(entry[key]) is None
-            ):
-                clipped = False
+            if key not in entry:
+                continue
+            bound = _finite_number(entry[key])
+            if bound is None or bound < 0:
+                bounds_ok = False
                 break
-        if not clipped:
+        if not bounds_ok:
             continue
-        kept.append(dict(entry))
+        kept.append({**entry, "match_index": match_index})
     return kept or None
+
+
+def _integral_number(value: object) -> int | None:
+    """整数値の数値なら int を返す (bool / 非整数 / NaN / Infinity は None)。
+
+    JSON Schema の `integer` は小数部 0 の数値 (`1.0`) も受けるので、Python で
+    float になる値も整数として受理する (schema 妥当な値を preserve で落とさない)。
+    """
+    number = _finite_number(value)
+    if number is None or not number.is_integer():
+        return None
+    return int(number)
 
 
 def _finite_number(value: object) -> float | None:
