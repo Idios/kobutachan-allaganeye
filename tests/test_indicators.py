@@ -260,14 +260,17 @@ def test_scan_scale_factors_reject_far_off_scales() -> None:
     """既定の +-5% を超えるスケール差は拾わない (ラダーなら拾える)。
 
     キャリブレーションの誤差が +-5% を超えたら取り逃す、というのが #1147 の
-    明示したトレードオフ。ここが変わったら GT の再測定が必要。
+    明示したトレードオフ。境界をはっきりさせるため **1.10 / 1.20 の両方**を
+    見る (1.05 は既定に含まれるので、ちょうど 1.05 側は別テストが使っている)。
+    ここが変わったら GT の再測定が必要。
     """
-    patch = _noise(54, 252, seed=41)
-    tpl = load_templates()["assist"]
-    _paste(patch, _scaled(tpl, 1.20), 60, 32)
+    ladder = _DEFAULT_SCALE_FACTORS
+    for factor in (1.10, 1.20):
+        patch = _noise(54, 252, seed=41)
+        _paste(patch, _scaled(load_templates()["assist"], factor), 60, 32)
 
-    assert classify_text(patch)[0] == "other"
-    assert classify_text(patch, scale_factors=_DEFAULT_SCALE_FACTORS)[0] == "assist"
+        assert classify_text(patch)[0] == "other"
+        assert classify_text(patch, scale_factors=ladder)[0] == "assist"
 
 
 def test_match_text_gates_brightness_before_choosing_location() -> None:
