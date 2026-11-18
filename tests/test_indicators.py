@@ -15,6 +15,8 @@ import pytest
 
 from allaganeye.exceptions import InputFileError
 from allaganeye.video.indicators import (
+    _DEFAULT_SCALE_FACTORS,
+    _SCAN_SCALE_FACTORS,
     IndicatorEvent,
     IndicatorLayout,
     Rect,
@@ -228,16 +230,44 @@ def test_classify_prefers_bright_match_over_darker_higher_score() -> None:
 
     NCC はコントラスト不変なので、減光したコピーのほうがスコアが高くなりうる。
     明度ゲートを位置の選択前に掛けないと、本物のテキストを取り逃す。
-    ここでは縮小したコピー (別スケール) を置いているので、スケールをまたぐ選択の検証。
+    ここでは縮尺を変えたコピー (別スケール) を置いているので、スケールをまたぐ
+    選択の検証。#1147 で走査の既定は +-5% 3 段になったため、この検証では
+    **ラダーを明示的に渡す** (既定側の許容幅は
+    `test_scan_scale_factors_reject_far_off_scales` が見る)。
     """
     patch = _noise(54, 252, seed=29)
     tpl = load_templates()["assist"]
     dimmed = (tpl.astype(np.float32) * 0.5).astype(np.uint8)
     _paste(patch, dimmed, 10, 4)
     _paste(patch, _scaled(tpl, 1.1), 60, 32)
-    kind, score = classify_text(patch)
+    kind, score = classify_text(patch, scale_factors=_DEFAULT_SCALE_FACTORS)
     assert kind == "assist"
     assert score >= 0.55
+
+
+def test_scan_scale_factors_cover_the_measured_hud_range() -> None:
+    """走査の既定は +-5% の 3 段 (#1147 の GT 実測に基づく契約)。
+
+    実測 (GT 3 本、`docs/testing-guide.md`) で合格した倍率は 1.00 と 1.05 だけで、
+    +-10% 以上は一度も勝たなかった。ここを広げると 1 フレームあたりの NCC 回数が
+    そのまま増える (7 段 = 14 回 -> 3 段 = 6 回)。
+    """
+    assert _SCAN_SCALE_FACTORS == (0.95, 1.00, 1.05)
+    assert set(_SCAN_SCALE_FACTORS) <= set(_DEFAULT_SCALE_FACTORS)
+
+
+def test_scan_scale_factors_reject_far_off_scales() -> None:
+    """既定の +-5% を超えるスケール差は拾わない (ラダーなら拾える)。
+
+    キャリブレーションの誤差が +-5% を超えたら取り逃す、というのが #1147 の
+    明示したトレードオフ。ここが変わったら GT の再測定が必要。
+    """
+    patch = _noise(54, 252, seed=41)
+    tpl = load_templates()["assist"]
+    _paste(patch, _scaled(tpl, 1.20), 60, 32)
+
+    assert classify_text(patch)[0] == "other"
+    assert classify_text(patch, scale_factors=_DEFAULT_SCALE_FACTORS)[0] == "assist"
 
 
 def test_match_text_gates_brightness_before_choosing_location() -> None:
