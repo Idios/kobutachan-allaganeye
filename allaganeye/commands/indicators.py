@@ -42,8 +42,9 @@ from allaganeye.exceptions import (
     DetectionError,
     InputFileError,
     MetadataConflictError,
+    VideoProcessingError,
 )
-from allaganeye.video.frames import iter_gray_frames
+from allaganeye.video.frames import HwaccelSpec, iter_gray_frames, resolve_hwaccel
 from allaganeye.video.indicator_scan import resolve_scan_workers, scan_detections
 from allaganeye.video.indicators import (
     IndicatorEvent,
@@ -166,6 +167,16 @@ def register(app: typer.Typer) -> None:
                 ),
             ),
         ] = None,
+        gpu: Annotated[
+            bool,
+            typer.Option(
+                "--gpu",
+                help=(
+                    "Decode with the GPU (NVDEC / D3D11VA / QSV) when available. "
+                    "Falls back to CPU decode if it fails."
+                ),
+            ),
+        ] = False,
     ) -> None:
         """Detect KO / ASSIST indicator intervals in a detected recording."""
 
@@ -186,6 +197,7 @@ def register(app: typer.Typer) -> None:
                 write=write,
                 expected_mtime=expected_mtime,
                 region=_parse_region(region),
+                gpu=gpu,
                 emit=emit,
                 progress=progress,
             )
@@ -480,6 +492,7 @@ def run_indicators(
     emit: Callable[[dict[str, Any]], None],
     progress: Callable[[str], None],
     region: tuple[float, float, float, float] | None = None,
+    gpu: bool = False,
 ) -> IndicatorReport:
     """Body of the command, kept free of typer so it can be unit-tested."""
     # NaN はすべての比較が False なので、下限比較より先に有限性を見る。
@@ -549,6 +562,13 @@ def run_indicators(
         layout, frame_width=frame_size[0], frame_height=frame_size[1]
     )
     templates = load_templates()
+    # #1151: --gpu のときだけハードウェアデコードを使う。vendor 選択と decoder の
+    # 対応は gpu_detector の表を流用し、使えないときは黙って CPU に倒す。
+    hwaccel = resolve_hwaccel(probe.get("codec")) if gpu else None
+    if gpu and hwaccel is None:
+        progress("GPU decode unavailable (no supported GPU / codec); using CPU")
+    elif hwaccel is not None:
+        progress(f"GPU decode enabled (vendor={hwaccel.vendor})")
     started_at = time.monotonic()
 
     def on_progress(scanned_s: float) -> None:
@@ -570,18 +590,32 @@ def run_indicators(
         emit(update)
         progress(f"  scanned {scanned_s:.0f}s / {duration:.0f}s{suffix}")
 
-    detections = scan_detections(
-        source,
-        interval=interval,
-        total=duration,
-        frame_size=None,
-        crop=band_crop,
-        workers=resolve_scan_workers(),
-        frames_factory=iter_gray_frames,
-        detect=lambda frame: _detection_tuple(frame, layout, templates),
-        on_progress=on_progress,
-        progress_step=PROGRESS_STEP_SECONDS,
-    )
+    def scan(
+        decoder_hwaccel: HwaccelSpec | None,
+    ) -> list[tuple[float, str | None, float]]:
+        return scan_detections(
+            source,
+            interval=interval,
+            total=duration,
+            frame_size=None,
+            crop=band_crop,
+            workers=resolve_scan_workers(),
+            frames_factory=iter_gray_frames,
+            detect=lambda frame: _detection_tuple(frame, layout, templates),
+            on_progress=on_progress,
+            progress_step=PROGRESS_STEP_SECONDS,
+            hwaccel=decoder_hwaccel,
+        )
+
+    try:
+        detections = scan(hwaccel)
+    except VideoProcessingError as exc:
+        # #1151: GPU デコードは環境依存で落ちる (ドライバ / セッション数 / codec)。
+        # ユーザーは「速くしたい」だけなので、黙って CPU で 1 回だけやり直す。
+        if hwaccel is None:
+            raise
+        progress(f"GPU decode failed ({exc}); falling back to CPU ...")
+        detections = scan(None)
 
     events = group_detections(detections, max_gap=interval * 1.2, min_samples=2)
     report = IndicatorReport(

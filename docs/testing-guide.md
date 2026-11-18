@@ -368,6 +368,44 @@ SSoT は `allaganeye/video/indicators.py` の `_prefilter_threshold_for()`)。
 
 37.7 倍速なので 10,080 秒は **約 4.5 分** (並列化前は約 41 分)。
 
+### ハードウェアデコード (`--gpu`、#1151)
+
+`indicators --gpu` は `detect --gpu` と同じ vendor 選択 (`gpu_detector` の表) で
+デコードをハードウェア化する。crop / fps フィルタは CPU 側なので、surface を
+GPU に持つ vendor (D3D11VA / QSV) は filter 先頭に `hwdownload,format=nv12,` を
+挿入する。失敗時は CPU で 1 回だけ自動再実行する。
+
+#### 実測 (2026-11-18、`20260116_1.mp4`、NVIDIA + AMD 機)
+
+1 ストリーム 300 秒のデコードのみ (crop あり):
+
+| 経路 | 時間 | フレーム checksum |
+| --- | --- | --- |
+| CPU | 9.44 秒 | 3173898855 |
+| `-hwaccel cuda` (auto-download) | 6.95 秒 | 同し |
+| `-hwaccel cuda -c:v h264_cuvid` | 6.58 秒 | 同し |
+| `-hwaccel d3d11va -c:v h264` + hwdownload | 6.23 秒 | 同し |
+
+**出力画素は完全一致**。ただし 8 並列にすると差は小さくなる:
+
+| 8 並列で 944 秒をデコード | 時間 |
+| --- | --- |
+| CPU | 12.9 秒 |
+| cuda (cuvid) | 12.0 秒 |
+| d3d11va | 11.3 秒 |
+
+end-to-end (crop + ±5% 3 段 + 明度プリフィルタ + 8 ワーカー):
+
+| 経路 | 時間 | イベント |
+| --- | --- | --- |
+| CPU | 25.3 秒 | 30 件 |
+| `--gpu` | **24.2 秒** | 30 件 (完全一致) |
+
+**利得が小さい理由**: 8 並列のソフトウェアデコードは既にホスト I/O で飽和しており、
+デコードは並列でも 2.3 倍しか伸びない。したがってこの構成では `--gpu` は数 %。
+**4K 録画 / コア数の少ない環境 / 照合と CPU を奪い合う状況**では相対的に効く見込み
+(未検証)。パイプ読み出しの粒度 (1 フレーム vs 64 フレーム) は無関係だった。
+
 ## baseline drift の判定
 
 `tests/test_scorebar_regression.py::TestNoResolutionCompat` 系の baseline mismatch が発生した場合、(A) 検知ロジック退行 vs (B) ffmpeg version 依存差異 を以下の手順で判別する。

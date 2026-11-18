@@ -22,14 +22,75 @@ from __future__ import annotations
 import subprocess
 import tempfile
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from allaganeye.exceptions import VideoProcessingError
 from allaganeye.ffmpeg_path import find_ffmpeg
+from allaganeye.system_info import probe_gpu_vendors
+from allaganeye.video.gpu_detector import (
+    _GPU_DECODER_MAP,
+    _HWACCEL_OUTPUT_FORMAT_MAP,
+    _HWACCELS_NEED_HWDOWNLOAD,
+    _VENDOR_HWACCEL_MAP,
+    _VENDOR_PREFERENCE,
+)
 
-__all__ = ["build_frame_command", "iter_gray_frames"]
+__all__ = [
+    "HwaccelSpec",
+    "build_frame_command",
+    "iter_gray_frames",
+    "resolve_hwaccel",
+]
+
+
+@dataclass(frozen=True)
+class HwaccelSpec:
+    """ハードウェアデコードの ffmpeg 引数 (#1151)。
+
+    ``args`` は ``-i`` より前に置く (`-hwaccel` / ``-hwaccel_output_format`` /
+    ``-c:v <decoder>``)。``filter_prefix`` は GPU surface のまま出てくる vendor
+    (d3d11va / qsv) で filter の先頭に必要な ``hwdownload,format=nv12,``。
+    """
+
+    vendor: str
+    args: tuple[str, ...]
+    filter_prefix: str = ""
+
+
+def resolve_hwaccel(codec: str | None) -> HwaccelSpec | None:
+    """利用可能な GPU から hwaccel 引数を組む。使えなければ ``None`` (CPU)。
+
+    vendor 選択と codec -> decoder の対応は `gpu_detector` の表をそのまま使う。
+    未知の codec / GPU なしのときは **CPU に倒す** (推測で decoder を渡すと
+    ffmpeg が即死し、そのチャンクだけ欠損する)。
+    """
+    if not codec:
+        return None
+    vendors = probe_gpu_vendors()
+    vendor = next(
+        (
+            candidate
+            for candidate in _VENDOR_PREFERENCE
+            if candidate in vendors and candidate in _VENDOR_HWACCEL_MAP
+        ),
+        None,
+    )
+    if vendor is None:
+        return None
+    decoder = _GPU_DECODER_MAP.get(vendor, {}).get(codec)
+    if decoder is None:
+        return None
+    hwaccel = _VENDOR_HWACCEL_MAP[vendor]
+    args: list[str] = ["-hwaccel", hwaccel]
+    output_format = _HWACCEL_OUTPUT_FORMAT_MAP.get(hwaccel)
+    if output_format is not None:
+        args += ["-hwaccel_output_format", output_format]
+    args += ["-c:v", decoder]
+    prefix = "hwdownload,format=nv12," if hwaccel in _HWACCELS_NEED_HWDOWNLOAD else ""
+    return HwaccelSpec(vendor=vendor, args=tuple(args), filter_prefix=prefix)
 
 
 def build_frame_command(
@@ -39,6 +100,7 @@ def build_frame_command(
     start: float = 0.0,
     duration: float | None = None,
     crop: tuple[int, int, int, int] | None = None,
+    hwaccel: HwaccelSpec | None = None,
 ) -> list[str]:
     """Build the ffmpeg argv for raw gray frame streaming.
 
@@ -58,6 +120,8 @@ def build_frame_command(
     if duration is not None and duration <= 0:
         raise ValueError(f"duration must be positive, got {duration}")
     filters: list[str] = []
+    if hwaccel is not None and hwaccel.filter_prefix:
+        filters.append(hwaccel.filter_prefix.rstrip(","))
     if crop is not None:
         x, y, width, height = crop
         if x < 0 or y < 0 or width <= 0 or height <= 0:
@@ -69,6 +133,10 @@ def build_frame_command(
         find_ffmpeg(),
         "-v",
         "error",
+    ]
+    if hwaccel is not None:
+        command += list(hwaccel.args)
+    command += [
         "-ss",
         f"{start:.3f}",
         "-i",
@@ -96,6 +164,7 @@ def iter_gray_frames(
     start: float = 0.0,
     duration: float | None = None,
     crop: tuple[int, int, int, int] | None = None,
+    hwaccel: HwaccelSpec | None = None,
 ) -> Iterator[tuple[float, np.ndarray]]:
     """Yield ``(timestamp, grayscale frame)`` pairs at ``fps`` frames per second.
 
@@ -129,7 +198,7 @@ def iter_gray_frames(
     if width <= 0 or height <= 0:
         raise ValueError(f"frame_size must be positive, got {(width, height)}")
     command = build_frame_command(
-        video, fps=fps, start=start, duration=duration, crop=crop
+        video, fps=fps, start=start, duration=duration, crop=crop, hwaccel=hwaccel
     )
     frame_bytes = width * height
     return_code = 0
