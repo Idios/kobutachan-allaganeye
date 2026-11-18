@@ -62,6 +62,21 @@ _DEFAULT_SCALES: tuple[float, ...] = tuple(round(0.50 + 0.05 * i, 2) for i in ra
 
 # バンド内のテキストスケール探索。
 _DEFAULT_SCALE_FACTORS: tuple[float, ...] = (0.90, 0.95, 1.00, 1.05, 1.10, 1.15, 1.20)
+"""診断用の全段 (アンカー由来の `scale` を中心に +-20%)。
+
+`match_text` の既定はこちら。走査の既定は :data:`_SCAN_SCALE_FACTORS`。
+"""
+
+_SCAN_SCALE_FACTORS: tuple[float, ...] = (0.95, 1.00, 1.05)
+"""走査 (分類) で使うスケール倍率 (#1147)。**ここが SSoT**。
+
+GT 3 本 (1080p の 2 本 + scale 0.8 の他 HUD) を実測したところ、実際に
+`_MIN_SCORE` を通過した倍率は **1.00 と 1.05 だけ**で、+-10% 以上は一度も
+勝たなかった。アンカー由来の `scale` は +-5% 以内に収まる前提でよい。
+
+7 段 (1 フレーム 14 回の NCC) から 3 段 (6 回) に減らすと、`20260116_1.mp4`
+(944 秒) の走査が 57.5 秒 -> 28.0 秒になる。イベント列は 3 本とも全件一致。
+"""
 
 # 判定する種類。順序は判定の同点崩しには使わない (スコア / 閾値の比で決める)。
 _TEXT_KINDS: tuple[str, ...] = ("ko", "assist")
@@ -433,13 +448,19 @@ def classify_text(
     templates: dict[str, np.ndarray] | None = None,
     *,
     scale: float = 1.0,
+    scale_factors: Sequence[float] = _SCAN_SCALE_FACTORS,
 ) -> tuple[str, float]:
     """バンドパッチを `ko` / `assist` / `other` に分類する。
 
     `other` は「既知テンプレートに合格しない表示」で、`BOOSTED!` などが該当する。
     合格しなかった場合も第 2 要素には最良スコアを入れる (調査用)。
+
+    ``scale_factors`` の既定は走査用の +-5% 3 段 (#1147)。アンカー由来の
+    ``scale`` の誤差を吸収するにはこれで十分であることを GT で確認してある
+    (経緯は :data:`_SCAN_SCALE_FACTORS`)。スケール許容幅そのものを検証したい
+    ときは ``match_text`` / ここに ``_DEFAULT_SCALE_FACTORS`` を明示的に渡す。
     """
-    matches = match_text(patch, templates, scale=scale)
+    matches = match_text(patch, templates, scale=scale, scale_factors=scale_factors)
     passed = [
         (match.score / _MIN_SCORE[match.kind], match)
         for match in matches.values()
@@ -487,14 +508,18 @@ def detect_indicator_patch(
     patch_gray: np.ndarray,
     layout: IndicatorLayout,
     templates: dict[str, np.ndarray] | None = None,
+    *,
+    scale_factors: Sequence[float] = _SCAN_SCALE_FACTORS,
 ) -> IndicatorHit | None:
     """**バンドだけを切り出した** フレームから検出する (#1140)。
 
     ffmpeg 側で ``crop`` したフレームをそのまま渡す経路で使う。切り出し範囲は
     :func:`band_crop_rect` と同一なので、フルフレーム経路 (:func:`detect_indicator`)
-    と同じ画素を見る。
+    と同じ画素を見る。``scale_factors`` は :func:`classify_text` に渡る。
     """
-    kind, score = classify_text(patch_gray, templates, scale=layout.scale)
+    kind, score = classify_text(
+        patch_gray, templates, scale=layout.scale, scale_factors=scale_factors
+    )
     if kind == "other":
         return None
     return IndicatorHit(kind=kind, score=score, band=layout.text_band())
