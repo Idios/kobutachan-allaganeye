@@ -256,3 +256,41 @@ def test_iter_gray_frames_feeds_the_detector() -> None:
     assert hits, "expected at least one KO detection inside the display window"
     assert {kind for _, kind, _ in hits} == {"ko"}
     assert min(timestamp for timestamp, _, _ in hits) <= 493.7
+
+
+def test_hwaccel_decode_matches_cpu() -> None:
+    """GPU デコードの画素は CPU デコードと一致する (#1151)。
+
+    `--gpu` の価値は速度だが、**判定が変わらない**ことが前提。GPU が無い環境 / 未対応
+    codec の環境では skip する (CI ランナーは通常 GPU 無し)。
+    """
+    from allaganeye.video.frames import iter_gray_frames, resolve_hwaccel
+
+    hwaccel = resolve_hwaccel("h264")
+    if hwaccel is None:
+        pytest.skip("no supported GPU / codec on this machine")
+
+    video = _video("20260116_1.mp4")
+    band = (550, 623, 252, 54)
+
+    def frames(hw):
+        out = []
+        for timestamp, patch in iter_gray_frames(
+            video,
+            fps=SCAN_FPS,
+            frame_size=None,
+            start=493.0,
+            duration=1.0,
+            crop=band,
+            hwaccel=hw,
+        ):
+            out.append((timestamp, patch.tobytes()))
+        return out
+
+    cpu = frames(None)
+    gpu = frames(hwaccel)
+
+    assert cpu, "expected decoded frames"
+    assert len(cpu) == len(gpu)
+    assert [stamp for stamp, _ in cpu] == [stamp for stamp, _ in gpu]
+    assert [pixels for _, pixels in cpu] == [pixels for _, pixels in gpu]
