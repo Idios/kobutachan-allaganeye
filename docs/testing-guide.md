@@ -260,6 +260,49 @@ def _ffmpeg_interval(request: pytest.FixtureRequest) -> None:
 
 この症状が出た場合は、`_ffmpeg_interval` のスリープ時間を増やすか、テストを個別に実行して問題の再現性を確認する。
 
+## KO / ASSIST 走査の実測 (#1140)
+
+`allaganeye indicators` の走査は **チャンク並列 + ffmpeg 側 crop** になっている。
+速度の正は本節の実測値で、しきい値 (ワーカー上限 / 最小チャンク長) の SSoT は
+`allaganeye/video/indicator_scan.py` の docstring。
+
+### 測定条件 (2026-11-18)
+
+- 動画: `20260116_1.mp4` (944.1 秒 / 9441 フレーム @ 0.1 秒)
+- バンド: `(x=550, y=623, w=252, h=54)` (fps 1.0 レイアウト、1080p)
+- 機械: 32 論理コア / Windows / venv の Python 3.12
+
+### before / after
+
+| 経路 | 実測 | 倍率 |
+| --- | --- | --- |
+| before: 逐次 1 ffmpeg + フルフレーム (1920x1080) | 227.9 秒 | 1.0x |
+| after: 8 ワーカー + ffmpeg crop (252x54) | 59.1 秒 | 3.9x |
+
+**検出結果は完全一致** (9441 フレームの `(時刻, 種類, スコア)` が同一、
+イベント 30 件 / 30 件)。crop 導入後も一致するのは、切り出し座標を
+`band_crop_rect` 1 か所から取っているため (`tests/test_indicators.py` が pin)。
+
+### ワーカー数のスケーリング (300 秒スライス)
+
+| ワーカー | 時間 | 秒あたりフレーム |
+| --- | --- | --- |
+| 1 | 70.6 秒 | 42.5 fps |
+| 2 | 37.4 秒 | 80.3 fps |
+| 4 | 21.4 秒 | 139.9 fps |
+| 8 | 17.3 秒 | 173.7 fps |
+
+デコードのみ (照合なし) は 300 秒で 9.2 秒。**照合がボトルネック**で、
+8 ワーカーでも 4.1x に留まるのは GIL 競合 (cProfile では `filter2D` が総時間の
+89%、1 フレームあたり 14 回の NCC = 7 スケール × 2 テンプレート)。
+
+### 既知の残課題 (別 issue 候補)
+
+スケール探索を解決済みスケール 1 点に絞ると、同条件で 52.3 秒 -> 15.2 秒
+(さらに 3.45x) になることを実測した (イベント 30 件 / 30 件完全一致、種類の
+食い違い 0、スコア最大差 0.219)。ただし検出の許容幅を狭める意味を持つため、
+GT 突合を含む別 issue で扱う。
+
 ## baseline drift の判定
 
 `tests/test_scorebar_regression.py::TestNoResolutionCompat` 系の baseline mismatch が発生した場合、(A) 検知ロジック退行 vs (B) ffmpeg version 依存差異 を以下の手順で判別する。

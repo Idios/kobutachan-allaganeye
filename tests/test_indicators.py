@@ -18,9 +18,11 @@ from allaganeye.video.indicators import (
     IndicatorEvent,
     IndicatorLayout,
     Rect,
+    band_crop_rect,
     calibrate_layout,
     classify_text,
     detect_indicator,
+    detect_indicator_patch,
     group_detections,
     layout_from_bar_region,
     layout_from_payload,
@@ -309,6 +311,37 @@ def test_detect_indicator_rejects_partially_clipped_band() -> None:
     layout = IndicatorLayout(scale=1.0, x=618.0, y=614.0)
     with pytest.raises(ValueError):
         detect_indicator(_noise(650, 640, seed=35), layout)
+
+
+def test_band_crop_rect_is_the_same_window_the_detector_uses() -> None:
+    """ffmpeg の crop 座標と Python 側の切り出し窓が同一であること (#1140)。
+
+    ここがずれると「crop したフレーム」と「フルフレーム」で別の画素を見て、
+    並列走査 (= crop 経路) だけ結果が変わる。
+    """
+    layout = IndicatorLayout(scale=1.0, x=618.0, y=614.0)
+    band = layout.text_band()
+
+    x, y, w, h = band_crop_rect(layout, frame_width=1920, frame_height=1080)
+
+    assert (x, y) == (round(band.x0), round(band.y0))
+    assert (w, h) == (round(band.x1) - round(band.x0), round(band.y1) - round(band.y0))
+
+
+def test_detect_indicator_patch_matches_the_full_frame_path() -> None:
+    """パッチ入力 (ffmpeg crop 経路) とフルフレーム入力の結果が一致する。"""
+    layout = IndicatorLayout(scale=1.0, x=618.0, y=614.0)
+    frame = _noise(1080, 1920, seed=7)
+    band = layout.text_band()
+    _paste(frame, load_templates()["ko"], round(band.x0) + 60, round(band.y0) + 6)
+    x, y, w, h = band_crop_rect(layout, frame_width=1920, frame_height=1080)
+
+    full = detect_indicator(frame, layout)
+    patch = detect_indicator_patch(frame[y : y + h, x : x + w], layout)
+
+    assert full is not None
+    assert patch is not None
+    assert (full.kind, full.score) == (patch.kind, patch.score)
 
 
 def test_validate_layout_for_frame_accepts_resolved_layout() -> None:

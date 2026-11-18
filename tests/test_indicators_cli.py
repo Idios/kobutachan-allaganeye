@@ -75,20 +75,38 @@ def metadata_path(tmp_path: Path) -> Path:
 def _frames_with_assist(
     times: list[float], *, hit_from: float, hit_to: float
 ) -> list[tuple[float, np.ndarray]]:
-    """Build synthetic frames; paste the ASSISTED! template inside the hit window."""
+    """Build synthetic frames; paste the ASSISTED! template inside the hit window.
+
+    #1140 以降、走査は ffmpeg 側でバンドを crop したフレームを受け取る
+    (パイプ転送量を落とすため)。ここではバンドサイズのパッチを作り、
+    テンプレートはパッチ内の同じ相対位置に貼る。
+    """
     band = LAYOUT.text_band()
+    x0, y0 = round(band.x0), round(band.y0)
+    width, height = round(band.x1) - x0, round(band.y1) - y0
     template = load_templates()["assist"]
     frames = []
     for index, timestamp in enumerate(times):
-        frame = np.random.default_rng(index).integers(
-            0, 40, size=(1080, 1920), dtype=np.uint8
+        patch = np.random.default_rng(index).integers(
+            0, 40, size=(height, width), dtype=np.uint8
         )
         if hit_from <= timestamp <= hit_to:
-            x = round(band.x0) + 60
-            y = round(band.y0) + 6
-            frame[y : y + template.shape[0], x : x + template.shape[1]] = template
-        frames.append((timestamp, frame))
+            patch[6 : 6 + template.shape[0], 60 : 60 + template.shape[1]] = template
+        frames.append((timestamp, patch))
     return frames
+
+
+def _full_frames(times: list[float]) -> list[tuple[float, np.ndarray]]:
+    """キャリブレーション用のフルフレーム (crop なしで呼ばれる経路)。"""
+    return [
+        (
+            timestamp,
+            np.random.default_rng(index).integers(
+                0, 40, size=(FRAME_SIZE[1], FRAME_SIZE[0]), dtype=np.uint8
+            ),
+        )
+        for index, timestamp in enumerate(times)
+    ]
 
 
 @pytest.fixture
@@ -105,9 +123,13 @@ def fake_video(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     times = [round(index * DEFAULT_INTERVAL, 2) for index in range(30)]
     frames = _frames_with_assist(times, hit_from=1.0, hit_to=1.4)
-    monkeypatch.setattr(
-        indicators_cmd, "iter_gray_frames", lambda *a, **k: iter(frames)
-    )
+    full_frames = _full_frames(times)
+
+    def fake_iter(*_args, crop=None, **_kwargs):
+        """crop 付き = 走査 / crop なし = キャリブレーション。"""
+        return iter(frames if crop is not None else full_frames)
+
+    monkeypatch.setattr(indicators_cmd, "iter_gray_frames", fake_iter)
 
 
 def test_indicators_reports_events(app: typer.Typer, metadata_path: Path, fake_video):

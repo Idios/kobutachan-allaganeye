@@ -141,6 +141,7 @@ PR #669 で追加した 2 command (`read_error_log_tail` / `probe_environment_in
 | `{ phase: "calibrating" }` | layout の自動キャリブレーション開始 (キャッシュ無し / `recalibrate` 指定時のみ) |
 | `{ phase: "scanning", layout: { anchor_x, anchor_y, scale, support, confidence, source } }` | 走査開始。解決済み layout の通知 (`source` は `anchor` / `user`) |
 | `{ phase: "scanning", processed_s, total_s }` | 30 秒ごとの進捗 (処理済み秒 / 総尺秒) |
+| `{ phase: "scanning", processed_s, total_s, eta_s }` | 同上 + **推定残り秒** (#1140)。算出は CLI 側が SSoT で、GUI は表示するだけ |
 
 `{"type":"complete",…}` 行は event にせず、command の戻り値 `IndicatorsResult` (`metadata` / `layout` / `recalibrated` / `events` / `wrote_metadata`) として返す。`events[]` は `{ signal_id, timestamp, end, score, evidence, match_index, clip_start?, clip_end? }` で（`signal_id` は `"ko_indicator"` / `"assist_indicator"`、`evidence` は自由 object で `samples` などを持つ）、`match_index` は試合外の区間なら `null`。形の正は `schemas/metadata.schema.json` の `$defs/HighlightEvent`。`{"type":"error",…}` 行の `message` は失敗時の `AppError.message` に載せる。空行 / malformed JSON / 未知の `type` は silently skip する (`start_minimap` の `parse_wire_event` と同じ方針)。
 

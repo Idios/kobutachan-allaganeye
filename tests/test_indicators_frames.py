@@ -46,6 +46,23 @@ def test_command_streams_raw_gray(tmp_path: Path) -> None:
     assert command[command.index("-vf") + 1] == "fps=10.0"
 
 
+# #1140 -- バンドだけを ffmpeg 側で crop すると、パイプ転送量が 2 MB -> 数十 KB
+# になり、Python に渡すフレームも小さくなる。ラベル帯の画素が逐次走査と同じに
+# なるよう、crop は format=gray の **後** に置く (yuv420p のまま crop すると
+# 奇数座標でクロマが丸められる)。
+def test_command_crops_the_band_after_grayscale_conversion(tmp_path: Path) -> None:
+    command = build_frame_command(
+        tmp_path / "in.mp4", fps=10.0, crop=(640, 620, 340, 140)
+    )
+    filters = command[command.index("-vf") + 1]
+    assert filters == "format=gray,crop=340:140:640:620,fps=10.0"
+
+
+def test_command_rejects_a_degenerate_crop(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        build_frame_command(tmp_path / "in.mp4", fps=2.0, crop=(0, 0, 0, 10))
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

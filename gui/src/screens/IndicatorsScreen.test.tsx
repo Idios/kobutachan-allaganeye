@@ -220,10 +220,12 @@ describe('IndicatorsScreen run (idle → running → complete)', () => {
     expect(screen.getByText('探索領域を解決中')).toBeInTheDocument();
 
     await act(async () => {
-      emitProgress({ phase: 'scanning', processed_s: 120, total_s: 600 });
+      emitProgress({ phase: 'scanning', processed_s: 120, total_s: 600, eta_s: 210 });
     });
     expect(screen.getByText('KO / ASSIST を走査中')).toBeInTheDocument();
     expect(screen.getByText('02:00 / 10:00')).toBeInTheDocument();
+    // #1140: 残り時間は CLI の eta_s をそのまま出す。
+    expect(screen.getByTestId('indicators-eta').textContent).toContain('残り約 03:30');
 
     await act(async () => {
       pending.resolve(COMPLETE_RESULT);

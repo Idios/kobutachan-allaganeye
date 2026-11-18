@@ -1326,7 +1326,9 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 - `complete` / `error` → `running`: [再検出] (§2.7.9) / [再試行] / [この領域で再実行] (§2.7.6) が再び `start(req)` を呼ぶ (`reset()` は挟まない)
 - `running` 中の `start()` / `reset()` は store が拒否する (code `indicators.busy`)。run を重ねると run id を持たない進捗 payload が混線するため
 
-**store**: `indicatorsStore` から `status` / `metadataPath` / `phase` / `processedSeconds` / `totalSeconds` / `layout` / `events` / `error` を読み `start` / `cancel` を呼ぶ。`appStateStore` から `navigate` / `setPendingSeekSeconds` / `openPreviewFor` / `selectedVideoPath` を、`metadataStore` から `metadata` / `filePath` / `loadedMtimeMs` を読む。
+**store**: `indicatorsStore` から `status` / `metadataPath` / `phase` / `processedSeconds` / `totalSeconds` / `etaSeconds` / `layout` / `events` / `error` を読み `start` / `cancel` を呼ぶ。`appStateStore` から `navigate` / `setPendingSeekSeconds` / `openPreviewFor` / `selectedVideoPath` を、`metadataStore` から `metadata` / `filePath` / `loadedMtimeMs` を読む。
+
+**推定残り時間 (#1140)**: progressBox の下に `残り約 mm:ss` を出す (`data-testid="indicators-eta"`)。値は CLI の `eta_s` をそのまま表示し、GUI 側で再計算しない (走査はチャンク並列なので、GUI が「経過時間 ÷ 進捗」で計算するとワーカー数の違いを反映できない)。`eta_s` が来ていないフレーム (scanning 開始行など) では行ごと非表示。
 
 **結果のスコープ (review R1)**: 結果は「どの metadata.json 向けか」でスコープする。run を起こした path は `indicatorsStore.metadataPath` が保持し、画面は `metadataStore.filePath` と比較する。
 

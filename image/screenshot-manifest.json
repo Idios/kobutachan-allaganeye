@@ -62,7 +62,7 @@
     "gui/src/types/metadata.generated.ts",
     "gui/src/types/metadata.schema.ts"
   ],
-  "sources_sha256": "2c917ef561dfcd82a638558e948c7ddf6590bace567801eabea184ee7ef8c80f",
+  "sources_sha256": "abcd306993d889c0091014af16c73dc302074b401fac0ceab32f74df2e9f83f6",
   "notes": {
     "gui/src/types/metadata.generated.ts": "型定義のみの生成物 (scripts/codegen/generate.py)。TS の型は build で消えるため描画結果に影響しない。schema 変更のたびに撮り直しを要求しないよう exclude する。",
     "gui/src/types/metadata.schema.ts": "zod の検証定義のみ (画面を描画しない)。フィールド集合の追加/変更は表示に影響せず、JSON Schema との整合は zod-schema-integrity.test.ts が見る。schema 変更のたびに撮り直しを要求しないよう exclude する。"
