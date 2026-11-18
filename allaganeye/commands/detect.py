@@ -93,6 +93,9 @@ def run_detect(
     ``indicators`` (#1141) runs the KO / ASSIST stage **inside** this run so the
     boundaries and the event list land in one atomic write.  A failure of that
     stage is recorded in ``warnings[]`` and does not lose the boundary result.
+    The kwarg defaults to ``False`` for internal callers (tests / future
+    embedders); the **CLI default is on**
+    (``indicator_stage.CLI_DEFAULT_INDICATORS``), passed in by ``cli.py``.
     """
     json_mode = progress_format == "json"
     # In json mode the GUI consumes stdout as a structured stream, so we

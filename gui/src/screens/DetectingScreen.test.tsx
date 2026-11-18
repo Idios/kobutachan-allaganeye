@@ -123,11 +123,17 @@ describe('DetectingScreen', () => {
     expect(screen.getByText('test.mkv')).toBeInTheDocument();
   });
 
-  it('renders the 2 phase rows (Detecting / Refining)', () => {
+  it('renders the 3 phase rows (Detecting / Refining / Indicators)', () => {
     render(<DetectingScreen />);
     expect(screen.getByText('Detecting')).toBeInTheDocument();
     expect(screen.getByText('Refining')).toBeInTheDocument();
-    // #1141 -- OFF のランでは KO / ASSIST の行を出さない。
+    // #1141 -- 既定 ON なので KO / ASSIST の行も出る。
+    expect(screen.getByTestId('phase-row-indicators')).toBeInTheDocument();
+  });
+
+  it('hides the indicators row when the stage is turned off (#1141)', () => {
+    useAppStateStore.getState().setDetectionParams({ indicators: false });
+    render(<DetectingScreen />);
     expect(screen.queryByTestId('phase-row-indicators')).toBeNull();
   });
 
@@ -162,8 +168,7 @@ describe('DetectingScreen', () => {
       expect(mid).toBeLessThan(PHASE_WINDOWS.indicators[1]);
     });
 
-    it('shows a third row with progress when the stage was requested', async () => {
-      useAppStateStore.getState().setDetectionParams({ indicators: true });
+    it('shows a third row with progress', async () => {
       // start_detect を未解決のままにして、進捗バーが 100% に飛ぶのを防ぐ。
       invokeMock.mockImplementation((cmd) => {
         if (cmd === 'start_detect') {
@@ -190,8 +195,7 @@ describe('DetectingScreen', () => {
       expect(row.textContent).toContain('50%');
     });
 
-    it('forwards indicators only when enabled', async () => {
-      useAppStateStore.getState().setDetectionParams({ indicators: true });
+    it('forwards the indicators flag to start_detect', async () => {
       render(<DetectingScreen />);
       await waitFor(() => {
         expect(invokeMock).toHaveBeenCalledWith(
@@ -234,6 +238,8 @@ describe('DetectingScreen', () => {
             blackoutThreshold: 22,
             workers: 8,
             gpu: false,
+            // #1141 -- 既定 ON なので常に明示送信される。
+            indicators: true,
           },
         }),
       );

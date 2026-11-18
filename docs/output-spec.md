@@ -76,7 +76,7 @@ Error: --quiet and --verbose are mutually exclusive
 | `--vtuber` | 行 9 の `vtuber=on` トークンに反映。`--vtuber` 採用 run の verbose 検知統計に **行 12d / 12e** が追加される (#895)。`--vtuber` が縮退 (V0 失敗等) した場合は timeline 統計行は出力されず通常 pass 1/2 統計に戻る。cache ヒット時 (行 7) は `vtuber_algo=N` トークンが `masked_fallback` 直後に挿入される (vtuber 影響 run のみ) |
 | `--masked` | 行 9 の `masked=on` トークンに反映。masked fallback 採用 run では verbose 検知統計に **行 12b / 12c** が追加される (#822)。暗転が 1 件も検出できなかった録画では `--masked` 未指定でも fallback が自動発動するため、**行 9 が `masked=off` のままでもこれらの統計行が出力されうる** (#821)。cache ヒット時 (行 7) は `masked=` に加え resolved の `masked_fallback=` が出力され、masked 影響 run のみ `masked_algo=N` トークンが `masked_fallback` の直後に挿入される。`--vtuber` との同時指定は exit 5 |
 | `--keep-trailing` | 出力項目自体の有無には影響しない。cache ヒット時 (行 7) の `keep_trailing=on` トークン値に反映され、post-match trailing を通常 match として MP4 化するため行 17 のファイル一覧と行 11 の `Splitting: N matches` の件数が変化しうる (#805)。行 13 の `Detected N match(es)` と行 14 の Match 一覧は default でも post_match segment を数えるため、本フラグでは変化しない |
-| `--indicators` / `--no-indicators` | 指定時のみ **行 13a / 13b** が追加される (#1141)。metadata.json に `indicator_layout` と `events[]` が同じ write で載る (他の行の有無は変わらない)。`--dry-run` では分割も metadata 書き込みも行わないため非出力。`split --from-metadata` では exit 5 |
+| `--indicators` / `--no-indicators` | **既定 ON** (#1141)。ON のとき **行 13a / 13b** が追加され、metadata.json に `indicator_layout` と `events[]` が同じ write で載る (他の行の有無は変わらない)。`--no-indicators` で行 13a / 13b は非出力。`--dry-run` では分割も metadata 書き込みも行わないため非出力。`split --from-metadata` では exit 5 |
 | `-o`, `--sample-interval`, `--blackout-threshold`, etc. | 出力項目自体の有無には影響せず、値のみ変化 |
 
 直交フラグ × 主軸組合せの全網羅 (例: `--gpu × 8 = 16 組合せ`) は **系統的検証チェックリスト (#409)** で補完する。
@@ -111,8 +111,8 @@ Error: --quiet and --verbose are mutually exclusive
 | 12d | `Timeline (vtuber): N probes, anchor conf X.XX` (2 space indent 付き) | [#895](https://github.com/Idios/kobutachan-allaganeye/issues/895) | × | ◯ (cache miss + vtuber timeline 採用時のみ) | × | × | ◯ (同左) | × | ❌ |
 | 12e | `V3: N gaps tested, N merged, N peek-overridden; V4: N dropped, N low-confidence` (2 space indent 付き) | [#895](https://github.com/Idios/kobutachan-allaganeye/issues/895) | × | ◯ (cache miss + vtuber timeline 採用時のみ) | × | × | ◯ (同左) | × | ❌ |
 | 13 | `Detected N match(es) ... (cached)` サフィックス含 | [#418](https://github.com/Idios/kobutachan-allaganeye/issues/418) (M) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
-| 13a | `Detecting KO / ASSIST indicators ...` + 結果行 (`KO: N / ASSIST: M (K intervals)` / 失敗時 `KO / ASSIST detection failed (recorded in warnings[]): ...`。どちらも 2 space indent 付き) | [#1141](https://github.com/Idios/kobutachan-allaganeye/issues/1141) | ◯ (`--indicators` 時のみ) | ◯ (同左) | × | × | × | × | ❌ |
-| 13b | KO / ASSIST 走査の逐次進捗 (`KO / ASSIST: Ns / Ms [ETA hh:mm:ss]`、2 space indent 付き) + 診断行 (layout 解決経路 / GPU 有無) | [#1141](https://github.com/Idios/kobutachan-allaganeye/issues/1141) | × | ◯ (`--indicators` 時のみ) | × | × | × | × | ❌ |
+| 13a | `Detecting KO / ASSIST indicators ...` + 結果行 (`KO: N / ASSIST: M (K intervals)` / 失敗時 `KO / ASSIST detection failed (recorded in warnings[]): ...`。どちらも 2 space indent 付き) | [#1141](https://github.com/Idios/kobutachan-allaganeye/issues/1141) | ◯ (既定 ON、`--no-indicators` で非出力) | ◯ (同左) | × | × | × | × | ❌ |
+| 13b | KO / ASSIST 走査の逐次進捗 (`KO / ASSIST: Ns / Ms [ETA hh:mm:ss]`、2 space indent 付き) + 診断行 (layout 解決経路 / GPU 有無) | [#1141](https://github.com/Idios/kobutachan-allaganeye/issues/1141) | × | ◯ (`--no-indicators` 以外) | × | × | × | × | ❌ |
 | 14 | Match 一覧 (`[unknown]` / `[fl_match]` マーカー含) | [#382](https://github.com/Idios/kobutachan-allaganeye/issues/382) | ◯ | ◯ | × | ◯ | ◯ | × | ❌ |
 | 15 | Gap 一覧 | - | × | ◯ | × | × | ◯ | × | ❌ |
 | 15a | ディスク空き容量 warning (`Warning: free space is tight (estimated: ..., free: ...)`、**stderr**) | [#338](https://github.com/Idios/kobutachan-allaganeye/issues/338), [#933](https://github.com/Idios/kobutachan-allaganeye/issues/933) | stderr (推定サイズが空きの 80% 超のときのみ) | stderr (同左) | × | - | - | - | ❌ |

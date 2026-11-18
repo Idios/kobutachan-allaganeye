@@ -59,7 +59,7 @@ allaganeye split --from-metadata <metadata.json> [OPTIONS]
 | `--keep-trailing` | `false` | default は試合後 trailing を `post_match: true` フラグ化して metadata に保持し、default split (MP4) から除外する (#805 段階2 で不可逆削除を廃止)。本フラグ指定時は flagging を skip し、trailing を通常 match として MP4 分割・保持する (#797 probe 無効化)。段階2 で `post_match_trailing_dropped` warning は emit されなくなった (flag が代替) |
 | `--no-audio` | `false` | 音声ベースの試合境界昇格（Fanfare スキャン）を無効化する。**音声モジュールは凍結されており（#327 で凍結、#865 で期限を定めない凍結が正式方針）、本フラグの値に関わらずスキャンは常にスキップされる。verbose 出力では `audio=frozen` と表示される (#384)** |
 | `--masked` | `false` | チャット欄マスク画像が全画面に合成された録画向け。mask のない領域を自動検出して再検知する。暗転が一部見つかる場合でも本フラグ指定でこの経路を強制する。**`--vtuber` と同時指定は排他エラー (exit 5)** |
-| `--indicators` | `false` | 境界検出の直後に KO / ASSIST インジケータを走査し、**同じ metadata.json に同じ 1 回の atomic write** で `indicator_layout` と `events[]` を書く (#1141)。`--no-indicators` が既定。所要は 944 秒の録画で約 25 秒 / 2.8 時間で約 4.5 分 (`docs/testing-guide.md` §「KO / ASSIST 走査の実測」)。走査に失敗しても境界の結果は失わず、`warnings[]` に `indicators_failed` を記録して exit code は境界検出の成否で決まる。**`--from-metadata` と同時指定は exit 5** (検知をしない経路のため。`allaganeye indicators <metadata.json>` を使う) |
+| `--indicators` | `true` | 境界検出の直後に KO / ASSIST インジケータを走査し、**同じ metadata.json に同じ 1 回の atomic write** で `indicator_layout` と `events[]` を書く (#1141)。**既定は ON**(`--no-indicators` で skip。L4 は 0.4.0 の新機能なので、ON でも既存の使い方は変わらない)。所要は 944 秒の録画で約 25 秒 / 2.8 時間で約 4.5 分 (`docs/testing-guide.md` §「KO / ASSIST 走査の実測」)。走査に失敗しても境界の結果は失わず、`warnings[]` に `indicators_failed` を記録して exit code は境界検出の成否で決まる。**`--from-metadata` と同時指定は exit 5** (検知をしない経路のため。`allaganeye indicators <metadata.json>` を使う) |
 | `--dry-run` | `false` | 検知のみ実行し分割しない（検知結果はキャッシュに保存される） |
 | `-v`, `--verbose` | `false` | 詳細出力（メタデータ詳細、gap 情報）。**`-q` と同時指定は排他エラー (exit 5) (#419)** |
 | `-q`, `--quiet` | `false` | 進捗出力を抑制（出力ファイル一覧のみ）。**`-v` と同時指定は排他エラー (exit 5) (#419)** |
@@ -320,7 +320,7 @@ allaganeye detect <video_path> [OPTIONS]
 | `--keep-trailing` | `false` | post-match trailing の flagging を skip し通常 match として保持 (#805 段階2、default は flag して MP4 除外・metadata 保持) |
 | `--no-audio` | `false` | 音声昇格無効化 (現在 frozen) |
 | `--masked` | `false` | チャット欄マスク録画向けの mask-free 領域自動検出 + 再検知。split と同仕様 |
-| `--indicators` | `false` | KO / ASSIST の検出を同じ detect に内蔵し、境界と `indicator_layout` / `events[]` を **1 回の atomic write** で書く (#1141)。既定は `--no-indicators`。失敗時は `warnings[]` に `indicators_failed` を記録し境界の結果は保持する |
+| `--indicators` | `true` | KO / ASSIST の検出を同じ detect に内蔵し、境界と `indicator_layout` / `events[]` を **1 回の atomic write** で書く (#1141)。**既定は ON** (`--no-indicators` で skip)。失敗時は `warnings[]` に `indicators_failed` を記録し境界の結果は保持する |
 | `-v`, `--verbose` | `false` | 詳細出力 |
 | `-q`, `--quiet` | `false` | 進捗出力抑制 |
 | `--progress-format` | `text` | 進捗の出力形式。`text` は click progress bar + typer ステータス行、`json` は stdout に 1 行 1 JSON (`phase` / `completed` / `total` / `elapsed_s`) を emit し人間可読出力を全抑制する (Tauri GUI wrapper 用、#569)。`--indicators` 指定時は `phase: "indicators"` の行が追加され、`completed` / `total` は**走査済み / 総尺の秒** (端数切り捨て)、`eta_s` は推定残り秒 (#1141)。`text` / `json` 以外は exit 5 |

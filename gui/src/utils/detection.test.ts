@@ -40,24 +40,29 @@ describe('toStartDetectParams (#613)', () => {
     expect(args.gpu).toBe(expected);
   });
 
-  it('produces the three expected keys (noAudio omitted; audio module frozen indefinitely, #327 / #865)', () => {
+  it('produces the four expected keys (noAudio omitted; audio module frozen indefinitely, #327 / #865)', () => {
     const args = toStartDetectParams(DEFAULT_DETECTION_PARAMS);
     expect(Object.keys(args).sort()).toEqual([
       'blackoutThreshold',
       'gpu',
+      'indicators',
       'workers',
     ]);
   });
 
-  // #1141 -- KO / ASSIST 統合。OFF ではキー自体を送らないので、既存の argv は
-  // 1 バイトも変わらない (この pin がその証明)。
+  // #1141 -- KO / ASSIST 統合。CLI の既定が ON なので、OFF は明示的に
+  // `--no-indicators` を載せる必要があり、boolean を常に送る。
   describe('indicators (#1141)', () => {
-    it('omits the key when off', () => {
+    it('sends true by default', () => {
+      expect(toStartDetectParams(DEFAULT_DETECTION_PARAMS).indicators).toBe(true);
+    });
+
+    it('sends false when turned off', () => {
       const args = toStartDetectParams({
         ...DEFAULT_DETECTION_PARAMS,
         indicators: false,
       });
-      expect(args).not.toHaveProperty('indicators');
+      expect(args.indicators).toBe(false);
     });
 
     it('sends indicators: true when enabled', () => {
@@ -68,12 +73,12 @@ describe('toStartDetectParams (#613)', () => {
       expect(args.indicators).toBe(true);
     });
 
-    it('counts as a modification', () => {
+    it('counts as a modification when turned off', () => {
       expect(isDetectionParamsModified(DEFAULT_DETECTION_PARAMS)).toBe(false);
       expect(
         isDetectionParamsModified({
           ...DEFAULT_DETECTION_PARAMS,
-          indicators: true,
+          indicators: false,
         }),
       ).toBe(true);
     });

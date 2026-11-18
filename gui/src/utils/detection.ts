@@ -44,11 +44,9 @@ export function toStartDetectParams(p: DetectionParams): Record<string, unknown>
   } else if (p.detectionPath === 'vtuber') {
     args.vtuber = true;
   }
-  // #1141: OFF のときはキー自体を送らない (Rust 側も `Some(false)` では flag を
-  // 載せない)。これで従来の argv が 1 バイトも変わらない。
-  if (p.indicators) {
-    args.indicators = true;
-  }
+  // #1141: 既定は ON (CLI 側も ON) なので、OFF を選んだときは Rust が
+  // `--no-indicators` を載せるために **boolean を常に送る**。
+  args.indicators = p.indicators;
   return args;
 }
 

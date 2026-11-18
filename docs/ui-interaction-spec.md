@@ -435,10 +435,10 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | button group (`role="radiogroup"` + 2 つの `role="radio"`、`data-testid="detection-params-indicators"`)。GPU と同じ `triStateRow` / `triStateButton` を再利用 |
-| 状態 | `OFF` (既定、`indicators=false`) / `ON` (`indicators=true`) |
+| 状態 | `ON` (既定、`indicators=true`) / `OFF` (`indicators=false`、`--no-indicators`) |
 | 遷移トリガー | 各 button `onClick` → `setDetectionParams({ indicators })` |
 | store mutation | `appStateStore.detectionParams.indicators` (他の field は触らない) |
-| 例外 / edge case | `toStartDetectParams` ([detection.ts](../gui/src/utils/detection.ts)) は **ON のときだけ** `indicators: true` を送る。OFF ではキー自体を送らないため、`start_detect` の argv は #1141 以前と 1 バイトも変わらない (Rust unit test `detect_command_args_emits_indicators_only_when_true` が pin) |
+| 例外 / edge case | CLI の既定が ON なので、`toStartDetectParams` ([detection.ts](../gui/src/utils/detection.ts)) は **boolean を常に送る** (OFF のとき Rust が `--no-indicators` を載せる)。Rust unit test `detect_command_args_translates_indicators_tristate` が `Some(true)` / `Some(false)` / `None` の 3 分岐を pin |
 | 結果表示 | 有効時は「2 段目の進捗」として §2.2.5b の 3 段目バーが出る。`metadata.json` の `events[]` / `indicator_layout` が埋まり、検出だけ失敗した場合は `warnings[]` に `indicators_failed` が入る (完了画面は境界と試合一覧をそのまま表示する) |
 
 > **help 本文**: 所要時間 (2.8 時間で約 4.5 分 / 944 秒で約 25 秒) と「失敗しても分割結果は失われない」ことを書く。文言は `DetectionParamsPanel.tsx` の `INDICATORS_HELP`。
@@ -516,7 +516,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | progress bar ([DetectingScreen.tsx](../gui/src/screens/DetectingScreen.tsx) の 3 個目の `PhaseRow`、`<PhaseRow name="Indicators" jp="KO / ASSIST" …>` = `data-testid="phase-row-indicators"`) |
-| 状態 | 既定は**非表示**。`detectionParams.indicators` が true の run でだけ表示する (OFF の run に「待機 0%」のバーを残すと誤解を生むため) |
+| 状態 | `detectionParams.indicators` が true の run で表示する (**既定 ON**)。OFF の run では非表示 (「待機 0%」のバーを残すと誤解を生むため) |
 | 遷移トリガー | CLI の `phase: "indicators"` イベント。`completed` / `total` は**走査済み秒 / 総尺秒**で、`PHASE_WINDOWS.indicators` (`[97, 99]`) の帯に写す。`eta_s` はログ行 (§2.2.6) に `残り ~mm:ss` として出す |
 | store mutation | なし |
 | 例外 / edge case | 検出を要求しても走査が走らない (キャリブレーション失敗) 場合、CLI は `phase: "indicators"` を 1 行も出さずに完了する。バーは 0% のまま `done` に至るが、`metadata.json` の `warnings[]` に `indicators_failed` が残り、完了画面は境界を表示する |

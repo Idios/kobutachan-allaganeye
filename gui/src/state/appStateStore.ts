@@ -67,11 +67,13 @@ export interface DetectionParams {
    */
   detectionPath: DetectionPath;
   /**
-   * #1141: `--indicators` を渡すか。ON にすると境界検出と同じ metadata.json に
-   * KO / ASSIST のイベント列が 1 回の atomic write で入る (CLI の既定は OFF)。
+   * #1141: `--indicators` (`true`) / `--no-indicators` (`false`)。ON にすると
+   * 境界検出と同じ metadata.json に KO / ASSIST のイベント列が 1 回の atomic
+   * write で入る。**既定は ON**（CLI 側の既定も ON）— L4 の新機能なので
+   * 既存ユーザーの行動を壊さず、ON のまま切り抜きへ進める。
    *
-   * OFF のときはフラグ自体を送らない (`--no-indicators` は送らない) ので、
-   * 従来の argv は 1 バイトも変わらない。
+   * コストは 944 秒の録画で約 25 秒 / 2.8 時間で約 4.5 分
+   * (`docs/testing-guide.md` §「KO / ASSIST 走査の実測」)。
    */
   indicators: boolean;
 }
@@ -87,7 +89,7 @@ export const DEFAULT_DETECTION_PARAMS: DetectionParams = {
   workers: 0,
   gpu: null,
   detectionPath: 'standard',
-  indicators: false,
+  indicators: true,
 };
 
 export interface AppState {

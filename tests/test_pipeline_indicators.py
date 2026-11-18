@@ -126,14 +126,14 @@ def _read(tmp_path: Path) -> dict:
 
 
 def test_detect_without_indicators_writes_no_event_fields(tmp_path):
-    """既定 (OFF) では events / indicator_layout を書かない。"""
+    """`--no-indicators` では events / indicator_layout を書かない。"""
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
     with (
         patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
         patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
         patch(f"{MODULE_STAGE}.detect_indicator_events", side_effect=AssertionError),
     ):
-        run_detect(Path("input.mp4"), config, quiet=True)
+        run_detect(Path("input.mp4"), config, quiet=True, indicators=False)
 
     payload = _read(tmp_path)
     assert "events" not in payload
@@ -271,7 +271,7 @@ def test_split_indicators_writes_events(tmp_path, split_mocks):
 
 def test_split_without_indicators_writes_no_event_fields(tmp_path, split_mocks):
     config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
-    run_split(Path("input.mp4"), config, quiet=True)
+    run_split(Path("input.mp4"), config, quiet=True, indicators=False)
 
     payload = _read(tmp_path)
     assert "events" not in payload
@@ -336,6 +336,44 @@ def test_cli_rejects_indicators_with_from_metadata(tmp_path):
     )
     assert result.exit_code == 5
     assert "--indicators is not compatible with --from-metadata" in result.output
+
+
+def test_cli_detect_defaults_to_indicators_on(tmp_path):
+    """`detect` の既定は ON (`CLI_DEFAULT_INDICATORS`)。SSoT は stage の定数。"""
+    from allaganeye.detection.indicator_stage import CLI_DEFAULT_INDICATORS
+
+    assert CLI_DEFAULT_INDICATORS is True
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    with patch(f"{MODULE_DETECT}.run_detect") as run:
+        result = runner.invoke(
+            cli_app, ["detect", str(video), "-o", str(tmp_path / "out")]
+        )
+    assert result.exit_code == 0, result.output
+    assert run.call_args.kwargs["indicators"] is True
+
+
+def test_cli_no_indicators_flag_turns_the_stage_off(tmp_path):
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    with patch(f"{MODULE_DETECT}.run_detect") as run:
+        result = runner.invoke(
+            cli_app,
+            ["detect", str(video), "-o", str(tmp_path / "out"), "--no-indicators"],
+        )
+    assert result.exit_code == 0, result.output
+    assert run.call_args.kwargs["indicators"] is False
+
+
+def test_cli_split_defaults_to_indicators_on(tmp_path):
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"")
+    with patch(f"{MODULE_SPLIT}.run_split") as run:
+        result = runner.invoke(
+            cli_app, ["split", str(video), "-o", str(tmp_path / "out")]
+        )
+    assert result.exit_code == 0, result.output
+    assert run.call_args.kwargs["indicators"] is True
 
 
 def test_cli_accepts_both_indicator_flags(tmp_path):

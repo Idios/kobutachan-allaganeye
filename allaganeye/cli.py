@@ -10,6 +10,7 @@ import typer
 
 from allaganeye import __version__
 from allaganeye.config import SUPPORTED_EXTENSIONS, SplitConfig
+from allaganeye.detection.indicator_stage import CLI_DEFAULT_INDICATORS
 from allaganeye.exceptions import (
     AllaganEyeError,
     ConfigValidationError,
@@ -235,14 +236,15 @@ def split(
         ),
     ] = False,
     indicators: Annotated[
-        bool,
+        bool | None,
         typer.Option(
             "--indicators/--no-indicators",
             help="Also detect KO / ASSIST indicator intervals and write them into "
             "metadata.json in the same atomic write as the boundaries (#1141). "
-            "Default: off. Not compatible with --from-metadata.",
+            "Default: on (use --no-indicators to skip it). Not compatible with "
+            "--from-metadata.",
         ),
-    ] = False,
+    ] = None,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -350,8 +352,14 @@ def split(
 
         from allaganeye.commands.split_matches import run_split
 
+        # 未指定は CLI 既定 (ON) に解決する。`--from-metadata` との排他は
+        # 「明示的に --indicators を渡した」ときだけ効かせる (#1141)。
         run_split(
-            video_path, config, verbose=verbose, quiet=quiet, indicators=indicators
+            video_path,
+            config,
+            verbose=verbose,
+            quiet=quiet,
+            indicators=(CLI_DEFAULT_INDICATORS if indicators is None else indicators),
         )
 
     except AllaganEyeError as e:
@@ -457,14 +465,14 @@ def detect(
         ),
     ] = False,
     indicators: Annotated[
-        bool,
+        bool | None,
         typer.Option(
             "--indicators/--no-indicators",
             help="Also detect KO / ASSIST indicator intervals and write them into "
             "metadata.json in the same atomic write as the boundaries (#1141). "
-            "Default: off.",
+            "Default: on (use --no-indicators to skip it).",
         ),
-    ] = False,
+    ] = None,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -549,7 +557,7 @@ def detect(
             verbose=verbose,
             quiet=quiet,
             progress_format=progress_format,
-            indicators=indicators,
+            indicators=(CLI_DEFAULT_INDICATORS if indicators is None else indicators),
         )
 
     except AllaganEyeError as e:

@@ -181,7 +181,9 @@ def run_split(
     - ``quiet``: suppresses all output except output file list
 
     ``indicators`` (#1141) runs the KO / ASSIST stage between detection and the
-    metadata write, so boundaries and events land in **one** atomic write.
+    metadata write, so boundaries and events land in **one** atomic write. The
+    kwarg defaults to ``False`` for internal callers; the **CLI default is on**
+    (``detection.indicator_stage.CLI_DEFAULT_INDICATORS``)。
     """
     show = not quiet
 

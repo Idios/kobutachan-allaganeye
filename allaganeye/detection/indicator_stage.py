@@ -59,6 +59,7 @@ from allaganeye.video.refs import load_templates
 
 __all__ = [
     "CALIBRATION_SAMPLES",
+    "CLI_DEFAULT_INDICATORS",
     "DEFAULT_INTERVAL",
     "INDICATORS_FAILED_CODE",
     "MIN_INTERVAL",
@@ -85,6 +86,17 @@ PROGRESS_STEP_SECONDS = 30.0
 
 INDICATORS_FAILED_CODE = "indicators_failed"
 """統合経路 (#1141) でインジケータ検出だけが失敗したときの warning code。"""
+
+CLI_DEFAULT_INDICATORS = True
+"""`detect` / `split` の `--indicators` の**既定値**。ここが SSoT (#1141)。
+
+L4 は 0.4.0 の新機能で、ON でも既存ユーザーの行動を壊さない (metadata に
+`events[]` が増えるだけ)。コストは 944 秒の録画で約 25 秒 / 2.8 時間で約 4.5 分
+(`docs/testing-guide.md` の「KO / ASSIST 走査の実測」節)。
+
+`run_detect` / `run_split` のキーワード引数は **False** を既定にしている
+(テストや内部呼び出しが実フレームを読まずに済むように)。CLI はこの定数を
+typer の既定値として渡す。"""
 
 
 @dataclass(frozen=True)
