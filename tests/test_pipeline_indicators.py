@@ -59,6 +59,7 @@ EVENTS = [
         "timestamp": 100.0,
         "end": 101.0,
         "score": 0.91,
+        "evidence": {"samples": 3},
         "match_index": 1,
     },
     {
@@ -66,6 +67,7 @@ EVENTS = [
         "timestamp": 200.0,
         "end": 201.0,
         "score": 0.88,
+        "evidence": {"samples": 4},
         "match_index": 1,
     },
 ]
@@ -77,10 +79,8 @@ MODULE_STAGE = "allaganeye.detection.indicator_stage"
 runner = CliRunner()
 
 
-def _run(payload: dict[str, object] | None = None) -> IndicatorRun:
-    return IndicatorRun(
-        layout=dict(LAYOUT), events=[dict(e) for e in (payload or EVENTS)]
-    )
+def _run(events: list[dict[str, object]] | None = None) -> IndicatorRun:
+    return IndicatorRun(layout=dict(LAYOUT), events=[dict(e) for e in (events or EVENTS)])
 
 
 def _fake_stage(result: IndicatorRun | None = None, *, notices: bool = True):
@@ -219,9 +219,7 @@ def test_detect_indicators_emits_json_phase(capsys, tmp_path):
 @pytest.mark.parametrize(("use_gpu", "expected"), [(True, True), (False, False)])
 def test_detect_indicators_passes_explicit_gpu_only(tmp_path, use_gpu, expected):
     """GPU は明示指定 (--gpu) のときだけステージへ渡す (opt-in)。"""
-    config = SplitConfig(
-        output_dir=tmp_path, min_match_duration=60.0, use_gpu=use_gpu
-    )
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0, use_gpu=use_gpu)
     seen: dict[str, object] = {}
 
     def fake(source, payload, **kwargs):
@@ -235,9 +233,7 @@ def test_detect_indicators_passes_explicit_gpu_only(tmp_path, use_gpu, expected)
             f"{MODULE_DETECT}._resolve_gpu_mode_with_probe",
             return_value=(use_gpu, "nvidia" if use_gpu else None, ["nvidia"]),
         ),
-        patch(
-            "allaganeye.system_info.probe_gpu_vendors", return_value=["nvidia"]
-        ),
+        patch("allaganeye.system_info.probe_gpu_vendors", return_value=["nvidia"]),
         patch(f"{MODULE_STAGE}.detect_indicator_events", new=fake),
     ):
         run_detect(Path("input.mp4"), config, quiet=True, indicators=True)
@@ -346,3 +342,128 @@ def test_cli_detect_accepts_both_indicator_flags():
     assert result.exit_code == 0
     assert "--indicators" in result.output
     assert "--no-indicators" in result.output
+
+
+# --- Codex adversarial-review (2026-11-18) の P2 3 件の regression pin --------
+
+
+def test_detect_emits_writing_metadata_after_the_indicator_stage(capsys, tmp_path):
+    """`writing_metadata` は走査の**後**に出す (codex P2 #1)。
+
+    先に出すと GUI の進捗が 99% で頭打ちになり、indicators 帯 (97-99%) の
+    更新が捨てられる (bar は単調増加)。
+    """
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
+        patch(f"{MODULE_STAGE}.detect_indicator_events", new=_fake_stage()),
+    ):
+        run_detect(
+            Path("input.mp4"),
+            config,
+            quiet=True,
+            progress_format="json",
+            indicators=True,
+        )
+
+    phases = [
+        json.loads(line)["phase"]
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("{")
+    ]
+    assert "indicators" in phases and "writing_metadata" in phases
+    assert phases.index("writing_metadata") > max(
+        index for index, phase in enumerate(phases) if phase == "indicators"
+    )
+
+
+def test_detect_counts_the_indicator_scan_in_detection_completed_at(tmp_path):
+    """走査の所要を `detection_completed_at` に含める (codex P2 #3)。"""
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    stamps = [
+        "2026-11-18T00:00:00Z",  # detected_at
+        "2026-11-18T00:00:01Z",  # payload 組み立て時
+        "2026-11-18T00:05:00Z",  # 走査後 (これが書かれる)
+    ]
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
+        patch(f"{MODULE_DETECT}._iso_utc_now", side_effect=stamps),
+        patch(f"{MODULE_STAGE}.detect_indicator_events", new=_fake_stage()),
+    ):
+        run_detect(Path("input.mp4"), config, quiet=True, indicators=True)
+
+    payload = _read(tmp_path)
+    assert payload["detection_started_at"] == stamps[0]
+    assert payload["detection_completed_at"] == stamps[2]
+
+
+def test_split_counts_the_indicator_scan_in_detection_completed_at(
+    tmp_path, split_mocks
+):
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    stamps = [
+        "2026-11-18T00:00:00Z",  # detected_at
+        "2026-11-18T00:00:01Z",  # payload 組み立て時
+        "2026-11-18T00:05:00Z",  # 走査後 (これが書かれる)
+    ]
+    with (
+        patch(f"{MODULE_SPLIT}._iso_utc_now", side_effect=stamps),
+        patch(f"{MODULE_STAGE}.detect_indicator_events", new=_fake_stage()),
+    ):
+        run_split(Path("input.mp4"), config, quiet=True, indicators=True)
+
+    payload = _read(tmp_path)
+    assert payload["detection_completed_at"] == stamps[2]
+
+
+def test_split_from_metadata_drops_malformed_indicator_fields(tmp_path):
+    """壊れた `events` / `indicator_layout` は新ファイルに持ち込まない (codex P2 #2)。
+
+    1 フィールドの不正で GUI の zod が metadata.json 全体を拒否し、健全な
+    境界結果まで読めなくなるため、preserve 時に sanitize する。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "source": str(source),
+                "source_duration": PROBE_RESULT["duration"],
+                "source_fps": PROBE_RESULT["fps"],
+                "detected_at": "2026-11-18T00:00:00Z",
+                "matches": [
+                    {
+                        "index": 1,
+                        "start_time": 0.0,
+                        "end_time": 600.0,
+                        "duration": 600.0,
+                        "type": "fl_match",
+                        "output_file": "match_001.mp4",
+                    }
+                ],
+                "gaps": [],
+                "warnings": [],
+                "indicator_layout": {},
+                "events": [{}, {"signal_id": "ko_indicator"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_SPLIT}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE_SPLIT}.split_video",
+            return_value=[tmp_path / "out" / "match_001.mp4"],
+        ),
+    ):
+        run_split_from_metadata(metadata_path, config, quiet=True)
+
+    fresh = json.loads((tmp_path / "out" / "metadata.json").read_text("utf-8"))
+    assert "indicator_layout" not in fresh
+    assert "events" not in fresh
+    assert len(fresh["matches"]) == 1

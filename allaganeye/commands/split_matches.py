@@ -654,13 +654,27 @@ def run_split_from_metadata(
     # metadata が SSoT (#586 timing / #644 brightness / #805 warnings /
     # #810 capture_regions と同じ preserve パターン)。
     old_layout = payload.get("indicator_layout")
-    preserve_layout = old_layout if isinstance(old_layout, dict) else None
-    old_events = payload.get("events")
-    preserve_events: list[dict[str, Any]] | None = (
-        [event for event in old_events if isinstance(event, dict)]
-        if isinstance(old_events, list)
-        else None
+    preserve_layout = (
+        _sanitize_indicator_layout(old_layout) if old_layout is not None else None
     )
+    if old_layout is not None and preserve_layout is None:
+        # 壊れた 1 フィールドで metadata.json 全体を GUI が読めなくなるより、
+        # そのフィールドだけ落とす (capture_regions / warnings と同じ preserve 方針)。
+        logger.warning(
+            "Dropping malformed indicator_layout from %s "
+            "(shape validation failed -- field omitted from rewritten metadata)",
+            metadata_path,
+        )
+    old_events = payload.get("events")
+    preserve_events = (
+        _sanitize_highlight_events(old_events) if old_events is not None else None
+    )
+    if isinstance(old_events, list) and preserve_events is None:
+        logger.warning(
+            "Dropping malformed events from %s "
+            "(shape validation failed -- field omitted from rewritten metadata)",
+            metadata_path,
+        )
 
     def preserve_indicator_payload(target: dict[str, Any]) -> None:
         if preserve_layout is not None:
@@ -1671,6 +1685,9 @@ def _split_and_write_metadata(
     # in the payload). #586: completed_at は明示指定がなければ writer 直前
     # の ``_iso_utc_now()``。``--from-metadata`` 経路は元 metadata の値を
     # caller (run_split_from_metadata) が引き継いで渡す。
+    # #1141: 呼び出し側が値を渡したか (--from-metadata の preserve) を先に記録する。
+    # None を埋めた後で判定すると常に True になり、走査後の更新が起きない。
+    caller_gave_completed_at = detection_completed_at is not None
     if detection_completed_at is None:
         detection_completed_at = _iso_utc_now()
     result = _build_metadata_payload(
@@ -1695,6 +1712,11 @@ def _split_and_write_metadata(
     metadata_path = config.output_dir / "metadata.json"
     if before_write is not None:
         before_write(cast("dict[str, Any]", result))
+        if not caller_gave_completed_at:
+            # #1141: before_write (KO / ASSIST 走査) の所要を検知の所要に含める。
+            # 呼び出し側が値を指定した経路 (`--from-metadata` の preserve) は
+            # 元 metadata の時刻を保持するので触らない。
+            result["detection_completed_at"] = _iso_utc_now()
     write_metadata_atomic(metadata_path, result)
 
     # Report where the files actually landed, not the raw ``-o`` string
@@ -2375,7 +2397,12 @@ def _sanitize_brightness_samples(value: object) -> "BrightnessSamples | None":
 
 _CAPTURE_REGIONS_TOP_KEYS = frozenset({"coarse", "segments", "fallback_reason"})
 _CAPTURE_REGION_COORD_KEYS = frozenset({"x", "y", "w", "h", "confidence"})
-_CAPTURE_REGION_REQUIRED_KEYS = frozenset({"x", "y", "w", "h", "confidence", "source"})
+_CAPTURE_REGION_REQUIRED_KEYS = {"x", "y", "w", "h", "confidence", "source"}
+
+_INDICATOR_LAYOUT_KEYS = frozenset(
+    {"anchor_x", "anchor_y", "scale", "support", "confidence", "source"}
+)
+"""`$defs/IndicatorLayout` の required 6 キー (= additionalProperties:false)。"""
 
 
 def _sanitize_capture_regions(value: object) -> "CaptureRegions | None":
@@ -2439,6 +2466,104 @@ def _sanitize_capture_regions(value: object) -> "CaptureRegions | None":
         return None
 
     return cast("CaptureRegions", value)
+
+
+def _sanitize_indicator_layout(value: object) -> dict[str, Any] | None:
+    """`indicator_layout` の preserve sanitizer (#1141)。
+
+    `--from-metadata` は再検知しないので元 metadata の値をそのまま新ファイルに
+    書くが、手編集された `indicator_layout: {}` のような値を通すと GUI の zod
+    (`IndicatorLayoutSchema`) が **metadata.json 全体を** 拒否し、健全な境界
+    結果まで読めなくなる。`_sanitize_capture_regions` と同じ純 Python 検査
+    (jsonschema の runtime 依存は追加しない) で、スキーマ
+    `$defs/IndicatorLayout` (additionalProperties:false / required 6 keys) を
+    写す。完全に妥当なときだけ dict を返す。
+    """
+    if not isinstance(value, dict):
+        return None
+    if set(value.keys()) != _INDICATOR_LAYOUT_KEYS:
+        return None
+    for key in ("anchor_x", "anchor_y", "confidence"):
+        number = _finite_number(value.get(key))
+        if number is None or not 0.0 <= number <= 1.0:
+            return None
+    scale = _finite_number(value.get("scale"))
+    if scale is None or scale <= 0.0:
+        return None
+    support = value.get("support")
+    if isinstance(support, bool) or not isinstance(support, int) or support < 1:
+        return None
+    source = value.get("source")
+    if not isinstance(source, str) or not source:
+        return None
+    return dict(value)
+
+
+def _sanitize_highlight_events(value: object) -> list[dict[str, Any]] | None:
+    """`events` の preserve sanitizer (#1141)。
+
+    壊れた 1 件 (例: `{}`) をそのまま新ファイルに書くと GUI が metadata.json
+    全体を読めなくなるため、**スキーマの required を満たす要素だけを残す**。
+    全部落ちたら None (キー自体を書かない = 未検出と同じ形)。
+
+    残す条件は `$defs/HighlightEvent` の required 6 フィールド
+    (`signal_id` / `timestamp` / `end` / `score` / `evidence` / `match_index`) を
+    満たすこと。`clip_start` / `clip_end` は optional なので値の形だけ見る。
+    """
+    if not isinstance(value, list):
+        return None
+    kept: list[dict[str, Any]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        signal_id = entry.get("signal_id")
+        if not isinstance(signal_id, str) or not signal_id:
+            continue
+        timestamp = _finite_number(entry.get("timestamp"))
+        end = _finite_number(entry.get("end"))
+        score = _finite_number(entry.get("score"))
+        if timestamp is None or end is None or score is None:
+            continue
+        if timestamp < 0 or end < 0 or not 0.0 <= score <= 1.0:
+            continue
+        if not isinstance(entry.get("evidence"), dict):
+            continue
+        match_index = entry.get("match_index")
+        if match_index is not None and (
+            isinstance(match_index, bool)
+            or not isinstance(match_index, int)
+            or match_index < 1
+        ):
+            continue
+        clipped = True
+        for key in ("clip_start", "clip_end"):
+            if (
+                key in entry
+                and entry[key] is not None
+                and _finite_number(entry[key]) is None
+            ):
+                clipped = False
+                break
+        if not clipped:
+            continue
+        kept.append(dict(entry))
+    return kept or None
+
+
+def _finite_number(value: object) -> float | None:
+    """有限実数なら float を返す (bool と NaN / Infinity は None)。
+
+    `json.dumps` は allow_nan=True で非標準 token を再 emit し、strict reader
+    (GUI serde_json / JSON.parse) が metadata.json 全体を reject するため、
+    NaN / Infinity は sanitize 側で塞ぐ (`_sanitize_capture_regions` と同じ理由)。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (OverflowError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _is_valid_capture_region(region: object) -> bool:

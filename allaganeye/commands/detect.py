@@ -304,9 +304,6 @@ def run_detect(
         vendor_used=gpu_vendor if use_gpu else None,
     )
 
-    if progress_emitter is not None:
-        progress_emitter.emit("writing_metadata")
-
     brightness_samples = build_brightness_samples(captured_brightness)
 
     # #586: capture wall-clock end of the detect pipeline immediately
@@ -391,6 +388,11 @@ def run_detect(
             notice=on_indicator_notice,
             progress=indicator_diagnostic,
         )
+        # #1141: 走査の所要を「検知の所要」に含める (#586 の契約は
+        # detection_completed_at - detection_started_at)。payload を組んだ後に
+        # 数分走るので、組み立て時の値のままにすると GUI の「所要」から
+        # KO / ASSIST 分が抜け落ちる。
+        payload["detection_completed_at"] = _iso_utc_now()
         if show:
             if indicator_warning is None:
                 events = payload.get("events")
@@ -401,6 +403,12 @@ def run_detect(
                     "  KO / ASSIST detection failed "
                     f"(recorded in warnings[]): {indicator_warning.get('context')}"
                 )
+
+    # #1141: `writing_metadata` は KO / ASSIST 走査の**後**に出す。先に出すと
+    # GUI の進捗が 99% で頭打ちになり、indicators 帯 (97-99%) の更新が
+    # すべて捨てられる (bar は単調増加)。
+    if progress_emitter is not None:
+        progress_emitter.emit("writing_metadata")
 
     write_metadata_atomic(metadata_path, payload)
 
