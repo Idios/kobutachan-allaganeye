@@ -38,13 +38,18 @@ const passthrough = argv.filter((arg) => arg !== '--full');
 const hasFlag = (name) =>
   passthrough.some((arg) => arg === name || arg.startsWith(`${name}=`));
 
-// 実行しないコマンド (marker を書いてはいけない)。
-const informational = ['--help', '-h', '--version', '-V'].some(hasFlag);
+// 実行しないコマンド (marker を書いてはいけない)。短縮形の version は `-v`
+// (`-V` ではない。`mutator --help` の `-v, --version`)。
+const informational = ['--help', '-h', '--version', '-v'].some(hasFlag);
 
-// 部分実行 / 明示的な差分指定。marker もモードも変えない (そのまま渡す)。
+// 部分実行 / 明示的な差分指定 / 実効設定が argv から分からない指定。
+// marker もモードも変えない (そのまま渡す)。
 // `--time-budget` / `--mutants-per-line` / `--shard` を入れるのは重要: これらを
 // 付けた full run は mutant を Pending のまま残すので、「全ソースを測った」
 // 証拠にならない (codex review 2026-11-19 P1)。
+// `--config-file` (制限が設定側に書かれうる) と `--root` (別 project を測る) は
+// 実効スコープを argv から確定できないので、保守的に marker を書かない
+// (codex review 2026-11-19 P2)。
 const partialFlags = [
   '--include',
   '--exclude',
@@ -53,6 +58,8 @@ const partialFlags = [
   '--time-budget',
   '--mutants-per-line',
   '--shard',
+  '--root',
+  '--config-file',
 ];
 const scoped = partialFlags.some(hasFlag);
 
