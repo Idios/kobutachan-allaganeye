@@ -464,6 +464,10 @@ function DetectingRunningView({
   // #569 review Round 1 課題 1: probing event payload を保持して
   // header meta 行を実 ffprobe 結果で render する。
   const [probeInfo, setProbeInfo] = useState<ProbeInfo | null>(null);
+  // #1141 -- KO / ASSIST 走査の進捗 (0-100)。全体 progress から導出しないのは、
+  // cache_hit が全体を 99% に貼り付けるため (`PHASE_WINDOWS.cache_hit: [0, 99]`)、
+  // 差分の 97-99 帯では 3 段目が即 100% になって「走査を飛ばした」ように見えるから。
+  const [indicatorPct, setIndicatorPct] = useState(0);
   // Captured once on first mount via lazy initialiser so log entries
   // can compute their relative timestamp inside render. The parent
   // remounts this component (via `key={runCount}`) on retry, so a new
@@ -553,6 +557,20 @@ function DetectingRunningView({
               return;
             }
             setPhaseLabel(payload.phase);
+
+            // #1141 -- 3 段目のバーは indicators イベントの (completed / total)
+            // だけで動かす。total は走査対象の秒数。走査後の `writing_metadata`
+            // で 100% に揃える (失敗時は 0 のまま = 走っていないことが見える)。
+            if (payload.phase === 'indicators') {
+              const total = payload.total ?? 0;
+              if (total > 0) {
+                setIndicatorPct(
+                  Math.min(100, ((payload.completed ?? 0) / total) * 100),
+                );
+              }
+            } else if (payload.phase === 'writing_metadata') {
+              setIndicatorPct((prev) => (prev > 0 ? 100 : prev));
+            }
 
             // #569 review Round 1 課題 1: probing event の ffprobe 結果を
             // header meta 行用に保持。後続 phase でも維持されるので、
@@ -665,17 +683,21 @@ function DetectingRunningView({
     Math.min(100, ((progress - refineStart) * 100) / (refiningEnd - refineStart)),
   );
   const refiningSub = phaseLabel === 'scorebar' ? '分類' : 'refine';
-  // #1141 -- KO / ASSIST の 3 段目。ステージを要求したランでだけ表示する
-  // (OFF のランでは指標のバーが「待機 0%」で残るのは誤解を生む)。
+  // #1141 -- 3 段目は指標自身の進捗で描く (全体 progress と独立)。
   const indicatorStart = PHASE_WINDOWS.indicators[0];
   const indicatorEnd = PHASE_WINDOWS.indicators[1];
-  const pct3 = Math.max(
-    0,
-    Math.min(
-      100,
-      ((progress - indicatorStart) * 100) / (indicatorEnd - indicatorStart),
-    ),
-  );
+  const pct3 =
+    phaseLabel === 'indicators' || indicatorPct > 0
+      ? indicatorPct
+      : progress >= indicatorEnd
+        ? 100
+        : Math.max(
+            0,
+            Math.min(
+              100,
+              ((progress - indicatorStart) * 100) / (indicatorEnd - indicatorStart),
+            ),
+          );
 
   const eta = computeEta(progress, elapsed);
   // #569 review Round 1 課題 1: probing event 受信後は実 ffprobe 結果を

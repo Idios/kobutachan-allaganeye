@@ -614,3 +614,50 @@ def test_preserve_sanitizers_reject_nested_non_finite_numbers() -> None:
         assert _sanitize_highlight_events([nested]) is None
         unknown = {**event, "forward_compat": {"x": bad}}
         assert _sanitize_highlight_events([unknown]) is None
+
+
+def test_detect_indicators_runs_on_detection_cache_hit(tmp_path):
+    """検知キャッシュが hit しても KO / ASSIST の走査は実行される (#1141)。
+
+    履歴から同じ動画・同じ出力先で再実行すると境界検出は cache hit で skip
+    されるが、**イベント列は毎回作り直す** (キャッシュするのは境界だけ)。
+    2 回目で `_run_detection` が呼ばれないことを pin した上で、events が
+    書かれることを確かめる。
+    """
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"x" * 16)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES) as detect,
+        patch(f"{MODULE_STAGE}.detect_indicator_events", new=_fake_stage()),
+    ):
+        run_detect(video, config, quiet=True, indicators=True)
+    assert detect.call_count == 1
+    assert _read(tmp_path)["events"] == EVENTS
+
+    # 2 回目: cache hit するので検知は走らないが、indicators は走る。
+    stage_calls: list[str] = []
+    fake = _fake_stage()
+    real_stage = fake
+
+    def counting_stage(source, payload, **kwargs):
+        stage_calls.append("called")
+        return real_stage(source, payload, **kwargs)
+
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE_DETECT}._run_detection",
+            side_effect=AssertionError("cache hit なのに再検知した"),
+        ) as detect2,
+        patch(f"{MODULE_STAGE}.detect_indicator_events", new=counting_stage),
+    ):
+        run_detect(video, config, quiet=True, indicators=True)
+
+    assert detect2.call_count == 0
+    assert stage_calls == ["called"], "cache hit でも KO / ASSIST の走査は実行する"
+    payload = _read(tmp_path)
+    assert payload["events"] == EVENTS
+    assert payload["indicator_layout"] == LAYOUT

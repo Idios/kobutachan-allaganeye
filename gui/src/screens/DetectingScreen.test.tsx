@@ -168,6 +168,57 @@ describe('DetectingScreen', () => {
       expect(mid).toBeLessThan(PHASE_WINDOWS.indicators[1]);
     });
 
+    it('keeps the third row on its own progress after a cache hit', async () => {
+      // cache_hit は全体 progress を 99% に貼り付ける (PHASE_WINDOWS)。
+      // 3 段目を全体 progress から導出すると即 100% になり「走査を飛ばした」
+      // ように見えるため、indicators イベントの ratio で描く (#1141)。
+      invokeMock.mockImplementation((cmd) => {
+        if (cmd === 'start_detect') {
+          return new Promise(() => {
+            /* never resolves */
+          });
+        }
+        return Promise.resolve(null);
+      });
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(listenMock).toHaveBeenCalled();
+      });
+      act(() => {
+        emitDetectProgress({ phase: 'cache_hit', boundaries: 1 });
+      });
+      act(() => {
+        emitDetectProgress({ phase: 'indicators', completed: 900, total: 1800 });
+      });
+      const row = screen.getByTestId('phase-row-indicators');
+      expect(row.textContent).toContain('50%');
+      expect(row.textContent).not.toContain('100%');
+    });
+
+    it('completes the third row when the metadata write starts', async () => {
+      invokeMock.mockImplementation((cmd) => {
+        if (cmd === 'start_detect') {
+          return new Promise(() => {
+            /* never resolves */
+          });
+        }
+        return Promise.resolve(null);
+      });
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(listenMock).toHaveBeenCalled();
+      });
+      act(() => {
+        emitDetectProgress({ phase: 'indicators', completed: 930, total: 944 });
+      });
+      act(() => {
+        emitDetectProgress({ phase: 'writing_metadata' });
+      });
+      expect(
+        screen.getByTestId('phase-row-indicators').textContent,
+      ).toContain('100%');
+    });
+
     it('shows a third row with progress', async () => {
       // start_detect を未解決のままにして、進捗バーが 100% に飛ぶのを防ぐ。
       invokeMock.mockImplementation((cmd) => {

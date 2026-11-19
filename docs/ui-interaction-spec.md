@@ -517,7 +517,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | --- | --- |
 | 種類 | progress bar ([DetectingScreen.tsx](../gui/src/screens/DetectingScreen.tsx) の 3 個目の `PhaseRow`、`<PhaseRow name="Indicators" jp="KO / ASSIST" …>` = `data-testid="phase-row-indicators"`) |
 | 状態 | `detectionParams.indicators` が true の run で表示する (**既定 ON**)。OFF の run では非表示 (「待機 0%」のバーを残すと誤解を生むため) |
-| 遷移トリガー | CLI の `phase: "indicators"` イベント。`completed` / `total` は**走査済み秒 / 総尺秒**で、`PHASE_WINDOWS.indicators` (`[97, 99]`) の帯に写す。`eta_s` はログ行 (§2.2.6) に `残り ~mm:ss` として出す |
+| 遷移トリガー | CLI の `phase: "indicators"` イベントの **`completed` / `total`（走査済み秒 / 総尺秒）比**で描く（全体 progress から導出しない）。理由: `PHASE_WINDOWS.cache_hit` が全体を 99% に貼り付けるため、cache hit した run では差分の 97-99 帯が潰れて「走査を飛ばした」ように見える。`writing_metadata` で 100% に揃える（走査が走らなかった失敗時は 0 のまま）。`eta_s` はログ行 (§2.2.6) に `残り ~mm:ss` として出す |
 | store mutation | なし |
 | 例外 / edge case | 検出を要求しても走査が走らない (キャリブレーション失敗) 場合、CLI は `phase: "indicators"` を 1 行も出さずに完了する。バーは 0% のまま `done` に至るが、`metadata.json` の `warnings[]` に `indicators_failed` が残り、完了画面は境界を表示する |
 
