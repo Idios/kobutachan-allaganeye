@@ -1355,13 +1355,16 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 **推定残り時間 (#1140)**: progressBox の下に `残り約 mm:ss` を出す (`data-testid="indicators-eta"`)。値は CLI の `eta_s` をそのまま表示し、GUI 側で再計算しない (走査はチャンク並列なので、GUI が「経過時間 ÷ 進捗」で計算するとワーカー数の違いを反映できない)。`eta_s` が来ていないフレーム (scanning 開始行など) では行ごと非表示。
 
-**結果のスコープ (review R1)**: 結果は「どの metadata.json 向けか」でスコープする。run を起こした path は `indicatorsStore.metadataPath` が保持し、画面は `metadataStore.filePath` と比較する。
+**結果のスコープ (review R1) / 永続化された結果の表示 (#1141)**: 結果は「どの metadata.json 向けか」でスコープする。run を起こした path は `indicatorsStore.metadataPath` が保持し、画面は `metadataStore.filePath` と比較する。**store にこのファイル向けの結果が無いときは、metadata.json に永続化された `events[]` / `indicator_layout` を結果として表示する**（`detect --indicators` が書いた結果で、毎回 [検出を開始] に戻さない）。
 
 | 条件 | 表示 |
 | --- | --- |
-| 一致 (`metadataPath === filePath`) | 通常の status をそのまま表示 |
-| 不一致 + `complete` / `error` | `idle` 扱いにし、結果とエラーを隠す (新しい run は開始できる) |
+| 一致 (`metadataPath === filePath`) | 通常の status をそのまま表示（store が優先） |
+| 不一致 + `complete` / `error` + metadata に `events` あり | `complete` として **metadata の結果**を表示 |
+| 不一致 + `complete` / `error` + metadata に `events` 無し | `idle` 扱いにし、結果とエラーを隠す (新しい run は開始できる) |
 | 不一致 + `running` | §2.7.11 の「別の動画の検出が進行中」ブロックに切替 |
+
+`events` が**空配列でも「走査済み」**として `complete` にする（0 件という結果を出し直させる意味がない）。判定は `Array.isArray(metadata.events)` で、キー欠落のみ `idle`。
 
 不一致時に結果を隠す理由は、録画 A → B と切り替えたときに A の行を押すと **B の存在しない match index / 時刻** へシークし得るため。走行中の run は store が listener の寿命を持つので止めず、§2.7.11 で `[中断]` の逃げ道を出す。
 
