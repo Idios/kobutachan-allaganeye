@@ -442,7 +442,8 @@ npx mutator accept <key> --reason "<理由>"       # equivalent mutant を理由
 | marker あり | `--since ${MUTATION_SINCE:-origin/develop-0.4.0}`（差分のみ） |
 | `--include` / `--exclude` / `--only` / `--since` を明示 | そのまま渡す（marker は触らない） |
 | `--time-budget` / `--mutants-per-line` / `--shard` を明示 | 全ソース（`--since` を付けない）。**marker は書かない**（`Pending` が残るため） |
-| `--help` / `--version` | 何もしない（marker は触らない） |
+| `--config-file` / `--root` を明示 | そのまま渡す（実効スコープを argv から確定できないので **marker は書かない**） |
+| `--help` / `-h` / `--version` / `-v` | 何もしない（marker は触らない） |
 | `MUTATION_FULL=1` / `--full` | marker があっても全ソース（marker を更新する） |
 
 **marker を書く条件は「スコープ制限なし + 終了コード 0 / 2」**。`--time-budget` 付きの
