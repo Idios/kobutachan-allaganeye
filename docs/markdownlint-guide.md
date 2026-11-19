@@ -39,6 +39,7 @@ CI: `.github/workflows/markdownlint.yml` (paths filter `**/*.md`)。
 | `**/kobutachan_allaganeye.egg-info/**` | pip install -e . の egg-info |
 | `**/build-cache/**` | CI cache extracted artifacts |
 | `**/.superpowers/**` | superpowers SDD scratch (task brief / report / ledger。`.gitignore` 済み local 生成物、#481 PoC session) |
+| `**/.agents/skills/mutator/**` / `**/.agents/skills/mutation-test-loop/**` | @mizchi/mutator 同梱 skill (#1154)。`npx mutator init-skill` の出力を無改変で置く (upstream の表組みは MD060 と異なる) |
 
 新規 build / cache dir が増えたら早めに `**/<name>/**` 形式で追加する。1 階層パターン (例: `dist/**`) は nested ケース (例: `gui/dist/**`) を捕捉しないため避ける。
 

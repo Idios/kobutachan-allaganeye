@@ -2,3 +2,6 @@ dist/
 node_modules/
 .vite/
 *.log
+
+# mutation testing (#1154): cache / reports. mutator.accepted.json is committed.
+.mutator/

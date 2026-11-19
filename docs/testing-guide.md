@@ -406,6 +406,93 @@ end-to-end (crop + ±5% 3 段 + 明度プリフィルタ + 8 ワーカー):
 **4K 録画 / コア数の少ない環境 / 照合と CPU を奪い合う状況**では相対的に効く見込み
 (未検証)。パイプ読み出しの粒度 (1 フレーム vs 64 フレーム) は無関係だった。
 
+## GUI mutation testing (#1154)
+
+GUI (`gui/`) のテスト品質とデッドコード整理のため、[mizchi/mutator](https://github.com/mizchi/mutator)
+（diff 駆動の mutation testing）を導入している。**初回は全ソース、以後は差分だけ**を回す。
+
+### 前提
+
+- `gui` の `vitest` は **5.1.1**（mutator の Vitest アダプタが `vitest ^5.0.0` を要求するため。#1154 以前は 4.1.12）
+- mutator 本体は **Node.js 24 以上**（`gui/package.json` の `engines` ではなく依存側の要求）。
+  CI の `gui-frontend` job は node 22 のままで `npm test` は動く（vitest 5 の engines は `^22.12 || ^24 || >=26`）が、
+  **mutation testing を CI に載せる場合はその job だけ node 24 にする**（今は未常設）
+- 設定は `gui/mutator.config.ts`、入口は `gui/scripts/mutation.mjs`（`npm run test:mutation`）
+
+### コマンド
+
+```bash
+cd gui
+npm run test:mutation                            # 初回 full / 2 回目以降は差分のみ (自動)
+npm run test:mutation -- --reporter simplify    # デッドコード候補を出す
+npm run test:mutation -- --kill-matrix          # 検出力ゼロ / 包含されるテストを出す
+npm run test:mutation -- --include 'src/utils/*.ts'   # 部分実行 (全ソース扱いにしない)
+MUTATION_FULL=1 npm run test:mutation            # 差分モードでも全ソースを再実行
+MUTATION_SINCE=origin/main npm run test:mutation # 差分の基準を変える
+npx mutator accept <key> --reason "<理由>"       # equivalent mutant を理由付きで除外
+```
+
+### 「初回 full → 以後差分」の管理
+
+`gui/scripts/mutation.mjs` が `.mutator/full-run.json`（marker）の有無で切り替える。
+
+| 状態 | 実行内容 |
+| --- | --- |
+| marker なし | 全ソース（`--since` を付けない）。終了コード 0 / 2 で marker を書く |
+| marker あり | `--since ${MUTATION_SINCE:-origin/develop-0.4.0}`（差分のみ） |
+| `--include` / `--exclude` / `--only` / `--since` を明示 | そのまま渡す（marker は触らない） |
+| `--time-budget` / `--mutants-per-line` / `--shard` を明示 | 全ソース（`--since` を付けない）。**marker は書かない**（`Pending` が残るため） |
+| `--config-file` / `--root` を明示 | そのまま渡す（実効スコープを argv から確定できないので **marker は書かない**） |
+| `--help` / `-h` / `--version` / `-v` | 何もしない（marker は触らない） |
+| `MUTATION_FULL=1` / `--full` | marker があっても全ソース（marker を更新する） |
+
+**marker を書く条件は「スコープ制限なし + 終了コード 0 / 2」**。`--time-budget` 付きの
+full run は mutant を `Pending` のまま残すので「全ソースを測った」証拠にならない
+（書いてしまうと次の run が差分モードに入り、未計測のファイルが永久に測られない。
+codex adversarial-review 2026-11-19 P1）。初回計測を分割するときは
+`--time-budget` を付けて回し続け、**最後に `--time-budget` なしで 1 回完走させる**。
+
+snapshot の有無ではなく marker で判定するのは、**`--include` 付きの部分実行でも
+`.mutator/snapshot.json` が書かれる**ため（部分実行で差分モードに入ると、未計測の
+ファイルが永久に測られなくなる）。`.mutator/` は gitignore 済み
+（`mutator.accepted.json` は**コミット対象**）。
+
+### 初回 full run の実測（2026-11-19、Windows / 32 論理コア）
+
+| 項目 | 値 |
+| --- | --- |
+| 対象 | 64 files（`src/**/*.ts{,x}`、テスト / 生成物は除外） |
+| mutant 総数 | **8,068** |
+| 内訳 | Killed 1,836 / Survived 1,047 / NoCoverage 463 / CompileError 2,951 / Ignored 5 / RuntimeError 5 / Timeout 1 / **Pending 1,760** |
+| mutation score | **63.7%**（covered 2,884 のうち 1,837 を検出） |
+| 所要 | `--time-budget 900` で 2,807 mutants 消化 → 全体の ETA は **約 2 時間 26 分** |
+
+**初回は 1 回で終わらない前提で回す**: GUI テストは jsdom + RTL で 1 mutant あたりが重く、
+full run は 2.5 時間規模。`--time-budget` で区切ると残りは `Pending` になり、次の
+`MUTATION_FULL=1` 実行で続きから消化される（判定は関数ハッシュ単位でキャッシュされる）。
+
+### 生存 mutant の扱い
+
+スコアは KPI にしない（equivalent mutant で 100% にはならない）。1 件ずつ次のいずれかで決着させる
+（skill `mutation-test-loop` がこのループを回す）。
+
+1. テストを足して殺す（`not detected` / `not infected` / `not reached` の分類ごとに、足すべき入力が違う）
+2. コードを消す（`--reporter simplify` の削除系候補）
+3. `npx mutator accept <key> --reason "<理由>"` で `mutator.accepted.json` に記録する（コミットする）
+
+### エージェント skill
+
+`@mizchi/mutator` 同梱の skill を `.agents/skills/` に配置している
+（`npx mutator init-skill --dir .agents/skills` の出力。**ただし `mutator/SKILL.md` の
+1 文だけ `--dir` 前提に直している** — upstream は Claude Code の既定 skill ディレクトリを
+指しており、この repo の配置 (`.agents/skills/`) と合わないため。更新時は `--force` で上書きした後、
+同じ 1 文を直す）。
+
+| skill | 用途 |
+| --- | --- |
+| `mutator` | セットアップ / 実行 / レポートの読み方 / CI / 閾値 / accepted mutant（`references/` に詳細） |
+| `mutation-test-loop` | 生存 mutant を 1 件ずつ潰すループ（`--reporter agent` → テスト追加 → `--only` で再確認 → accept） |
+
 ## baseline drift の判定
 
 `tests/test_scorebar_regression.py::TestNoResolutionCompat` 系の baseline mismatch が発生した場合、(A) 検知ロジック退行 vs (B) ffmpeg version 依存差異 を以下の手順で判別する。

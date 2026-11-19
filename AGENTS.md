@@ -127,6 +127,7 @@ allaganeye clips <metadata.json> [-o DIR] [--pre SEC] [--post SEC] [--gap SEC]  
 cd gui && npm install                   # 初回セットアップ
 cd gui && npm run tauri dev             # dev ウィンドウ起動
 cd gui && npm test                      # vitest 単体テスト
+cd gui && npm run test:mutation         # mutation testing (初回 full / 以後差分。Node 24+、#1154)
 cd gui && npm run lint                  # eslint
 cd gui && npm run typecheck             # tsc --noEmit
 cd gui && npm run build                 # vite build (gui/dist/ 生成)
@@ -326,7 +327,7 @@ Python 依存は 2 層構成 (#916)。`pyproject.toml` = **外部への互換範
 
 L2 からは**単一ワークツリー + skill ベースディスパッチ**を採用。詳細は `docs/l2-workflow.md` を参照。
 
-- 既存 skill: `review-pr`, `iterate-review`, `enforce-acceptance-criteria`, `scope-guard`, `create-task`, `close-issue`, `release`（`.agents/skills/` に配置。Zed では skill tool または手動追従で実行）
+- 既存 skill: `review-pr`, `iterate-review`, `enforce-acceptance-criteria`, `scope-guard`, `create-task`, `close-issue`, `release`, `mutator`, `mutation-test-loop`（`.agents/skills/` に配置。Zed では skill tool または手動追従で実行）。`mutator` / `mutation-test-loop` は `@mizchi/mutator` 同梱の skill を無改変で置いたもの（GUI mutation testing 用。手順は `docs/testing-guide.md` §GUI mutation testing）
 - 計画立案・実装・PR テストは Plan モード + 通常ツール + TodoWrite で代替
 - ユーザー (Idios) が戦略・方針を判断し、主エージェント (DeepSeek) は選択肢提示と実装を担う
 - skill (`.agents/skills/*/SKILL.md`) 改修 PR は mizchi `empirical-prompt-tuning` protocol に従う。詳細は [`docs/l2-workflow.md` §skill 改修ワークフロー](docs/l2-workflow.md#skill-改修ワークフロー-empirical-prompt-tuning) を参照
