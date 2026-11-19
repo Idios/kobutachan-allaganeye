@@ -40,7 +40,13 @@ const hasFlag = (name) =>
 
 // 実行しないコマンド (marker を書いてはいけない)。短縮形の version は `-v`
 // (`-V` ではない。`mutator --help` の `-v, --version`)。
-const informational = ['--help', '-h', '--version', '-v'].some(hasFlag);
+// 位置引数の subcommand (`init-skill` / `accept` / `select-tests`) も mutation を
+// 実行しない (codex review 2026-11-19 P1)。
+const SUBCOMMANDS = new Set(['init-skill', 'accept', 'select-tests']);
+const positional = passthrough.find((arg) => !arg.startsWith('-'));
+const informational =
+  ['--help', '-h', '--version', '-v'].some(hasFlag) ||
+  (positional !== undefined && SUBCOMMANDS.has(positional));
 
 // 部分実行 / 明示的な差分指定 / 実効設定が argv から分からない指定。
 // marker もモードも変えない (そのまま渡す)。
@@ -111,7 +117,10 @@ const status = result.status ?? 1;
 //   測られなくなる)。codex review 2026-11-19 P1。
 // - `--help` / `--version` は何も測っていないので書かない (P2)。
 const completed = status === 0 || status === 2;
-if (!informational && !scoped && completed) {
+// `mode.length === 0` = この実行が **全ソース** を対象にしたことを意味する
+// (marker があると自動で `--since` が入るので、差分 run で marker を
+//  上書きしない。codex review 2026-11-19 P2)。
+if (!informational && !scoped && mode.length === 0 && completed) {
   const head = spawnSync('git', ['rev-parse', 'HEAD'], {
     cwd: root,
     encoding: 'utf-8',
