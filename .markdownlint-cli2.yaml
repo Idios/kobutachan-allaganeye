@@ -58,4 +58,9 @@ ignores:
   - "build/**"  # Portable ZIP build dry-run 出力 (third-party LICENSE/SKILL 誤検出回避、#723)
   - "build-cache/**"  # Portable ZIP build キャッシュ ($env:ALLAGANEYE_BUILD_CACHE_DIR、third-party LICENSE 誤検出回避、#723 sweep)
   - "output/**"  # detect output / temp PR body draft 等の local 生成物 (.gitignore 済、#793 reexamination で導入)
+  # @mizchi/mutator 同梱 skill (#1154)。`npx mutator init-skill` の出力を
+  # そのまま置く (改変すると init-skill が上書きを拒否し、更新できなくなる)。
+  # upstream の表組みは本 repo の MD060 と異なるため lint 対象外にする。
+  - "**/.agents/skills/mutator/**"
+  - "**/.agents/skills/mutation-test-loop/**"
   - "**/.superpowers/**"  # superpowers SDD scratch (task brief/report/ledger、.gitignore 済、#481 PoC session で導入)
