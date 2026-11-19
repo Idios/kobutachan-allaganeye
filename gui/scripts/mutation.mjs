@@ -35,23 +35,33 @@ const argv = process.argv.slice(2);
 const forceFull = process.env.MUTATION_FULL === '1' || argv.includes('--full');
 const passthrough = argv.filter((arg) => arg !== '--full');
 
-// 部分実行 / 明示的な差分指定は、marker もモードも変えない (そのまま渡す)。
-const scoped = passthrough.some(
-  (arg) =>
-    arg === '--include' ||
-    arg === '--exclude' ||
-    arg === '--only' ||
-    arg === '--since' ||
-    arg.startsWith('--include=') ||
-    arg.startsWith('--exclude=') ||
-    arg.startsWith('--only=') ||
-    arg.startsWith('--since='),
-);
+const hasFlag = (name) =>
+  passthrough.some((arg) => arg === name || arg.startsWith(`${name}=`));
+
+// 実行しないコマンド (marker を書いてはいけない)。
+const informational = ['--help', '-h', '--version', '-V'].some(hasFlag);
+
+// 部分実行 / 明示的な差分指定。marker もモードも変えない (そのまま渡す)。
+// `--time-budget` / `--mutants-per-line` / `--shard` を入れるのは重要: これらを
+// 付けた full run は mutant を Pending のまま残すので、「全ソースを測った」
+// 証拠にならない (codex review 2026-11-19 P1)。
+const partialFlags = [
+  '--include',
+  '--exclude',
+  '--only',
+  '--since',
+  '--time-budget',
+  '--mutants-per-line',
+  '--shard',
+];
+const scoped = partialFlags.some(hasFlag);
 
 const hasFullRun = existsSync(markerPath);
 const mode = scoped || forceFull || !hasFullRun ? [] : ['--since', since];
 
-if (scoped || forceFull) {
+if (informational) {
+  console.log('[mutation] 引数を表示/検証するだけで実行しません');
+} else if (scoped || forceFull) {
   console.log(
     forceFull
       ? '[mutation] 全ソースを対象にします (MUTATION_FULL / --full)'
@@ -86,10 +96,15 @@ if (result.error) {
 }
 
 const status = result.status ?? 1;
-// 0 = ok、2 = quality gate (survived / critical)。どちらも「全ソースを回した」
-// として marker を書く。4 (mutant 無しでテストが落ちる) や 1 (設定不正) の
-// ときは書かない = 次回も full からやり直す。
-if (!scoped && (status === 0 || status === 2)) {
+// marker は **スコープ制限のない、完走した full run** でのみ書く。
+// - 0 = ok / 2 = quality gate (survived / critical) は「完走」とみなす
+// - 4 (mutant 無しでテストが落ちる) や 1 (設定不正) は書かない
+// - `--time-budget` / `--mutants-per-line` / `--shard` 付きは Pending が残るので
+//   書かない (書くと次の run が差分モードに入り、未計測のファイルが永久に
+//   測られなくなる)。codex review 2026-11-19 P1。
+// - `--help` / `--version` は何も測っていないので書かない (P2)。
+const completed = status === 0 || status === 2;
+if (!informational && !scoped && completed) {
   const head = spawnSync('git', ['rev-parse', 'HEAD'], {
     cwd: root,
     encoding: 'utf-8',
@@ -113,6 +128,10 @@ if (!scoped && (status === 0 || status === 2)) {
   } catch (error) {
     console.warn(`[mutation] marker を書けませんでした: ${error.message}`);
   }
+} else if (!informational && (scoped || !completed)) {
+  console.log(
+    '[mutation] 部分実行 / 未完走のため marker は更新しません (次回も全ソースか、partial のまま)',
+  );
 }
 
 process.exit(status);

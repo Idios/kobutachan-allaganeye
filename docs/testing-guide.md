@@ -441,7 +441,15 @@ npx mutator accept <key> --reason "<理由>"       # equivalent mutant を理由
 | marker なし | 全ソース（`--since` を付けない）。終了コード 0 / 2 で marker を書く |
 | marker あり | `--since ${MUTATION_SINCE:-origin/develop-0.4.0}`（差分のみ） |
 | `--include` / `--exclude` / `--only` / `--since` を明示 | そのまま渡す（marker は触らない） |
-| `MUTATION_FULL=1` / `--full` | marker があっても全ソース |
+| `--time-budget` / `--mutants-per-line` / `--shard` を明示 | 全ソース（`--since` を付けない）。**marker は書かない**（`Pending` が残るため） |
+| `--help` / `--version` | 何もしない（marker は触らない） |
+| `MUTATION_FULL=1` / `--full` | marker があっても全ソース（marker を更新する） |
+
+**marker を書く条件は「スコープ制限なし + 終了コード 0 / 2」**。`--time-budget` 付きの
+full run は mutant を `Pending` のまま残すので「全ソースを測った」証拠にならない
+（書いてしまうと次の run が差分モードに入り、未計測のファイルが永久に測られない。
+codex adversarial-review 2026-11-19 P1）。初回計測を分割するときは
+`--time-budget` を付けて回し続け、**最後に `--time-budget` なしで 1 回完走させる**。
 
 snapshot の有無ではなく marker で判定するのは、**`--include` 付きの部分実行でも
 `.mutator/snapshot.json` が書かれる**ため（部分実行で差分モードに入ると、未計測の
