@@ -18,7 +18,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import typer
 
@@ -47,6 +47,15 @@ from allaganeye.commands.split_matches import (
     build_brightness_samples,
 )
 from allaganeye.config import SplitConfig
+from allaganeye.detection.format import (
+    format_indicator_summary,
+    format_timestamp,
+)
+from allaganeye.detection.indicator_stage import (
+    StageNotice,
+    attach_indicators,
+    reuse_indicators,
+)
 from allaganeye.detection.metadata_writer import write_metadata_atomic
 from allaganeye.detection.progress_emitter import ProgressEmitter
 from allaganeye.detection.warnings import build_warnings
@@ -64,6 +73,7 @@ def run_detect(
     verbose: bool = False,
     quiet: bool = False,
     progress_format: str = "text",
+    indicators: bool = False,
 ) -> None:
     """Run detection and write ``metadata.json`` without splitting (#463).
 
@@ -80,6 +90,13 @@ def run_detect(
       wrapper.  Suppresses every other stdout write (``Probing: ...``,
       ``Metadata: ...``, etc.) so the GUI can parse cleanly.  Errors and
       ``-v`` traceback still go to stderr.
+
+    ``indicators`` (#1141) runs the KO / ASSIST stage **inside** this run so the
+    boundaries and the event list land in one atomic write.  A failure of that
+    stage is recorded in ``warnings[]`` and does not lose the boundary result.
+    The kwarg defaults to ``False`` for internal callers (tests / future
+    embedders); the **CLI default is on**
+    (``indicator_stage.CLI_DEFAULT_INDICATORS``), passed in by ``cli.py``.
     """
     json_mode = progress_format == "json"
     # In json mode the GUI consumes stdout as a structured stream, so we
@@ -132,6 +149,9 @@ def run_detect(
 
     cache_path = config.output_dir / ".detection_cache.json"
     boundaries = None
+    # #1141: 検知キャッシュが hit したときは、既存 metadata.json の KO / ASSIST
+    # 結果も再利用してよい (同じ動画・同じ出力先で前回成功している証拠)。
+    cache_hit_boundaries = False
     # #821 -- resolved masked fallback。cache-hit は cache 記録値を引き継ぎ、
     # cache-miss は detection callback で捕捉する。
     masked_fallback_used = False
@@ -145,6 +165,7 @@ def run_detect(
         hit = _load_cache_hit(cache_path, video_path, effective_interval, config)
         if hit is not None:
             boundaries = hit.boundaries
+            cache_hit_boundaries = True
             masked_fallback_used = hit.masked_fallback_used
             captured_region = hit.capture_regions
             if show and verbose:
@@ -291,9 +312,6 @@ def run_detect(
         vendor_used=gpu_vendor if use_gpu else None,
     )
 
-    if progress_emitter is not None:
-        progress_emitter.emit("writing_metadata")
-
     brightness_samples = build_brightness_samples(captured_brightness)
 
     # #586: capture wall-clock end of the detect pipeline immediately
@@ -326,6 +344,104 @@ def run_detect(
         capture_regions=captured_region,
     )
     metadata_path = config.output_dir / "metadata.json"
+
+    # #1141: KO / ASSIST を**同じ payload に乗せてから** 1 回だけ書く。境界と
+    # イベントが別プロセスの write-back になると CAS 競合と ffprobe の二重実行が
+    # 起きるため。GPU は明示指定 (--gpu) のときだけ使う (indicators --gpu と
+    # 同じ opt-in。end-to-end の利得は実測で約 4%)。
+    if indicators:
+        if show:
+            typer.echo("\nDetecting KO / ASSIST indicators ...")
+
+        def indicator_diagnostic(message: str) -> None:
+            """どの経路で layout を決めたか / GPU が使えたかを verbose で出す。"""
+            if show and verbose:
+                typer.echo(f"  {message}")
+
+        def on_indicator_notice(notice: StageNotice) -> None:
+            if notice.kind == "calibrating":
+                indicator_diagnostic("resolving indicator layout ...")
+                if progress_emitter is not None:
+                    progress_emitter.emit(
+                        "indicators", completed=0, total=int(metadata["duration"])
+                    )
+                return
+            if notice.kind != "progress":
+                return
+            if progress_emitter is not None:
+                progress_emitter.emit(
+                    "indicators",
+                    completed=int(notice.processed_s or 0),
+                    total=int(notice.total_s or 0),
+                    eta_s=notice.eta_s,
+                )
+            elif show and verbose:
+                suffix = (
+                    f" [ETA {format_timestamp(notice.eta_s)}]"
+                    if notice.eta_s is not None
+                    else ""
+                )
+                typer.echo(
+                    f"  KO / ASSIST: {notice.processed_s or 0:.0f}s / "
+                    f"{notice.total_s or 0:.0f}s{suffix}"
+                )
+
+        reused = (
+            reuse_indicators(
+                cast("dict[str, Any]", payload),
+                video=video_path,
+                metadata_path=metadata_path,
+            )
+            if cache_hit_boundaries
+            else None
+        )
+        indicator_warning = None
+        if reused is not None:
+            # 走査を省いたので、3 段目バーを即 100% にし、ログに 1 行残す。
+            if show:
+                typer.echo(
+                    f"  KO / ASSIST: 既存の検出結果を再利用しました ({reused} 件)"
+                )
+            if progress_emitter is not None:
+                progress_emitter.emit(
+                    "indicators",
+                    completed=int(metadata["duration"]),
+                    total=int(metadata["duration"]),
+                    reused=reused,
+                )
+        else:
+            indicator_warning = attach_indicators(
+                cast("dict[str, Any]", payload),
+                source=video_path,
+                frame_size=(int(metadata["width"]), int(metadata["height"])),
+                duration=float(metadata["duration"]),
+                codec=metadata.get("codec"),
+                gpu=config.use_gpu is True,
+                notice=on_indicator_notice,
+                progress=indicator_diagnostic,
+            )
+            # #1141: 走査の所要を「検知の所要」に含める (#586 の契約は
+            # detection_completed_at - detection_started_at)。payload を組んだ後に
+            # 数分走るので、組み立て時の値のままにすると GUI の「所要」から
+            # KO / ASSIST 分が抜け落ちる。
+            payload["detection_completed_at"] = _iso_utc_now()
+        if show:
+            if indicator_warning is None:
+                events = payload.get("events")
+                if isinstance(events, list):
+                    typer.echo(f"  {format_indicator_summary(events)}")
+            else:
+                typer.echo(
+                    "  KO / ASSIST detection failed "
+                    f"(recorded in warnings[]): {indicator_warning.get('context')}"
+                )
+
+    # #1141: `writing_metadata` は KO / ASSIST 走査の**後**に出す。先に出すと
+    # GUI の進捗が 99% で頭打ちになり、indicators 帯 (97-99%) の更新が
+    # すべて捨てられる (bar は単調増加)。
+    if progress_emitter is not None:
+        progress_emitter.emit("writing_metadata")
+
     write_metadata_atomic(metadata_path, payload)
 
     # Report where the file actually landed, not the raw ``-o`` string

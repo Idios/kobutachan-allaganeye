@@ -498,6 +498,19 @@ interface MetadataWarning {
 | code | severity | context | 意味 | 備考 |
 | --- | --- | --- | --- | --- |
 | `post_match_trailing_dropped` | `warn` | `{start, end}` (秒) | 試合後の trailing セグメント (ロビー / 市街) が、早期候補ウィンドウで scorebar を検出できなかったため削除された ([#805](https://github.com/Idios/kobutachan-allaganeye/issues/805))。`context.start` / `context.end` が削除された区間の境界 | **【段階2 で emission 停止・deprecated】** #805 段階2 で `post_match` フラグ (#805 段階2) に置換され、`build_warnings` はこの code を **emit しなくなった**。フレッシュな detect / split 実行では本エントリは生成されない。ただし code は `WARNING_CODES` registry に残置されており (後方互換)、旧 metadata.json に含まれる本エントリを `sanitize_warnings` で引き続き読み取れる。旧フォーマット (本警告を含む metadata.json) を `split --from-metadata` で読んだ場合でも crash しない (forward-compat reader が pass-through) |
+| `indicators_failed` | `warn` | `{error: string}` | `detect --indicators` / `split --indicators` で KO / ASSIST の検出だけが失敗した ([#1141](https://github.com/Idios/kobutachan-allaganeye/issues/1141))。`context.error` が原因 (キャリブレーション不能 / ffmpeg 失敗等) のメッセージ | **境界検出の結果は `matches[]` に残り、exit code も境界検出の成否で決まる** (イベント列だけが欠落する)。`events[]` / `indicator_layout` を伴わない metadata.json になる |
+
+## `indicator_layout` / `events` の書き手 (#1141)
+
+3 つの経路が同じ形を書く (フィールドの意味は [`docs/cli-spec.md`](cli-spec.md) §indicators コマンドを参照):
+
+| 経路 | 書き方 |
+| --- | --- |
+| `allaganeye indicators <metadata.json>` | 既存 metadata への write-back (`--write` が既定) |
+| `allaganeye detect <video> --indicators` | 境界と**同じ 1 回の atomic write** |
+| `allaganeye split <video> --indicators` | 同上 |
+
+`split --from-metadata` は再検知しないため、元 metadata の 2 フィールドを**そのまま引き継ぐ**。また `detect` / `split` は**検知キャッシュが hit し、既存 metadata.json の 2 フィールドが妥当なときは走査を省いて再利用**する（同じ動画・同じ出力先で前回成功している証拠がある場合のみ）。
 
 ## `minimap_regions` フィールド (#481)
 

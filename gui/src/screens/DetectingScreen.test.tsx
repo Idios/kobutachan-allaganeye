@@ -123,10 +123,140 @@ describe('DetectingScreen', () => {
     expect(screen.getByText('test.mkv')).toBeInTheDocument();
   });
 
-  it('renders the 2 phase rows (Detecting / Refining)', () => {
+  it('renders the 3 phase rows (Detecting / Refining / Indicators)', () => {
     render(<DetectingScreen />);
     expect(screen.getByText('Detecting')).toBeInTheDocument();
     expect(screen.getByText('Refining')).toBeInTheDocument();
+    // #1141 -- 既定 ON なので KO / ASSIST の行も出る。
+    expect(screen.getByTestId('phase-row-indicators')).toBeInTheDocument();
+  });
+
+  it('hides the indicators row when the stage is turned off (#1141)', () => {
+    useAppStateStore.getState().setDetectionParams({ indicators: false });
+    render(<DetectingScreen />);
+    expect(screen.queryByTestId('phase-row-indicators')).toBeNull();
+  });
+
+  // #1141 -- KO / ASSIST 統合。要求したランでは 3 段目 (indicators) を出し、
+  // 走査の進捗と ETA を表示する。
+  describe('indicators phase (#1141)', () => {
+    it('buildLogText summarises the scan and carries the ETA', () => {
+      const entry = buildLogText({
+        phase: 'indicators',
+        completed: 900,
+        total: 1800,
+        eta_s: 12,
+      });
+      expect(entry?.text).toContain('KO / ASSIST');
+      expect(entry?.text).toContain('1800s');
+      expect(entry?.text).toContain('残り');
+    });
+
+    it('maps the phase inside the pre-write window', () => {
+      const start = computeOverallPercent({
+        phase: 'indicators',
+        completed: 0,
+        total: 1800,
+      });
+      expect(start).toBe(PHASE_WINDOWS.indicators[0]);
+      const mid = computeOverallPercent({
+        phase: 'indicators',
+        completed: 900,
+        total: 1800,
+      });
+      expect(mid).toBeGreaterThan(start);
+      expect(mid).toBeLessThan(PHASE_WINDOWS.indicators[1]);
+    });
+
+    it('keeps the third row on its own progress after a cache hit', async () => {
+      // cache_hit は全体 progress を 99% に貼り付ける (PHASE_WINDOWS)。
+      // 3 段目を全体 progress から導出すると即 100% になり「走査を飛ばした」
+      // ように見えるため、indicators イベントの ratio で描く (#1141)。
+      invokeMock.mockImplementation((cmd) => {
+        if (cmd === 'start_detect') {
+          return new Promise(() => {
+            /* never resolves */
+          });
+        }
+        return Promise.resolve(null);
+      });
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(listenMock).toHaveBeenCalled();
+      });
+      act(() => {
+        emitDetectProgress({ phase: 'cache_hit', boundaries: 1 });
+      });
+      act(() => {
+        emitDetectProgress({ phase: 'indicators', completed: 900, total: 1800 });
+      });
+      const row = screen.getByTestId('phase-row-indicators');
+      expect(row.textContent).toContain('50%');
+      expect(row.textContent).not.toContain('100%');
+    });
+
+    it('completes the third row when the metadata write starts', async () => {
+      invokeMock.mockImplementation((cmd) => {
+        if (cmd === 'start_detect') {
+          return new Promise(() => {
+            /* never resolves */
+          });
+        }
+        return Promise.resolve(null);
+      });
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(listenMock).toHaveBeenCalled();
+      });
+      act(() => {
+        emitDetectProgress({ phase: 'indicators', completed: 930, total: 944 });
+      });
+      act(() => {
+        emitDetectProgress({ phase: 'writing_metadata' });
+      });
+      expect(
+        screen.getByTestId('phase-row-indicators').textContent,
+      ).toContain('100%');
+    });
+
+    it('shows a third row with progress', async () => {
+      // start_detect を未解決のままにして、進捗バーが 100% に飛ぶのを防ぐ。
+      invokeMock.mockImplementation((cmd) => {
+        if (cmd === 'start_detect') {
+          return new Promise(() => {
+            /* never resolves */
+          });
+        }
+        return Promise.resolve(null);
+      });
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(listenMock).toHaveBeenCalled();
+      });
+      act(() => {
+        emitDetectProgress({
+          phase: 'indicators',
+          completed: 900,
+          total: 1800,
+          eta_s: 12,
+        });
+      });
+      const row = screen.getByTestId('phase-row-indicators');
+      expect(row.textContent).toContain('KO / ASSIST');
+      expect(row.textContent).toContain('50%');
+    });
+
+    it('forwards the indicators flag to start_detect', async () => {
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'start_detect',
+          expect.objectContaining({
+            params: expect.objectContaining({ indicators: true }),
+          }),
+        );
+      });
+    });
   });
 
   it('invokes start_detect with the derived output dir on mount', async () => {
@@ -159,6 +289,8 @@ describe('DetectingScreen', () => {
             blackoutThreshold: 22,
             workers: 8,
             gpu: false,
+            // #1141 -- 既定 ON なので常に明示送信される。
+            indicators: true,
           },
         }),
       );

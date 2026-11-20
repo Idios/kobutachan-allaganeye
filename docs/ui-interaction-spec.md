@@ -199,7 +199,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 節 | 画面 | 主要 UI 部品 | 進捗 |
 | --- | --- | --- | --- |
 | §2.1 | drop | D&D zone / [参照…] / 直近録画リスト / SelectedCard (詳細設定パネル含む、#613) / probeError card | #598 で追加 |
-| §2.2 | detecting | AllaganSigil 回転 / Header / progressBadge / PhaseRow ×2 / live log / [中断] | #600 で追加 |
+| §2.2 | detecting | AllaganSigil 回転 / Header / progressBadge / PhaseRow ×2 (+ #1141 で Indicators の 3 段目) / live log / [中断] | #600 で追加 |
 | §2.3 | complete | statusDot / sourceBox / stats / [元に戻す] / [境界を調整] / [全試合書き出し] / [⬦ ミニマップ切抜き] / [× 閉じる] / BrightnessTimeline / listItem / previewPane / emptyNote | #603 で追加、[⬦ ミニマップ切抜き] は #893 で追加 |
 | §2.4 | preview | [◀ 一覧へ] / match name input / type select / Pane (×2 IN/OUT) / Pane.video / Pane.tcInput / stepRow ×6 / keyHint / FrameStrip / [適用] / dirty indicator / applyError / [元に戻す] / [書き出し] / emptyNote | #605 で追加 |
 | §2.5 | export | [◀ プレビュー] / header / 出力先 input + [参照…] / 命名規則 input / コーデック selector ×2 / errorMessage / progressBox / [書き出し開始] / [中断] / [✓ フォルダを開く] + openFolderError / [設定変更して再書き出し] / [設定変更して再試行] / listHeader + bulk / listItem / emptyNote / [⬦ ミニマップ切抜きへ] | #590 §2.5 追加 PR で追加、[⬦ ミニマップ切抜きへ] は #893 で追加 |
@@ -331,7 +331,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 
 **目的**: `start_detect` (#569) に渡す検知パラメータを GUI 上で調整。値は `appStateStore.detectionParams` に保存され、`reset()` まで session 中保持される (localStorage 永続化なし、再起動時は default に戻る)。
 
-**スコープ (4 パラメータ)**: `blackout_threshold` / `workers` / `gpu` / `detectionPath` (#1136)。`detectionPath` は CLI の `--masked` / `--vtuber` に対応する 3 値 (「標準 / マスク録画 / 配信レイアウト」) で、両 flag が相互排他 (CLI exit 5) なので boolean 2 本ではなく enum 1 本で持つ §2.1.10.8。`--no-audio` は audio module frozen (#327、`allaganeye/audio/__init__.py` の `AUDIO_FROZEN`) のため UI 不公開。解凍は #865 で「期限なし凍結」に決着しており、再追加の予定はない（方針が変われば再検討）。
+**スコープ (5 パラメータ)**: `blackout_threshold` / `workers` / `gpu` / `detectionPath` (#1136) / `indicators` (#1141)。`detectionPath` は CLI の `--masked` / `--vtuber` に対応する 3 値 (「標準 / マスク録画 / 配信レイアウト」) で、両 flag が相互排他 (CLI exit 5) なので boolean 2 本ではなく enum 1 本で持つ §2.1.10.8。`indicators` は KO / ASSIST 検出の ON / OFF (§2.1.10.9)。`--no-audio` は audio module frozen (#327、`allaganeye/audio/__init__.py` の `AUDIO_FROZEN`) のため UI 不公開。解凍は #865 で「期限なし凍結」に決着しており、再追加の予定はない（方針が変われば再検討）。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -398,7 +398,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
   - header: `aria-expanded` / `aria-controls` で expand 状態を AT に通知
   - 各 input: `<label htmlFor>` (slider / numeric) で関連付け、tri-state は `aria-label="gpu mode"` + `role="radio"`
   - リセット button: `aria-label` で disabled 理由 (default 値) を明示
-- Tab order: header toggle → (展開時) blackout slider → workers numeric → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ。**#1135 以降**: 各項目の help トリガーが label の直後に入るため、header toggle → blackout help → blackout slider → workers help → workers numeric → gpu help → gpu の 3 button → path help → 検知経路の 3 button (§2.1.10.8) → reset button の順になる (§1.7)
+- Tab order: header toggle → (展開時) blackout slider → workers numeric → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ。**#1135 以降**: 各項目の help トリガーが label の直後に入るため、header toggle → blackout help → blackout slider → workers help → workers numeric → gpu help → gpu の 3 button → path help → 検知経路の 3 button (§2.1.10.8) → indicators help → indicators の 2 button (§2.1.10.9) → reset button の順になる (§1.7)
 - **`--no-audio` UI 不採用**: `allaganeye/audio/__init__.py` の `AUDIO_FROZEN` により audio module は frozen 状態 (#327、`split_matches.py` の `_run_audio_scan` が live probe して skip) のため `--no-audio` flag は実質 no-op。GUI 側でのみ控え (Rust `DetectParams.no_audio` field 自体は #569 で実装済み。再公開は解凍が前提だが、#865 で期限なし凍結に決着済み)
 
 ##### §2.1.10.7 help トリガー (HelpTip、#1135)
@@ -427,6 +427,21 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 結果表示 | `metadata.json` の `detection_params.masked` / `vtuber` に選択が記録される。masked 経路では 0 暗転時の自動 fallback (`masked_fallback_used`) と明示選択を区別して完了画面の通知文言を分ける (§2.3 complete の masked fallback 通知) |
 
 > **help 本文の役割**: 「標準」でも 0 暗転時にはマスク向け fallback が自動発動する (#821) ため、help でその事実を書かないと「マスク録画を選ぶ意味」が伝わらない。文言は [DetectionParamsPanel.tsx](../gui/src/screens/DetectionParamsPanel.tsx) の `DETECTION_PATH_HELP`。
+
+##### §2.1.10.9 KO / ASSIST 検出の ON / OFF (indicators、#1141)
+
+[#1141](https://github.com/Idios/kobutachan-allaganeye/issues/1141) で追加。`allaganeye detect --indicators` を GUI から要求できるようにする。ON にすると境界検出と同じ `metadata.json` に `indicator_layout` / `events[]` が 1 回の atomic write で入るため、完了画面からそのまま KO / ASSIST 画面 / クリップ切り抜きへ進める。
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | button group (`role="radiogroup"` + 2 つの `role="radio"`、`data-testid="detection-params-indicators"`)。GPU と同じ `triStateRow` / `triStateButton` を再利用 |
+| 状態 | `ON` (既定、`indicators=true`) / `OFF` (`indicators=false`、`--no-indicators`) |
+| 遷移トリガー | 各 button `onClick` → `setDetectionParams({ indicators })` |
+| store mutation | `appStateStore.detectionParams.indicators` (他の field は触らない) |
+| 例外 / edge case | CLI の既定が ON なので、`toStartDetectParams` ([detection.ts](../gui/src/utils/detection.ts)) は **boolean を常に送る** (OFF のとき Rust が `--no-indicators` を載せる)。Rust unit test `detect_command_args_translates_indicators_tristate` が `Some(true)` / `Some(false)` / `None` の 3 分岐を pin |
+| 結果表示 | 有効時は「2 段目の進捗」として §2.2.5b の 3 段目バーが出る。`metadata.json` の `events[]` / `indicator_layout` が埋まり、検出だけ失敗した場合は `warnings[]` に `indicators_failed` が入る (完了画面は境界と試合一覧をそのまま表示する) |
+
+> **help 本文**: 所要時間 (2.8 時間で約 4.5 分 / 944 秒で約 25 秒) と「失敗しても分割結果は失われない」ことを書く。文言は `DetectionParamsPanel.tsx` の `INDICATORS_HELP`。
 
 ### §2.2 detecting
 
@@ -495,6 +510,16 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 遷移トリガー | `progress` 変化 (Phase 2 dummy では `pct2 = (progress - 40) × 1.67`、progress=40 から開始) |
 | store mutation | なし |
 | 例外 / edge case | Phase 2 では Detecting 完了相当のタイミング (progress=40) から start。Phase 2.5 で実フェーズ境界に置換 |
+
+#### §2.2.5b PhaseRow.Indicators (KO / ASSIST、#1141)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | progress bar ([DetectingScreen.tsx](../gui/src/screens/DetectingScreen.tsx) の 3 個目の `PhaseRow`、`<PhaseRow name="Indicators" jp="KO / ASSIST" …>` = `data-testid="phase-row-indicators"`) |
+| 状態 | `detectionParams.indicators` が true の run で表示する (**既定 ON**)。OFF の run では非表示 (「待機 0%」のバーを残すと誤解を生むため) |
+| 遷移トリガー | CLI の `phase: "indicators"` イベントの **`completed` / `total`（走査済み秒 / 総尺秒）比**で描く（全体 progress から導出しない）。理由: `PHASE_WINDOWS.cache_hit` が全体を 99% に貼り付けるため、cache hit した run では差分の 97-99 帯が潰れて「走査を飛ばした」ように見える。`writing_metadata` で 100% に揃える（走査が走らなかった失敗時は 0 のまま）。`eta_s` はログ行 (§2.2.6) に `残り ~mm:ss` として出す |
+| store mutation | なし |
+| 例外 / edge case | 検出を要求しても走査が走らない (キャリブレーション失敗) 場合、CLI は `phase: "indicators"` を 1 行も出さずに完了する。バーは 0% のまま `done` に至るが、`metadata.json` の `warnings[]` に `indicators_failed` が残り、完了画面は境界を表示する。**検知キャッシュ hit + 既存 metadata に結果があるときは走査を省き**、CLI が `completed == total` の `indicators` イベントを 1 回出すのでバーは即 100% になり、ログに `KO / ASSIST 走査: …` ではなく `KO / ASSIST: 既存の検出結果を再利用しました (N 件)`（人間向け）が出る |
 
 #### §2.2.6 live log
 
@@ -1330,13 +1355,16 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 **推定残り時間 (#1140)**: progressBox の下に `残り約 mm:ss` を出す (`data-testid="indicators-eta"`)。値は CLI の `eta_s` をそのまま表示し、GUI 側で再計算しない (走査はチャンク並列なので、GUI が「経過時間 ÷ 進捗」で計算するとワーカー数の違いを反映できない)。`eta_s` が来ていないフレーム (scanning 開始行など) では行ごと非表示。
 
-**結果のスコープ (review R1)**: 結果は「どの metadata.json 向けか」でスコープする。run を起こした path は `indicatorsStore.metadataPath` が保持し、画面は `metadataStore.filePath` と比較する。
+**結果のスコープ (review R1) / 永続化された結果の表示 (#1141)**: 結果は「どの metadata.json 向けか」でスコープする。run を起こした path は `indicatorsStore.metadataPath` が保持し、画面は `metadataStore.filePath` と比較する。**store にこのファイル向けの結果が無いときは、metadata.json に永続化された `events[]` / `indicator_layout` を結果として表示する**（`detect --indicators` が書いた結果で、毎回 [検出を開始] に戻さない）。
 
 | 条件 | 表示 |
 | --- | --- |
-| 一致 (`metadataPath === filePath`) | 通常の status をそのまま表示 |
-| 不一致 + `complete` / `error` | `idle` 扱いにし、結果とエラーを隠す (新しい run は開始できる) |
+| 一致 (`metadataPath === filePath`) | 通常の status をそのまま表示（store が優先） |
+| 不一致 + `complete` / `error` + metadata に `events` あり | `complete` として **metadata の結果**を表示 |
+| 不一致 + `complete` / `error` + metadata に `events` 無し | `idle` 扱いにし、結果とエラーを隠す (新しい run は開始できる) |
 | 不一致 + `running` | §2.7.11 の「別の動画の検出が進行中」ブロックに切替 |
+
+`events` が**空配列でも「走査済み」**として `complete` にする（0 件という結果を出し直させる意味がない）。判定は `Array.isArray(metadata.events)` で、キー欠落のみ `idle`。
 
 不一致時に結果を隠す理由は、録画 A → B と切り替えたときに A の行を押すと **B の存在しない match index / 時刻** へシークし得るため。走行中の run は store が listener の寿命を持つので止めず、§2.7.11 で `[中断]` の逃げ道を出す。
 

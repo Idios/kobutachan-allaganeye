@@ -5,6 +5,7 @@ the new ``detect`` command and ``split --from-metadata`` use the same
 timestamp / duration / ISO formatting.
 """
 
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
 
@@ -38,6 +39,18 @@ def format_hms(seconds: float) -> str:
     h, rest = divmod(total, 3600)
     m, s = divmod(rest, 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def format_indicator_summary(events: Sequence[Mapping[str, object]]) -> str:
+    """KO / ASSIST イベント数の 1 行サマリ (#1141)。
+
+    ``indicators`` コマンドの summary と、``detect`` / ``split`` に統合した
+    ステージの完了行の**両方**がここを使う (件数の数え方を 1 か所にする)。
+    未知の ``signal_id`` は KO / ASSIST のどちらにも数えない。
+    """
+    ko = sum(1 for event in events if event.get("signal_id") == "ko_indicator")
+    assist = sum(1 for event in events if event.get("signal_id") == "assist_indicator")
+    return f"KO: {ko} / ASSIST: {assist} ({len(events)} intervals)"
 
 
 def iso_utc_now() -> str:

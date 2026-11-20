@@ -25,6 +25,7 @@ Phases
 - ``"refine"``                 Pass 2 fine-grained probing
 - ``"scorebar"``               scorebar classification
 - ``"audio"``                  audio Fanfare scan (when --no-audio is off)
+- ``"indicators"``             KO / ASSIST indicator scan (#1141)
 - ``"writing_metadata"``       just before metadata.json is written
 - ``"done"``                   final, includes ``metadata_path`` field
 - ``"error"``                  fatal failure, includes ``message`` field
