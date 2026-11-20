@@ -54,6 +54,7 @@ from allaganeye.detection.format import (
 from allaganeye.detection.indicator_stage import (
     StageNotice,
     attach_indicators,
+    reuse_indicators,
 )
 from allaganeye.detection.metadata_writer import write_metadata_atomic
 from allaganeye.detection.progress_emitter import ProgressEmitter
@@ -148,6 +149,9 @@ def run_detect(
 
     cache_path = config.output_dir / ".detection_cache.json"
     boundaries = None
+    # #1141: 検知キャッシュが hit したときは、既存 metadata.json の KO / ASSIST
+    # 結果も再利用してよい (同じ動画・同じ出力先で前回成功している証拠)。
+    cache_hit_boundaries = False
     # #821 -- resolved masked fallback。cache-hit は cache 記録値を引き継ぎ、
     # cache-miss は detection callback で捕捉する。
     masked_fallback_used = False
@@ -161,6 +165,7 @@ def run_detect(
         hit = _load_cache_hit(cache_path, video_path, effective_interval, config)
         if hit is not None:
             boundaries = hit.boundaries
+            cache_hit_boundaries = True
             masked_fallback_used = hit.masked_fallback_used
             captured_region = hit.capture_regions
             if show and verbose:
@@ -381,21 +386,45 @@ def run_detect(
                     f"{notice.total_s or 0:.0f}s{suffix}"
                 )
 
-        indicator_warning = attach_indicators(
-            cast("dict[str, Any]", payload),
-            source=video_path,
-            frame_size=(int(metadata["width"]), int(metadata["height"])),
-            duration=float(metadata["duration"]),
-            codec=metadata.get("codec"),
-            gpu=config.use_gpu is True,
-            notice=on_indicator_notice,
-            progress=indicator_diagnostic,
+        reused = (
+            reuse_indicators(
+                cast("dict[str, Any]", payload),
+                video=video_path,
+                metadata_path=metadata_path,
+            )
+            if cache_hit_boundaries
+            else None
         )
-        # #1141: 走査の所要を「検知の所要」に含める (#586 の契約は
-        # detection_completed_at - detection_started_at)。payload を組んだ後に
-        # 数分走るので、組み立て時の値のままにすると GUI の「所要」から
-        # KO / ASSIST 分が抜け落ちる。
-        payload["detection_completed_at"] = _iso_utc_now()
+        indicator_warning = None
+        if reused is not None:
+            # 走査を省いたので、3 段目バーを即 100% にし、ログに 1 行残す。
+            if show:
+                typer.echo(
+                    f"  KO / ASSIST: 既存の検出結果を再利用しました ({reused} 件)"
+                )
+            if progress_emitter is not None:
+                progress_emitter.emit(
+                    "indicators",
+                    completed=int(metadata["duration"]),
+                    total=int(metadata["duration"]),
+                    reused=reused,
+                )
+        else:
+            indicator_warning = attach_indicators(
+                cast("dict[str, Any]", payload),
+                source=video_path,
+                frame_size=(int(metadata["width"]), int(metadata["height"])),
+                duration=float(metadata["duration"]),
+                codec=metadata.get("codec"),
+                gpu=config.use_gpu is True,
+                notice=on_indicator_notice,
+                progress=indicator_diagnostic,
+            )
+            # #1141: 走査の所要を「検知の所要」に含める (#586 の契約は
+            # detection_completed_at - detection_started_at)。payload を組んだ後に
+            # 数分走るので、組み立て時の値のままにすると GUI の「所要」から
+            # KO / ASSIST 分が抜け落ちる。
+            payload["detection_completed_at"] = _iso_utc_now()
         if show:
             if indicator_warning is None:
                 events = payload.get("events")

@@ -28,7 +28,10 @@ from allaganeye.detection.format import (
 )
 from allaganeye.detection.indicator_stage import (
     StageNotice,
+    _sanitize_highlight_events,
+    _sanitize_indicator_layout,
     attach_indicators,
+    reuse_indicators,
 )
 from allaganeye.detection.metadata_writer import (
     read_metadata,
@@ -214,6 +217,10 @@ def run_split(
         metadata["duration"], config.sample_interval
     )
 
+    # #1141: 検知キャッシュが hit したときは、既存 metadata.json の KO / ASSIST
+    # 結果も再利用してよい (同じ動画・同じ出力先で前回成功している証拠)。
+    cache_hit_boundaries = False
+
     def write_indicators_into(payload: dict[str, Any]) -> None:
         """KO / ASSIST を metadata payload に足す (#1141 受け入れ条件 2 / 3)。
 
@@ -222,6 +229,18 @@ def run_split(
         opt-in。end-to-end の利得は実測で約 4%)。失敗は warning に記録されて
         戻るので、境界の結果は失われない。
         """
+        if cache_hit_boundaries:
+            reused = reuse_indicators(
+                payload,
+                video=video_path,
+                metadata_path=config.output_dir / "metadata.json",
+            )
+            if reused is not None:
+                if show:
+                    typer.echo(
+                        f"KO / ASSIST: 既存の検出結果を再利用しました ({reused} 件)"
+                    )
+                return
         if show:
             typer.echo("\nDetecting KO / ASSIST indicators ...")
         warning = attach_indicators(
@@ -258,6 +277,7 @@ def run_split(
         hit = _load_cache_hit(cache_path, video_path, effective_interval, config)
         if hit is not None:
             boundaries = hit.boundaries
+            cache_hit_boundaries = True
             # Surface the detection context that the cached run used (#380).
             # Without this, verbose+cached prints only "Detected ... (cached)"
             # which strips the parameter summary users rely on for
@@ -2401,11 +2421,6 @@ _CAPTURE_REGIONS_TOP_KEYS = frozenset({"coarse", "segments", "fallback_reason"})
 _CAPTURE_REGION_COORD_KEYS = frozenset({"x", "y", "w", "h", "confidence"})
 _CAPTURE_REGION_REQUIRED_KEYS = {"x", "y", "w", "h", "confidence", "source"}
 
-_INDICATOR_LAYOUT_KEYS = frozenset(
-    {"anchor_x", "anchor_y", "scale", "support", "confidence", "source"}
-)
-"""`$defs/IndicatorLayout` の required 6 キー (= additionalProperties:false)。"""
-
 
 def _sanitize_capture_regions(value: object) -> "CaptureRegions | None":
     """Structural sanitizer for a CaptureRegions payload read from metadata.json or cache.
@@ -2468,157 +2483,6 @@ def _sanitize_capture_regions(value: object) -> "CaptureRegions | None":
         return None
 
     return cast("CaptureRegions", value)
-
-
-def _sanitize_indicator_layout(value: object) -> dict[str, Any] | None:
-    """`indicator_layout` の preserve sanitizer (#1141)。
-
-    `--from-metadata` は再検知しないので元 metadata の値をそのまま新ファイルに
-    書くが、手編集された `indicator_layout: {}` のような値を通すと GUI の zod
-    (`IndicatorLayoutSchema`) が **metadata.json 全体を** 拒否し、健全な境界
-    結果まで読めなくなる。`_sanitize_capture_regions` と同じ純 Python 検査
-    (jsonschema の runtime 依存は追加しない) で、スキーマ
-    `$defs/IndicatorLayout` (additionalProperties:false / required 6 keys) を
-    写す。完全に妥当なときだけ dict を返す。
-    """
-    if not isinstance(value, dict):
-        return None
-    if set(value.keys()) != _INDICATOR_LAYOUT_KEYS:
-        return None
-    if not _is_finite_json(value):
-        return None
-    for key in ("anchor_x", "anchor_y", "confidence"):
-        number = _finite_number(value.get(key))
-        if number is None or not 0.0 <= number <= 1.0:
-            return None
-    scale = _finite_number(value.get("scale"))
-    if scale is None or scale <= 0.0:
-        return None
-    support = _integral_number(value.get("support"))
-    if support is None or support < 1:
-        return None
-    source = value.get("source")
-    if not isinstance(source, str) or not source:
-        return None
-    sanitized = dict(value)
-    # `6.0` のような整数値 float は schema (`integer`) / GUI zod (`.int()`) とも
-    # 通るので int に正規化して返す (codex review 2026-11-18 P2)。
-    sanitized["support"] = support
-    return sanitized
-
-
-def _sanitize_highlight_events(value: object) -> list[dict[str, Any]] | None:
-    """`events` の preserve sanitizer (#1141)。
-
-    壊れた 1 件 (例: `{}`) をそのまま新ファイルに書くと GUI が metadata.json
-    全体を読めなくなるため、**スキーマの required を満たす要素だけを残す**。
-    全部落ちたら None (キー自体を書かない = 未検出と同じ形)。
-
-    残す条件は `$defs/HighlightEvent` の required 6 フィールド
-    (`signal_id` / `timestamp` / `end` / `score` / `evidence` / `match_index`) を
-    満たすこと。`clip_start` / `clip_end` は optional なので値の形だけ見る。
-    """
-    if not isinstance(value, list):
-        return None
-    kept: list[dict[str, Any]] = []
-    for entry in value:
-        if not isinstance(entry, dict):
-            continue
-        signal_id = entry.get("signal_id")
-        if not isinstance(signal_id, str) or not signal_id:
-            continue
-        timestamp = _finite_number(entry.get("timestamp"))
-        end = _finite_number(entry.get("end"))
-        score = _finite_number(entry.get("score"))
-        if timestamp is None or end is None or score is None:
-            continue
-        if timestamp < 0 or end < 0 or not 0.0 <= score <= 1.0:
-            continue
-        if not isinstance(entry.get("evidence"), dict):
-            continue
-        # `match_index` は required (明示 null は許容) なので、**キーの存在**と
-        # 値の検査を分ける (codex review 2026-11-18 P2)。
-        if "match_index" not in entry:
-            continue
-        match_index = entry["match_index"]
-        if match_index is not None:
-            normalized = _integral_number(match_index)
-            if normalized is None or normalized < 1:
-                continue
-            match_index = normalized
-        # `clip_start` / `clip_end` は optional だが、あるなら有限かつ >= 0 の
-        # 数値でなければならない (null / 負値は schema / zod が拒否する)。
-        bounds_ok = True
-        for key in ("clip_start", "clip_end"):
-            if key not in entry:
-                continue
-            bound = _finite_number(entry[key])
-            if bound is None or bound < 0:
-                bounds_ok = False
-                break
-        if not bounds_ok:
-            continue
-        # `evidence` や未知キーの**入れ子**に NaN / Infinity が残ると、
-        # `json.dumps` が非標準 token を再 emit して GUI の strict reader が
-        # metadata.json 全体を拒否する (codex review 2026-11-18 P2)。
-        if not _is_finite_json(entry):
-            continue
-        kept.append({**entry, "match_index": match_index})
-    return kept or None
-
-
-def _is_finite_json(value: object, *, depth: int = 0) -> bool:
-    """NaN / Infinity を含まない JSON 値か (dict / list を再帰的に検査)。
-
-    `read_metadata` は Python の `json.loads` なので NaN / Infinity を受理するが、
-    `write_metadata_atomic` は `allow_nan=True` でそのまま再 emit する。GUI の
-    strict reader (serde_json / JSON.parse) は metadata.json **全体**を拒否する
-    ため、preserve 経路で塞ぐ (#1141 codex review P2)。
-
-    `depth` の上限は手編集で作られた極端に深い構造での再帰爆発を避けるため
-    (`json.loads` は循環を作れないので、これで十分)。
-    """
-    if depth > 32:
-        return False
-    if isinstance(value, float):
-        return math.isfinite(value)
-    if isinstance(value, dict):
-        return all(
-            _is_finite_json(key, depth=depth + 1)
-            and _is_finite_json(item, depth=depth + 1)
-            for key, item in value.items()
-        )
-    if isinstance(value, (list, tuple)):
-        return all(_is_finite_json(item, depth=depth + 1) for item in value)
-    return True
-
-
-def _integral_number(value: object) -> int | None:
-    """整数値の数値なら int を返す (bool / 非整数 / NaN / Infinity は None)。
-
-    JSON Schema の `integer` は小数部 0 の数値 (`1.0`) も受けるので、Python で
-    float になる値も整数として受理する (schema 妥当な値を preserve で落とさない)。
-    """
-    number = _finite_number(value)
-    if number is None or not number.is_integer():
-        return None
-    return int(number)
-
-
-def _finite_number(value: object) -> float | None:
-    """有限実数なら float を返す (bool と NaN / Infinity は None)。
-
-    `json.dumps` は allow_nan=True で非標準 token を再 emit し、strict reader
-    (GUI serde_json / JSON.parse) が metadata.json 全体を reject するため、
-    NaN / Infinity は sanitize 側で塞ぐ (`_sanitize_capture_regions` と同じ理由)。
-    """
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    try:
-        number = float(value)
-    except (OverflowError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
 
 
 def _is_valid_capture_region(region: object) -> bool:

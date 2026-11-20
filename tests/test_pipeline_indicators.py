@@ -278,6 +278,27 @@ def test_split_without_indicators_writes_no_event_fields(tmp_path, split_mocks):
     assert "indicator_layout" not in payload
 
 
+def test_split_indicators_reuses_on_cache_hit(tmp_path, split_mocks):
+    """split でも cache hit なら既存 metadata の結果を再利用する (#1141)。"""
+    # 検知キャッシュは動画の fingerprint (mtime / size) を見るので実ファイルが要る。
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"x" * 16)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with patch(f"{MODULE_STAGE}.detect_indicator_events", new=_fake_stage()):
+        run_split(video, config, quiet=True, indicators=True)
+    assert _read(tmp_path)["events"] == EVENTS
+
+    with (
+        patch(
+            f"{MODULE_STAGE}.detect_indicator_events",
+            side_effect=AssertionError("cache hit なのに再走査した"),
+        ),
+    ):
+        run_split(video, config, quiet=True, indicators=True)
+
+    assert _read(tmp_path)["events"] == EVENTS
+
+
 def test_split_from_metadata_preserves_events_and_layout(tmp_path):
     """`detect --indicators` の結果を `--from-metadata` が落とさない。"""
     source = tmp_path / "input.mp4"
@@ -616,13 +637,11 @@ def test_preserve_sanitizers_reject_nested_non_finite_numbers() -> None:
         assert _sanitize_highlight_events([unknown]) is None
 
 
-def test_detect_indicators_runs_on_detection_cache_hit(tmp_path):
-    """検知キャッシュが hit しても KO / ASSIST の走査は実行される (#1141)。
+def test_detect_indicators_reuses_the_previous_result_on_cache_hit(tmp_path):
+    """検知キャッシュが hit したら、既存 metadata の KO / ASSIST 結果を再利用する。
 
-    履歴から同じ動画・同じ出力先で再実行すると境界検出は cache hit で skip
-    されるが、**イベント列は毎回作り直す** (キャッシュするのは境界だけ)。
-    2 回目で `_run_detection` が呼ばれないことを pin した上で、events が
-    書かれることを確かめる。
+    境界検出をキャッシュから復元するのと同じ理由（同じ動画・同じ出力先で前回
+    成功している）で、数分かかる走査も省く。走査器が呼ばれないことを pin する。
     """
     video = tmp_path / "input.mp4"
     video.write_bytes(b"x" * 16)
@@ -630,34 +649,115 @@ def test_detect_indicators_runs_on_detection_cache_hit(tmp_path):
 
     with (
         patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
-        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES) as detect,
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
         patch(f"{MODULE_STAGE}.detect_indicator_events", new=_fake_stage()),
     ):
         run_detect(video, config, quiet=True, indicators=True)
-    assert detect.call_count == 1
     assert _read(tmp_path)["events"] == EVENTS
 
-    # 2 回目: cache hit するので検知は走らないが、indicators は走る。
+    # 2 回目: cache hit。検知も走査も走らず、前回の結果を引き継ぐ。
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE_DETECT}._run_detection",
+            side_effect=AssertionError("cache hit なのに再検知した"),
+        ),
+        patch(
+            f"{MODULE_STAGE}.detect_indicator_events",
+            side_effect=AssertionError("cache hit なのに再走査した"),
+        ),
+    ):
+        run_detect(video, config, quiet=True, indicators=True)
+
+    payload = _read(tmp_path)
+    assert payload["events"] == EVENTS
+    assert payload["indicator_layout"] == LAYOUT
+    assert payload["warnings"] == []
+
+
+def test_detect_indicators_runs_when_cache_hit_has_no_previous_result(tmp_path):
+    """キャッシュ hit でも、既存 metadata に結果が無ければ走査する。"""
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"x" * 16)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    # 1 回目は indicators OFF（= metadata に events が無い状態を作る）。
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
+    ):
+        run_detect(video, config, quiet=True, indicators=False)
+    assert "events" not in _read(tmp_path)
+
+    # 2 回目は cache hit だが、再利用できる結果が無いので走査する。
     stage_calls: list[str] = []
     fake = _fake_stage()
-    real_stage = fake
 
     def counting_stage(source, payload, **kwargs):
         stage_calls.append("called")
-        return real_stage(source, payload, **kwargs)
+        return fake(source, payload, **kwargs)
 
     with (
         patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
         patch(
             f"{MODULE_DETECT}._run_detection",
             side_effect=AssertionError("cache hit なのに再検知した"),
-        ) as detect2,
+        ),
         patch(f"{MODULE_STAGE}.detect_indicator_events", new=counting_stage),
     ):
         run_detect(video, config, quiet=True, indicators=True)
 
-    assert detect2.call_count == 0
-    assert stage_calls == ["called"], "cache hit でも KO / ASSIST の走査は実行する"
-    payload = _read(tmp_path)
-    assert payload["events"] == EVENTS
-    assert payload["indicator_layout"] == LAYOUT
+    assert stage_calls == ["called"]
+    assert _read(tmp_path)["events"] == EVENTS
+
+
+def test_detect_indicators_does_not_reuse_a_different_source(tmp_path):
+    """既存 metadata の source が別の動画なら再利用しない（走査する）。"""
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"x" * 16)
+    other = tmp_path / "other.mp4"
+    other.write_bytes(b"y" * 16)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+
+    (tmp_path / "metadata.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "source": str(other),
+                "source_duration": PROBE_RESULT["duration"],
+                "source_fps": PROBE_RESULT["fps"],
+                "detected_at": "2026-11-18T00:00:00Z",
+                "matches": [
+                    {
+                        "index": 1,
+                        "start_time": 0.0,
+                        "end_time": 600.0,
+                        "duration": 600.0,
+                        "type": "fl_match",
+                        "output_file": "match_001.mp4",
+                    }
+                ],
+                "gaps": [],
+                "warnings": [],
+                "indicator_layout": LAYOUT,
+                "events": EVENTS,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    stage_calls: list[str] = []
+    fake = _fake_stage()
+
+    def counting_stage(source, payload, **kwargs):
+        stage_calls.append("called")
+        return fake(source, payload, **kwargs)
+
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
+        patch(f"{MODULE_STAGE}.detect_indicator_events", new=counting_stage),
+    ):
+        run_detect(video, config, quiet=True, indicators=True)
+
+    assert stage_calls == ["called"]

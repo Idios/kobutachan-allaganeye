@@ -508,9 +508,9 @@ interface MetadataWarning {
 | --- | --- |
 | `allaganeye indicators <metadata.json>` | 既存 metadata への write-back (`--write` が既定) |
 | `allaganeye detect <video> --indicators` | 境界と**同じ 1 回の atomic write** |
-| `allaganeye split <video> --indicators` | 同上 (cache hit 経路でも検出する) |
+| `allaganeye split <video> --indicators` | 同上 |
 
-`split --from-metadata` は再検知しないため、元 metadata の 2 フィールドを**そのまま引き継ぐ**。
+`split --from-metadata` は再検知しないため、元 metadata の 2 フィールドを**そのまま引き継ぐ**。また `detect` / `split` は**検知キャッシュが hit し、既存 metadata.json の 2 フィールドが妥当なときは走査を省いて再利用**する（同じ動画・同じ出力先で前回成功している証拠がある場合のみ）。
 
 ## `minimap_regions` フィールド (#481)
 
