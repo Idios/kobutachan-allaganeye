@@ -477,7 +477,7 @@ main.tsx (React root)
 └── ErrorModal                  (#614、Boundary の外側なので blank 後も visible)
 
 App (App.tsx)
-├── StateSwitcher           (dev 用 7 タブ、absolute 配置で右上に float。#653 で production build では非描画)
+├── StateSwitcher           (dev 用 8 タブ、absolute 配置で右上に float。#653 で production build では非描画)
 ├── body
 │   └── main
 │       └── (screen === 'drop') DropScreen
@@ -488,6 +488,7 @@ App (App.tsx)
 │       └── (screen === 'export') ExportScreen
 │       └── (screen === 'minimap') MinimapScreen (#893)
 │       └── (screen === 'indicators') IndicatorsScreen (#1106 Phase 2)
+│       └── (screen === 'clips') ClipsScreen (#1131 Phase B2)
 ├── ConflictModal           (#514、body の外に常時 render される global modal)
 ├── DraftRestoreModal       (#517、同上)
 └── ConfirmExitModal        (#523、同上)

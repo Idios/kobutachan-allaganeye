@@ -229,8 +229,8 @@ cache には `.detection_cache.json` top-level (`masked_fallback_used` と同型
 `allaganeye indicators --write`（既定）が書く L4 のイベント列。**毎回全件置換**する
 （差分マージはしない。検出条件が変われば結果集合ごと変わるため）。ただし
 `clip_start` / `clip_end` はユーザーの手作業なので、`signal_id` + `timestamp` が
-一致するイベントへ引き継ぐ（#1139）。未実行の
-metadata.json は持たない（optional）。**この文書は意味の要約で、形の正は
+一致するイベントへ引き継ぐ（#1139）。結果が無い
+metadata.json（未実行 / `skipped` / `failed`）は持たない（optional）。**この文書は意味の要約で、形の正は
 `schemas/metadata.schema.json` の `$defs/HighlightEvent`**、設計の正は
 [event output format design](superpowers/specs/2026-11-16-l4-event-output-format-design.md)。
 
@@ -283,7 +283,7 @@ KO / ASSIST ステージの結果。`events[]` の有無だけでは「未実行
 | `allaganeye indicators --no-write` | ✗ 書かない |
 | `allaganeye split --from-metadata` | ✓ 元 metadata の値を preserve（未知の値は落とす） |
 
-**GUI 側の扱い**: `gui/src/types/metadata.schema.ts` の zod で enum 検証し、クリップ画面と KO / ASSIST 画面が空状態 / idle の案内文を切り替える（[ui-interaction-spec.md](ui-interaction-spec.md) §2.7.0 / §2.8.0）。キー欠落は「未実行」として扱う（既存 metadata の後方互換）。
+**GUI 側の扱い**: `gui/src/types/metadata.schema.ts` の zod で enum 検証し、クリップ画面と KO / ASSIST 画面が空状態 / idle の案内文を切り替える（[ui-interaction-spec.md](ui-interaction-spec.md) §2.7.0 / §2.8.0）。キー欠落は「結果なし（未実行と区別できない旧 metadata）」として扱う（後方互換）。
 
 > **GUI 側の扱い**: root 直下のキーなので `[適用]`（`normalizeForPersistence`）は
 > root を spread で保持し、match 配列を組み直しても `events` は落ちない。
