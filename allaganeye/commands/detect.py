@@ -52,6 +52,7 @@ from allaganeye.detection.format import (
     format_timestamp,
 )
 from allaganeye.detection.indicator_stage import (
+    INDICATOR_STATUS_SKIPPED,
     StageNotice,
     attach_indicators,
     reuse_indicators,
@@ -435,6 +436,11 @@ def run_detect(
                     "  KO / ASSIST detection failed "
                     f"(recorded in warnings[]): {indicator_warning.get('context')}"
                 )
+    else:
+        # #1141: 「未実行」と「明示的にスキップ」を metadata で区別する
+        # (docs/metadata-spec.md の indicator_status)。GUI のクリップ画面は
+        # この値で空状態の案内文を分ける。
+        payload["indicator_status"] = INDICATOR_STATUS_SKIPPED
 
     # #1141: `writing_metadata` は KO / ASSIST 走査の**後**に出す。先に出すと
     # GUI の進捗が 99% で頭打ちになり、indicators 帯 (97-99%) の更新が

@@ -195,6 +195,8 @@ def test_indicators_writes_layout_back(
     # #127: イベントも同じ write で metadata に入る。
     assert len(payload["events"]) == 1
     assert payload["events"][0]["signal_id"] == "assist_indicator"
+    # #1141: 単体コマンドの write-back も「検出済み」を残す。
+    assert payload["indicator_status"] == "detected"
 
 
 def test_indicators_replaces_previous_events(

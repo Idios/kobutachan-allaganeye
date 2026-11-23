@@ -110,17 +110,28 @@ function renderClips(
   patch: Partial<ClipsState> = {},
   overrides: {
     events?: HighlightEvent[];
+    /** `true` で `events` キー自体を落とす (未実行 / 旧 writer の metadata)。 */
+    noEventsKey?: boolean;
     filePath?: string | null;
     dirty?: boolean;
+    /** `indicator_status` / `warnings` など root の追加入力 (#1141)。 */
+    metadataPatch?: Record<string, unknown>;
   } = {},
 ): HTMLElement {
   useAppStateStore.getState().reset();
   useMetadataStore.getState().clear();
   useMetadataStore.getState().loadSample();
   const base = useMetadataStore.getState().metadata;
+  if (base !== null) {
+    const next: Record<string, unknown> = { ...base, ...(overrides.metadataPatch ?? {}) };
+    if (overrides.noEventsKey) {
+      delete next.events;
+    } else {
+      next.events = overrides.events ?? EVENTS;
+    }
+    useMetadataStore.setState({ metadata: next as unknown as typeof base });
+  }
   useMetadataStore.setState({
-    metadata:
-      base === null ? base : { ...base, events: overrides.events ?? EVENTS },
     filePath: overrides.filePath === undefined ? METADATA_PATH : overrides.filePath,
     loadedMtimeMs: 42,
     dirty: overrides.dirty ?? false,
@@ -429,8 +440,9 @@ describe('ClipsScreen idle', () => {
 
   it('explains an empty candidate list and links to indicators', () => {
     renderClips({}, { events: [] });
-    expect(screen.getByTestId('clips-empty')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '⬦ KO / ASSIST を検出' })).toBeInTheDocument();
+    expect(screen.getByTestId('clips-empty')).toHaveAttribute('data-reason', 'no-events');
+    // 走査済みで 0 件なので「先に検出してください」ではなく再検出に誘導する。
+    expect(screen.getByRole('button', { name: '⬦ KO / ASSIST を再検出' })).toBeInTheDocument();
   });
 
   it('shows the metadata-missing note when nothing is loaded', () => {
@@ -448,6 +460,89 @@ describe('ClipsScreen idle', () => {
   });
 });
 
+describe('ClipsScreen empty-state reasons (#1141)', () => {
+  it('explains a failed indicator scan with the warning detail', () => {
+    renderClips(
+      {},
+      {
+        noEventsKey: true,
+        metadataPatch: {
+          indicator_status: 'failed',
+          warnings: [
+            {
+              code: 'indicators_failed',
+              severity: 'warn',
+              context: { error: 'calibration failed' },
+            },
+          ],
+        },
+      },
+    );
+    expect(screen.getByTestId('clips-empty')).toHaveAttribute(
+      'data-reason',
+      'indicator-failed',
+    );
+    expect(screen.getByTestId('clips-empty-detail')).toHaveTextContent(
+      'calibration failed',
+    );
+    expect(
+      screen.getByRole('button', { name: '⬦ KO / ASSIST を検出' }),
+    ).toBeInTheDocument();
+  });
+
+  it('names the 詳細設定 OFF path when the scan was skipped', () => {
+    renderClips(
+      {},
+      { noEventsKey: true, metadataPatch: { indicator_status: 'skipped' } },
+    );
+    expect(screen.getByTestId('clips-empty')).toHaveAttribute(
+      'data-reason',
+      'indicator-skipped',
+    );
+    expect(screen.getByTestId('clips-empty')).toHaveTextContent('詳細設定');
+  });
+
+  it('stays neutral for legacy metadata without indicator_status', () => {
+    renderClips({}, { noEventsKey: true });
+    expect(screen.getByTestId('clips-empty')).toHaveAttribute(
+      'data-reason',
+      'not-scanned',
+    );
+    expect(screen.getByTestId('clips-empty-detail')).toHaveTextContent(
+      '詳細設定で OFF のまま検出した場合もここに出ます',
+    );
+  });
+
+  it('explains that the detected events are outside every match', () => {
+    renderClips({}, { events: [{ ...EVENTS[2] }] });
+    expect(screen.getByTestId('clips-empty')).toHaveAttribute(
+      'data-reason',
+      'no-usable-events',
+    );
+    expect(
+      screen.getByRole('button', { name: '⬦ KO / ASSIST の一覧を見る' }),
+    ).toBeInTheDocument();
+  });
+
+  it('hides the empty-state action in sample mode', () => {
+    renderClips({}, { events: [], filePath: null });
+    expect(screen.getByTestId('clips-empty')).toHaveAttribute('data-reason', 'no-events');
+    expect(
+      screen.queryByRole('button', { name: '⬦ KO / ASSIST を再検出' }),
+    ).not.toBeInTheDocument();
+  });
+
+  // events 優先 (2026-11-22 確定): status は events が無いときの理由付け。
+  it.each(['skipped', 'failed'] as const)(
+    'lists candidates despite indicator_status=%s (events 優先)',
+    (status) => {
+      renderClips({}, { metadataPatch: { indicator_status: status } });
+      expect(screen.queryByTestId('clips-empty')).not.toBeInTheDocument();
+      expect(screen.getByTestId('clips-candidate-1')).toBeInTheDocument();
+    },
+  );
+});
+
 describe('ClipsScreen run guards', () => {
   it('disables 切り抜く in sample mode with a reason', () => {
     renderClips({}, { filePath: null }); // sample mode (filePath === null)
@@ -463,6 +558,25 @@ describe('ClipsScreen run guards', () => {
     expect(screen.getByTestId('clips-run-disabled')).toHaveTextContent(
       '未適用の編集があります',
     );
+  });
+
+  it('does not show another file\'s progress and blocks 切り抜く (#1141)', () => {
+    renderClips({
+      status: 'running',
+      metadataPath: 'C:/other/metadata.json',
+    });
+    // 別ファイルの進捗は見せない (自ファイルの候補一覧は読める)。
+    expect(screen.queryByTestId('clips-progress')).not.toBeInTheDocument();
+    expect(screen.getByTestId('clips-run-disabled')).toHaveTextContent('別の動画');
+    expect(screen.getByTestId('clips-cut-1')).toBeDisabled();
+    // 逃げ道 ([中断]) は出す (store が run の重なりを拒否するため)。
+    expect(screen.getByTestId('clips-other-file-cancel')).toBeInTheDocument();
+  });
+
+  it('shows the progress when the run belongs to this file', () => {
+    renderClips({ status: 'running', metadataPath: METADATA_PATH });
+    expect(screen.getByTestId('clips-progress')).toBeInTheDocument();
+    expect(screen.queryByTestId('clips-other-file-cancel')).not.toBeInTheDocument();
   });
 
   it('reports invalid margins instead of seeking or invoking the CLI', async () => {
@@ -597,9 +711,24 @@ describe('ClipsScreen running / result / error', () => {
     expect(mockInvoke).toHaveBeenCalledWith('kill_tracked_processes');
   });
 
-  it('hides a run that belongs to a different metadata.json', () => {
-    renderClips({ metadataPath: 'C:/other/metadata.json' });
+  it('hides the complete result of a different metadata.json', () => {
+    renderClips({
+      status: 'complete',
+      result: CLIPS_RESULT,
+      metadataPath: 'C:/other/metadata.json',
+    });
     expect(screen.getByTestId('clips-screen')).toHaveAttribute('data-status', 'idle');
+    expect(screen.queryByTestId('clips-result')).not.toBeInTheDocument();
+  });
+
+  it('hides the error of a different metadata.json', () => {
+    renderClips({
+      status: 'error',
+      error: { message: 'boom', hint: null, code: 'subprocess.exit_failed' },
+      metadataPath: 'C:/other/metadata.json',
+    });
+    expect(screen.getByTestId('clips-screen')).toHaveAttribute('data-status', 'idle');
+    expect(screen.queryByTestId('clips-error')).not.toBeInTheDocument();
   });
 
   it('offers an overwrite retry only for an existing-output failure', async () => {

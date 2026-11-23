@@ -30,7 +30,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 import time
-from typing import Any, Literal
+from typing import Any, Final, Literal, TypeAlias, cast
 
 import numpy as np
 
@@ -63,9 +63,14 @@ __all__ = [
     "CLI_DEFAULT_INDICATORS",
     "DEFAULT_INTERVAL",
     "INDICATORS_FAILED_CODE",
+    "INDICATOR_STATUSES",
+    "INDICATOR_STATUS_DETECTED",
+    "INDICATOR_STATUS_FAILED",
+    "INDICATOR_STATUS_SKIPPED",
     "MIN_INTERVAL",
     "PROGRESS_STEP_SECONDS",
     "IndicatorRun",
+    "IndicatorStatus",
     "StageNotice",
     "attach_indicators",
     "calibration_timestamps",
@@ -88,6 +93,23 @@ PROGRESS_STEP_SECONDS = 30.0
 
 INDICATORS_FAILED_CODE = "indicators_failed"
 """統合経路 (#1141) でインジケータ検出だけが失敗したときの warning code。"""
+
+IndicatorStatus: TypeAlias = Literal["detected", "skipped", "failed"]
+"""`indicator_status` の取り得る値 (schema の `enum` と同期)。"""
+
+INDICATOR_STATUS_DETECTED: Final[IndicatorStatus] = "detected"
+"""走査が完了した (検知キャッシュからの再利用を含む)。"""
+
+INDICATOR_STATUS_SKIPPED: Final[IndicatorStatus] = "skipped"
+"""検出を無効にして走らなかった (`--no-indicators`)。"""
+
+INDICATOR_STATUS_FAILED: Final[IndicatorStatus] = "failed"
+"""走査を試みて失敗した (`warnings[]` に `indicators_failed`)。"""
+
+INDICATOR_STATUSES = frozenset(
+    {INDICATOR_STATUS_DETECTED, INDICATOR_STATUS_SKIPPED, INDICATOR_STATUS_FAILED}
+)
+"""`indicator_status` の取り得る値。schema (`enum`) と同期する。"""
 
 CLI_DEFAULT_INDICATORS = True
 """`detect` / `split` の `--indicators` の**既定値**。ここが SSoT (#1141)。
@@ -436,6 +458,18 @@ def _sanitize_indicator_layout(value: object) -> dict[str, Any] | None:
     return sanitized
 
 
+def _sanitize_indicator_status(value: object) -> IndicatorStatus | None:
+    """`indicator_status` の preserve sanitizer (#1141)。
+
+    `--from-metadata` は再検知しないので元 metadata の値を引き継ぐが、
+    schema の `enum` に無い値を通すと GUI の zod が metadata.json 全体を
+    拒否する。既知の 3 値だけを返し、それ以外は None (キーを書かない)。
+    """
+    if isinstance(value, str) and value in INDICATOR_STATUSES:
+        return cast("IndicatorStatus", value)
+    return None
+
+
 def _sanitize_highlight_events(value: object) -> list[dict[str, Any]] | None:
     """`events` の preserve sanitizer (#1141)。
 
@@ -569,6 +603,12 @@ def reuse_indicators(
     * ``source`` が今回の動画と同じ実体（``abspath`` 比較）
     * ``indicator_layout`` / ``events`` が schema 妥当（sanitizer を通る）
 
+    **events 優先** (#1141、2026-11-22 確定): 上の条件を満たすなら、前回の
+    ``indicator_status`` が ``skipped`` / ``failed`` でも**再利用し、``detected``
+    に昇格する**。妥当な ``events[]`` を持っていることが「走査済み」の根拠であり、
+    ``indicator_status`` は「``events[]`` が無いときに、なぜ無いか」を表す値として
+    扱う（値の意味は ``docs/metadata-spec.md`` の indicator_status を参照）。
+
     戻り値は再利用したイベント件数。再利用しなかったときは ``None``
     （呼び出し側は通常どおり走査する）。
     """
@@ -592,6 +632,11 @@ def reuse_indicators(
         return None
     payload["indicator_layout"] = layout
     payload["events"] = events
+    # 前回の結果をそのまま使うので、ステージの結果は「走査済み」になる。
+    # events 優先 (2026-11-22 確定): 前回値が skipped / failed でも、妥当な
+    # layout + events が残っているなら「走査済み」の根拠として detected に昇格する
+    # (indicator_status は events が無いときの理由付け)。
+    payload["indicator_status"] = INDICATOR_STATUS_DETECTED
     return len(events)
 
 
@@ -649,9 +694,11 @@ def attach_indicators(
             warnings.append(warning)
         else:
             payload["warnings"] = [warning]
+        payload["indicator_status"] = INDICATOR_STATUS_FAILED
         return warning
     payload["indicator_layout"] = run.layout
     # #127: イベントは全件置換 (検出条件が変われば集合ごと変わる)。fresh な
     # detect / split の payload には events が無いので、引き継ぎ対象も無い。
     payload["events"] = run.events
+    payload["indicator_status"] = INDICATOR_STATUS_DETECTED
     return None

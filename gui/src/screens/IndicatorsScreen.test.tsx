@@ -810,6 +810,58 @@ describe('IndicatorsScreen persisted results (#1141)', () => {
     expect(screen.getByTestId('indicators-idle')).toBeInTheDocument();
   });
 
+  it('explains that the scan was skipped in 詳細設定 (#1141)', () => {
+    renderWithMetadata({ indicator_status: 'skipped' });
+
+    expect(screen.getByTestId('indicators-screen')).toHaveAttribute('data-status', 'idle');
+    expect(screen.getByTestId('indicators-skipped-note')).toHaveTextContent('詳細設定');
+  });
+
+  it('shows the previous failure reason from warnings[] (#1141)', () => {
+    renderWithMetadata({
+      indicator_status: 'failed',
+      warnings: [
+        {
+          code: 'indicators_failed',
+          severity: 'warn',
+          context: { error: 'calibration failed' },
+        },
+      ],
+    });
+
+    expect(screen.getByTestId('indicators-screen')).toHaveAttribute('data-status', 'idle');
+    expect(screen.getByTestId('indicators-previous-failure')).toHaveTextContent(
+      'calibration failed',
+    );
+  });
+
+  it('does not show the stage notes for legacy metadata (#1141)', () => {
+    renderWithMetadata({});
+
+    expect(screen.queryByTestId('indicators-skipped-note')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('indicators-previous-failure')).not.toBeInTheDocument();
+  });
+
+  // events 優先 (2026-11-22 確定): status は events が無いときの理由付け。
+  it.each(['skipped', 'failed'] as const)(
+    'shows the persisted events despite indicator_status=%s',
+    (status) => {
+      renderWithMetadata({
+        events: EVENTS,
+        indicator_layout: LAYOUT,
+        indicator_status: status,
+      });
+
+      expect(screen.getByTestId('indicators-screen')).toHaveAttribute(
+        'data-status',
+        'complete',
+      );
+      expect(screen.queryByTestId('indicators-skipped-note')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('indicators-previous-failure')).not.toBeInTheDocument();
+      expect(screen.getByTestId('indicators-summary')).toHaveTextContent('KO 2');
+    },
+  );
+
   it('prefers the store result for this file over the persisted one', () => {
     renderWithMetadata({ events: [], indicator_layout: LAYOUT }, completePatch());
 

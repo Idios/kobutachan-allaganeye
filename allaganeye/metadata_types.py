@@ -179,4 +179,5 @@ class Metadata(TypedDict):
     capture_regions: NotRequired[CaptureRegions]
     minimap_regions: NotRequired[list[MinimapRegionEntry]]
     indicator_layout: NotRequired[IndicatorLayout]
+    indicator_status: NotRequired[Literal["detected", "skipped", "failed"]]
     events: NotRequired[list[HighlightEvent]]

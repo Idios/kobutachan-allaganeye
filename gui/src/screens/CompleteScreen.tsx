@@ -120,6 +120,11 @@ export function CompleteScreen() {
     metadata.detection_params?.masked_fallback_used === true;
   const maskedRequestedExplicitly = metadata.detection_params?.masked === true;
 
+  // #1141 review: §1.2 -- 試合 0 件で disabled になる導線 (ミニマップ / KO /
+  // ASSIST / クリップ) に理由を出す。条件は 3 つとも同じ 1 つ。
+  const noMatches = metadata.matches.length === 0;
+  const noMatchesReason = '試合が検出されていません。先に動画を検出してください';
+
   return (
     <div className={styles.screen} data-testid="complete-screen">
       <SampleModeBanner />
@@ -234,39 +239,66 @@ export function CompleteScreen() {
           >
             ⬦ 全試合書き出し
           </button>
-          <button
-            type="button"
-            className={styles.exportAllButton}
-            onClick={() => navigate('minimap')}
-            disabled={metadata.matches.length === 0}
-            aria-label="ミニマップ切抜き"
+          <DisabledTooltip
+            disabled={noMatches}
+            reason={noMatchesReason}
+            inlineHint
           >
-            ⬦ ミニマップ切抜き
-          </button>
+            {(p) => (
+              <button
+                type="button"
+                className={styles.exportAllButton}
+                onClick={() => navigate('minimap')}
+                disabled={noMatches}
+                aria-label="ミニマップ切抜き"
+                {...p}
+              >
+                ⬦ ミニマップ切抜き
+              </button>
+            )}
+          </DisabledTooltip>
           {/* #1106 Phase 2: KO / ASSIST 検出画面への導線。キャリブレーションは
               試合区間内のフレームで行うため、試合 0 件では実行できない
               (ミニマップ切抜きと同じ disabled 条件)。 */}
-          <button
-            type="button"
-            className={styles.exportAllButton}
-            onClick={() => navigate('indicators')}
-            disabled={metadata.matches.length === 0}
-            aria-label="KO / ASSIST を検出"
+          <DisabledTooltip
+            disabled={noMatches}
+            reason={noMatchesReason}
+            inlineHint
           >
-            ⬦ KO / ASSIST を検出
-          </button>
+            {(p) => (
+              <button
+                type="button"
+                className={styles.exportAllButton}
+                onClick={() => navigate('indicators')}
+                disabled={noMatches}
+                aria-label="KO / ASSIST を検出"
+                {...p}
+              >
+                ⬦ KO / ASSIST を検出
+              </button>
+            )}
+          </DisabledTooltip>
           {/* #1131 Phase B2: KO / ASSIST の前後を切り抜く画面への導線。
               候補 (`metadata.events`) は indicators の実行後にしか無いが、
               未検出のときは画面側が「先に検出してください」を出す。 */}
-          <button
-            type="button"
-            className={styles.exportAllButton}
-            onClick={() => navigate('clips')}
-            disabled={metadata.matches.length === 0}
-            aria-label="クリップ切り抜き"
+          <DisabledTooltip
+            disabled={noMatches}
+            reason={noMatchesReason}
+            inlineHint
           >
-            ⬦ クリップ切り抜き
-          </button>
+            {(p) => (
+              <button
+                type="button"
+                className={styles.exportAllButton}
+                onClick={() => navigate('clips')}
+                disabled={noMatches}
+                aria-label="クリップ切り抜き"
+                {...p}
+              >
+                ⬦ クリップ切り抜き
+              </button>
+            )}
+          </DisabledTooltip>
           <button
             type="button"
             className={styles.closeButton}

@@ -410,4 +410,24 @@ describe('MetadataSchema', () => {
     };
     expect(MetadataSchema.safeParse(doc).success).toBe(false);
   });
+
+  // #1141 -- KO / ASSIST ステージ結果。JSON Schema の enum と値を一致させる
+  // (zod-schema-integrity はキー集合しか見ないため、値はここで pin する)。
+  it('accepts every documented indicator_status value', () => {
+    for (const status of ['detected', 'skipped', 'failed'] as const) {
+      const doc = { ...validMetadata(), indicator_status: status };
+      expect(MetadataSchema.safeParse(doc).success).toBe(true);
+    }
+  });
+
+  it('accepts metadata without indicator_status (legacy writer)', () => {
+    expect(MetadataSchema.safeParse(validMetadata()).success).toBe(true);
+  });
+
+  it('rejects unknown or non-string indicator_status values', () => {
+    for (const bad of ['reused', 'DETECTED', '', 1, null]) {
+      const doc = { ...validMetadata(), indicator_status: bad };
+      expect(MetadataSchema.safeParse(doc).success).toBe(false);
+    }
+  });
 });

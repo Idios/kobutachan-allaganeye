@@ -31,6 +31,7 @@ import typer
 from allaganeye.detection.format import format_hms
 from allaganeye.detection.indicator_stage import (
     DEFAULT_INTERVAL,
+    INDICATOR_STATUS_DETECTED,
     MIN_INTERVAL,
     PROGRESS_STEP_SECONDS,
     StageNotice,
@@ -446,6 +447,9 @@ def run_indicators(
             payload["events"] = _with_clip_overrides(
                 report.events, payload.get("events")
             )
+            # #1141: 単体コマンドで走査した経路も「検出済み」を残す。GUI の
+            # クリップ画面はこの値で「未実行 / スキップ / 失敗」と区別する。
+            payload["indicator_status"] = INDICATOR_STATUS_DETECTED
             write_metadata_atomic(metadata_path, payload)
         if staged is not None and output is not None:
             _publish_report(staged, output)

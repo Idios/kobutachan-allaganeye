@@ -233,6 +233,19 @@ export function IndicatorsScreen() {
   const runDisabled = isSample;
   const runDisabledReason = 'サンプル動画では検出を実行できません';
 
+  // #1141 -- 統合経路 (`detect --indicators`) が残したステージの結果。
+  // 値の意味は docs/metadata-spec.md §indicator_status が正。idle
+  // (metadata に events が無い) のとき、"未実行" と "詳細設定 OFF / 前回失敗"
+  // を区別して案内する。
+  const indicatorStatus = metadata?.indicator_status ?? null;
+  const indicatorWarning = (metadata?.warnings ?? []).find(
+    (warning) => warning.code === 'indicators_failed',
+  );
+  const indicatorFailureDetail =
+    typeof indicatorWarning?.context?.error === 'string'
+      ? indicatorWarning.context.error
+      : null;
+
   // #127 §4-3: 未知の signal_id は描画しない (新しい信号が増えても既存画面は
   // 素通りさせる)。件数も既知分だけを数える。
   // #1141: `detect --indicators` は metadata.json に `events[]` を直接書く。
@@ -437,6 +450,20 @@ export function IndicatorsScreen() {
       <AllaganFrame className={styles.panel}>
         {displayedStatus === 'idle' && (
           <div className={styles.stateBlock}>
+            {indicatorStatus === 'skipped' && (
+              <div className={styles.note} data-testid="indicators-skipped-note">
+                詳細設定で KO / ASSIST 検出を OFF のまま検出されています。ここで検出すると
+                metadata.json に結果が書き込まれます。
+              </div>
+            )}
+            {indicatorStatus === 'failed' && (
+              <div className={styles.note} data-testid="indicators-previous-failure">
+                前回の KO / ASSIST 検出は失敗しました
+                {indicatorFailureDetail === null
+                  ? '。もう一度実行できます。'
+                  : `: ${indicatorFailureDetail}`}
+              </div>
+            )}
             <div className={styles.stateLead} role="status" data-testid="indicators-idle">
               録画全体を走査するため、動画の長さに応じて数分かかることがあります。
             </div>

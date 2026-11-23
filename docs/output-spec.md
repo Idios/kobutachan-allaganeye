@@ -37,7 +37,7 @@ detect に該当しない行 (この 4 点で網羅):
 - **非出力**: 行 1-10 (環境ヘッダ / HW info / `Probing:` / Metadata 詳細 / `Auto-adjusted` / Dry-run 通知 / Cache hit params / GPU mode / 検知パラメータ summary / 検知進捗バー)、行 11 のうち検知統計部分 (`Pass 1` / `Pass 2` / `Scorebar`)、行 12 (Filter drop 内訳) / 行 12a (`Region:`) / **行 12b-12e (masked / vtuber の検知統計)** / 行 13 (`Detected N match(es)`) / 行 14 (Match 一覧) / 行 15 (Gap 一覧)。いずれも検知を行わないため (`run_split_from_metadata` は `_print_detection_stats` を呼ばない)
 - **出力**: 行 16 (`Splitting` 進捗バー) / 行 17 (`Output:` + ファイル一覧 + `Metadata:`) / 行 11 のうち `Splitting` elapsed (`_emit_splitting_elapsed`) / **行 15a (ディスク空き容量 warning)** / 行 18 (`Total:`) / 行 19 系エラー表示
 - **本経路固有の行**: 下表 3b / 3c
-- **KO / ASSIST (#1141)**: 検知を再実行しないため、元 metadata の `indicator_layout` / `events[]` を**そのまま引き継ぐ** (他の preserve と同じ。行 13a / 13b は非出力)。`--indicators` との同時指定は exit 5 (`allaganeye indicators <metadata.json>` が代替経路)
+- **KO / ASSIST (#1141)**: 検知を再実行しないため、元 metadata の `indicator_layout` / `events[]` / `indicator_status` を**そのまま引き継ぐ** (他の preserve と同じ。行 13a / 13b は非出力)。`--indicators` との同時指定は exit 5 (`allaganeye indicators <metadata.json>` が代替経路)
 
 | # | 出力項目 | 関連Issue | default | `-v` | `-q` | `--dry-run` | `-v --dry-run` | `-q --dry-run` | `-v -q` |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -76,7 +76,7 @@ Error: --quiet and --verbose are mutually exclusive
 | `--vtuber` | 行 9 の `vtuber=on` トークンに反映。`--vtuber` 採用 run の verbose 検知統計に **行 12d / 12e** が追加される (#895)。`--vtuber` が縮退 (V0 失敗等) した場合は timeline 統計行は出力されず通常 pass 1/2 統計に戻る。cache ヒット時 (行 7) は `vtuber_algo=N` トークンが `masked_fallback` 直後に挿入される (vtuber 影響 run のみ) |
 | `--masked` | 行 9 の `masked=on` トークンに反映。masked fallback 採用 run では verbose 検知統計に **行 12b / 12c** が追加される (#822)。暗転が 1 件も検出できなかった録画では `--masked` 未指定でも fallback が自動発動するため、**行 9 が `masked=off` のままでもこれらの統計行が出力されうる** (#821)。cache ヒット時 (行 7) は `masked=` に加え resolved の `masked_fallback=` が出力され、masked 影響 run のみ `masked_algo=N` トークンが `masked_fallback` の直後に挿入される。`--vtuber` との同時指定は exit 5 |
 | `--keep-trailing` | 出力項目自体の有無には影響しない。cache ヒット時 (行 7) の `keep_trailing=on` トークン値に反映され、post-match trailing を通常 match として MP4 化するため行 17 のファイル一覧と行 11 の `Splitting: N matches` の件数が変化しうる (#805)。行 13 の `Detected N match(es)` と行 14 の Match 一覧は default でも post_match segment を数えるため、本フラグでは変化しない |
-| `--indicators` / `--no-indicators` | **既定 ON** (#1141)。ON のとき **行 13a / 13b**（キャッシュ hit + 前回結果ありなら 13c のみ）が追加され、metadata.json に `indicator_layout` と `events[]` が同じ write で載る (他の行の有無は変わらない)。`--no-indicators` で行 13a / 13b は非出力。`--dry-run` では分割も metadata 書き込みも行わないため非出力。`split --from-metadata` では exit 5 |
+| `--indicators` / `--no-indicators` | **既定 ON** (#1141)。ON のとき **行 13a / 13b**（キャッシュ hit + 前回結果ありなら 13c のみ）が追加され、metadata.json に `indicator_layout` と `events[]` が同じ write で載る (他の行の有無は変わらない)。結果は `indicator_status` (`detected` / `skipped` / `failed`) に記録される。`--no-indicators` で行 13a / 13b は非出力。`--dry-run` では分割も metadata 書き込みも行わないため非出力。`split --from-metadata` では exit 5 |
 | `-o`, `--sample-interval`, `--blackout-threshold`, etc. | 出力項目自体の有無には影響せず、値のみ変化 |
 
 直交フラグ × 主軸組合せの全網羅 (例: `--gpu × 8 = 16 組合せ`) は **系統的検証チェックリスト (#409)** で補完する。
@@ -287,7 +287,7 @@ Metadata: <metadata.json path>
 | default | stdout: 人間向け summary | `KO: N / ASSIST: M (K intervals)` + 1 行 1 区間。進捗は stderr |
 | `-o PATH` | `PATH` (JSON ドキュメント) | `{"metadata", "layout", "recalibrated", "events"}`。`events[]` は `{"signal_id", "timestamp", "end", "score", "evidence", "match_index"}`（ユーザー指定の `clip_start` / `clip_end` があれば引き継ぐ・#1139） |
 | `--json` | stdout: JSON Lines | `progress` (calibrating / scanning) + 最終 `complete` 行。人間向け summary は出さない。エラー時は `{"type":"error","message":...}` を 1 行 |
-| `--write` (既定) | `metadata.json` 更新 | `indicator_layout` と `events` を同じ atomic write で書く（`events` は全件置換。ただし `clip_start` / `clip_end` は `signal_id` + `timestamp` 一致で引き継ぐ）。`--no-write` で無効化 |
+| `--write` (既定) | `metadata.json` 更新 | `indicator_layout` / `indicator_status` (`detected`) / `events` を同じ atomic write で書く（`events` は全件置換。ただし `clip_start` / `clip_end` は `signal_id` + `timestamp` 一致で引き継ぐ）。`--no-write` で無効化 |
 | `--recalibrate` | (なし) | 既存の `indicator_layout` を無視して再解決し、その結果で write-back する |
 | `--expected-mtime MS` | (なし) | write-back 前の CAS guard。不一致なら exit 6 |
 

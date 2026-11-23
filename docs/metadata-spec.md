@@ -206,7 +206,8 @@ cache には `.detection_cache.json` top-level (`masked_fallback_used` と同型
 | --- | --- |
 | `allaganeye indicators`（`--write`、既定） | ✓ 解決結果を書く（キャッシュ再利用時も同じ値を書き直す） |
 | `allaganeye indicators --no-write` | ✗ 書かない |
-| `allaganeye detect` / `split` | ✗ 書かない（L4 は検知パイプラインの外） |
+| `allaganeye detect` / `split`（`--indicators`、既定 ON） | ✓ 境界と同じ **1 回の atomic write**。検知キャッシュ hit + 既存結果が妥当なら再利用 |
+| `allaganeye split --from-metadata` | ✓ 元 metadata の値を preserve（再検知しないため） |
 
 `--expected-mtime` による CAS guard は `capture_regions` と同じ（不一致なら exit 6）。
 不正な値（範囲外 / 型違い / キー欠落）は `InputFileError`（exit 2）で落とす。壊れた値を
@@ -254,7 +255,35 @@ metadata.json は持たない（optional）。**この文書は意味の要約�
 | --- | --- |
 | `allaganeye indicators`（`--write`、既定） | ✓ 全件置換で書く（`indicator_layout` と同じ write） |
 | `allaganeye indicators --no-write` | ✗ 書かない |
-| `allaganeye detect` / `split` / `export` / `minimap` | ✗ 書かない |
+| `allaganeye detect` / `split`（`--indicators`、既定 ON） | ✓ 境界と同じ **1 回の atomic write** |
+| `allaganeye split --from-metadata` | ✓ 元 metadata の値を preserve |
+| `allaganeye export` / `minimap` | ✗ 書かない |
+
+### `indicator_status`（string enum、#1141）
+
+KO / ASSIST ステージの結果。`events[]` の有無だけでは「未実行」「詳細設定 OFF で検出」「走査に失敗」を区別できないため、writer が結果を 1 値で残す。**形の正は `schemas/metadata.schema.json` の `properties.indicator_status`**。
+
+| 値 | 意味 | `events[]` | `warnings[]` |
+| --- | --- | --- | --- |
+| `"detected"` | 走査が完了した（検知キャッシュからの再利用を含む） | 書かれる（0 件なら空配列） | 変化なし |
+| `"skipped"` | 検出を無効にして走らなかった（`--no-indicators` / GUI 詳細設定 OFF） | 書かれない | 変化なし |
+| `"failed"` | 走査を試みて失敗した | 書かれない | `indicators_failed` が入る |
+| キー欠落 | このフィールドを書かない writer が作った metadata（未実行と OFF を区別できない） | — | — |
+
+**events 優先（2026-11-22 確定）**: `indicator_status` は `events[]` が**無い**ときに「なぜ無いか」を表す値であり、`events[]` の有無が優先する。妥当な `indicator_layout` / `events[]` を持つ metadata を検知キャッシュの再利用で引き継ぐときは、前回値が `skipped` / `failed` でも `detected` に昇格する（イベントが残っていることが走査済みの根拠）。GUI も同じ規則で、`events[]` があれば status に関わらず結果を表示する。`split --from-metadata` は再走査しないため値をそのまま preserve する（昇格しない）。
+
+**書き込みパス別の挙動**:
+
+| 経路 | 書き込み |
+| --- | --- |
+| `allaganeye detect` / `split`（`--indicators`、既定） | ✓ `detected`（失敗時は `failed`） |
+| 同 `--no-indicators` | ✓ `skipped` |
+| 検知キャッシュ hit + 既存結果の再利用 | ✓ `detected` |
+| `allaganeye indicators`（`--write`、既定） | ✓ `detected` |
+| `allaganeye indicators --no-write` | ✗ 書かない |
+| `allaganeye split --from-metadata` | ✓ 元 metadata の値を preserve（未知の値は落とす） |
+
+**GUI 側の扱い**: `gui/src/types/metadata.schema.ts` の zod で enum 検証し、クリップ画面と KO / ASSIST 画面が空状態 / idle の案内文を切り替える（[ui-interaction-spec.md](ui-interaction-spec.md) §2.7.0 / §2.8.0）。キー欠落は「未実行」として扱う（既存 metadata の後方互換）。
 
 > **GUI 側の扱い**: root 直下のキーなので `[適用]`（`normalizeForPersistence`）は
 > root を spread で保持し、match 配列を組み直しても `events` は落ちない。
@@ -511,6 +540,8 @@ interface MetadataWarning {
 | `allaganeye split <video> --indicators` | 同上 |
 
 `split --from-metadata` は再検知しないため、元 metadata の 2 フィールドを**そのまま引き継ぐ**。また `detect` / `split` は**検知キャッシュが hit し、既存 metadata.json の 2 フィールドが妥当なときは走査を省いて再利用**する（同じ動画・同じ出力先で前回成功している証拠がある場合のみ）。
+
+`indicator_status` も同じ 3 経路が書く（`--no-indicators` は `skipped`、失敗は `failed`、再利用は `detected`）。値の意味と preserve 規則は §`indicator_status` を参照。
 
 ## `minimap_regions` フィールド (#481)
 

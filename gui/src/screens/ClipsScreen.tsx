@@ -53,6 +53,88 @@ const SECONDS_RE = /^\d+(\.\d+)?$/;
 /** CLI が既存出力を拒否したときの文言 (allaganeye/commands/clips.py)。 */
 const ALREADY_EXISTS_MARKER = 'already exist';
 
+/** 切り抜き候補が 0 件のときの理由 (#1141)。 */
+export type ClipEmptyReason =
+  | 'indicator-failed'
+  | 'indicator-skipped'
+  | 'not-scanned'
+  | 'no-events'
+  | 'no-usable-events';
+
+export interface ClipEmptyState {
+  reason: ClipEmptyReason;
+  message: string;
+  /** 補足 (失敗理由 / OFF の可能性等)。表示しないときは null。 */
+  detail: string | null;
+  /** 次の行動を促すボタンの可視名 (`isSample` のときは描画しない)。 */
+  actionLabel: string;
+}
+
+/**
+ * 候補 0 件の原因を 1 つに潰さず切り分ける (#1141)。
+ *
+ * 「イベントが無い」には ① 検出が失敗した ② 詳細設定で OFF のまま検出した
+ * ③ まだ検出していない ④ 検出したが 0 件 ⑤ 検出したが全部使えない
+ * の 5 通りがあり、どれも「先に KO / ASSIST を検出してください」では誤誘導になる
+ * (②③ は詳細設定の場所、① は失敗の事実を伝える必要がある)。
+ */
+export function describeEmptyCandidates(args: {
+  /** `metadata.events` が配列として存在するか (キー欠落と空配列を区別する)。 */
+  eventsKeyPresent: boolean;
+  eventCount: number;
+  indicatorStatus: 'detected' | 'skipped' | 'failed' | null;
+  /** `warnings[]` の `indicators_failed.context.error` (あれば)。 */
+  failureDetail: string | null;
+}): ClipEmptyState {
+  const {
+    eventsKeyPresent,
+    eventCount,
+    indicatorStatus,
+    failureDetail,
+  } = args;
+  if (!eventsKeyPresent && indicatorStatus === 'failed') {
+    return {
+      reason: 'indicator-failed',
+      message: 'KO / ASSIST の検出に失敗しました（試合の分割は完了しています）。',
+      detail: failureDetail,
+      actionLabel: '⬦ KO / ASSIST を検出',
+    };
+  }
+  if (!eventsKeyPresent && indicatorStatus === 'skipped') {
+    return {
+      reason: 'indicator-skipped',
+      message:
+        '詳細設定で KO / ASSIST 検出を OFF のまま検出したため、イベントがありません。',
+      detail: 'ここから検出すると metadata.json に結果が書き込まれます。',
+      actionLabel: '⬦ KO / ASSIST を検出',
+    };
+  }
+  if (!eventsKeyPresent) {
+    return {
+      reason: 'not-scanned',
+      message: 'まだ KO / ASSIST を検出していません。',
+      detail:
+        'この metadata.json は KO / ASSIST の結果を持っていません（詳細設定で OFF のまま検出した場合もここに出ます）。',
+      actionLabel: '⬦ KO / ASSIST を検出',
+    };
+  }
+  if (eventCount === 0) {
+    return {
+      reason: 'no-events',
+      message: 'KO / ASSIST は検出されませんでした（0 件）。',
+      detail:
+        '戦意値ゲージが映っていない区間だけだった可能性があります。再検出できます。',
+      actionLabel: '⬦ KO / ASSIST を再検出',
+    };
+  }
+  return {
+    reason: 'no-usable-events',
+    message: '切り抜ける KO / ASSIST がありません。',
+    detail: '検出されたイベントはすべて試合区間の外か、未対応の種類です。',
+    actionLabel: '⬦ KO / ASSIST の一覧を見る',
+  };
+}
+
 // ── Pure helpers (exported for tests) ───────────────────────────────────────
 
 export interface ClipCandidate {
@@ -222,11 +304,31 @@ export function ClipsScreen() {
     ).length;
   }, [allEvents]);
 
-  // 走行中の run が別ファイル向けなら、その進捗は見せない (indicators と同じ規則)。
+  // #1141 -- 候補 0 件の理由を切り分ける材料。`indicator_status` はこの
+  // フィールドを書く writer (0.4.0+) の metadata にだけ入る。
+  const indicatorStatus = metadata?.indicator_status ?? null;
+  const eventsKeyPresent = Array.isArray(allEvents);
+  const indicatorWarning = (metadata?.warnings ?? []).find(
+    (warning) => warning.code === 'indicators_failed',
+  );
+  const indicatorFailureDetail =
+    typeof indicatorWarning?.context?.error === 'string'
+      ? indicatorWarning.context.error
+      : null;
+  const emptyState = describeEmptyCandidates({
+    eventsKeyPresent,
+    eventCount: allEvents?.length ?? 0,
+    indicatorStatus,
+    failureDetail: indicatorFailureDetail,
+  });
+
+  // 走行中の run が別ファイル向けなら、その進捗も結果も見せない (§2.8.0 前提 4)。
+  // 画面は idle 扱いにし、[⬦ 切り抜く] を disabled + 理由 + [中断] で逃げ道を出す
+  // (indicators の §2.7.11 と同じ規則)。
   const runIsForThisFile =
     runMetadataPath !== null && runMetadataPath === filePath;
-  const displayedStatus =
-    status === 'running' ? 'running' : runIsForThisFile ? status : 'idle';
+  const runningElsewhere = status === 'running' && !runIsForThisFile;
+  const displayedStatus = runIsForThisFile ? status : 'idle';
   const cancelled =
     displayedStatus === 'error' && error?.code === 'subprocess.cancelled';
   // 「既存出力あり」で止まったときだけ上書き再実行を出す (それ以外の exit 5 は
@@ -239,9 +341,9 @@ export function ClipsScreen() {
     ? 'サンプル動画では切り抜きを実行できません'
     : dirty
       ? '未適用の編集があります。先に [適用] してから切り抜いてください'
-      : margins !== null
-        ? margins
-        : null;
+      : runningElsewhere
+        ? '別の動画の切り抜きが進行中です。完了を待つか [中断] で停止してください'
+        : margins;
   const runDisabled = runDisabledReason !== null && displayedStatus !== 'running';
 
   // 実際に書き出される区間 (CLI の `plan_clips` + クランプの鏡)。
@@ -441,6 +543,16 @@ export function ClipsScreen() {
             {runDisabledReason}
           </div>
         )}
+        {runningElsewhere && (
+          <button
+            type="button"
+            className={styles.cancelButton}
+            onClick={cancel}
+            data-testid="clips-other-file-cancel"
+          >
+            中断
+          </button>
+        )}
         {outsideCount > 0 && (
           <div className={styles.note} data-testid="clips-outside-note">
             {outsideCount} 件は試合区間の外にあるため切り抜けません。
@@ -533,16 +645,25 @@ export function ClipsScreen() {
 
         {candidates.length === 0 ? (
           <div className={styles.emptyBlock}>
-            <div className={styles.emptyNote} data-testid="clips-empty">
-              KO / ASSIST のイベントがありません。先に KO / ASSIST を検出してください。
+            <div
+              className={styles.emptyNote}
+              data-testid="clips-empty"
+              data-reason={emptyState.reason}
+            >
+              {emptyState.message}
             </div>
+            {emptyState.detail !== null && (
+              <div className={styles.note} data-testid="clips-empty-detail">
+                {emptyState.detail}
+              </div>
+            )}
             {!isSample && (
               <button
                 type="button"
                 className={styles.secondaryButton}
                 onClick={() => navigate('indicators')}
               >
-                ⬦ KO / ASSIST を検出
+                {emptyState.actionLabel}
               </button>
             )}
           </div>

@@ -257,6 +257,13 @@ export const MetadataSchema = z
      */
     indicator_layout: IndicatorLayoutSchema.optional(),
     /**
+     * #1141 -- KO / ASSIST ステージの結果。値の意味は
+     * `docs/metadata-spec.md` §`indicator_status` が正 (schema と同期)。
+     * キー欠落 = このフィールドより前の writer が作った metadata で、
+     * 「未実行」と「詳細設定 OFF のまま検出」を区別できない。
+     */
+    indicator_status: z.enum(['detected', 'skipped', 'failed']).optional(),
+    /**
      * #127 -- L4 highlight events. `allaganeye indicators --write` が全件置換で
      * 書く。未検出の recording は持たないので optional。`[適用]` は root を
      * spread で保持するため round-trip する。

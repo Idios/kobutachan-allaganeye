@@ -138,6 +138,8 @@ def test_detect_without_indicators_writes_no_event_fields(tmp_path):
     payload = _read(tmp_path)
     assert "events" not in payload
     assert "indicator_layout" not in payload
+    # #1141: 明示スキップを「未実行 (キー欠落)」と区別できるようにする。
+    assert payload["indicator_status"] == "skipped"
 
 
 def test_detect_indicators_writes_layout_and_events_in_one_write(tmp_path):
@@ -163,6 +165,7 @@ def test_detect_indicators_writes_layout_and_events_in_one_write(tmp_path):
     assert len(writes) == 1, "metadata.json は 1 回だけ書く (atomic write 1 回)"
     assert writes[0]["events"] == EVENTS
     assert writes[0]["indicator_layout"] == LAYOUT
+    assert writes[0]["indicator_status"] == "detected"
     assert len(writes[0]["matches"]) == len(BOUNDARIES)
     assert _read(tmp_path)["events"] == EVENTS
 
@@ -183,6 +186,7 @@ def test_detect_indicators_failure_keeps_boundaries_and_records_warning(tmp_path
     payload = _read(tmp_path)
     assert len(payload["matches"]) == len(BOUNDARIES)
     assert "events" not in payload
+    assert payload["indicator_status"] == "failed"
     codes = [warning["code"] for warning in payload["warnings"]]
     assert codes == ["indicators_failed"]
     assert payload["warnings"][0]["severity"] == "warn"
@@ -267,6 +271,7 @@ def test_split_indicators_writes_events(tmp_path, split_mocks):
     payload = _read(tmp_path)
     assert payload["events"] == EVENTS
     assert payload["indicator_layout"] == LAYOUT
+    assert payload["indicator_status"] == "detected"
 
 
 def test_split_without_indicators_writes_no_event_fields(tmp_path, split_mocks):
@@ -276,6 +281,7 @@ def test_split_without_indicators_writes_no_event_fields(tmp_path, split_mocks):
     payload = _read(tmp_path)
     assert "events" not in payload
     assert "indicator_layout" not in payload
+    assert payload["indicator_status"] == "skipped"
 
 
 def test_split_indicators_reuses_on_cache_hit(tmp_path, split_mocks):
@@ -325,6 +331,7 @@ def test_split_from_metadata_preserves_events_and_layout(tmp_path):
                 "gaps": [],
                 "warnings": [],
                 "indicator_layout": LAYOUT,
+                "indicator_status": "skipped",
                 "events": EVENTS,
             }
         ),
@@ -343,6 +350,57 @@ def test_split_from_metadata_preserves_events_and_layout(tmp_path):
     fresh = json.loads((tmp_path / "out" / "metadata.json").read_text("utf-8"))
     assert fresh["events"] == EVENTS
     assert fresh["indicator_layout"] == LAYOUT
+    # #1141: 本ランは走査しないので、ステージの結果は元 metadata が SSoT。
+    assert fresh["indicator_status"] == "skipped"
+
+
+def test_split_from_metadata_drops_unknown_indicator_status(tmp_path):
+    """schema の enum に無い `indicator_status` は新 metadata に持ち込まない。
+
+    GUI の zod は root の enum 違反で metadata.json 全体を拒否するため、壊れた
+    1 フィールドで境界結果まで読めなくなるのを避ける (indicator_layout /
+    events と同じ preserve sanitizer 方針)。
+    """
+    source = tmp_path / "input.mp4"
+    source.write_bytes(b"")
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "source": str(source),
+                "source_duration": PROBE_RESULT["duration"],
+                "source_fps": PROBE_RESULT["fps"],
+                "detected_at": "2026-11-18T00:00:00Z",
+                "matches": [
+                    {
+                        "index": 1,
+                        "start_time": 0.0,
+                        "end_time": 600.0,
+                        "duration": 600.0,
+                        "type": "fl_match",
+                        "output_file": "match_001.mp4",
+                    }
+                ],
+                "gaps": [],
+                "warnings": [],
+                "indicator_status": "bogus",
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = SplitConfig(output_dir=tmp_path / "out", min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_SPLIT}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE_SPLIT}.split_video",
+            return_value=[tmp_path / "out" / "match_001.mp4"],
+        ),
+    ):
+        run_split_from_metadata(metadata_path, config, quiet=True)
+
+    fresh = json.loads((tmp_path / "out" / "metadata.json").read_text("utf-8"))
+    assert "indicator_status" not in fresh
 
 
 # --- CLI --------------------------------------------------------------------
@@ -672,6 +730,8 @@ def test_detect_indicators_reuses_the_previous_result_on_cache_hit(tmp_path):
     payload = _read(tmp_path)
     assert payload["events"] == EVENTS
     assert payload["indicator_layout"] == LAYOUT
+    # 再利用した run も「走査済み」として記録する。
+    assert payload["indicator_status"] == "detected"
     assert payload["warnings"] == []
 
 
@@ -688,6 +748,7 @@ def test_detect_indicators_runs_when_cache_hit_has_no_previous_result(tmp_path):
     ):
         run_detect(video, config, quiet=True, indicators=False)
     assert "events" not in _read(tmp_path)
+    assert _read(tmp_path)["indicator_status"] == "skipped"
 
     # 2 回目は cache hit だが、再利用できる結果が無いので走査する。
     stage_calls: list[str] = []
@@ -709,6 +770,50 @@ def test_detect_indicators_runs_when_cache_hit_has_no_previous_result(tmp_path):
 
     assert stage_calls == ["called"]
     assert _read(tmp_path)["events"] == EVENTS
+    assert _read(tmp_path)["indicator_status"] == "detected"
+
+
+@pytest.mark.parametrize("previous_status", ["skipped", "failed"])
+def test_detect_indicators_promotes_a_reused_result_to_detected(
+    tmp_path, previous_status
+):
+    """妥当な layout + events が残っていれば skipped / failed を detected に昇格する。
+
+    events 優先 (2026-11-22 確定): `indicator_status` は events が**無い**ときの
+    理由付けであり、妥当な events を持っていることが「走査済み」の根拠。
+    """
+    video = tmp_path / "input.mp4"
+    video.write_bytes(b"x" * 16)
+    config = SplitConfig(output_dir=tmp_path, min_match_duration=60.0)
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(f"{MODULE_DETECT}._run_detection", return_value=BOUNDARIES),
+        patch(f"{MODULE_STAGE}.detect_indicator_events", new=_fake_stage()),
+    ):
+        run_detect(video, config, quiet=True, indicators=True)
+
+    # 前回の status を skipped / failed に書き換える (旧 writer / 失敗後の手編集を模す)。
+    payload = _read(tmp_path)
+    payload["indicator_status"] = previous_status
+    (tmp_path / "metadata.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    with (
+        patch(f"{MODULE_DETECT}.probe_video", return_value=PROBE_RESULT),
+        patch(
+            f"{MODULE_DETECT}._run_detection",
+            side_effect=AssertionError("cache hit なのに再検知した"),
+        ),
+        patch(
+            f"{MODULE_STAGE}.detect_indicator_events",
+            side_effect=AssertionError("cache hit なのに再走査した"),
+        ),
+    ):
+        run_detect(video, config, quiet=True, indicators=True)
+
+    written = _read(tmp_path)
+    assert written["events"] == EVENTS
+    assert written["indicator_layout"] == LAYOUT
+    assert written["indicator_status"] == "detected"
 
 
 def test_detect_indicators_does_not_reuse_a_different_source(tmp_path):

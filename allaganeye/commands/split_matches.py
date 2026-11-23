@@ -27,9 +27,12 @@ from allaganeye.detection.format import (
     iso_utc_now as _iso_utc_now,
 )
 from allaganeye.detection.indicator_stage import (
+    INDICATOR_STATUS_SKIPPED,
+    IndicatorStatus,
     StageNotice,
     _sanitize_highlight_events,
     _sanitize_indicator_layout,
+    _sanitize_indicator_status,
     attach_indicators,
     reuse_indicators,
 )
@@ -270,6 +273,11 @@ def run_split(
     before_write: Callable[[dict[str, Any]], None] | None = (
         write_indicators_into if indicators else None
     )
+    # #1141: KO / ASSIST を無効にした実行は「未実行」と区別できるよう
+    # `indicator_status: "skipped"` を残す (docs/metadata-spec.md の
+    # indicator_status)。ON のときは before_write (attach / reuse) が
+    # detected / failed を書く。
+    indicator_status = None if indicators else INDICATOR_STATUS_SKIPPED
 
     # Check detection cache
     cache_path = config.output_dir / ".detection_cache.json"
@@ -327,6 +335,7 @@ def run_split(
                 capture_regions=hit.capture_regions,
                 quiet=quiet,
                 before_write=before_write,
+                indicator_status=indicator_status,
             )
             # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
             _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
@@ -496,6 +505,7 @@ def run_split(
         capture_regions=captured_region,
         quiet=quiet,
         before_write=before_write,
+        indicator_status=indicator_status,
     )
     # #805 段階2: MP4 化したのは active のみ (post_match は除外)。verbose の
     # split 件数は書き出した MP4 数を報告する。
@@ -698,6 +708,17 @@ def run_split_from_metadata(
             metadata_path,
         )
 
+    # #1141 -- `indicator_status` も同じ preserve パターン。本ランは走査しないので、
+    # 「未実行 / スキップ済み / 失敗 / 検出済み」の区別は元 metadata が SSoT。
+    old_status = payload.get("indicator_status")
+    preserve_status = _sanitize_indicator_status(old_status)
+    if old_status is not None and preserve_status is None:
+        logger.warning(
+            "Dropping unknown indicator_status from %s "
+            "(expected one of detected / skipped / failed -- field omitted)",
+            metadata_path,
+        )
+
     def preserve_indicator_payload(target: dict[str, Any]) -> None:
         if preserve_layout is not None:
             target["indicator_layout"] = dict(preserve_layout)
@@ -727,6 +748,7 @@ def run_split_from_metadata(
         capture_regions=preserve_capture_regions,
         quiet=quiet,
         before_write=preserve_indicator_payload,
+        indicator_status=preserve_status,
     )
     # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
     _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
@@ -1654,6 +1676,7 @@ def _split_and_write_metadata(
     capture_regions: CaptureRegions | None = None,
     quiet: bool = False,
     before_write: Callable[[dict[str, Any]], None] | None = None,
+    indicator_status: IndicatorStatus | None = None,
 ) -> None:
     """Split video and write metadata.json (#591: system_info required).
 
@@ -1668,6 +1691,10 @@ def _split_and_write_metadata(
     の直前に呼ばれるフック。KO / ASSIST の検出結果を差し込むために使う
     (境界とイベントを **1 回の atomic write** に載せるため、2 回目の write を
     作らない)。引数の dict はその場で書き換えてよい。
+
+    ``indicator_status`` (#1141): `before_write` が走る前に payload へ入れる
+    KO / ASSIST ステージの結果 (``skipped`` または `--from-metadata` の preserve 値)。
+    `before_write` (attach / reuse) はこの値を detected / failed で上書きする。
     """
     show = not quiet
     source_duration = metadata["duration"]
@@ -1732,6 +1759,8 @@ def _split_and_write_metadata(
         capture_regions=capture_regions,
     )
     metadata_path = config.output_dir / "metadata.json"
+    if indicator_status is not None:
+        result["indicator_status"] = indicator_status
     if before_write is not None:
         before_write(cast("dict[str, Any]", result))
         if not caller_gave_completed_at:
