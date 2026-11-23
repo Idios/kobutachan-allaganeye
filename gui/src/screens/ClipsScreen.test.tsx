@@ -427,6 +427,7 @@ describe('ClipsScreen idle', () => {
     renderClips();
     expect(screen.getByLabelText('前 (秒)')).toHaveValue(DEFAULT_MARGIN_SECONDS);
     expect(screen.getByLabelText('後 (秒)')).toHaveValue(DEFAULT_MARGIN_SECONDS);
+    expect(screen.getByLabelText('束ね (秒)')).toHaveValue(DEFAULT_GAP_SECONDS);
   });
 
   it('counts events outside every match and does not list them', () => {
@@ -667,6 +668,7 @@ describe('ClipsScreen actions', () => {
         metadataPath: METADATA_PATH,
         pre: 10,
         post: 10,
+        gap: 5,
         codec: 'copy',
         eventIndexes: [4],
         overwrite: false,
@@ -685,6 +687,69 @@ describe('ClipsScreen actions', () => {
       'start_clips',
       expect.objectContaining({ req: expect.objectContaining({ codec: 'h264' }) }),
     );
+  });
+
+  // #1131 受け入れ条件: 束ね幅 (--gap) も GUI から変えられる。
+  it('uses the edited 束ね value for the display and start_clips', async () => {
+    const user = userEvent.setup();
+    // 近接する 2 件 (既定 gap 5 秒で束ねられる) を使う。
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], signal_id: 'assist_indicator', timestamp: 512.1, end: 513.6 },
+      { ...EVENTS[3], signal_id: 'assist_indicator', timestamp: 515.5, end: 517.0 },
+    ];
+    renderClips({}, { events });
+    // 既定では束ねられて同じ区間 (502.1 - 527.0) になる。
+    expect(
+      within(screen.getByTestId('clips-candidate-1')).getByText(
+        /範囲 00:08:22 - 00:08:47/,
+      ),
+    ).toBeInTheDocument();
+
+    const gap = screen.getByLabelText('束ね (秒)');
+    expect(gap).toHaveValue(DEFAULT_GAP_SECONDS);
+    await user.clear(gap);
+    await user.type(gap, '0');
+
+    // 束ねないので、行の範囲はそのイベント単体の前後だけになる。
+    expect(
+      within(screen.getByTestId('clips-candidate-1')).getByText(
+        /範囲 00:08:22 - 00:08:43/,
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByTestId('clips-cut-1'));
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'start_clips',
+      expect.objectContaining({ req: expect.objectContaining({ gap: 0 }) }),
+    );
+  });
+
+  it('reports an invalid 束ね value instead of invoking the CLI', async () => {
+    const user = userEvent.setup();
+    renderClips();
+    const gap = screen.getByLabelText('束ね (秒)');
+    await user.clear(gap);
+    await user.type(gap, '-1');
+
+    expect(screen.getByTestId('clips-cut-1')).toBeDisabled();
+    expect(screen.getByTestId('clips-run-disabled')).toHaveTextContent(
+      '束ね は 0 以上の秒数',
+    );
+    await user.click(screen.getByTestId('clips-preview-1'));
+    expect(screen.getByTestId('clips-margins-error')).toHaveTextContent(
+      '束ね は 0 以上の秒数',
+    );
+    expect(mockInvoke).not.toHaveBeenCalledWith('start_clips', expect.anything());
+  });
+
+  // #1131 受け入れ条件: copy がキーフレームに丸められることを UI で明示する。
+  it('explains that copy clips snap to keyframes', async () => {
+    const user = userEvent.setup();
+    renderClips();
+    expect(screen.getByTestId('clips-copy-note')).toHaveTextContent('キーフレーム');
+
+    await user.selectOptions(screen.getByLabelText('形式'), 'h264');
+    expect(screen.queryByTestId('clips-copy-note')).not.toBeInTheDocument();
   });
 
   it('shows the written paths after a successful run', async () => {

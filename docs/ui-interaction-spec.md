@@ -1544,7 +1544,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 **実行は 1 件ずつ (Q2 C)**: `eventIndexes: [position]` を渡す。CLI は索引を含むクリップ全体 (束ねられた仲間を含む) を書き出し、クリップ番号は計画時のまま (振り直さない — 別のイベントが同じ `{idx}` を指して既存ファイルを潰さないため)。
 
-**session-local config**: 前後秒数 (`pre` / `post`)・形式 (`codec`) は match 編集ではない一時設定なので `metadataStore` に commit しない (§3.4 の §1.1 例外と同じ扱い)。
+**session-local config**: 前後秒数 (`pre` / `post`)・束ね幅 (`gap`)・形式 (`codec`) は match 編集ではない一時設定なので `metadataStore` に commit しない (§3.4 の §1.1 例外と同じ扱い)。
 
 **dirty / sample mode**: [⬦ 切り抜く] は `filePath === null` (§1.4) または `dirty === true` で disabled。CLI は **disk の metadata.json** を読むため、未適用の編集があると in-memory の `events[]` と位置がずれて**別のイベントを切り抜き得る**。理由文は §2.8.2 のノートに出す。
 
@@ -1552,7 +1552,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 **CLI 側の read-time CAS**: 上の照合と spawn の間にも外部変更は入り得るので、`start_clips` は `expectedMtime` (CLI `--expected-mtime`) を**常に**渡し、CLI が metadata.json の読み取り前後の mtime 一致を検証する。不一致は CLI exit 6 → `state.mtime_conflict` で、位置が古いまま別のイベントを切り抜く経路は閉じている。
 
-**表示する範囲 = 実際に書かれる範囲**: 行の「範囲」とプレビューの `clipRange` は `planClipWindows()` の戻り値を使う（`events[].clip_start` / `clip_end` が両方あればその区間を優先し、束ねの対象外にする — #1139）。これは CLI (`allaganeye/export/clips.py` の `plan_clips`) の **近接束ね (`--gap` 既定 5 秒) + 試合区間クランプ** を GUI 側で鏡にしたもの (codex review 2026-11-17)。単独イベントの前後だけを見せると「表示と違う長さのファイルが出る」ため。**四捨五入はしない** (JS の half-up と Python の half-even が 0.005 秒の端で食い違い、GUI だけが範囲外と判定する差になる)。鏡にしている都合上、CLI 側の束ね / クランプ規則を変えたら本関数も同時に直す必要がある。
+**表示する範囲 = 実際に書かれる範囲**: 行の「範囲」とプレビューの `clipRange` は `planClipWindows()` の戻り値を使う（`events[].clip_start` / `clip_end` が両方あればその区間を優先し、束ねの対象外にする — #1139）。これは CLI (`allaganeye/export/clips.py` の `plan_clips`) の **近接束ね (`--gap` 既定 5 秒、GUI の束ね入力で変更可) + 試合区間クランプ** を GUI 側で鏡にしたもの (codex review 2026-11-17)。単独イベントの前後だけを見せると「表示と違う長さのファイルが出る」ため。**四捨五入はしない** (JS の half-up と Python の half-even が 0.005 秒の端で食い違い、GUI だけが範囲外と判定する差になる)。鏡にしている都合上、CLI 側の束ね / クランプ規則を変えたら本関数も同時に直す必要がある。
 
 #### §2.8.0 画面を開く前提 / 開いた後の定常状態 (#1141)
 
@@ -1579,19 +1579,21 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 導線はどの分岐も `navigate('indicators')` (§2.7)。sample mode ではボタンを出さない (§1.4)。`events[]` 内の試合外件数は別途 §2.8.2 のノートで出す (理由表 5 行目と重なるときは両方出す)。
 
-**開いた後の定常状態**: `idle` (run 無し)。前後秒数 10 / 10・形式 `copy` のフォーム (§2.8.1)、候補の試合別一覧 (§2.8.3)。前回の run 結果は `clipsStore.metadataPath === metadataStore.filePath` のときだけ `complete` として残る (§2.8 ヘッダ)。
+**開いた後の定常状態**: `idle` (run 無し)。前後秒数 10 / 10・束ね 5・形式 `copy` のフォーム (§2.8.1)、候補の試合別一覧 (§2.8.3)。前回の run 結果は `clipsStore.metadataPath === metadataStore.filePath` のときだけ `complete` として残る (§2.8 ヘッダ)。
 
 **前提を満たす操作 (ユーザー操作)**: 候補が無いときは空状態の導線で §2.7 に移り検出する (write-back 後は `refreshFromDiskPreservingEdits()` で metadata が追従するので、戻ると候補が並ぶ)。`dirty` のときは preview で [適用] してから戻る (§1.3)。外部プロセスが metadata.json を書き換えた場合は、[⬦ 切り抜く] の spawn 前 mtime 照合が読み直しを促す (§2.8 ヘッダ)。
 
-#### §2.8.1 前後秒数 / 形式のフォーム
+#### §2.8.1 前後秒数 / 束ね / 形式のフォーム
 
 | 項目 | 内容 |
 | --- | --- |
-| 種類 | 数値入力 ×2 (`aria-label` は `前 (秒)` / `後 (秒)`) + セレクト (`aria-label="形式"`、`無劣化 (copy)` / `再エンコード (h264)`)。初期値は CLI 既定の 10 / 10 秒・`copy` |
+| 種類 | 数値入力 ×3 (`aria-label` は `前 (秒)` / `後 (秒)` / `束ね (秒)`) + セレクト (`aria-label="形式"`、`無劣化 (copy)` / `再エンコード (h264)`)。初期値は CLI 既定の 10 / 10 / 5 秒・`copy` |
 | 状態 | 常時 enabled (走行中も値を変えられるが、実行中の run には影響しない) |
-| 遷移トリガー | 入力 → local state (文字列のまま保持) → §2.8.2 / §2.8.3 のクリック時に `validateMargins()` で検証 |
+| 遷移トリガー | 入力 → local state (文字列のまま保持) → §2.8.2 / §2.8.3 のクリック時に `validateMargins()` / `validateGap()` で検証。束ね値は表示中の `planClipWindows()` にも即時反映する |
 | store mutation | なし (session-local、§2.8 ヘッダ) |
-| 例外 / edge case | 受理値は `^\d+(\.\d+)?$` (0 以上の整数 / 小数)。負値・空・指数表記はCLI が exit 5 で拒否するため、`validateMargins()` が先に弾く。違反は §2.8.4 の `role="alert"` に出す |
+| 例外 / edge case | 受理値は 3 つとも `^\d+(\.\d+)?$` (0 以上の整数 / 小数)。負値・空・指数表記は CLI が exit 5 で拒否するため、GUI が先に弾く。違反は §2.8.4 の `role="alert"` に出す |
+
+**copy のキーフレーム丸め注記 (#1131 受け入れ条件)**: `codec === 'copy'` のときフォームの下に `data-testid="clips-copy-note"` の注記を出す — 「無劣化 (copy) はキーフレーム単位で切るため、指定した秒数より前後することがあります。厳密に指定したいときは『再エンコード (h264)』を選んでください」。`h264` に切り替えると非表示になる (`copy` が既定のため、既定表示)。
 
 #### §2.8.2 実行不可ノート / 試合外ノート
 
@@ -1601,7 +1603,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | 状態 | 前者は `filePath === null` / `dirty` / 別ファイルの切り抜きが走行中 / 前後秒数が不正 のいずれか。後者は試合外イベントが 1 件以上のとき (§1.2: disabled 理由は必ず文言で出す)。別ファイル走行中のときは [中断] (`data-testid="clips-other-file-cancel"`) も出す |
 | 遷移トリガー | なし (表示専用) |
 | store mutation | なし |
-| 例外 / edge case | 理由文は優先順で 1 つだけ出す (sample mode → dirty → 別ファイル走行中 → 前後秒数の不正)。§1.2 の DisabledTooltip ではなく inline ノートにしたのは、行ごとの [⬦ 切り抜く] が複数あり、行ごとに tooltip を付けると重複するため。別ファイル走行中は `displayedStatus` を `idle` にし、前の run の進捗 / 結果は表示しない (indicators §2.7.11 と同じスコープ則) |
+| 例外 / edge case | 理由文は優先順で 1 つだけ出す (sample mode → dirty → 別ファイル走行中 → 前後秒数 / 束ねの不正)。§1.2 の DisabledTooltip ではなく inline ノートにしたのは、行ごとの [⬦ 切り抜く] が複数あり、行ごとに tooltip を付けると重複するため。別ファイル走行中は `displayedStatus` を `idle` にし、前の run の進捗 / 結果は表示しない (indicators §2.7.11 と同じスコープ則) |
 
 #### §2.8.3 候補行 ([この範囲を確認] / [⬦ 切り抜く])
 
@@ -1613,12 +1615,12 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | store mutation | `appStateStore.setClipRange` / `setPendingSeekSeconds` / `openPreviewFor`、または `clipsStore.start()` |
 | 例外 / edge case | 時刻は両方とも `hh:mm:ss` (1 秒切り捨て、出所は `utils/time.ts` の `fmtClockTime`)。`clipRange` の終端は `start` より前にならず、`start` は 0 秒でクランプする。試合区間へのクランプと近接イベントの束ねは `planClipWindows()` が担う (§2.8 ヘッダ)。`clipRange.matchIndex` はクリップ範囲の調整画面 (§2.4.18) のスコープキーで、別の試合を開くと試合境界のエディタに戻る。ボタンの可視名は `KO 00:08:13 の範囲をプレビューで確認` / `KO 00:08:13 を切り抜く` |
 
-#### §2.8.4 前後秒数の検証エラー
+#### §2.8.4 前後秒数 / 束ねの検証エラー
 
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | `role="alert"` のフィールドエラー (`data-testid="clips-margins-error"`) |
-| 状態 | `validateMargins()` が非 null を返したときのみ。入力変更で null に戻す |
+| 状態 | `validateMargins()` または `validateGap()` が非 null を返したときのみ。入力変更で null に戻す |
 | 遷移トリガー | [この範囲を確認] のクリックで検証し、不正なら `start()` も遷移もせずにここに出す |
 | store mutation | なし |
 | 例外 / edge case | [⬦ 切り抜く] は同じ条件で disabled になる (§2.8.2) ため、ここに出るのは実質「範囲確認」のクリック経路。二重の防御だが、disabled の理由表示だけでなく操作結果としてもフィードバックを返す |

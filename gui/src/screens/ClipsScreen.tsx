@@ -242,6 +242,22 @@ export function parseMargins(
 }
 
 /**
+ * 束ね幅 (`--gap`) の client-side 検証。CLI は 0 以上の有限値しか受け付けない。
+ * 問題なければ null。
+ */
+export function validateGap(gapText: string): string | null {
+  if (!SECONDS_RE.test(gapText.trim())) {
+    return '束ね は 0 以上の秒数で入力してください (例: 5)';
+  }
+  return null;
+}
+
+/** 表示用の寛容なパース。入力途中は 0 として扱う (実行時は `validateGap` が先に弾く)。 */
+function parseGapSafe(gapText: string): number {
+  return SECONDS_RE.test(gapText.trim()) ? Number(gapText.trim()) : 0;
+}
+
+/**
  * 表示用の寛容なパース。入力途中 (`""` / `"-"` など) でも行の表示を壊さないよう、
  * 不正値は 0 として扱う (実行時は `validateMargins` が先に弾く)。
  */
@@ -281,6 +297,8 @@ export function ClipsScreen() {
 
   const [preText, setPreText] = useState(String(DEFAULT_MARGIN_SECONDS));
   const [postText, setPostText] = useState(String(DEFAULT_MARGIN_SECONDS));
+  // #1131 受け入れ条件: 束ね幅 (CLI `--gap`) も GUI から変えられる。
+  const [gapText, setGapText] = useState(String(DEFAULT_GAP_SECONDS));
   const [codec, setCodec] = useState<'copy' | 'h264'>('copy');
   const [marginsError, setMarginsError] = useState<string | null>(null);
   /** 直近の実行対象 (上書き再実行のために覚えておく)。 */
@@ -336,22 +354,29 @@ export function ClipsScreen() {
   const canOverwriteRetry =
     displayedStatus === 'error' && isAlreadyExistsError(error?.message);
 
-  const margins = validateMargins(preText, postText);
+  const formError =
+    validateMargins(preText, postText) ?? validateGap(gapText);
   const runDisabledReason = isSample
     ? 'サンプル動画では切り抜きを実行できません'
     : dirty
       ? '未適用の編集があります。先に [適用] してから切り抜いてください'
       : runningElsewhere
         ? '別の動画の切り抜きが進行中です。完了を待つか [中断] で停止してください'
-        : margins;
+        : formError;
   const runDisabled = runDisabledReason !== null && displayedStatus !== 'running';
 
   // 実際に書き出される区間 (CLI の `plan_clips` + クランプの鏡)。
   // pre / post を編集したら再計算するので、表示とプレビューが常に一致する。
   const windows = useMemo(() => {
     const { pre, post } = parseMarginsSafe(preText, postText);
-    return planClipWindows(allEvents, metadata?.matches ?? [], pre, post);
-  }, [allEvents, metadata, preText, postText]);
+    return planClipWindows(
+      allEvents,
+      metadata?.matches ?? [],
+      pre,
+      post,
+      parseGapSafe(gapText),
+    );
+  }, [allEvents, metadata, preText, postText, gapText]);
 
   /** 行の「実際の区間」。クランプの結果 0 幅なら null (クリップにならない)。 */
   function windowFor(position: number): { start: number; end: number } | null {
@@ -376,7 +401,8 @@ export function ClipsScreen() {
       // ボタンは disabled だが、再実行ボタン経由の呼び出しもここで止める。
       return;
     }
-    const message = validateMargins(preText, postText);
+    const message =
+      validateMargins(preText, postText) ?? validateGap(gapText);
     setMarginsError(message);
     if (message !== null) return;
 
@@ -404,11 +430,13 @@ export function ClipsScreen() {
     }
 
     const { pre, post } = parseMargins(preText, postText);
+    const gap = Number(gapText.trim());
     setLastPosition(position);
     const request: ClipsRequest = {
       metadataPath: path,
       pre,
       post,
+      gap,
       codec,
       eventIndexes: [position],
       overwrite,
@@ -425,7 +453,8 @@ export function ClipsScreen() {
 
   /** 行の [この範囲を確認] — 実際に書かれる区間を積んで preview へ。 */
   function confirmRange(candidate: ClipCandidate): void {
-    const message = validateMargins(preText, postText);
+    const message =
+      validateMargins(preText, postText) ?? validateGap(gapText);
     setMarginsError(message);
     if (message !== null) return;
     const range = windowFor(candidate.position);
@@ -522,6 +551,20 @@ export function ClipsScreen() {
             />
           </label>
           <label className={styles.controlField}>
+            <span>束ね (秒)</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={gapText}
+              aria-label="束ね (秒)"
+              onChange={(e) => {
+                setGapText(e.target.value);
+                setMarginsError(null);
+              }}
+            />
+          </label>
+          <label className={styles.controlField}>
             <span>形式</span>
             <select
               value={codec}
@@ -533,6 +576,12 @@ export function ClipsScreen() {
             </select>
           </label>
         </div>
+        {codec === 'copy' && (
+          <div className={styles.copyNote} data-testid="clips-copy-note">
+            無劣化 (copy) はキーフレーム単位で切るため、指定した秒数より前後することがあります。
+            厳密に指定したいときは「再エンコード (h264)」を選んでください。
+          </div>
+        )}
         {marginsError !== null && (
           <div className={styles.fieldError} role="alert" data-testid="clips-margins-error">
             {marginsError}
