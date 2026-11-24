@@ -489,7 +489,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 状態 | `displayOnly`。`progress` (0-100) を四捨五入で表示 |
 | 遷移トリガー | local state `progress` 変化 (Phase 2 dummy interval、Phase 2.5 で CLI 進捗イベント) |
 | store mutation | なし |
-| 例外 / edge case | Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で `progressTiming` 行を経過時間 (`fmtElapsed(elapsed)`) と簡易 ETA (`computeEta(percent, elapsed)` の線形外挿、進捗 0% / 100% 付近では非表示) に差し替え済 |
+| 例外 / edge case | Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で `progressTiming` 行を経過時間 (`fmtElapsed(elapsed)`) と簡易 ETA (`computeEta(percent, elapsed)` の線形外挿、進捗 0% / 100% 付近では非表示) に差し替え済。**#1141: `phase === "indicators"` の間は外挿を使わず CLI の `eta_s` をそのまま表示する**（全体 progress は indicators 帯 97-99% に張り付くため、外挿は時刻に関わらず「残り ~0:01」になる）。`eta_s` 未受信の間は残り時間を出さない |
 
 #### §2.2.4 PhaseRow.Detecting (粗スキャン)
 
@@ -517,7 +517,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | --- | --- |
 | 種類 | progress bar ([DetectingScreen.tsx](../gui/src/screens/DetectingScreen.tsx) の 3 個目の `PhaseRow`、`<PhaseRow name="Indicators" jp="KO / ASSIST" …>` = `data-testid="phase-row-indicators"`) |
 | 状態 | `detectionParams.indicators` が true の run で表示する (**既定 ON**)。OFF の run では非表示 (「待機 0%」のバーを残すと誤解を生むため) |
-| 遷移トリガー | CLI の `phase: "indicators"` イベントの **`completed` / `total`（走査済み秒 / 総尺秒）比**で描く（全体 progress から導出しない）。理由: `PHASE_WINDOWS.cache_hit` が全体を 99% に貼り付けるため、cache hit した run では差分の 97-99 帯が潰れて「走査を飛ばした」ように見える。`writing_metadata` で 100% に揃える（走査が走らなかった失敗時は 0 のまま）。`eta_s` はログ行 (§2.2.6) に `残り ~mm:ss` として出す |
+| 遷移トリガー | CLI の `phase: "indicators"` イベントの **`completed` / `total`（走査済み秒 / 総尺秒）比**で描く（全体 progress から導出しない）。理由: `PHASE_WINDOWS.cache_hit` が全体を 99% に貼り付けるため、cache hit した run では差分の 97-99 帯が潰れて「走査を飛ばした」ように見える。`writing_metadata` で 100% に揃える（走査が走らなかった失敗時は 0 のまま）。`eta_s` はログ行 (§2.2.6) と progressBadge の残り時間 (§2.2.3) の両方に `残り ~mm:ss` として出す |
 | store mutation | なし |
 | 例外 / edge case | 検出を要求しても走査が走らない (キャリブレーション失敗) 場合、CLI は `phase: "indicators"` を 1 行も出さずに完了する。バーは 0% のまま `done` に至るが、`metadata.json` の `warnings[]` に `indicators_failed` が残り、完了画面は境界を表示する。**検知キャッシュ hit + 既存 metadata に結果があるときは走査を省き**、CLI が `completed == total` の `indicators` イベントを 1 回出すのでバーは即 100% になり、ログに `KO / ASSIST 走査: …` ではなく `KO / ASSIST: 既存の検出結果を再利用しました (N 件)`（人間向け）が出る |
 

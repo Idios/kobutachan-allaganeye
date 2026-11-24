@@ -246,6 +246,32 @@ describe('DetectingScreen', () => {
       expect(row.textContent).toContain('50%');
     });
 
+    it('shows the CLI-reported ETA on the badge, not the overall-progress estimate', async () => {
+      // 全体 progress は indicators 帯 (97-99%) に張り付くため、そこからの
+      // 外挿は常に「残り ~0:01」になる。バッジはログ行と同じ `eta_s` を使う。
+      invokeMock.mockImplementation((cmd) => {
+        if (cmd === 'start_detect') {
+          return new Promise(() => {
+            /* never resolves */
+          });
+        }
+        return Promise.resolve(null);
+      });
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(listenMock).toHaveBeenCalled();
+      });
+      act(() => {
+        emitDetectProgress({
+          phase: 'indicators',
+          completed: 900,
+          total: 1800,
+          eta_s: 6,
+        });
+      });
+      expect(screen.getByTestId('detect-timing')).toHaveTextContent('残り ~00:06');
+    });
+
     it('forwards the indicators flag to start_detect', async () => {
       render(<DetectingScreen />);
       await waitFor(() => {

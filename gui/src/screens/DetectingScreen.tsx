@@ -468,6 +468,10 @@ function DetectingRunningView({
   // cache_hit が全体を 99% に貼り付けるため (`PHASE_WINDOWS.cache_hit: [0, 99]`)、
   // 差分の 97-99 帯では 3 段目が即 100% になって「走査を飛ばした」ように見えるから。
   const [indicatorPct, setIndicatorPct] = useState(0);
+  // #1141 -- 走査中に CLI が報告した推定残り秒 (`eta_s`)。全体 progress からの
+  // 外挿 (computeEta) は indicators 帯 (97-99%) では 1%-3% 分しか残らない計算に
+  // なり、常に「残り ~0:01」に張り付く。記録値をそのまま使う (ログ行と同じ値)。
+  const [indicatorEta, setIndicatorEta] = useState<number | null>(null);
   // Captured once on first mount via lazy initialiser so log entries
   // can compute their relative timestamp inside render. The parent
   // remounts this component (via `key={runCount}`) on retry, so a new
@@ -567,6 +571,9 @@ function DetectingRunningView({
                 setIndicatorPct(
                   Math.min(100, ((payload.completed ?? 0) / total) * 100),
                 );
+              }
+              if (typeof payload.eta_s === 'number') {
+                setIndicatorEta(payload.eta_s);
               }
             } else if (payload.phase === 'writing_metadata') {
               setIndicatorPct((prev) => (prev > 0 ? 100 : prev));
@@ -699,7 +706,11 @@ function DetectingRunningView({
             ),
           );
 
-  const eta = computeEta(progress, elapsed);
+  // #1141 -- indicators 中は CLI の `eta_s` をそのまま出す (ログ行と一致)。
+  // `eta_s` がまだ来ていない間は残り時間を出さない（全体 progress からの
+  // 外挿は 97-99% 帯で「残り ~0:01」に張り付くため、誤った値を出さない）。
+  const eta =
+    phaseLabel === 'indicators' ? indicatorEta : computeEta(progress, elapsed);
   // #569 review Round 1 課題 1: probing event 受信後は実 ffprobe 結果を
   // 表示。受信前 (起動直後の数百 ms) は暫定で `phase: ...` を出して
   // 「meta 行が空」状態を回避する。
@@ -727,7 +738,7 @@ function DetectingRunningView({
         </div>
         <div className={styles.progressBadge}>
           <div className={styles.progressNum}>{Math.round(progress)}%</div>
-          <div className={styles.progressTiming}>
+          <div className={styles.progressTiming} data-testid="detect-timing">
             経過 {fmtElapsed(elapsed)}
             {eta !== null && ` · 残り ~${fmtElapsed(eta)}`}
           </div>
