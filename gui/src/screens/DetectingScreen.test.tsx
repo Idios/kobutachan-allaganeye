@@ -270,6 +270,14 @@ describe('DetectingScreen', () => {
         });
       });
       expect(screen.getByTestId('detect-timing')).toHaveTextContent('残り ~00:06');
+      // ログ行とバッジで同じ値を使う (以前はログ 0:06 / バッジ 0:01 に割れていた)。
+      expect(screen.getByRole('log')).toHaveTextContent('残り ~00:06');
+
+      // 別 phase に移ったら indicators で受けた値を流用しない。
+      act(() => {
+        emitDetectProgress({ phase: 'writing_metadata' });
+      });
+      expect(screen.getByTestId('detect-timing')).not.toHaveTextContent('~00:06');
     });
 
     it('forwards the indicators flag to start_detect', async () => {
