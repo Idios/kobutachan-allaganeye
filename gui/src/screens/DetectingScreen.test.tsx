@@ -25,6 +25,7 @@ import {
   computeOverallPercent,
   computeEta,
   PHASE_WINDOWS,
+  selectEta,
 } from './DetectingScreen';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
@@ -123,10 +124,174 @@ describe('DetectingScreen', () => {
     expect(screen.getByText('test.mkv')).toBeInTheDocument();
   });
 
-  it('renders the 2 phase rows (Detecting / Refining)', () => {
+  it('renders the 3 phase rows (Detecting / Refining / Indicators)', () => {
     render(<DetectingScreen />);
     expect(screen.getByText('Detecting')).toBeInTheDocument();
     expect(screen.getByText('Refining')).toBeInTheDocument();
+    // #1141 -- 既定 ON なので KO / ASSIST の行も出る。
+    expect(screen.getByTestId('phase-row-indicators')).toBeInTheDocument();
+  });
+
+  it('hides the indicators row when the stage is turned off (#1141)', () => {
+    useAppStateStore.getState().setDetectionParams({ indicators: false });
+    render(<DetectingScreen />);
+    expect(screen.queryByTestId('phase-row-indicators')).toBeNull();
+  });
+
+  // #1141 -- KO / ASSIST 統合。要求したランでは 3 段目 (indicators) を出し、
+  // 走査の進捗と ETA を表示する。
+  describe('indicators phase (#1141)', () => {
+    it('buildLogText summarises the scan and carries the ETA', () => {
+      const entry = buildLogText({
+        phase: 'indicators',
+        completed: 900,
+        total: 1800,
+        eta_s: 12,
+      });
+      expect(entry?.text).toContain('KO / ASSIST');
+      expect(entry?.text).toContain('1800s');
+      expect(entry?.text).toContain('残り');
+    });
+
+    it('maps the phase inside the pre-write window', () => {
+      const start = computeOverallPercent({
+        phase: 'indicators',
+        completed: 0,
+        total: 1800,
+      });
+      expect(start).toBe(PHASE_WINDOWS.indicators[0]);
+      const mid = computeOverallPercent({
+        phase: 'indicators',
+        completed: 900,
+        total: 1800,
+      });
+      expect(mid).toBeGreaterThan(start);
+      expect(mid).toBeLessThan(PHASE_WINDOWS.indicators[1]);
+    });
+
+    it('keeps the third row on its own progress after a cache hit', async () => {
+      // cache_hit は全体 progress を 99% に貼り付ける (PHASE_WINDOWS)。
+      // 3 段目を全体 progress から導出すると即 100% になり「走査を飛ばした」
+      // ように見えるため、indicators イベントの ratio で描く (#1141)。
+      invokeMock.mockImplementation((cmd) => {
+        if (cmd === 'start_detect') {
+          return new Promise(() => {
+            /* never resolves */
+          });
+        }
+        return Promise.resolve(null);
+      });
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(listenMock).toHaveBeenCalled();
+      });
+      act(() => {
+        emitDetectProgress({ phase: 'cache_hit', boundaries: 1 });
+      });
+      act(() => {
+        emitDetectProgress({ phase: 'indicators', completed: 900, total: 1800 });
+      });
+      const row = screen.getByTestId('phase-row-indicators');
+      expect(row.textContent).toContain('50%');
+      expect(row.textContent).not.toContain('100%');
+    });
+
+    it('completes the third row when the metadata write starts', async () => {
+      invokeMock.mockImplementation((cmd) => {
+        if (cmd === 'start_detect') {
+          return new Promise(() => {
+            /* never resolves */
+          });
+        }
+        return Promise.resolve(null);
+      });
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(listenMock).toHaveBeenCalled();
+      });
+      act(() => {
+        emitDetectProgress({ phase: 'indicators', completed: 930, total: 944 });
+      });
+      act(() => {
+        emitDetectProgress({ phase: 'writing_metadata' });
+      });
+      expect(
+        screen.getByTestId('phase-row-indicators').textContent,
+      ).toContain('100%');
+    });
+
+    it('shows a third row with progress', async () => {
+      // start_detect を未解決のままにして、進捗バーが 100% に飛ぶのを防ぐ。
+      invokeMock.mockImplementation((cmd) => {
+        if (cmd === 'start_detect') {
+          return new Promise(() => {
+            /* never resolves */
+          });
+        }
+        return Promise.resolve(null);
+      });
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(listenMock).toHaveBeenCalled();
+      });
+      act(() => {
+        emitDetectProgress({
+          phase: 'indicators',
+          completed: 900,
+          total: 1800,
+          eta_s: 12,
+        });
+      });
+      const row = screen.getByTestId('phase-row-indicators');
+      expect(row.textContent).toContain('KO / ASSIST');
+      expect(row.textContent).toContain('50%');
+    });
+
+    it('shows the CLI-reported ETA on the badge, not the overall-progress estimate', async () => {
+      // 全体 progress は indicators 帯 (97-99%) に張り付くため、そこからの
+      // 外挿は常に「残り ~0:01」になる。バッジはログ行と同じ `eta_s` を使う。
+      invokeMock.mockImplementation((cmd) => {
+        if (cmd === 'start_detect') {
+          return new Promise(() => {
+            /* never resolves */
+          });
+        }
+        return Promise.resolve(null);
+      });
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(listenMock).toHaveBeenCalled();
+      });
+      act(() => {
+        emitDetectProgress({
+          phase: 'indicators',
+          completed: 900,
+          total: 1800,
+          eta_s: 6,
+        });
+      });
+      expect(screen.getByTestId('detect-timing')).toHaveTextContent('残り ~00:06');
+      // ログ行とバッジで同じ値を使う (以前はログ 0:06 / バッジ 0:01 に割れていた)。
+      expect(screen.getByRole('log')).toHaveTextContent('残り ~00:06');
+
+      // 別 phase に移ったら indicators で受けた値を流用しない。
+      act(() => {
+        emitDetectProgress({ phase: 'writing_metadata' });
+      });
+      expect(screen.getByTestId('detect-timing')).not.toHaveTextContent('~00:06');
+    });
+
+    it('forwards the indicators flag to start_detect', async () => {
+      render(<DetectingScreen />);
+      await waitFor(() => {
+        expect(invokeMock).toHaveBeenCalledWith(
+          'start_detect',
+          expect.objectContaining({
+            params: expect.objectContaining({ indicators: true }),
+          }),
+        );
+      });
+    });
   });
 
   it('invokes start_detect with the derived output dir on mount', async () => {
@@ -159,6 +324,8 @@ describe('DetectingScreen', () => {
             blackoutThreshold: 22,
             workers: 8,
             gpu: false,
+            // #1141 -- 既定 ON なので常に明示送信される。
+            indicators: true,
           },
         }),
       );
@@ -1085,6 +1252,50 @@ describe('DetectingScreen helpers', () => {
   it('computeEta extrapolates remaining time from elapsed and percent', () => {
     // 25% in 10s -> 30s remaining (total 40s, elapsed 10s).
     expect(computeEta(25, 10)).toBeCloseTo(30);
+  });
+
+  // #1141 -- バッジの ETA 選択。indicators は全体 % が 97-99% に圧縮される
+  // ため、外挿を絶対に使わない (ログ行と同じ報告値を優先)。
+  describe('selectEta (#1141)', () => {
+    it('prefers the ETA reported for the current phase', () => {
+      expect(
+        selectEta({
+          phaseLabel: 'indicators',
+          reported: { phase: 'indicators', seconds: 6 },
+          progress: 98,
+          elapsed: 60,
+        }),
+      ).toBe(6);
+    });
+
+    it('never extrapolates during indicators before eta_s arrives', () => {
+      // 97-99% 帯からの外挿は 60 秒経過でも ~1 秒になる。出さないのが正。
+      expect(
+        selectEta({
+          phaseLabel: 'indicators',
+          reported: null,
+          progress: 98,
+          elapsed: 60,
+        }),
+      ).toBeNull();
+    });
+
+    it('ignores a report that belongs to another phase', () => {
+      expect(
+        selectEta({
+          phaseLabel: 'scan',
+          reported: { phase: 'indicators', seconds: 6 },
+          progress: 25,
+          elapsed: 10,
+        }),
+      ).toBeCloseTo(30);
+    });
+
+    it('falls back to the extrapolation for other phases', () => {
+      expect(
+        selectEta({ phaseLabel: 'scan', reported: null, progress: 25, elapsed: 10 }),
+      ).toBeCloseTo(30);
+    });
   });
 
   it('buildLogText skips chatty intra-scan updates', () => {

@@ -53,6 +53,88 @@ const SECONDS_RE = /^\d+(\.\d+)?$/;
 /** CLI が既存出力を拒否したときの文言 (allaganeye/commands/clips.py)。 */
 const ALREADY_EXISTS_MARKER = 'already exist';
 
+/** 切り抜き候補が 0 件のときの理由 (#1141)。 */
+export type ClipEmptyReason =
+  | 'indicator-failed'
+  | 'indicator-skipped'
+  | 'not-scanned'
+  | 'no-events'
+  | 'no-usable-events';
+
+export interface ClipEmptyState {
+  reason: ClipEmptyReason;
+  message: string;
+  /** 補足 (失敗理由 / OFF の可能性等)。表示しないときは null。 */
+  detail: string | null;
+  /** 次の行動を促すボタンの可視名 (`isSample` のときは描画しない)。 */
+  actionLabel: string;
+}
+
+/**
+ * 候補 0 件の原因を 1 つに潰さず切り分ける (#1141)。
+ *
+ * 「イベントが無い」には ① 検出が失敗した ② 詳細設定で OFF のまま検出した
+ * ③ まだ検出していない ④ 検出したが 0 件 ⑤ 検出したが全部使えない
+ * の 5 通りがあり、どれも「先に KO / ASSIST を検出してください」では誤誘導になる
+ * (②③ は詳細設定の場所、① は失敗の事実を伝える必要がある)。
+ */
+export function describeEmptyCandidates(args: {
+  /** `metadata.events` が配列として存在するか (キー欠落と空配列を区別する)。 */
+  eventsKeyPresent: boolean;
+  eventCount: number;
+  indicatorStatus: 'detected' | 'skipped' | 'failed' | null;
+  /** `warnings[]` の `indicators_failed.context.error` (あれば)。 */
+  failureDetail: string | null;
+}): ClipEmptyState {
+  const {
+    eventsKeyPresent,
+    eventCount,
+    indicatorStatus,
+    failureDetail,
+  } = args;
+  if (!eventsKeyPresent && indicatorStatus === 'failed') {
+    return {
+      reason: 'indicator-failed',
+      message: 'KO / ASSIST の検出に失敗しました（試合の分割は完了しています）。',
+      detail: failureDetail,
+      actionLabel: '⬦ KO / ASSIST を検出',
+    };
+  }
+  if (!eventsKeyPresent && indicatorStatus === 'skipped') {
+    return {
+      reason: 'indicator-skipped',
+      message:
+        '詳細設定で KO / ASSIST 検出を OFF のまま検出したため、イベントがありません。',
+      detail: 'ここから検出すると metadata.json に結果が書き込まれます。',
+      actionLabel: '⬦ KO / ASSIST を検出',
+    };
+  }
+  if (!eventsKeyPresent) {
+    return {
+      reason: 'not-scanned',
+      message: 'まだ KO / ASSIST を検出していません。',
+      detail:
+        'この metadata.json は KO / ASSIST の結果を持っていません（詳細設定で OFF のまま検出した場合もここに出ます）。',
+      actionLabel: '⬦ KO / ASSIST を検出',
+    };
+  }
+  if (eventCount === 0) {
+    return {
+      reason: 'no-events',
+      message: 'KO / ASSIST は検出されませんでした（0 件）。',
+      detail:
+        '戦意値ゲージが映っていない区間だけだった可能性があります。再検出できます。',
+      actionLabel: '⬦ KO / ASSIST を再検出',
+    };
+  }
+  return {
+    reason: 'no-usable-events',
+    message: '切り抜ける KO / ASSIST がありません。',
+    detail: '検出されたイベントはすべて試合区間の外か、未対応の種類です。',
+    actionLabel: '⬦ KO / ASSIST の一覧を見る',
+  };
+}
+
 // ── Pure helpers (exported for tests) ───────────────────────────────────────
 
 export interface ClipCandidate {
@@ -160,6 +242,22 @@ export function parseMargins(
 }
 
 /**
+ * 束ね幅 (`--gap`) の client-side 検証。CLI は 0 以上の有限値しか受け付けない。
+ * 問題なければ null。
+ */
+export function validateGap(gapText: string): string | null {
+  if (!SECONDS_RE.test(gapText.trim())) {
+    return '束ね は 0 以上の秒数で入力してください (例: 5)';
+  }
+  return null;
+}
+
+/** 表示用の寛容なパース。入力途中は 0 として扱う (実行時は `validateGap` が先に弾く)。 */
+function parseGapSafe(gapText: string): number {
+  return SECONDS_RE.test(gapText.trim()) ? Number(gapText.trim()) : 0;
+}
+
+/**
  * 表示用の寛容なパース。入力途中 (`""` / `"-"` など) でも行の表示を壊さないよう、
  * 不正値は 0 として扱う (実行時は `validateMargins` が先に弾く)。
  */
@@ -199,6 +297,8 @@ export function ClipsScreen() {
 
   const [preText, setPreText] = useState(String(DEFAULT_MARGIN_SECONDS));
   const [postText, setPostText] = useState(String(DEFAULT_MARGIN_SECONDS));
+  // #1131 受け入れ条件: 束ね幅 (CLI `--gap`) も GUI から変えられる。
+  const [gapText, setGapText] = useState(String(DEFAULT_GAP_SECONDS));
   const [codec, setCodec] = useState<'copy' | 'h264'>('copy');
   const [marginsError, setMarginsError] = useState<string | null>(null);
   /** 直近の実行対象 (上書き再実行のために覚えておく)。 */
@@ -222,11 +322,31 @@ export function ClipsScreen() {
     ).length;
   }, [allEvents]);
 
-  // 走行中の run が別ファイル向けなら、その進捗は見せない (indicators と同じ規則)。
+  // #1141 -- 候補 0 件の理由を切り分ける材料。`indicator_status` はこの
+  // フィールドを書く writer (0.4.0+) の metadata にだけ入る。
+  const indicatorStatus = metadata?.indicator_status ?? null;
+  const eventsKeyPresent = Array.isArray(allEvents);
+  const indicatorWarning = (metadata?.warnings ?? []).find(
+    (warning) => warning.code === 'indicators_failed',
+  );
+  const indicatorFailureDetail =
+    typeof indicatorWarning?.context?.error === 'string'
+      ? indicatorWarning.context.error
+      : null;
+  const emptyState = describeEmptyCandidates({
+    eventsKeyPresent,
+    eventCount: allEvents?.length ?? 0,
+    indicatorStatus,
+    failureDetail: indicatorFailureDetail,
+  });
+
+  // 走行中の run が別ファイル向けなら、その進捗も結果も見せない (§2.8.0 前提 4)。
+  // 画面は idle 扱いにし、[⬦ 切り抜く] を disabled + 理由 + [中断] で逃げ道を出す
+  // (indicators の §2.7.11 と同じ規則)。
   const runIsForThisFile =
     runMetadataPath !== null && runMetadataPath === filePath;
-  const displayedStatus =
-    status === 'running' ? 'running' : runIsForThisFile ? status : 'idle';
+  const runningElsewhere = status === 'running' && !runIsForThisFile;
+  const displayedStatus = runIsForThisFile ? status : 'idle';
   const cancelled =
     displayedStatus === 'error' && error?.code === 'subprocess.cancelled';
   // 「既存出力あり」で止まったときだけ上書き再実行を出す (それ以外の exit 5 は
@@ -234,22 +354,29 @@ export function ClipsScreen() {
   const canOverwriteRetry =
     displayedStatus === 'error' && isAlreadyExistsError(error?.message);
 
-  const margins = validateMargins(preText, postText);
+  const formError =
+    validateMargins(preText, postText) ?? validateGap(gapText);
   const runDisabledReason = isSample
     ? 'サンプル動画では切り抜きを実行できません'
     : dirty
       ? '未適用の編集があります。先に [適用] してから切り抜いてください'
-      : margins !== null
-        ? margins
-        : null;
+      : runningElsewhere
+        ? '別の動画の切り抜きが進行中です。完了を待つか [中断] で停止してください'
+        : formError;
   const runDisabled = runDisabledReason !== null && displayedStatus !== 'running';
 
   // 実際に書き出される区間 (CLI の `plan_clips` + クランプの鏡)。
   // pre / post を編集したら再計算するので、表示とプレビューが常に一致する。
   const windows = useMemo(() => {
     const { pre, post } = parseMarginsSafe(preText, postText);
-    return planClipWindows(allEvents, metadata?.matches ?? [], pre, post);
-  }, [allEvents, metadata, preText, postText]);
+    return planClipWindows(
+      allEvents,
+      metadata?.matches ?? [],
+      pre,
+      post,
+      parseGapSafe(gapText),
+    );
+  }, [allEvents, metadata, preText, postText, gapText]);
 
   /** 行の「実際の区間」。クランプの結果 0 幅なら null (クリップにならない)。 */
   function windowFor(position: number): { start: number; end: number } | null {
@@ -274,7 +401,8 @@ export function ClipsScreen() {
       // ボタンは disabled だが、再実行ボタン経由の呼び出しもここで止める。
       return;
     }
-    const message = validateMargins(preText, postText);
+    const message =
+      validateMargins(preText, postText) ?? validateGap(gapText);
     setMarginsError(message);
     if (message !== null) return;
 
@@ -302,11 +430,13 @@ export function ClipsScreen() {
     }
 
     const { pre, post } = parseMargins(preText, postText);
+    const gap = Number(gapText.trim());
     setLastPosition(position);
     const request: ClipsRequest = {
       metadataPath: path,
       pre,
       post,
+      gap,
       codec,
       eventIndexes: [position],
       overwrite,
@@ -323,7 +453,8 @@ export function ClipsScreen() {
 
   /** 行の [この範囲を確認] — 実際に書かれる区間を積んで preview へ。 */
   function confirmRange(candidate: ClipCandidate): void {
-    const message = validateMargins(preText, postText);
+    const message =
+      validateMargins(preText, postText) ?? validateGap(gapText);
     setMarginsError(message);
     if (message !== null) return;
     const range = windowFor(candidate.position);
@@ -420,6 +551,20 @@ export function ClipsScreen() {
             />
           </label>
           <label className={styles.controlField}>
+            <span>束ね (秒)</span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={gapText}
+              aria-label="束ね (秒)"
+              onChange={(e) => {
+                setGapText(e.target.value);
+                setMarginsError(null);
+              }}
+            />
+          </label>
+          <label className={styles.controlField}>
             <span>形式</span>
             <select
               value={codec}
@@ -431,6 +576,12 @@ export function ClipsScreen() {
             </select>
           </label>
         </div>
+        {codec === 'copy' && (
+          <div className={styles.copyNote} data-testid="clips-copy-note">
+            無劣化 (copy) はキーフレーム単位で切るため、指定した秒数より前後することがあります。
+            厳密に指定したいときは「再エンコード (h264)」を選んでください。
+          </div>
+        )}
         {marginsError !== null && (
           <div className={styles.fieldError} role="alert" data-testid="clips-margins-error">
             {marginsError}
@@ -440,6 +591,16 @@ export function ClipsScreen() {
           <div className={styles.note} role="status" data-testid="clips-run-disabled">
             {runDisabledReason}
           </div>
+        )}
+        {runningElsewhere && (
+          <button
+            type="button"
+            className={styles.cancelButton}
+            onClick={cancel}
+            data-testid="clips-other-file-cancel"
+          >
+            中断
+          </button>
         )}
         {outsideCount > 0 && (
           <div className={styles.note} data-testid="clips-outside-note">
@@ -533,16 +694,25 @@ export function ClipsScreen() {
 
         {candidates.length === 0 ? (
           <div className={styles.emptyBlock}>
-            <div className={styles.emptyNote} data-testid="clips-empty">
-              KO / ASSIST のイベントがありません。先に KO / ASSIST を検出してください。
+            <div
+              className={styles.emptyNote}
+              data-testid="clips-empty"
+              data-reason={emptyState.reason}
+            >
+              {emptyState.message}
             </div>
+            {emptyState.detail !== null && (
+              <div className={styles.note} data-testid="clips-empty-detail">
+                {emptyState.detail}
+              </div>
+            )}
             {!isSample && (
               <button
                 type="button"
                 className={styles.secondaryButton}
                 onClick={() => navigate('indicators')}
               >
-                ⬦ KO / ASSIST を検出
+                {emptyState.actionLabel}
               </button>
             )}
           </div>

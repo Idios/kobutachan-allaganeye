@@ -46,6 +46,7 @@ EXPECTED_IDS = {
     "path-refs",
     "metadata-schema",
     "indicator-events",
+    "indicator-status",
     "version-locations",
     "error-hints",
     "shipped-commands",

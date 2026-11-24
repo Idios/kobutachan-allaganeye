@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import Any, TypedDict, cast
 
 import typer
 from click._termui_impl import ProgressBar as _ClickProgressBar  # subclass 用 (#365)
@@ -22,8 +22,19 @@ from allaganeye.audio.matcher import BgmHit
 from allaganeye.config import SplitConfig
 from allaganeye.detection.format import (
     format_duration as _format_duration,
+    format_indicator_summary,
     format_timestamp as _format_timestamp,
     iso_utc_now as _iso_utc_now,
+)
+from allaganeye.detection.indicator_stage import (
+    INDICATOR_STATUS_SKIPPED,
+    IndicatorStatus,
+    StageNotice,
+    _sanitize_highlight_events,
+    _sanitize_indicator_layout,
+    _sanitize_indicator_status,
+    attach_indicators,
+    reuse_indicators,
 )
 from allaganeye.detection.metadata_writer import (
     read_metadata,
@@ -166,6 +177,7 @@ def run_split(
     *,
     verbose: bool = False,
     quiet: bool = False,
+    indicators: bool = False,
 ) -> None:
     """Run the split pipeline: probe -> detect -> split.
 
@@ -173,6 +185,11 @@ def run_split(
     - Default: probe status, progress bar, match list, output files
     - ``verbose``: adds metadata details, gap info, interval adjustment
     - ``quiet``: suppresses all output except output file list
+
+    ``indicators`` (#1141) runs the KO / ASSIST stage between detection and the
+    metadata write, so boundaries and events land in **one** atomic write. The
+    kwarg defaults to ``False`` for internal callers; the **CLI default is on**
+    (``detection.indicator_stage.CLI_DEFAULT_INDICATORS``)。
     """
     show = not quiet
 
@@ -203,12 +220,72 @@ def run_split(
         metadata["duration"], config.sample_interval
     )
 
+    # #1141: 検知キャッシュが hit したときは、既存 metadata.json の KO / ASSIST
+    # 結果も再利用してよい (同じ動画・同じ出力先で前回成功している証拠)。
+    cache_hit_boundaries = False
+
+    def write_indicators_into(payload: dict[str, Any]) -> None:
+        """KO / ASSIST を metadata payload に足す (#1141 受け入れ条件 2 / 3)。
+
+        境界検出と同じ payload をその場で書き換えるので、atomic write は 1 回。
+        GPU は明示指定 (``--gpu``) のときだけ使う (``indicators --gpu`` と同じ
+        opt-in。end-to-end の利得は実測で約 4%)。失敗は warning に記録されて
+        戻るので、境界の結果は失われない。
+        """
+        if cache_hit_boundaries:
+            reused = reuse_indicators(
+                payload,
+                video=video_path,
+                metadata_path=config.output_dir / "metadata.json",
+            )
+            if reused is not None:
+                if show:
+                    typer.echo(
+                        f"KO / ASSIST: 既存の検出結果を再利用しました ({reused} 件)"
+                    )
+                return
+        if show:
+            typer.echo("\nDetecting KO / ASSIST indicators ...")
+        warning = attach_indicators(
+            payload,
+            source=video_path,
+            frame_size=(int(metadata["width"]), int(metadata["height"])),
+            duration=float(metadata["duration"]),
+            codec=metadata.get("codec"),
+            gpu=config.use_gpu is True,
+            notice=(lambda n: _display_indicator_notice(n, show=show, verbose=verbose)),
+            progress=(
+                lambda message: typer.echo(f"  {message}") if show and verbose else None
+            ),
+        )
+        if not show:
+            return
+        if warning is None:
+            events = payload.get("events")
+            if isinstance(events, list):
+                typer.echo(f"  {format_indicator_summary(events)}")
+        else:
+            typer.echo(
+                "  KO / ASSIST detection failed "
+                f"(recorded in warnings[]): {warning.get('context')}"
+            )
+
+    before_write: Callable[[dict[str, Any]], None] | None = (
+        write_indicators_into if indicators else None
+    )
+    # #1141: KO / ASSIST を無効にした実行は「未実行」と区別できるよう
+    # `indicator_status: "skipped"` を残す (docs/metadata-spec.md の
+    # indicator_status)。ON のときは before_write (attach / reuse) が
+    # detected / failed を書く。
+    indicator_status = None if indicators else INDICATOR_STATUS_SKIPPED
+
     # Check detection cache
     cache_path = config.output_dir / ".detection_cache.json"
     if not config.no_cache:
         hit = _load_cache_hit(cache_path, video_path, effective_interval, config)
         if hit is not None:
             boundaries = hit.boundaries
+            cache_hit_boundaries = True
             # Surface the detection context that the cached run used (#380).
             # Without this, verbose+cached prints only "Detected ... (cached)"
             # which strips the parameter summary users rely on for
@@ -257,6 +334,8 @@ def run_split(
                 masked_fallback_used=hit.masked_fallback_used,
                 capture_regions=hit.capture_regions,
                 quiet=quiet,
+                before_write=before_write,
+                indicator_status=indicator_status,
             )
             # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
             _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
@@ -425,6 +504,8 @@ def run_split(
         warnings=build_warnings(),
         capture_regions=captured_region,
         quiet=quiet,
+        before_write=before_write,
+        indicator_status=indicator_status,
     )
     # #805 段階2: MP4 化したのは active のみ (post_match は除外)。verbose の
     # split 件数は書き出した MP4 数を報告する。
@@ -599,6 +680,51 @@ def run_split_from_metadata(
         available_vendors=probe_gpu_vendors(),
         vendor_used=None,
     )
+
+    # #1141 -- `detect --indicators` が書いた `indicator_layout` / `events` を
+    # `--from-metadata` の再書き込みで失わない。本ランは再検知しないので元
+    # metadata が SSoT (#586 timing / #644 brightness / #805 warnings /
+    # #810 capture_regions と同じ preserve パターン)。
+    old_layout = payload.get("indicator_layout")
+    preserve_layout = (
+        _sanitize_indicator_layout(old_layout) if old_layout is not None else None
+    )
+    if old_layout is not None and preserve_layout is None:
+        # 壊れた 1 フィールドで metadata.json 全体を GUI が読めなくなるより、
+        # そのフィールドだけ落とす (capture_regions / warnings と同じ preserve 方針)。
+        logger.warning(
+            "Dropping malformed indicator_layout from %s "
+            "(shape validation failed -- field omitted from rewritten metadata)",
+            metadata_path,
+        )
+    old_events = payload.get("events")
+    preserve_events = (
+        _sanitize_highlight_events(old_events) if old_events is not None else None
+    )
+    if isinstance(old_events, list) and preserve_events is None:
+        logger.warning(
+            "Dropping malformed events from %s "
+            "(shape validation failed -- field omitted from rewritten metadata)",
+            metadata_path,
+        )
+
+    # #1141 -- `indicator_status` も同じ preserve パターン。本ランは走査しないので、
+    # 「未実行 / スキップ済み / 失敗 / 検出済み」の区別は元 metadata が SSoT。
+    old_status = payload.get("indicator_status")
+    preserve_status = _sanitize_indicator_status(old_status)
+    if old_status is not None and preserve_status is None:
+        logger.warning(
+            "Dropping unknown indicator_status from %s "
+            "(expected one of detected / skipped / failed -- field omitted)",
+            metadata_path,
+        )
+
+    def preserve_indicator_payload(target: dict[str, Any]) -> None:
+        if preserve_layout is not None:
+            target["indicator_layout"] = dict(preserve_layout)
+        if preserve_events is not None:
+            target["events"] = [dict(event) for event in preserve_events]
+
     split_start = time.monotonic()
     _split_and_write_metadata(
         source_path,
@@ -621,10 +747,37 @@ def run_split_from_metadata(
         warnings=preserve_warnings,
         capture_regions=preserve_capture_regions,
         quiet=quiet,
+        before_write=preserve_indicator_payload,
+        indicator_status=preserve_status,
     )
     # #805 段階2: MP4 化したのは active のみ (post_match は除外)。
     _emit_splitting_elapsed(split_start, len(active_boundaries), verbose, show)
     _emit_total_time(total_start, verbose, show)
+
+
+def _display_indicator_notice(
+    notice: StageNotice, *, show: bool, verbose: bool
+) -> None:
+    """KO / ASSIST 走査の途中経過を人間向けに出す (#1141)。
+
+    ``split`` には ``--progress-format json`` が無いので text だけ。走査の
+    進捗行は ``verbose`` のときだけ出す (2.8 時間の録画で 300 行を超えるため)。
+    """
+    if not show:
+        return
+    if notice.kind == "calibrating":
+        if verbose:
+            typer.echo("  resolving indicator layout ...")
+        return
+    if notice.kind != "progress" or not verbose:
+        return
+    suffix = (
+        f" [ETA {_format_timestamp(notice.eta_s)}]" if notice.eta_s is not None else ""
+    )
+    typer.echo(
+        f"  KO / ASSIST: {notice.processed_s or 0:.0f}s / "
+        f"{notice.total_s or 0:.0f}s{suffix}"
+    )
 
 
 def _display_results(
@@ -1522,6 +1675,8 @@ def _split_and_write_metadata(
     warnings: list[MetadataWarning] | None = None,
     capture_regions: CaptureRegions | None = None,
     quiet: bool = False,
+    before_write: Callable[[dict[str, Any]], None] | None = None,
+    indicator_status: IndicatorStatus | None = None,
 ) -> None:
     """Split video and write metadata.json (#591: system_info required).
 
@@ -1529,8 +1684,17 @@ def _split_and_write_metadata(
     optional. ``None`` means「本ランで取得」(started = detected_at の値、
     completed = writer 直前の ``_iso_utc_now()``)。``run_split`` /
     ``run_detect`` は新規検知なので両方 ``None`` を渡し fresh capture を
-    使う。``run_split_from_metadata`` は元 metadata の値を保持して GUI
+    ``run_split_from_metadata`` は元 metadata の値を保持して GUI
     「所要」が「検知時の所要」を表示し続けるよう、明示的に値を渡す。
+
+    ``before_write`` (#1141): payload を組んだ直後、``write_metadata_atomic``
+    の直前に呼ばれるフック。KO / ASSIST の検出結果を差し込むために使う
+    (境界とイベントを **1 回の atomic write** に載せるため、2 回目の write を
+    作らない)。引数の dict はその場で書き換えてよい。
+
+    ``indicator_status`` (#1141): `before_write` が走る前に payload へ入れる
+    KO / ASSIST ステージの結果 (``skipped`` または `--from-metadata` の preserve 値)。
+    `before_write` (attach / reuse) はこの値を detected / failed で上書きする。
     """
     show = not quiet
     source_duration = metadata["duration"]
@@ -1570,6 +1734,9 @@ def _split_and_write_metadata(
     # in the payload). #586: completed_at は明示指定がなければ writer 直前
     # の ``_iso_utc_now()``。``--from-metadata`` 経路は元 metadata の値を
     # caller (run_split_from_metadata) が引き継いで渡す。
+    # #1141: 呼び出し側が値を渡したか (--from-metadata の preserve) を先に記録する。
+    # None を埋めた後で判定すると常に True になり、走査後の更新が起きない。
+    caller_gave_completed_at = detection_completed_at is not None
     if detection_completed_at is None:
         detection_completed_at = _iso_utc_now()
     result = _build_metadata_payload(
@@ -1592,6 +1759,15 @@ def _split_and_write_metadata(
         capture_regions=capture_regions,
     )
     metadata_path = config.output_dir / "metadata.json"
+    if indicator_status is not None:
+        result["indicator_status"] = indicator_status
+    if before_write is not None:
+        before_write(cast("dict[str, Any]", result))
+        if not caller_gave_completed_at:
+            # #1141: before_write (KO / ASSIST 走査) の所要を検知の所要に含める。
+            # 呼び出し側が値を指定した経路 (`--from-metadata` の preserve) は
+            # 元 metadata の時刻を保持するので触らない。
+            result["detection_completed_at"] = _iso_utc_now()
     write_metadata_atomic(metadata_path, result)
 
     # Report where the files actually landed, not the raw ``-o`` string
@@ -2272,7 +2448,7 @@ def _sanitize_brightness_samples(value: object) -> "BrightnessSamples | None":
 
 _CAPTURE_REGIONS_TOP_KEYS = frozenset({"coarse", "segments", "fallback_reason"})
 _CAPTURE_REGION_COORD_KEYS = frozenset({"x", "y", "w", "h", "confidence"})
-_CAPTURE_REGION_REQUIRED_KEYS = frozenset({"x", "y", "w", "h", "confidence", "source"})
+_CAPTURE_REGION_REQUIRED_KEYS = {"x", "y", "w", "h", "confidence", "source"}
 
 
 def _sanitize_capture_regions(value: object) -> "CaptureRegions | None":

@@ -128,6 +128,14 @@ pin の方法:
 | 同 `--no-write` | `metadata.json` を変更しない（`events` も書かない） |
 | `allaganeye detect` / `split` / `export` / `minimap` | `events` を書かない・読まない（L4 は検知パイプラインの外） |
 
+> **追記 (#1141, 2026-11-22)**: `detect` / `split` に KO / ASSIST 検出が統合され
+> （既定 ON、`--no-indicators` で skip）、上の `allaganeye detect / split` 行は
+> 「書かない」から **「境界と同じ 1 回の atomic write で `indicator_layout` /
+> `indicator_status` / `events[]` を書く」** に変わった。検知キャッシュが hit し
+> 既存 metadata に妥当な結果があるときは走査を省いて再利用する（その場合も
+> `indicator_status` は `detected`）。表は確定時点の記録として残し、現在の挙動は
+> この追記と `docs/metadata-spec.md` §`indicator_status` を正とする。
+
 - **`--write` が `events` も書く理由**: 検出は録画 15 分あたり数分かかる。結果を
   metadata に残さないと、GUI を閉じた時点で失われ、L6 / L7 は毎回再走査になる
 - **置換セマンティクス**: `events` は毎回**全件置換**する（差分マージはしない）。

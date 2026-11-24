@@ -24,13 +24,21 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 import tempfile
-import time
 from typing import Annotated, Any
 
 import typer
-import numpy as np
 
 from allaganeye.detection.format import format_hms
+from allaganeye.detection.indicator_stage import (
+    DEFAULT_INTERVAL,
+    INDICATOR_STATUS_DETECTED,
+    MIN_INTERVAL,
+    PROGRESS_STEP_SECONDS,
+    StageNotice,
+    calibration_timestamps,
+    detect_indicator_events,
+    resolve_indicator_layout,
+)
 from allaganeye.detection.metadata_writer import (
     read_metadata,
     resolve_source_path,
@@ -39,40 +47,19 @@ from allaganeye.detection.metadata_writer import (
 from allaganeye.exceptions import (
     AllaganEyeError,
     ConfigValidationError,
-    DetectionError,
-    InputFileError,
     MetadataConflictError,
-    VideoProcessingError,
-)
-from allaganeye.video.frames import HwaccelSpec, iter_gray_frames, resolve_hwaccel
-from allaganeye.video.indicator_scan import resolve_scan_workers, scan_detections
-from allaganeye.video.indicators import (
-    IndicatorEvent,
-    IndicatorLayout,
-    band_crop_rect,
-    calibrate_layout,
-    detect_indicator_patch,
-    event_to_payload,
-    group_detections,
-    layout_from_bar_region,
-    layout_from_payload,
-    layout_to_payload,
-    validate_layout_for_frame,
 )
 from allaganeye.video.probe import probe_video
-from allaganeye.video.refs import load_templates
 
-DEFAULT_INTERVAL = 0.1
-"""走査間隔 (秒)。note 4-9 の「0.1 秒以下」を既定にする。"""
-
-MIN_INTERVAL = 0.05
-"""走査間隔の下限。20 Hz を超える走査は映像の情報量を増やさない。"""
-
-CALIBRATION_SAMPLES = 6
-"""キャリブレーションに使うフレーム数 (note 4-3 の 5-10 フレーム)。"""
-
-PROGRESS_STEP_SECONDS = 30.0
-"""進捗を出す動画時間の間隔。"""
+__all__ = [
+    "DEFAULT_INTERVAL",
+    "MIN_INTERVAL",
+    "IndicatorReport",
+    "calibration_timestamps",
+    "register",
+    "resolve_indicator_layout",
+    "run_indicators",
+]
 
 
 @dataclass(frozen=True)
@@ -231,133 +218,6 @@ def _parse_region(value: str | None) -> tuple[float, float, float, float] | None
     return numbers  # type: ignore[return-value]
 
 
-def calibration_timestamps(
-    matches: list[dict[str, Any]],
-    *,
-    duration: float,
-    samples: int = CALIBRATION_SAMPLES,
-) -> list[float]:
-    """Pick frame timestamps for calibration, preferring in-match moments.
-
-    The battle-fervor gauge only renders during a match, so sampling the whole
-    video uniformly pulls in lobby / loading frames where the anchor cannot
-    match at all and the consensus collapses.
-
-    Samples are distributed over the **total matched time**, not one per
-    match: a recording split into per-match MP4s has exactly one match, and
-    ``calibrate_layout`` needs at least two agreeing frames, so "one frame per
-    match" would make every single-match file fail calibration.
-    """
-    usable = [
-        match
-        for match in matches
-        if isinstance(match, dict)
-        and isinstance(match.get("start_time"), (int, float))
-        and isinstance(match.get("end_time"), (int, float))
-        and float(match["end_time"]) > float(match["start_time"])
-    ]
-    if not usable:
-        if duration <= 0:
-            return []
-        step = duration / (samples + 1)
-        return [_inset(0.0, duration, step * (index + 1)) for index in range(samples)]
-
-    spans = [(float(match["start_time"]), float(match["end_time"])) for match in usable]
-    if len(spans) >= samples:
-        stride = (len(spans) - 1) / (samples - 1) if samples > 1 else 0.0
-        chosen = [spans[round(index * stride)] for index in range(samples)]
-        return [_inset(start, end, (start + end) / 2) for start, end in chosen]
-
-    total = sum(end - start for start, end in spans)
-    timestamps: list[float] = []
-    for index in range(samples):
-        target = total * (index + 0.5) / samples
-        offset = 0.0
-        for start, end in spans:
-            length = end - start
-            if offset + length >= target:
-                timestamps.append(_inset(start, end, start + (target - offset)))
-                break
-            offset += length
-    return sorted(set(timestamps))
-
-
-def _inset(start: float, end: float, timestamp: float, *, margin: float = 0.5) -> float:
-    """内側に寄せる: 表示のフェード端や境界フレームを避ける。
-
-    1 秒未満の短い区間では固定 0.5 秒の margin だと全サンプルが中点に潰れる
-    (dedupe で 1 フレームになり、2 フレーム以上の合意を要求するキャリブレーションが
-    失敗する)。区間長の 1/4 を上限にして、短い区間でも位置が分かれるようにする。
-    """
-    effective = min(margin, (end - start) / 4)
-    return round(min(end - effective, max(start + effective, timestamp)), 3)
-
-
-def resolve_indicator_layout(
-    source: Path,
-    payload: dict[str, Any],
-    *,
-    frame_size: tuple[int, int],
-    duration: float,
-) -> IndicatorLayout:
-    """Calibrate from frames sampled inside the detected matches."""
-    timestamps = calibration_timestamps(
-        [match for match in payload.get("matches") or [] if isinstance(match, dict)],
-        duration=duration,
-    )
-    frames = []
-    for timestamp in timestamps:
-        for _, frame in iter_gray_frames(
-            source, fps=1.0, frame_size=frame_size, start=timestamp, duration=0.2
-        ):
-            frames.append(frame)
-            break
-    layout = calibrate_layout(frames)
-    if layout is None:
-        raise DetectionError(
-            "インジケータの探索領域を解決できませんでした "
-            f"({len(frames)} フレームの合意が取れず)。"
-            "戦意値ゲージが映っていない録画か、HUD レイアウトが想定外の可能性があります。"
-        )
-    try:
-        validate_layout_for_frame(
-            layout, frame_width=frame_size[0], frame_height=frame_size[1]
-        )
-    except InputFileError as exc:
-        # 合意で見つけたアンカーがフレーム端に寄っていて、帯域がはみ出すケース。
-        # 入力 metadata の不正ではなく解決失敗なので exit 4 に寄せる。
-        raise DetectionError(f"探索領域を解決できませんでした: {exc}") from exc
-    return layout
-
-
-def _match_index(matches: list[dict[str, Any]], timestamp: float) -> int | None:
-    for match in matches:
-        start = match.get("start_time")
-        end = match.get("end_time")
-        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
-            continue
-        if float(start) <= timestamp <= float(end):
-            index = match.get("index")
-            if isinstance(index, int):
-                return index
-    return None
-
-
-def _event_payload(
-    event: IndicatorEvent, matches: list[dict[str, Any]]
-) -> dict[str, Any]:
-    """内部イベントを wire 形式にする (`HighlightEvent`、#127)。"""
-    return event_to_payload(event, match_index=_match_index(matches, event.start))
-
-
-def _detection_tuple(
-    patch: np.ndarray, layout: IndicatorLayout, templates: dict[str, np.ndarray]
-) -> tuple[str | None, float]:
-    """crop 済みバンド 1 枚を `group_detections` の入力形にする (#1140)。"""
-    hit = detect_indicator_patch(patch, layout, templates)
-    return (hit.kind, hit.score) if hit is not None else (None, 0.0)
-
-
 def _reject_output_aliasing_inputs(
     output: Path | None, metadata_path: Path, source: Path
 ) -> None:
@@ -514,115 +374,56 @@ def run_indicators(
     probe = probe_video(source)
     frame_size = (int(probe["width"]), int(probe["height"]))
     duration = float(probe["duration"])
-    matches = [
-        match for match in payload.get("matches") or [] if isinstance(match, dict)
-    ]
 
-    cached = payload.get("indicator_layout")
-    recalibrated = False
-    if region is not None:
-        if recalibrate:
-            raise ConfigValidationError(
-                "--region and --recalibrate are mutually exclusive; "
-                "--region already skips auto calibration"
+    if region is not None and recalibrate:
+        raise ConfigValidationError(
+            "--region and --recalibrate are mutually exclusive; "
+            "--region already skips auto calibration"
+        )
+
+    def on_notice(notice: StageNotice) -> None:
+        """共有ステージの構造化進捗を、このコマンドの wire 形式へ写す。"""
+        if notice.kind == "calibrating":
+            emit({"type": "progress", "phase": "calibrating"})
+        elif notice.kind == "layout":
+            emit({"type": "progress", "phase": "scanning", "layout": notice.layout})
+        else:
+            update: dict[str, Any] = {
+                "type": "progress",
+                "phase": "scanning",
+                "processed_s": notice.processed_s,
+                "total_s": notice.total_s,
+            }
+            suffix = ""
+            if notice.eta_s is not None:
+                update["eta_s"] = notice.eta_s
+                suffix = f" [ETA {format_hms(notice.eta_s)}]"
+            emit(update)
+            progress(
+                f"  scanned {notice.processed_s or 0:.0f}s / "
+                f"{notice.total_s or 0:.0f}s{suffix}"
             )
-        try:
-            layout = layout_from_bar_region(*region)
-        except ValueError as exc:
-            raise ConfigValidationError(f"--region: {exc}") from exc
-        validate_layout_for_frame(
-            layout, frame_width=frame_size[0], frame_height=frame_size[1]
-        )
-        progress("using --region (auto calibration skipped)")
-    elif cached is not None and not recalibrate:
-        layout = layout_from_payload(
-            cached, frame_width=frame_size[0], frame_height=frame_size[1]
-        )
-        validate_layout_for_frame(
-            layout, frame_width=frame_size[0], frame_height=frame_size[1]
-        )
-        progress("reused indicator_layout from metadata.json")
-    else:
-        emit({"type": "progress", "phase": "calibrating"})
-        progress("resolving indicator layout ...")
-        layout = resolve_indicator_layout(
-            source, payload, frame_size=frame_size, duration=duration
-        )
-        recalibrated = True
 
-    layout_payload = layout_to_payload(
-        layout, frame_width=frame_size[0], frame_height=frame_size[1]
+    run = detect_indicator_events(
+        source,
+        payload,
+        frame_size=frame_size,
+        duration=duration,
+        codec=probe.get("codec"),
+        interval=interval,
+        gpu=gpu,
+        region=region,
+        recalibrate=recalibrate,
+        notice=on_notice,
+        progress=progress,
+        progress_step=PROGRESS_STEP_SECONDS,
     )
-    emit({"type": "progress", "phase": "scanning", "layout": layout_payload})
-
-    # #1140: 走査はバンドだけを ffmpeg で crop して受け取る (転送量 2 MB -> 数十 KB)。
-    # 切り出し座標は検出側 (`band_crop_rect`) と同じ関数から得るので、
-    # フルフレーム経路と画素単位で一致する。
-    band_crop = band_crop_rect(
-        layout, frame_width=frame_size[0], frame_height=frame_size[1]
-    )
-    templates = load_templates()
-    # #1151: --gpu のときだけハードウェアデコードを使う。vendor 選択と decoder の
-    # 対応は gpu_detector の表を流用し、使えないときは黙って CPU に倒す。
-    hwaccel = resolve_hwaccel(probe.get("codec")) if gpu else None
-    if gpu and hwaccel is None:
-        progress("GPU decode unavailable (no supported GPU / codec); using CPU")
-    elif hwaccel is not None:
-        progress(f"GPU decode enabled (vendor={hwaccel.vendor})")
-    started_at = time.monotonic()
-
-    def on_progress(scanned_s: float) -> None:
-        """走査済み秒数から推定残り時間を出して emit する。"""
-        elapsed = time.monotonic() - started_at
-        eta: float | None = None
-        if scanned_s > 0 and duration > scanned_s:
-            eta = elapsed * (duration - scanned_s) / scanned_s
-        update: dict[str, Any] = {
-            "type": "progress",
-            "phase": "scanning",
-            "processed_s": round(min(scanned_s, duration), 1),
-            "total_s": round(duration, 1),
-        }
-        suffix = ""
-        if eta is not None and math.isfinite(eta):
-            update["eta_s"] = round(eta, 1)
-            suffix = f" [ETA {format_hms(eta)}]"
-        emit(update)
-        progress(f"  scanned {scanned_s:.0f}s / {duration:.0f}s{suffix}")
-
-    def scan(
-        decoder_hwaccel: HwaccelSpec | None,
-    ) -> list[tuple[float, str | None, float]]:
-        return scan_detections(
-            source,
-            interval=interval,
-            total=duration,
-            frame_size=None,
-            crop=band_crop,
-            workers=resolve_scan_workers(),
-            frames_factory=iter_gray_frames,
-            detect=lambda frame: _detection_tuple(frame, layout, templates),
-            on_progress=on_progress,
-            progress_step=PROGRESS_STEP_SECONDS,
-            hwaccel=decoder_hwaccel,
-        )
-
-    try:
-        detections = scan(hwaccel)
-    except VideoProcessingError as exc:
-        # #1151: GPU デコードは環境依存で落ちる (ドライバ / セッション数 / codec)。
-        # ユーザーは「速くしたい」だけなので、黙って CPU で 1 回だけやり直す。
-        if hwaccel is None:
-            raise
-        progress(f"GPU decode failed ({exc}); falling back to CPU ...")
-        detections = scan(None)
-
-    events = group_detections(detections, max_gap=interval * 1.2, min_samples=2)
+    layout_payload = run.layout
     report = IndicatorReport(
         layout=layout_payload,
-        events=[_event_payload(event, matches) for event in events],
+        events=run.events,
         metadata_path=metadata_path,
-        recalibrated=recalibrated,
+        recalibrated=run.recalibrated,
     )
 
     # どの書込みよりも先に CAS を確かめる: ここで落ちれば `-o` のファイルも作らない。
@@ -646,6 +447,9 @@ def run_indicators(
             payload["events"] = _with_clip_overrides(
                 report.events, payload.get("events")
             )
+            # #1141: 単体コマンドで走査した経路も「検出済み」を残す。GUI の
+            # クリップ画面はこの値で「未実行 / スキップ / 失敗」と区別する。
+            payload["indicator_status"] = INDICATOR_STATUS_DETECTED
             write_metadata_atomic(metadata_path, payload)
         if staged is not None and output is not None:
             _publish_report(staged, output)

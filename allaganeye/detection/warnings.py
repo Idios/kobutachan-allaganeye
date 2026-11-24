@@ -52,6 +52,13 @@ WARNING_CODES: dict[str, str] = {
         "detected in its early candidate-match window; re-run with "
         "--keep-trailing to retain it."
     ),
+    # #1141 -- `detect` / `split --indicators` で KO / ASSIST 検出だけが失敗した
+    # とき (キャリブレーション不能 / ffmpeg 失敗等)。境界検出の結果は捨てず、
+    # この code を `warnings[]` に積んで exit code は境界検出の成否で決める。
+    "indicators_failed": (
+        "KO / ASSIST indicator detection failed; the match boundaries were "
+        "kept. Re-run `allaganeye indicators <metadata.json>` to retry."
+    ),
 }
 """Registry of known warning codes mapped to their default English message.
 

@@ -87,6 +87,17 @@ const DETECTION_PATH_HELP = [
 ].join(' ');
 
 /**
+ * #1141 -- KO / ASSIST 検出のオン / オフ。所要時間の目安を書いておかないと
+ * 「何も増えていない」と誤解される (944 秒の録画で 25 秒 / 2.8 時間で約 4.5 分)。
+ */
+const INDICATORS_HELP = [
+  '動画から KO / ASSIST の発生時刻を検出し、分割結果と同じ metadata.json に記録します。',
+  'ON にすると、分割直後にクリップ切り抜きへ進めます（OFF の場合は後から「KO / ASSIST」画面で検出を実行できます）。',
+  '検出は 0.1 秒刻みの走査なので、2.8 時間の録画で約 4.5 分追加されます（944 秒の録画では約 25 秒）。',
+  '検出に失敗しても分割結果は失われません（metadata.json の warnings に記録されます）。',
+].join(' ');
+
+/**
  * #613: 詳細設定パネル — DropScreen の SelectedCard 内に collapsible で
  * 配置され、`detectionParams` (appStateStore) を直接 mutate する。
  *
@@ -286,6 +297,43 @@ export function DetectionParamsPanel() {
                 </button>
               );
             })}
+          </div>
+
+          <div className={styles.labelRow}>
+            <span className={styles.fieldLabel}>KO / ASSIST も検出する</span>
+            <HelpTip
+              label="KO / ASSIST 検出の説明"
+              testId="detection-params-indicators-help"
+            >
+              {INDICATORS_HELP}
+            </HelpTip>
+          </div>
+          <div
+            className={styles.triStateRow}
+            role="radiogroup"
+            aria-label="indicators"
+            data-testid="detection-params-indicators"
+          >
+            <button
+              type="button"
+              className={`${styles.triStateButton}${!detectionParams.indicators ? ` ${styles.triStateButtonActive}` : ''}`}
+              role="radio"
+              aria-checked={!detectionParams.indicators}
+              onClick={() => setDetectionParams({ indicators: false })}
+              data-testid="detection-params-indicators-off"
+            >
+              OFF
+            </button>
+            <button
+              type="button"
+              className={`${styles.triStateButton}${detectionParams.indicators ? ` ${styles.triStateButtonActive}` : ''}`}
+              role="radio"
+              aria-checked={detectionParams.indicators}
+              onClick={() => setDetectionParams({ indicators: true })}
+              data-testid="detection-params-indicators-on"
+            >
+              ON
+            </button>
           </div>
 
           <div className={styles.resetRow}>

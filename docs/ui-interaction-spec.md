@@ -199,7 +199,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 節 | 画面 | 主要 UI 部品 | 進捗 |
 | --- | --- | --- | --- |
 | §2.1 | drop | D&D zone / [参照…] / 直近録画リスト / SelectedCard (詳細設定パネル含む、#613) / probeError card | #598 で追加 |
-| §2.2 | detecting | AllaganSigil 回転 / Header / progressBadge / PhaseRow ×2 / live log / [中断] | #600 で追加 |
+| §2.2 | detecting | AllaganSigil 回転 / Header / progressBadge / PhaseRow ×2 (+ #1141 で Indicators の 3 段目) / live log / [中断] | #600 で追加 |
 | §2.3 | complete | statusDot / sourceBox / stats / [元に戻す] / [境界を調整] / [全試合書き出し] / [⬦ ミニマップ切抜き] / [× 閉じる] / BrightnessTimeline / listItem / previewPane / emptyNote | #603 で追加、[⬦ ミニマップ切抜き] は #893 で追加 |
 | §2.4 | preview | [◀ 一覧へ] / match name input / type select / Pane (×2 IN/OUT) / Pane.video / Pane.tcInput / stepRow ×6 / keyHint / FrameStrip / [適用] / dirty indicator / applyError / [元に戻す] / [書き出し] / emptyNote | #605 で追加 |
 | §2.5 | export | [◀ プレビュー] / header / 出力先 input + [参照…] / 命名規則 input / コーデック selector ×2 / errorMessage / progressBox / [書き出し開始] / [中断] / [✓ フォルダを開く] + openFolderError / [設定変更して再書き出し] / [設定変更して再試行] / listHeader + bulk / listItem / emptyNote / [⬦ ミニマップ切抜きへ] | #590 §2.5 追加 PR で追加、[⬦ ミニマップ切抜きへ] は #893 で追加 |
@@ -331,7 +331,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 
 **目的**: `start_detect` (#569) に渡す検知パラメータを GUI 上で調整。値は `appStateStore.detectionParams` に保存され、`reset()` まで session 中保持される (localStorage 永続化なし、再起動時は default に戻る)。
 
-**スコープ (4 パラメータ)**: `blackout_threshold` / `workers` / `gpu` / `detectionPath` (#1136)。`detectionPath` は CLI の `--masked` / `--vtuber` に対応する 3 値 (「標準 / マスク録画 / 配信レイアウト」) で、両 flag が相互排他 (CLI exit 5) なので boolean 2 本ではなく enum 1 本で持つ §2.1.10.8。`--no-audio` は audio module frozen (#327、`allaganeye/audio/__init__.py` の `AUDIO_FROZEN`) のため UI 不公開。解凍は #865 で「期限なし凍結」に決着しており、再追加の予定はない（方針が変われば再検討）。
+**スコープ (5 パラメータ)**: `blackout_threshold` / `workers` / `gpu` / `detectionPath` (#1136) / `indicators` (#1141)。`detectionPath` は CLI の `--masked` / `--vtuber` に対応する 3 値 (「標準 / マスク録画 / 配信レイアウト」) で、両 flag が相互排他 (CLI exit 5) なので boolean 2 本ではなく enum 1 本で持つ §2.1.10.8。`indicators` は KO / ASSIST 検出の ON / OFF (§2.1.10.9)。`--no-audio` は audio module frozen (#327、`allaganeye/audio/__init__.py` の `AUDIO_FROZEN`) のため UI 不公開。解凍は #865 で「期限なし凍結」に決着しており、再追加の予定はない（方針が変われば再検討）。
 
 | 項目 | 内容 |
 | --- | --- |
@@ -398,7 +398,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
   - header: `aria-expanded` / `aria-controls` で expand 状態を AT に通知
   - 各 input: `<label htmlFor>` (slider / numeric) で関連付け、tri-state は `aria-label="gpu mode"` + `role="radio"`
   - リセット button: `aria-label` で disabled 理由 (default 値) を明示
-- Tab order: header toggle → (展開時) blackout slider → workers numeric → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ。**#1135 以降**: 各項目の help トリガーが label の直後に入るため、header toggle → blackout help → blackout slider → workers help → workers numeric → gpu help → gpu の 3 button → path help → 検知経路の 3 button (§2.1.10.8) → reset button の順になる (§1.7)
+- Tab order: header toggle → (展開時) blackout slider → workers numeric → gpu (auto/on/off の 3 button) → reset button → SelectedCard `[キャンセル]` → `[OK]`。drop flow 全体で natural forward tab を保つ。**#1135 以降**: 各項目の help トリガーが label の直後に入るため、header toggle → blackout help → blackout slider → workers help → workers numeric → gpu help → gpu の 3 button → path help → 検知経路の 3 button (§2.1.10.8) → indicators help → indicators の 2 button (§2.1.10.9) → reset button の順になる (§1.7)
 - **`--no-audio` UI 不採用**: `allaganeye/audio/__init__.py` の `AUDIO_FROZEN` により audio module は frozen 状態 (#327、`split_matches.py` の `_run_audio_scan` が live probe して skip) のため `--no-audio` flag は実質 no-op。GUI 側でのみ控え (Rust `DetectParams.no_audio` field 自体は #569 で実装済み。再公開は解凍が前提だが、#865 で期限なし凍結に決着済み)
 
 ##### §2.1.10.7 help トリガー (HelpTip、#1135)
@@ -427,6 +427,21 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 結果表示 | `metadata.json` の `detection_params.masked` / `vtuber` に選択が記録される。masked 経路では 0 暗転時の自動 fallback (`masked_fallback_used`) と明示選択を区別して完了画面の通知文言を分ける (§2.3 complete の masked fallback 通知) |
 
 > **help 本文の役割**: 「標準」でも 0 暗転時にはマスク向け fallback が自動発動する (#821) ため、help でその事実を書かないと「マスク録画を選ぶ意味」が伝わらない。文言は [DetectionParamsPanel.tsx](../gui/src/screens/DetectionParamsPanel.tsx) の `DETECTION_PATH_HELP`。
+
+##### §2.1.10.9 KO / ASSIST 検出の ON / OFF (indicators、#1141)
+
+[#1141](https://github.com/Idios/kobutachan-allaganeye/issues/1141) で追加。`allaganeye detect --indicators` を GUI から要求できるようにする。ON にすると境界検出と同じ `metadata.json` に `indicator_layout` / `events[]` が 1 回の atomic write で入るため、完了画面からそのまま KO / ASSIST 画面 / クリップ切り抜きへ進める。
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | button group (`role="radiogroup"` + 2 つの `role="radio"`、`data-testid="detection-params-indicators"`)。GPU と同じ `triStateRow` / `triStateButton` を再利用 |
+| 状態 | `ON` (既定、`indicators=true`) / `OFF` (`indicators=false`、`--no-indicators`) |
+| 遷移トリガー | 各 button `onClick` → `setDetectionParams({ indicators })` |
+| store mutation | `appStateStore.detectionParams.indicators` (他の field は触らない) |
+| 例外 / edge case | CLI の既定が ON なので、`toStartDetectParams` ([detection.ts](../gui/src/utils/detection.ts)) は **boolean を常に送る** (OFF のとき Rust が `--no-indicators` を載せる)。Rust unit test `detect_command_args_translates_indicators_tristate` が `Some(true)` / `Some(false)` / `None` の 3 分岐を pin |
+| 結果表示 | 有効時は「2 段目の進捗」として §2.2.5b の 3 段目バーが出る。`metadata.json` の `events[]` / `indicator_layout` が埋まり、検出だけ失敗した場合は `warnings[]` に `indicators_failed` が入る (完了画面は境界と試合一覧をそのまま表示する) |
+
+> **help 本文**: 所要時間 (2.8 時間で約 4.5 分 / 944 秒で約 25 秒) と「失敗しても分割結果は失われない」ことを書く。文言は `DetectionParamsPanel.tsx` の `INDICATORS_HELP`。
 
 ### §2.2 detecting
 
@@ -474,7 +489,7 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 状態 | `displayOnly`。`progress` (0-100) を四捨五入で表示 |
 | 遷移トリガー | local state `progress` 変化 (Phase 2 dummy interval、Phase 2.5 で CLI 進捗イベント) |
 | store mutation | なし |
-| 例外 / edge case | Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で `progressTiming` 行を経過時間 (`fmtElapsed(elapsed)`) と簡易 ETA (`computeEta(percent, elapsed)` の線形外挿、進捗 0% / 100% 付近では非表示) に差し替え済 |
+| 例外 / edge case | Phase 2.5 ([#569](https://github.com/Idios/kobutachan-allaganeye/issues/569)) で `progressTiming` 行を経過時間 (`fmtElapsed(elapsed)`) と簡易 ETA (`computeEta(percent, elapsed)` の線形外挿、進捗 0% / 100% 付近では非表示) に差し替え済。**#1141: `phase === "indicators"` の間は外挿を使わず CLI の `eta_s` をそのまま表示する**（全体 progress は indicators 帯 97-99% に張り付くため、外挿は時刻に関わらず「残り ~0:01」になる）。`eta_s` 未受信の間は残り時間を出さない |
 
 #### §2.2.4 PhaseRow.Detecting (粗スキャン)
 
@@ -495,6 +510,16 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 遷移トリガー | `progress` 変化 (Phase 2 dummy では `pct2 = (progress - 40) × 1.67`、progress=40 から開始) |
 | store mutation | なし |
 | 例外 / edge case | Phase 2 では Detecting 完了相当のタイミング (progress=40) から start。Phase 2.5 で実フェーズ境界に置換 |
+
+#### §2.2.5b PhaseRow.Indicators (KO / ASSIST、#1141)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | progress bar ([DetectingScreen.tsx](../gui/src/screens/DetectingScreen.tsx) の 3 個目の `PhaseRow`、`<PhaseRow name="Indicators" jp="KO / ASSIST" …>` = `data-testid="phase-row-indicators"`) |
+| 状態 | `detectionParams.indicators` が true の run で表示する (**既定 ON**)。OFF の run では非表示 (「待機 0%」のバーを残すと誤解を生むため) |
+| 遷移トリガー | CLI の `phase: "indicators"` イベントの **`completed` / `total`（走査済み秒 / 総尺秒）比**で描く（全体 progress から導出しない）。理由: `PHASE_WINDOWS.cache_hit` が全体を 99% に貼り付けるため、cache hit した run では差分の 97-99 帯が潰れて「走査を飛ばした」ように見える。`writing_metadata` で 100% に揃える（走査が走らなかった失敗時は 0 のまま）。`eta_s` はログ行 (§2.2.6) と progressBadge の残り時間 (§2.2.3) の両方に `残り ~mm:ss` として出す |
+| store mutation | なし |
+| 例外 / edge case | 検出を要求しても走査が走らない (キャリブレーション失敗) 場合、CLI は `phase: "indicators"` を 1 行も出さずに完了する。バーは 0% のまま `done` に至るが、`metadata.json` の `warnings[]` に `indicators_failed` が残り、完了画面は境界を表示する。**検知キャッシュ hit + 既存 metadata に結果があるときは走査を省き**、CLI が `completed == total` の `indicators` イベントを 1 回出すのでバーは即 100% になり、ログに `KO / ASSIST 走査: …` ではなく `KO / ASSIST: 既存の検出結果を再利用しました (N 件)`（人間向け）が出る |
 
 #### §2.2.6 live log
 
@@ -671,20 +696,30 @@ minimap (§2.6) は現状 path 表示領域そのものを持たない (動画�
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | button ([CompleteScreen.tsx](../gui/src/screens/CompleteScreen.tsx) の `styles.exportAllButton` (2 つ目)、`aria-label="ミニマップ切抜き"`)。`styles.actions` 内で `[⬦ 全試合書き出し]` (§2.3.6) と `[× 閉じる]` (§2.3.7) の間に配置 |
-| 状態 | `idle` (`metadata.matches.length > 0`) / `disabled` (`metadata.matches.length === 0`) |
+| 状態 | `idle` (`metadata.matches.length > 0`) / `disabled` (`metadata.matches.length === 0`)。disabled 時は `DisabledTooltip` (`inlineHint`) で理由 `試合が検出されていません。先に動画を検出してください` を出す (§1.2) |
 | 遷移トリガー | `onClick` → `navigate('minimap')` (§2.6 minimap 画面へ) |
 | store mutation | `appStateStore.screen='minimap'` |
-| 例外 / edge case | [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) で追加。complete → minimap の入口は本 button と export 画面の `[⬦ ミニマップ切抜きへ]` (§2.5.17) の 2 経路で、どちらも `navigate('minimap')` のみを行い metadata は触らない。§1.2 の disabled 理由表示 (DisabledTooltip) は **現状未実装** (`[⬦ 境界を調整]` (§2.3.5) は実装済で非対称)。§1.3 dirty=true 時の confirm も未実装だが、minimap 側が切抜き開始時に dirty guard で実行拒否する (§2.6 の `handleStartCrop`) ため silent loss は起きない |
+| 例外 / edge case | [#893](https://github.com/Idios/kobutachan-allaganeye/issues/893) で追加。complete → minimap の入口は本 button と export 画面の `[⬦ ミニマップ切抜きへ]` (§2.5.17) の 2 経路で、どちらも `navigate('minimap')` のみを行い metadata は触らない。§1.3 dirty=true 時の confirm は未実装だが、minimap 側が切抜き開始時に dirty guard で実行拒否する (§2.6 の `handleStartCrop`) ため silent loss は起きない |
 
 #### §2.3.13 [⬦ KO / ASSIST を検出] button (#1106 Phase 2)
 
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | button ([CompleteScreen.tsx](../gui/src/screens/CompleteScreen.tsx) の `styles.exportAllButton` (3 つ目)、`aria-label="KO / ASSIST を検出"`)。`[⬦ ミニマップ切抜き]` (§2.3.12) の直後、`[× 閉じる]` (§2.3.7) の前に配置 |
-| 状態 | `idle` (`metadata.matches.length > 0`) / `disabled` (`metadata.matches.length === 0`) |
+| 状態 | `idle` (`metadata.matches.length > 0`) / `disabled` (`metadata.matches.length === 0`)。disabled 時は `DisabledTooltip` (`inlineHint`) で §2.3.12 と同じ理由を出す (§1.2) |
 | 遷移トリガー | `onClick` → `navigate('indicators')` (§2.7 indicators 画面へ) |
 | store mutation | `appStateStore.screen='indicators'` |
-| 例外 / edge case | キャリブレーションが試合区間内のフレームで行われる (戦意値ゲージは試合中しか出ない) ため、試合 0 件では実行できない → §2.3.12 と同じ disabled 条件。本 button は §1.2 の disabled 理由表示 (DisabledTooltip) を持たない (§2.3.12 と同じ非対称) |
+| 例外 / edge case | キャリブレーションが試合区間内のフレームで行われる (戦意値ゲージは試合中しか出ない) ため、試合 0 件では実行できない → §2.3.12 と同じ disabled 条件・同じ理由表示 |
+
+#### §2.3.14 [⬦ クリップ切り抜き] button (#1131 Phase B2)
+
+| 項目 | 内容 |
+| --- | --- |
+| 種類 | button ([CompleteScreen.tsx](../gui/src/screens/CompleteScreen.tsx) の `styles.exportAllButton`、`aria-label="クリップ切り抜き"`)。§2.3.13 の直後、`[× 閉じる]` (§2.3.7) の前に配置 |
+| 状態 | `idle` (`metadata.matches.length > 0`) / `disabled` (`metadata.matches.length === 0`)。disabled 時は `DisabledTooltip` (`inlineHint`) で §2.3.12 と同じ理由を出す (§1.2) |
+| 遷移トリガー | `onClick` → `navigate('clips')` (§2.8 clips 画面へ) |
+| store mutation | `appStateStore.screen='clips'` |
+| 例外 / edge case | **`events[]` の有無では disabled にしない** (未検出 / OFF / 失敗の理由は遷移先の §2.8.0 が案内し、そこから検出へ戻れる)。disabled 条件は試合 0 件のみ (§2.3.13 と同じ) |
 
 ### §2.4 preview
 
@@ -1330,13 +1365,16 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 **推定残り時間 (#1140)**: progressBox の下に `残り約 mm:ss` を出す (`data-testid="indicators-eta"`)。値は CLI の `eta_s` をそのまま表示し、GUI 側で再計算しない (走査はチャンク並列なので、GUI が「経過時間 ÷ 進捗」で計算するとワーカー数の違いを反映できない)。`eta_s` が来ていないフレーム (scanning 開始行など) では行ごと非表示。
 
-**結果のスコープ (review R1)**: 結果は「どの metadata.json 向けか」でスコープする。run を起こした path は `indicatorsStore.metadataPath` が保持し、画面は `metadataStore.filePath` と比較する。
+**結果のスコープ (review R1) / 永続化された結果の表示 (#1141)**: 結果は「どの metadata.json 向けか」でスコープする。run を起こした path は `indicatorsStore.metadataPath` が保持し、画面は `metadataStore.filePath` と比較する。**store にこのファイル向けの結果が無いときは、metadata.json に永続化された `events[]` / `indicator_layout` を結果として表示する**（`detect --indicators` が書いた結果で、毎回 [検出を開始] に戻さない）。
 
 | 条件 | 表示 |
 | --- | --- |
-| 一致 (`metadataPath === filePath`) | 通常の status をそのまま表示 |
-| 不一致 + `complete` / `error` | `idle` 扱いにし、結果とエラーを隠す (新しい run は開始できる) |
+| 一致 (`metadataPath === filePath`) | 通常の status をそのまま表示（store が優先） |
+| 不一致 + `complete` / `error` + metadata に `events` あり | `complete` として **metadata の結果**を表示 |
+| 不一致 + `complete` / `error` + metadata に `events` 無し | `idle` 扱いにし、結果とエラーを隠す (新しい run は開始できる) |
 | 不一致 + `running` | §2.7.11 の「別の動画の検出が進行中」ブロックに切替 |
+
+`events` が**空配列でも「走査済み」**として `complete` にする（0 件という結果を出し直させる意味がない）。判定は `Array.isArray(metadata.events)` で、キー欠落のみ `idle`。
 
 不一致時に結果を隠す理由は、録画 A → B と切り替えたときに A の行を押すと **B の存在しない match index / 時刻** へシークし得るため。走行中の run は store が listener の寿命を持つので止めず、§2.7.11 で `[中断]` の逃げ道を出す。
 
@@ -1351,6 +1389,34 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 **sample mode**: `filePath === null` では CLI を実行できないので [⬦ 検出を開始] / [再検出] / [再試行] を disabled にし、§1.4 の理由 `サンプル動画では検出を実行できません` を DisabledTooltip (inlineHint) で出す。`SampleModeBanner` は `styles.screen` 直下に常設。
 
 **metadata 不在**: `metadata === null` (§3.3 の entry-time 特殊状態) は `metadata.json が読み込まれていません。先に検出を実行してください。` の note + [◀ 一覧へ] のみを出す。
+
+#### §2.7.0 画面を開く前提 / 開いた後の定常状態 (#1141)
+
+**前提**: 画面は常に開ける。動作を決めるのは次の 3 点で、満たせないときは走査を開始せず、その理由を出す。
+
+| # | 前提 | 満たさないとき |
+| --- | --- | --- |
+| 1 | `metadata.json` が読み込まれている | `indicators-metadata-missing` note + [◀ 一覧へ] のみ |
+| 2 | 実ファイルモード (`filePath !== null`、sample mode でない) | 結果は読めるが [⬦ 検出を開始] / [再検出] / [再試行] を disabled にし、§1.4 の理由を出す |
+| 3 | 同じファイル向けの走査が走っていない | 自ファイル向けは progress、別ファイル向けは §2.7.11 のブロック |
+
+**キャッシュ**: `detect` / `split` の検知キャッシュが hit し、既存 `metadata.json` に妥当な `indicator_layout` / `events[]` があるとき、CLI は走査を省略して結果を再利用する (`allaganeye/detection/indicator_stage.py` の `reuse_indicators`)。GUI 側に「再利用された」ことを示す状態は持たない — 画面から見ると**最初から結果がある**だけで、開いた直後は `complete` になる。再走査したいときは検知を `--no-cache` で回す (本画面の [再検出] は通常どおり走査する)。
+
+**設定 (詳細設定の KO / ASSIST ON / OFF)**: 検出時の ON / OFF は `metadata.json` の `indicator_status` に残る (値の意味と writer は [`metadata-spec.md`](metadata-spec.md) §`indicator_status` が正)。開いた直後の状態はこの値と `events[]` の有無で決まる。
+
+| `indicator_status` | `events[]` | 開いた直後 |
+| --- | --- | --- |
+| `detected` | 配列 (0 件を含む) | `complete`。0 件でも「走査済み」として §2.7.4 / §2.7.5 を出す |
+| `skipped` | 無し | `idle` + `indicators-skipped-note` (詳細設定 OFF のまま検出した事実を出す) |
+| `failed` | 無し | `idle` + `indicators-previous-failure` (`warnings[]` の `indicators_failed.context.error`) |
+| キー欠落 | 無し | `idle` (旧 writer の metadata。未実行と OFF を区別できない) |
+| 任意 | 配列あり | `complete` として **metadata に永続化された結果** を表示 (§2.7 ヘッダのスコープ表。store 由来との区別は注記しない) |
+
+`events[]` がある場合は `indicator_status` より優先する — status は **events が無いときの理由付け** であり、`skipped` / `failed` でも妥当な `events[]` が残っていれば結果を出す ([`metadata-spec.md`](metadata-spec.md) §`indicator_status` の「events 優先」)。
+
+**開いた後の定常状態**: `idle` は開始ボタン + [戻る] のみ。`complete` は件数サマリ (§2.7.4) + イベント一覧 (§2.7.5) + [再検出] + イベントが 1 件以上あれば [⬦ クリップを切り抜く] (→ `navigate('clips')`)。走行状態 (`running`) は store が持つ値で、画面を開き直しても復元しない。
+
+**前提を満たす操作 (ユーザー操作)**: 結果が無い (`idle`) ときは [⬦ 検出を開始] で走査する (成功すると metadata.json に write-back され、次回は `detected`)。詳細設定 OFF のまま検出した場合はこの画面から検出するか、録画を選び直して詳細設定 ON で検出し直す。前回失敗した場合 (`indicator_status: "failed"` で開いた `idle`) は同じ [⬦ 検出を開始] で再走査する (領域の指定は、その run が失敗したときに出る §2.7.6 のフォームから行う。セッションをまたいだ失敗の履歴から領域を復元しない)。同梱テンプレートを更新した後などに再走査したいときは、検知を `--no-cache` で回す (検知キャッシュごと捨てるため再利用もされない)。
 
 #### §2.7.1 [⬦ 検出を開始] / [再検出] / [再試行]
 
@@ -1478,7 +1544,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 **実行は 1 件ずつ (Q2 C)**: `eventIndexes: [position]` を渡す。CLI は索引を含むクリップ全体 (束ねられた仲間を含む) を書き出し、クリップ番号は計画時のまま (振り直さない — 別のイベントが同じ `{idx}` を指して既存ファイルを潰さないため)。
 
-**session-local config**: 前後秒数 (`pre` / `post`)・形式 (`codec`) は match 編集ではない一時設定なので `metadataStore` に commit しない (§3.4 の §1.1 例外と同じ扱い)。
+**session-local config**: 前後秒数 (`pre` / `post`)・束ね幅 (`gap`)・形式 (`codec`) は match 編集ではない一時設定なので `metadataStore` に commit しない (§3.4 の §1.1 例外と同じ扱い)。
 
 **dirty / sample mode**: [⬦ 切り抜く] は `filePath === null` (§1.4) または `dirty === true` で disabled。CLI は **disk の metadata.json** を読むため、未適用の編集があると in-memory の `events[]` と位置がずれて**別のイベントを切り抜き得る**。理由文は §2.8.2 のノートに出す。
 
@@ -1486,27 +1552,58 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 **CLI 側の read-time CAS**: 上の照合と spawn の間にも外部変更は入り得るので、`start_clips` は `expectedMtime` (CLI `--expected-mtime`) を**常に**渡し、CLI が metadata.json の読み取り前後の mtime 一致を検証する。不一致は CLI exit 6 → `state.mtime_conflict` で、位置が古いまま別のイベントを切り抜く経路は閉じている。
 
-**表示する範囲 = 実際に書かれる範囲**: 行の「範囲」とプレビューの `clipRange` は `planClipWindows()` の戻り値を使う（`events[].clip_start` / `clip_end` が両方あればその区間を優先し、束ねの対象外にする — #1139）。これは CLI (`allaganeye/export/clips.py` の `plan_clips`) の **近接束ね (`--gap` 既定 5 秒) + 試合区間クランプ** を GUI 側で鏡にしたもの (codex review 2026-11-17)。単独イベントの前後だけを見せると「表示と違う長さのファイルが出る」ため。**四捨五入はしない** (JS の half-up と Python の half-even が 0.005 秒の端で食い違い、GUI だけが範囲外と判定する差になる)。鏡にしている都合上、CLI 側の束ね / クランプ規則を変えたら本関数も同時に直す必要がある。
+**表示する範囲 = 実際に書かれる範囲**: 行の「範囲」とプレビューの `clipRange` は `planClipWindows()` の戻り値を使う（`events[].clip_start` / `clip_end` が両方あればその区間を優先し、束ねの対象外にする — #1139）。これは CLI (`allaganeye/export/clips.py` の `plan_clips`) の **近接束ね (`--gap` 既定 5 秒、GUI の束ね入力で変更可) + 試合区間クランプ** を GUI 側で鏡にしたもの (codex review 2026-11-17)。単独イベントの前後だけを見せると「表示と違う長さのファイルが出る」ため。**四捨五入はしない** (JS の half-up と Python の half-even が 0.005 秒の端で食い違い、GUI だけが範囲外と判定する差になる)。鏡にしている都合上、CLI 側の束ね / クランプ規則を変えたら本関数も同時に直す必要がある。
 
-#### §2.8.1 前後秒数 / 形式のフォーム
+#### §2.8.0 画面を開く前提 / 開いた後の定常状態 (#1141)
+
+**前提**: 画面は常に開ける。候補一覧の表示と切り抜きの実行を決めるのは次の 4 点。
+
+| # | 前提 | 満たさないとき |
+| --- | --- | --- |
+| 1 | `metadata.json` が読み込まれている | `clips-metadata-missing` note + [◀ 一覧へ] のみ |
+| 2 | 切り抜き候補が 1 件以上 (`events[]` のうち `match_index` が非 null かつ既知の `signal_id`) | 候補 0 件の空状態 (下の理由表)。画面は開ける |
+| 3 | 実行は `filePath !== null` かつ `dirty === false` | 一覧は読めるが [⬦ 切り抜く] を disabled にし、§2.8.2 の理由を出す |
+| 4 | 同じファイル向けの切り抜きが走っていない | 自ファイル向けは progress、別ファイル向けは `idle` 扱い + 実行不可ノート + [中断] (§2.8.2) |
+
+**キャッシュ / 設定**: 候補の正は検知キャッシュではなく `metadata.json` の `events[]`。検知キャッシュが hit して KO / ASSIST の結果が再利用された run では `events[]` が既に書かれているので、**開いた直後から候補が並ぶ**。詳細設定で KO / ASSIST を OFF にした検出では `events[]` が無く、`indicator_status: "skipped"` が残る ([`metadata-spec.md`](metadata-spec.md) §`indicator_status`)。
+
+**候補 0 件の理由 (`data-testid="clips-empty"` の `data-reason`)**: 「イベントが無い」を 1 文言に潰すと、詳細設定 OFF のまま検出したユーザーを「先に検出してください」で誤誘導する。次の 5 分岐で出す。
+
+| 条件 | `data-reason` | 文言 / 導線 |
+| --- | --- | --- |
+| `indicator_status === "failed"` かつ `events` 無し | `indicator-failed` | 「KO / ASSIST の検出に失敗しました（試合の分割は完了しています）」+ `warnings[]` の `context.error` + [⬦ KO / ASSIST を検出] |
+| `indicator_status === "skipped"` かつ `events` 無し | `indicator-skipped` | 「詳細設定で KO / ASSIST 検出を OFF のまま検出したため…」+ [⬦ KO / ASSIST を検出] |
+| `events` キー欠落 (`indicator_status` も無し) | `not-scanned` | 「まだ検出していません（詳細設定で OFF のまま検出した場合もここに出ます）」+ [⬦ KO / ASSIST を検出] |
+| `events: []` | `no-events` | 「検出されませんでした（0 件）」+ [⬦ KO / ASSIST を再検出] |
+| `events` はあるが使える候補 0 | `no-usable-events` | 「切り抜ける KO / ASSIST がありません（試合区間の外 / 未対応の種類）」+ [⬦ KO / ASSIST の一覧を見る] |
+
+導線はどの分岐も `navigate('indicators')` (§2.7)。sample mode ではボタンを出さない (§1.4)。`events[]` 内の試合外件数は別途 §2.8.2 のノートで出す (理由表 5 行目と重なるときは両方出す)。
+
+**開いた後の定常状態**: `idle` (run 無し)。前後秒数 10 / 10・束ね 5・形式 `copy` のフォーム (§2.8.1)、候補の試合別一覧 (§2.8.3)。前回の run 結果は `clipsStore.metadataPath === metadataStore.filePath` のときだけ `complete` として残る (§2.8 ヘッダ)。
+
+**前提を満たす操作 (ユーザー操作)**: 候補が無いときは空状態の導線で §2.7 に移り検出する (write-back 後は `refreshFromDiskPreservingEdits()` で metadata が追従するので、戻ると候補が並ぶ)。`dirty` のときは preview で [適用] してから戻る (§1.3)。外部プロセスが metadata.json を書き換えた場合は、[⬦ 切り抜く] の spawn 前 mtime 照合が読み直しを促す (§2.8 ヘッダ)。
+
+#### §2.8.1 前後秒数 / 束ね / 形式のフォーム
 
 | 項目 | 内容 |
 | --- | --- |
-| 種類 | 数値入力 ×2 (`aria-label` は `前 (秒)` / `後 (秒)`) + セレクト (`aria-label="形式"`、`無劣化 (copy)` / `再エンコード (h264)`)。初期値は CLI 既定の 10 / 10 秒・`copy` |
+| 種類 | 数値入力 ×3 (`aria-label` は `前 (秒)` / `後 (秒)` / `束ね (秒)`) + セレクト (`aria-label="形式"`、`無劣化 (copy)` / `再エンコード (h264)`)。初期値は CLI 既定の 10 / 10 / 5 秒・`copy` |
 | 状態 | 常時 enabled (走行中も値を変えられるが、実行中の run には影響しない) |
-| 遷移トリガー | 入力 → local state (文字列のまま保持) → §2.8.2 / §2.8.3 のクリック時に `validateMargins()` で検証 |
+| 遷移トリガー | 入力 → local state (文字列のまま保持) → §2.8.2 / §2.8.3 のクリック時に `validateMargins()` / `validateGap()` で検証。束ね値は表示中の `planClipWindows()` にも即時反映する |
 | store mutation | なし (session-local、§2.8 ヘッダ) |
-| 例外 / edge case | 受理値は `^\d+(\.\d+)?$` (0 以上の整数 / 小数)。負値・空・指数表記はCLI が exit 5 で拒否するため、`validateMargins()` が先に弾く。違反は §2.8.4 の `role="alert"` に出す |
+| 例外 / edge case | 受理値は 3 つとも `^\d+(\.\d+)?$` (0 以上の整数 / 小数)。負値・空・指数表記は CLI が exit 5 で拒否するため、GUI が先に弾く。違反は §2.8.4 の `role="alert"` に出す |
+
+**copy のキーフレーム丸め注記 (#1131 受け入れ条件)**: `codec === 'copy'` のときフォームの下に `data-testid="clips-copy-note"` の注記を出す — 「無劣化 (copy) はキーフレーム単位で切るため、指定した秒数より前後することがあります。厳密に指定したいときは『再エンコード (h264)』を選んでください」。`h264` に切り替えると非表示になる (`copy` が既定のため、既定表示)。
 
 #### §2.8.2 実行不可ノート / 試合外ノート
 
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | `role="status"` のノート (`data-testid="clips-run-disabled"`) / 試合外件数 (`data-testid="clips-outside-note"`) |
-| 状態 | 前者は `filePath === null` / `dirty` / 前後秒数が不正 のいずれか。後者は試合外イベントが 1 件以上のとき (§1.2: disabled 理由は必ず文言で出す) |
+| 状態 | 前者は `filePath === null` / `dirty` / 別ファイルの切り抜きが走行中 / 前後秒数が不正 のいずれか。後者は試合外イベントが 1 件以上のとき (§1.2: disabled 理由は必ず文言で出す)。別ファイル走行中のときは [中断] (`data-testid="clips-other-file-cancel"`) も出す |
 | 遷移トリガー | なし (表示専用) |
 | store mutation | なし |
-| 例外 / edge case | 理由文は優先順で 1 つだけ出す (sample mode → dirty → 前後秒数の不正)。§1.2 の DisabledTooltip ではなく inline ノートにしたのは、行ごとの [⬦ 切り抜く] が複数あり、行ごとに tooltip を付けると重複するため |
+| 例外 / edge case | 理由文は優先順で 1 つだけ出す (sample mode → dirty → 別ファイル走行中 → 前後秒数 / 束ねの不正)。§1.2 の DisabledTooltip ではなく inline ノートにしたのは、行ごとの [⬦ 切り抜く] が複数あり、行ごとに tooltip を付けると重複するため。別ファイル走行中は `displayedStatus` を `idle` にし、前の run の進捗 / 結果は表示しない (indicators §2.7.11 と同じスコープ則) |
 
 #### §2.8.3 候補行 ([この範囲を確認] / [⬦ 切り抜く])
 
@@ -1518,12 +1615,12 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | store mutation | `appStateStore.setClipRange` / `setPendingSeekSeconds` / `openPreviewFor`、または `clipsStore.start()` |
 | 例外 / edge case | 時刻は両方とも `hh:mm:ss` (1 秒切り捨て、出所は `utils/time.ts` の `fmtClockTime`)。`clipRange` の終端は `start` より前にならず、`start` は 0 秒でクランプする。試合区間へのクランプと近接イベントの束ねは `planClipWindows()` が担う (§2.8 ヘッダ)。`clipRange.matchIndex` はクリップ範囲の調整画面 (§2.4.18) のスコープキーで、別の試合を開くと試合境界のエディタに戻る。ボタンの可視名は `KO 00:08:13 の範囲をプレビューで確認` / `KO 00:08:13 を切り抜く` |
 
-#### §2.8.4 前後秒数の検証エラー
+#### §2.8.4 前後秒数 / 束ねの検証エラー
 
 | 項目 | 内容 |
 | --- | --- |
 | 種類 | `role="alert"` のフィールドエラー (`data-testid="clips-margins-error"`) |
-| 状態 | `validateMargins()` が非 null を返したときのみ。入力変更で null に戻す |
+| 状態 | `validateMargins()` または `validateGap()` が非 null を返したときのみ。入力変更で null に戻す |
 | 遷移トリガー | [この範囲を確認] のクリックで検証し、不正なら `start()` も遷移もせずにここに出す |
 | store mutation | なし |
 | 例外 / edge case | [⬦ 切り抜く] は同じ条件で disabled になる (§2.8.2) ため、ここに出るのは実質「範囲確認」のクリック経路。二重の防御だが、disabled の理由表示だけでなく操作結果としてもフィードバックを返す |

@@ -75,6 +75,8 @@ const PHASE_WINDOWS: Record<string, [number, number]> = {
   refine: [70, 88],
   scorebar: [88, 97],
   audio: [3, 60],
+  // #1141 -- KO / ASSIST の走査。scorebar の後、metadata 書き込みの前に来る。
+  indicators: [97, 99],
   cache_hit: [0, 99],
   writing_metadata: [99, 100],
   done: [100, 100],
@@ -105,7 +107,7 @@ function computeOverallPercent(event: DetectProgressEvent): number {
  * log can highlight terminal / faulty / warned events without the user
  * having to read every line.
  *
- * - `info`: routine progress (start / probing / scan / refine / scorebar / chunk* / audio / writing_metadata)
+ * - `info`: routine progress (start / probing / scan / refine / scorebar / chunk* / audio / indicators / writing_metadata)
  * - `done`: terminal success (`phase="done"`) -- styled cyan-bright
  * - `error`: terminal failure (`phase="error"`) -- styled `--ae-danger`
  * - `warn`: notable non-fatal events (`phase="cache_hit"` for now;
@@ -191,6 +193,24 @@ function buildLogText(event: DetectProgressEvent): BuildLogResult | null {
       return { text: 'scorebar 分類', kind: 'info' };
     case 'audio':
       return { text: 'audio Fanfare scan', kind: 'info' };
+    case 'indicators':
+      // #1141 -- `completed` / `total` は秒。scan と同じく 10% 刻みで出す。
+      if (
+        event.completed !== undefined &&
+        event.total !== undefined &&
+        event.total > 0
+      ) {
+        const pct = (event.completed / event.total) * 100;
+        if (pct % 10 < 0.5 || event.completed === event.total) {
+          const eta =
+            event.eta_s !== undefined ? ` · 残り ~${fmtElapsed(event.eta_s)}` : '';
+          return {
+            text: `KO / ASSIST 走査: ${event.completed}/${event.total}s (${pct.toFixed(0)}%)${eta}`,
+            kind: 'info',
+          };
+        }
+      }
+      return null;
     case 'writing_metadata':
       return { text: 'metadata.json 書き込み中…', kind: 'info' };
     case 'done':
@@ -251,6 +271,48 @@ function computeEta(percent: number, elapsed: number): number | null {
   const total = elapsed * (100 / percent);
   const remaining = total - elapsed;
   return remaining > 0 ? remaining : null;
+}
+
+/**
+ * 全体 % の window が小さく、外挿 ETA が実態と食い違う phase (#1141)。
+ *
+ * `PHASE_WINDOWS` は長い phase を数 % の帯に圧縮することがある
+ * (indicators = 97-99%)。その間の `computeEta` は「経過 × 1-3%」しか返さず、
+ * 常に「残り ~0:01」に張り付く。こうした phase は CLI の `eta_s`
+ * (報告値) だけを使い、未受信の間は残り時間を出さない。
+ *
+ * **同型の phase を足すときはここに追加する** (window を小さくして
+ * `eta_s` を報告しない phase は、今のところ他に無い)。
+ */
+const NO_EXTRAPOLATED_ETA_PHASES: ReadonlySet<string> = new Set(['indicators']);
+
+export interface ReportedEta {
+  phase: string;
+  seconds: number;
+}
+
+/**
+ * progressBadge の残り時間 (#1141)。
+ *
+ * 1. CLI が**この phase について**報告した `eta_s` があればそれを出す
+ *    (ログ行と同じ値になる)
+ * 2. 外挿が破綻する phase (`NO_EXTRAPOLATED_ETA_PHASES`) は何も出さない
+ * 3. それ以外は従来どおり全体 progress からの線形外挿
+ */
+export function selectEta(args: {
+  phaseLabel: string;
+  reported: ReportedEta | null;
+  progress: number;
+  elapsed: number;
+}): number | null {
+  const { phaseLabel, reported, progress, elapsed } = args;
+  if (reported !== null && reported.phase === phaseLabel) {
+    return reported.seconds;
+  }
+  if (NO_EXTRAPOLATED_ETA_PHASES.has(phaseLabel)) {
+    return null;
+  }
+  return computeEta(progress, elapsed);
 }
 
 /**
@@ -444,6 +506,15 @@ function DetectingRunningView({
   // #569 review Round 1 課題 1: probing event payload を保持して
   // header meta 行を実 ffprobe 結果で render する。
   const [probeInfo, setProbeInfo] = useState<ProbeInfo | null>(null);
+  // #1141 -- KO / ASSIST 走査の進捗 (0-100)。全体 progress から導出しないのは、
+  // cache_hit が全体を 99% に貼り付けるため (`PHASE_WINDOWS.cache_hit: [0, 99]`)、
+  // 差分の 97-99 帯では 3 段目が即 100% になって「走査を飛ばした」ように見えるから。
+  const [indicatorPct, setIndicatorPct] = useState(0);
+  // #1141 -- CLI が進捗イベントに同梱する推定残り秒 (`eta_s`)。**どの phase の
+  // 値かも一緒に持つ**（phase をまたいで古い値を出さない）。進捗を全体 %に
+  // 圧縮するフェーズ (indicators = 97-99%) では `computeEta` の外挿が実態と
+  // 食い違うため、報告値があるフェーズはそれを優先する。
+  const [reportedEta, setReportedEta] = useState<ReportedEta | null>(null);
   // Captured once on first mount via lazy initialiser so log entries
   // can compute their relative timestamp inside render. The parent
   // remounts this component (via `key={runCount}`) on retry, so a new
@@ -533,6 +604,27 @@ function DetectingRunningView({
               return;
             }
             setPhaseLabel(payload.phase);
+
+            // #1141 -- 3 段目のバーは indicators イベントの (completed / total)
+            // だけで動かす。total は走査対象の秒数。走査後の `writing_metadata`
+            // で 100% に揃える (失敗時は 0 のまま = 走っていないことが見える)。
+            if (payload.phase === 'indicators') {
+              const total = payload.total ?? 0;
+              if (total > 0) {
+                setIndicatorPct(
+                  Math.min(100, ((payload.completed ?? 0) / total) * 100),
+                );
+              }
+            } else if (payload.phase === 'writing_metadata') {
+              setIndicatorPct((prev) => (prev > 0 ? 100 : prev));
+            }
+
+            // #1141 -- CLI が報告した推定残り秒は、その phase の間だけ採用する。
+            // indicators は全体 % が 97-99% に圧縮され、外挿が常に「残り ~0:01」
+            // に張り付くため特に重要。
+            if (typeof payload.eta_s === 'number') {
+              setReportedEta({ phase: payload.phase, seconds: payload.eta_s });
+            }
 
             // #569 review Round 1 課題 1: probing event の ffprobe 結果を
             // header meta 行用に保持。後続 phase でも維持されるので、
@@ -645,8 +737,31 @@ function DetectingRunningView({
     Math.min(100, ((progress - refineStart) * 100) / (refiningEnd - refineStart)),
   );
   const refiningSub = phaseLabel === 'scorebar' ? '分類' : 'refine';
+  // #1141 -- 3 段目は指標自身の進捗で描く (全体 progress と独立)。
+  const indicatorStart = PHASE_WINDOWS.indicators[0];
+  const indicatorEnd = PHASE_WINDOWS.indicators[1];
+  const pct3 =
+    phaseLabel === 'indicators' || indicatorPct > 0
+      ? indicatorPct
+      : progress >= indicatorEnd
+        ? 100
+        : Math.max(
+            0,
+            Math.min(
+              100,
+              ((progress - indicatorStart) * 100) / (indicatorEnd - indicatorStart),
+            ),
+          );
 
-  const eta = computeEta(progress, elapsed);
+  // #1141 -- CLI が残り秒を報告した phase ではその値を、報告が無い他 phase は
+  // 全体 progress からの外挿を使う。indicators のように window が小さい phase は
+  // 外挿しない (`selectEta` のコメント参照)。
+  const eta = selectEta({
+    phaseLabel,
+    reported: reportedEta,
+    progress,
+    elapsed,
+  });
   // #569 review Round 1 課題 1: probing event 受信後は実 ffprobe 結果を
   // 表示。受信前 (起動直後の数百 ms) は暫定で `phase: ...` を出して
   // 「meta 行が空」状態を回避する。
@@ -674,7 +789,7 @@ function DetectingRunningView({
         </div>
         <div className={styles.progressBadge}>
           <div className={styles.progressNum}>{Math.round(progress)}%</div>
-          <div className={styles.progressTiming}>
+          <div className={styles.progressTiming} data-testid="detect-timing">
             経過 {fmtElapsed(elapsed)}
             {eta !== null && ` · 残り ~${fmtElapsed(eta)}`}
           </div>
@@ -686,6 +801,14 @@ function DetectingRunningView({
       <div className={styles.phases}>
         <PhaseRow name="Detecting" jp="粗スキャン" pct={pct1} sub="scan" />
         <PhaseRow name="Refining" jp="精密計測" pct={pct2} sub={refiningSub} />
+        {detectionParams.indicators && (
+          <PhaseRow
+            name="Indicators"
+            jp="KO / ASSIST"
+            pct={pct3}
+            sub={phaseLabel === 'indicators' ? 'scan' : 'wait'}
+          />
+        )}
       </div>
 
       <div className={styles.divider} />

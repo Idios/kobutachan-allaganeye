@@ -327,6 +327,18 @@
   font-size: 12px;
 }
 
+/* #1141 -- 「詳細設定 OFF のまま検出」「前回の検出に失敗」の案内。
+   cancelledNote と同じ中立表示 (赤いエラーではない)。 */
+.note {
+  padding: 8px;
+  background: rgba(var(--ae-bg-rgb), 0.4);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.18);
+  color: var(--ae-text-dim);
+  font-family: var(--ae-font-body);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 .errorMessage {
   display: flex;
   flex-direction: column;
