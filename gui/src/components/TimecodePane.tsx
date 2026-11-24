@@ -129,6 +129,11 @@ export function TimecodePane({
             }}
             aria-label={`${label} timecode`}
             onClick={(e) => e.stopPropagation()}
+            // #1156: 入力にフォーカスしたらそのペインを操作対象にする。
+            // クリックの stopPropagation は維持する (pane button の click が
+            // 二重に発火しないため)。これが無いと OUT の TC を編集した直後の
+            // ←→ が IN を動かす。
+            onFocus={onActivate}
             disabled={disabled}
             {...p}
           />

@@ -1,6 +1,38 @@
 import { describe, expect, it } from 'vitest';
 
-import { fmtClockTime, fmtMatchDuration, fmtPreciseTime, fmtTime } from './time';
+import {
+  fmtClockTenths,
+  fmtClockTime,
+  fmtMatchDuration,
+  fmtPreciseTime,
+  fmtTime,
+} from './time';
+
+describe('fmtClockTenths (#1156)', () => {
+  it('formats HH:MM:SS.d with 0.1 s precision', () => {
+    expect(fmtClockTenths(0)).toBe('00:00:00.0');
+    expect(fmtClockTenths(3010)).toBe('00:50:10.0');
+    expect(fmtClockTenths(3031.5)).toBe('00:50:31.5');
+    expect(fmtClockTenths(3661.2)).toBe('01:01:01.2');
+  });
+
+  it('rounds to the nearest tenth instead of truncating', () => {
+    // 切り捨てると「0.5 秒動かしても表示が変わらない」= #1156 の症状 F になる。
+    expect(fmtClockTenths(3010.04)).toBe('00:50:10.0');
+    expect(fmtClockTenths(3010.06)).toBe('00:50:10.1');
+    expect(fmtClockTenths(3010.44)).toBe('00:50:10.4');
+  });
+
+  it('carries into minutes when rounding crosses 60 s', () => {
+    expect(fmtClockTenths(59.96)).toBe('00:01:00.0');
+  });
+
+  it('clamps negative / NaN / Infinity to zero', () => {
+    expect(fmtClockTenths(-1)).toBe('00:00:00.0');
+    expect(fmtClockTenths(Number.NaN)).toBe('00:00:00.0');
+    expect(fmtClockTenths(Number.POSITIVE_INFINITY)).toBe('00:00:00.0');
+  });
+});
 
 describe('fmtTime', () => {
   it('formats sub-hour durations as MM:SS', () => {

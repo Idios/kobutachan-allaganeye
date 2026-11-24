@@ -91,6 +91,152 @@
   flex-wrap: wrap;
 }
 
+/* #1156: セクション見出し (`候補フレーム ⸱ CANDIDATE FRAMES` と同じ idiom)。 */
+.sectionCaption {
+  font-family: var(--ae-font-ui);
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: var(--ae-gold-dim);
+  margin-top: 4px;
+}
+
+.sectionHint {
+  font-family: var(--ae-font-body);
+  font-size: 12px;
+  color: var(--ae-text-dim);
+}
+
+/* #1156: 操作対象の明示 (色だけに依存しない)。 */
+.activeLine {
+  font-family: var(--ae-font-body);
+  font-size: 12px;
+  color: var(--ae-cyan);
+}
+
+.eventLine {
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  color: var(--ae-text-dim);
+}
+
+.nudgeRows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nudgeRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.nudgeLabel {
+  min-width: 76px;
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--ae-gold);
+  white-space: nowrap;
+}
+
+.nudgeButtons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.unitNote {
+  font-family: var(--ae-font-body);
+  font-size: 11px;
+  color: var(--ae-text-dim);
+}
+
+/* #1156: 結果ブロック (操作と分離する)。 */
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: rgba(var(--ae-bg-rgb), 0.4);
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.18);
+}
+
+.resultRow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.resultLabel {
+  min-width: 76px;
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--ae-gold-dim);
+}
+
+.resultValue {
+  font-family: var(--ae-font-mono);
+  font-size: 12px;
+  color: var(--ae-gold-bright);
+  white-space: nowrap;
+}
+
+.resultRange {
+  font-family: var(--ae-font-mono);
+  font-size: 11px;
+  color: var(--ae-text-dim);
+  white-space: nowrap;
+}
+
+.tag {
+  padding: 1px 6px;
+  border: 1px solid rgba(var(--ae-gold-rgb), 0.4);
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--ae-gold);
+}
+
+.tagMuted {
+  font-family: var(--ae-font-ui);
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--ae-text-dim);
+}
+
+.resultNote {
+  font-family: var(--ae-font-body);
+  font-size: 11px;
+  color: var(--ae-text-dim);
+}
+
+.resultActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.saveNote {
+  font-family: var(--ae-font-body);
+  font-size: 11px;
+  color: var(--ae-text-dim);
+}
+
+.saveNoteWarn {
+  color: var(--ae-gold);
+}
+
+.saved {
+  font-family: var(--ae-font-body);
+  font-size: 11px;
+  color: var(--ae-cyan);
+}
+
 .stepButton {
   padding: 6px 10px;
   background: transparent;
@@ -105,14 +251,6 @@
 .stepButton:hover {
   color: var(--ae-gold-bright);
   border-color: var(--ae-gold-bright);
-}
-
-.duration {
-  margin: 0 8px;
-  font-family: var(--ae-font-mono);
-  font-size: 11px;
-  color: var(--ae-gold-bright);
-  white-space: nowrap;
 }
 
 .actions {

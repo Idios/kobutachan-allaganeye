@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -639,6 +639,8 @@ describe('ClipsScreen actions', () => {
       end: 504.9,
       matchIndex: 1,
       position: 1,
+      // #1156: 「自動範囲に戻したときの区間」(束ね + クランプ込み)。
+      baseline: { start: 483.4, end: 504.9, bundled: 1 },
     });
     expect(app.pendingSeekSeconds).toBe(483.4);
   });
@@ -655,7 +657,26 @@ describe('ClipsScreen actions', () => {
       end: 497.9,
       matchIndex: 1,
       position: 1,
+      // baseline も編集後の前後秒数 (post=3) で引く。
+      baseline: { start: 483.4, end: 497.9, bundled: 1 },
     });
+  });
+
+  it('keeps the edited margins across a remount (#1156)', async () => {
+    const user = userEvent.setup();
+    renderClips();
+    const post = screen.getByLabelText('後 (秒)');
+    await user.clear(post);
+    await user.type(post, '3');
+
+    // preview へ遷移して戻ると ClipsScreen は unmount される (#1156 レビュー指摘 1)。
+    cleanup();
+    render(<ClipsScreen />);
+
+    expect((screen.getByLabelText('後 (秒)') as HTMLInputElement).value).toBe('3');
+    expect(screen.getByTestId('clips-candidate-1').textContent).toContain(
+      '14.5 秒',
+    );
   });
 
   it('切り抜く invokes start_clips with the 1-based events[] position', async () => {

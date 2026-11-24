@@ -1,6 +1,27 @@
 import { create } from 'zustand';
 
+import {
+  DEFAULT_GAP_SECONDS,
+  DEFAULT_MARGIN_SECONDS,
+  type ClipBaseline,
+} from '../utils/clipWindow';
 import { stripExtendedPathPrefix } from '../utils/path';
+
+/** 切り抜きの前後秒数と束ね幅 (#1156)。 */
+export interface ClipMargins {
+  /** イベント開始の何秒前から切り抜くか (CLI `--pre`)。 */
+  pre: number;
+  /** イベント終端の何秒後まで切り抜くか (CLI `--post`)。 */
+  post: number;
+  /** この秒数以内に始まるイベントを同じクリップへ束ねる (CLI `--gap`)。 */
+  gap: number;
+}
+
+export const DEFAULT_CLIP_MARGINS: ClipMargins = {
+  pre: DEFAULT_MARGIN_SECONDS,
+  post: DEFAULT_MARGIN_SECONDS,
+  gap: DEFAULT_GAP_SECONDS,
+};
 
 /**
  * The high-level screen the user is currently on. State transitions between
@@ -143,7 +164,21 @@ export interface AppState {
     matchIndex: number;
     /** #1139: 対象イベントの `metadata.events` の 1 始まり位置 (手動指定の書込先)。 */
     position: number | null;
+    /**
+     * #1156: 「自動範囲に戻したときの区間」。呼び出し側が `planClipBaseline` で
+     * 計算して積む。引けない (クリップにならない等) 場合は `null` / 省略。
+     */
+    baseline?: ClipBaseline | null;
   } | null;
+
+  /**
+   * #1156: 切り抜きの前後秒数と束ね幅 (session 設定)。
+   *
+   * `ClipsScreen` の local state に置くと、preview へ遷移して戻る間に既定値へ
+   * 戻り、**クリップ範囲エディタの「自動範囲」と実際に切り抜く区間が食い違う**。
+   * `ClipsScreen` の入力 / baseline 計算 / `start_clips` の引数がこの 1 つを見る。
+   */
+  clipMargins: ClipMargins;
 
   /** Switch to a different screen. */
   navigate: (screen: AppScreen) => void;
@@ -168,8 +203,11 @@ export interface AppState {
       end: number;
       matchIndex: number;
       position: number | null;
+      baseline?: ClipBaseline | null;
     } | null,
   ) => void;
+  /** Patch the clip margins / gap (#1156). */
+  setClipMargins: (patch: Partial<ClipMargins>) => void;
   /** Reset everything back to a freshly launched state (screen = 'drop'). */
   reset: () => void;
 }
@@ -182,6 +220,7 @@ export const useAppStateStore = create<AppState>((set) => ({
   lastExportOutputDir: null,
   pendingSeekSeconds: null,
   clipRange: null,
+  clipMargins: { ...DEFAULT_CLIP_MARGINS },
 
   navigate: (screen) => set({ screen }),
   selectMatch: (selectedMatchIndex) => set({ selectedMatchIndex }),
@@ -207,6 +246,8 @@ export const useAppStateStore = create<AppState>((set) => ({
   setLastExportOutputDir: (lastExportOutputDir) => set({ lastExportOutputDir }),
   setPendingSeekSeconds: (pendingSeekSeconds) => set({ pendingSeekSeconds }),
   setClipRange: (clipRange) => set({ clipRange }),
+  setClipMargins: (patch) =>
+    set((s) => ({ clipMargins: { ...s.clipMargins, ...patch } })),
   reset: () =>
     set({
       screen: 'drop',
@@ -216,5 +257,6 @@ export const useAppStateStore = create<AppState>((set) => ({
       lastExportOutputDir: null,
       pendingSeekSeconds: null,
       clipRange: null,
+      clipMargins: { ...DEFAULT_CLIP_MARGINS },
     }),
 }));
