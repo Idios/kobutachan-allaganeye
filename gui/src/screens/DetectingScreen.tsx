@@ -274,6 +274,48 @@ function computeEta(percent: number, elapsed: number): number | null {
 }
 
 /**
+ * 全体 % の window が小さく、外挿 ETA が実態と食い違う phase (#1141)。
+ *
+ * `PHASE_WINDOWS` は長い phase を数 % の帯に圧縮することがある
+ * (indicators = 97-99%)。その間の `computeEta` は「経過 × 1-3%」しか返さず、
+ * 常に「残り ~0:01」に張り付く。こうした phase は CLI の `eta_s`
+ * (報告値) だけを使い、未受信の間は残り時間を出さない。
+ *
+ * **同型の phase を足すときはここに追加する** (window を小さくして
+ * `eta_s` を報告しない phase は、今のところ他に無い)。
+ */
+const NO_EXTRAPOLATED_ETA_PHASES: ReadonlySet<string> = new Set(['indicators']);
+
+export interface ReportedEta {
+  phase: string;
+  seconds: number;
+}
+
+/**
+ * progressBadge の残り時間 (#1141)。
+ *
+ * 1. CLI が**この phase について**報告した `eta_s` があればそれを出す
+ *    (ログ行と同じ値になる)
+ * 2. 外挿が破綻する phase (`NO_EXTRAPOLATED_ETA_PHASES`) は何も出さない
+ * 3. それ以外は従来どおり全体 progress からの線形外挿
+ */
+export function selectEta(args: {
+  phaseLabel: string;
+  reported: ReportedEta | null;
+  progress: number;
+  elapsed: number;
+}): number | null {
+  const { phaseLabel, reported, progress, elapsed } = args;
+  if (reported !== null && reported.phase === phaseLabel) {
+    return reported.seconds;
+  }
+  if (NO_EXTRAPOLATED_ETA_PHASES.has(phaseLabel)) {
+    return null;
+  }
+  return computeEta(progress, elapsed);
+}
+
+/**
  * #813 -- run id used to fence detect-progress events to the current run.
  * Prefers crypto.randomUUID, but falls back to a timestamp+random token so a
  * WebView runtime without crypto.randomUUID (old WebView2 / non-secure
@@ -472,10 +514,7 @@ function DetectingRunningView({
   // 値かも一緒に持つ**（phase をまたいで古い値を出さない）。進捗を全体 %に
   // 圧縮するフェーズ (indicators = 97-99%) では `computeEta` の外挿が実態と
   // 食い違うため、報告値があるフェーズはそれを優先する。
-  const [reportedEta, setReportedEta] = useState<{
-    phase: string;
-    seconds: number;
-  } | null>(null);
+  const [reportedEta, setReportedEta] = useState<ReportedEta | null>(null);
   // Captured once on first mount via lazy initialiser so log entries
   // can compute their relative timestamp inside render. The parent
   // remounts this component (via `key={runCount}`) on retry, so a new
@@ -714,14 +753,15 @@ function DetectingRunningView({
             ),
           );
 
-  // #1141 -- CLI が残り秒を報告した phase では、その値をそのまま出す
-  // (ログ行と同じ値)。報告が無い / 別 phase の間は全体 progress からの外挿
-  // (`computeEta`)。外挿は 97-99% 帯では「残り ~0:01」に張り付くため、
-  // indicators 中は誤った値を出さない (未受信なら残り時間を出さない)。
-  const eta =
-    reportedEta !== null && reportedEta.phase === phaseLabel
-      ? reportedEta.seconds
-      : computeEta(progress, elapsed);
+  // #1141 -- CLI が残り秒を報告した phase ではその値を、報告が無い他 phase は
+  // 全体 progress からの外挿を使う。indicators のように window が小さい phase は
+  // 外挿しない (`selectEta` のコメント参照)。
+  const eta = selectEta({
+    phaseLabel,
+    reported: reportedEta,
+    progress,
+    elapsed,
+  });
   // #569 review Round 1 課題 1: probing event 受信後は実 ffprobe 結果を
   // 表示。受信前 (起動直後の数百 ms) は暫定で `phase: ...` を出して
   // 「meta 行が空」状態を回避する。

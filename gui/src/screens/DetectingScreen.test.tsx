@@ -25,6 +25,7 @@ import {
   computeOverallPercent,
   computeEta,
   PHASE_WINDOWS,
+  selectEta,
 } from './DetectingScreen';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
@@ -1251,6 +1252,50 @@ describe('DetectingScreen helpers', () => {
   it('computeEta extrapolates remaining time from elapsed and percent', () => {
     // 25% in 10s -> 30s remaining (total 40s, elapsed 10s).
     expect(computeEta(25, 10)).toBeCloseTo(30);
+  });
+
+  // #1141 -- バッジの ETA 選択。indicators は全体 % が 97-99% に圧縮される
+  // ため、外挿を絶対に使わない (ログ行と同じ報告値を優先)。
+  describe('selectEta (#1141)', () => {
+    it('prefers the ETA reported for the current phase', () => {
+      expect(
+        selectEta({
+          phaseLabel: 'indicators',
+          reported: { phase: 'indicators', seconds: 6 },
+          progress: 98,
+          elapsed: 60,
+        }),
+      ).toBe(6);
+    });
+
+    it('never extrapolates during indicators before eta_s arrives', () => {
+      // 97-99% 帯からの外挿は 60 秒経過でも ~1 秒になる。出さないのが正。
+      expect(
+        selectEta({
+          phaseLabel: 'indicators',
+          reported: null,
+          progress: 98,
+          elapsed: 60,
+        }),
+      ).toBeNull();
+    });
+
+    it('ignores a report that belongs to another phase', () => {
+      expect(
+        selectEta({
+          phaseLabel: 'scan',
+          reported: { phase: 'indicators', seconds: 6 },
+          progress: 25,
+          elapsed: 10,
+        }),
+      ).toBeCloseTo(30);
+    });
+
+    it('falls back to the extrapolation for other phases', () => {
+      expect(
+        selectEta({ phaseLabel: 'scan', reported: null, progress: 25, elapsed: 10 }),
+      ).toBeCloseTo(30);
+    });
   });
 
   it('buildLogText skips chatty intra-scan updates', () => {
