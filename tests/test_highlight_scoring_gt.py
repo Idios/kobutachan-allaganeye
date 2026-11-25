@@ -1,0 +1,591 @@
+"""L6 ストリークスコアリングの GT 突合ハーネス (#1049 作業項目 3、Q3-B)。
+
+設計の正: `docs/superpowers/specs/2026-11-25-l6-streak-scoring-design.md` 5 節
+
+GT は `tests/fixtures/highlights_gt/scoring_gt.json`（5.1 節の形式）。**裁定は
+Idios の作業**なので、ファイルが無い間は理由付きで skip する。裁定が入れば
+「窓 5 / 10 / 15 秒のどれが人手の順位と最も一致するか」と「Spearman が
+しきい値以上か」を毎 PR の既定実行で検査するゲートになる。
+
+入力は GT イベントの JSON (`tests/fixtures/indicators_gt/*.json`) だけで、
+動画は開かない。そのため `slow` マーカーは付けない（5.4）。
+
+ワークシート（裁定用の一覧）は `pytest -s tests/test_highlight_scoring_gt.py` で
+標準出力に出る。GT ファイルが無いときの skip メッセージにも同じコマンドを載せる。
+"""
+
+from __future__ import annotations
+
+import json
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from collections.abc import Callable, Sequence
+
+import pytest
+
+from allaganeye.highlights.scoring import (
+    DEFAULT_WINDOW_SECONDS,
+    ScoringEvent,
+    group_streaks,
+    score_events,
+)
+
+FIXTURES = Path(__file__).parent / "fixtures"
+INDICATOR_GT_DIR = FIXTURES / "indicators_gt"
+GT_FILE = FIXTURES / "highlights_gt" / "scoring_gt.json"
+
+# 比較する窓（5.2）。参照窓はこの最小値でなければならない。
+WINDOWS = (5.0, 10.0, 15.0)
+# 段階は 3 値。Spearman の合格線は暫定（5.3 節 / 7 節-3）。
+TIERS = (1, 2, 3)
+MIN_SPEARMAN = 0.60
+# GT は表示終了時刻を持たないため `end = start`。スコアは `end` を使わない (4)。
+WORKSHEET_COMMAND = "pytest -s tests/test_highlight_scoring_gt.py"
+
+
+@dataclass(frozen=True)
+class GtGroup:
+    """参照窓で束ねた 1 グループと、人手の段階 (1=弱 / 2=中 / 3=強)。
+
+    `tier` は裁定前は `None` (draft)。
+    """
+
+    tier: int | None
+    events: tuple[tuple[str, float], ...]
+
+
+@dataclass(frozen=True)
+class GtCase:
+    label: str
+    source: str
+    groups: tuple[GtGroup, ...]
+
+
+@dataclass(frozen=True)
+class ScoringGt:
+    reference_window: float
+    chosen_window: float | None
+    provenance: str
+    cases: tuple[GtCase, ...]
+
+    @property
+    def group_count(self) -> int:
+        return sum(len(case.groups) for case in self.cases)
+
+    @property
+    def pending_groups(self) -> int:
+        """`tier` が未記入のグループ数。0 なら裁定済。"""
+        return sum(
+            1 for case in self.cases for group in case.groups if group.tier is None
+        )
+
+    @property
+    def adjudicated(self) -> bool:
+        return self.pending_groups == 0
+
+
+def _load_case_events(path: Path) -> tuple[str, tuple[ScoringEvent, ...]]:
+    """indicators の GT JSON から (`label`, イベント列) を読む。"""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    raw_events = payload.get("events")
+    if not isinstance(raw_events, list) or not raw_events:
+        raise ValueError(f"{path.name}: events must be a non-empty list")
+    events: list[ScoringEvent] = []
+    seen: set[tuple[str, float]] = set()
+    for index, raw in enumerate(raw_events):
+        kind = raw.get("kind")
+        start = raw.get("start")
+        if kind not in ("ko", "assist"):
+            raise ValueError(
+                f"{path.name}: events[{index}] has unsupported kind {kind!r}"
+            )
+        if isinstance(start, bool) or not isinstance(start, (int, float)):
+            raise ValueError(f"{path.name}: events[{index}].start must be a number")
+        if not math.isfinite(float(start)) or float(start) < 0:
+            raise ValueError(
+                f"{path.name}: events[{index}].start must be finite and >= 0"
+            )
+        key = (kind, round(float(start), 6))
+        if key in seen:
+            raise ValueError(f"{path.name}: duplicate event {key}")
+        seen.add(key)
+        # GT は表示終了時刻を持たない。スコアは start しか見ない (4)。
+        events.append(ScoringEvent(kind=kind, start=float(start), end=float(start)))
+    return str(payload["label"]), tuple(events)
+
+
+def _case_events() -> dict[str, tuple[ScoringEvent, ...]]:
+    cases: dict[str, tuple[ScoringEvent, ...]] = {}
+    for path in sorted(INDICATOR_GT_DIR.glob("*.json")):
+        label, events = _load_case_events(path)
+        cases[label] = events
+    if not cases:
+        raise ValueError(f"no indicator GT fixtures found in {INDICATOR_GT_DIR}")
+    return cases
+
+
+def _event_key(event: ScoringEvent) -> tuple[str, float]:
+    return (event.kind, round(event.start, 6))
+
+
+def _worksheet(
+    window: float = DEFAULT_WINDOW_SECONDS, *, with_score: bool = False
+) -> str:
+    """参照窓の全ストリークを、裁定用の Markdown 表にする (5.1)。
+
+    `with_score=False` が既定。**スコア列はアンカリングになる**ので、人手の採点には
+    出さない（モデルの値を見ながら採点すると GT がモデルに追随して循環する）。
+    """
+    header = "| case | start (s) | size | ko | assist | span (s) |"
+    separator = "| --- | --- | --- | --- | --- | --- |"
+    if with_score:
+        header += " score |"
+        separator += " --- |"
+    header += " tier |"
+    separator += " --- |"
+    lines = [
+        f"参照窓 {window:g} 秒のストリーク一覧（tier 列を 1=弱 / 2=中 / 3=強 で埋める）",
+        "",
+        header,
+        separator,
+    ]
+    for label, events in _case_events().items():
+        groups = sorted(group_streaks(events, window), key=lambda streak: streak.start)
+        scored = {
+            round(item.streak.start, 6): item.score
+            for item in score_events(events, window_seconds=window)
+        }
+        for streak in groups:
+            row = (
+                f"| {label} | {streak.start:.2f} | {streak.size} | {streak.ko_count} | "
+                f"{streak.assist_count} | {streak.span_seconds:.2f} |"
+            )
+            if with_score:
+                row += f" {scored[round(streak.start, 6)]:.3f} |"
+            lines.append(row + "  |")
+    return "\n".join(lines)
+
+
+def _load_gt(path: Path = GT_FILE) -> ScoringGt:
+    """GT を読み、壊れた点は**収集時に落とす**（fail-open にしない）。"""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    reference = payload.get("reference_window_seconds")
+    if isinstance(reference, bool) or not isinstance(reference, (int, float)):
+        raise ValueError("reference_window_seconds must be a number")
+    reference = float(reference)
+    if not math.isfinite(reference) or reference <= 0:
+        raise ValueError("reference_window_seconds must be finite and > 0")
+    if reference != min(WINDOWS):
+        raise ValueError(
+            f"reference_window_seconds must be {min(WINDOWS):g} (got {reference:g})"
+        )
+
+    chosen = payload.get("chosen_window_seconds")
+    if chosen is not None:
+        if isinstance(chosen, bool) or not isinstance(chosen, (int, float)):
+            raise ValueError("chosen_window_seconds must be a number or null")
+        if float(chosen) not in WINDOWS:
+            raise ValueError(f"chosen_window_seconds must be one of {WINDOWS}")
+
+    raw_cases = payload.get("cases")
+    if not isinstance(raw_cases, list) or not raw_cases:
+        raise ValueError("cases must be a non-empty list")
+
+    cases: list[GtCase] = []
+    seen_labels: set[str] = set()
+    for case_index, raw_case in enumerate(raw_cases):
+        label = raw_case.get("label")
+        source = raw_case.get("source")
+        if not isinstance(label, str) or not label:
+            raise ValueError(f"cases[{case_index}].label must be a non-empty string")
+        if label in seen_labels:
+            raise ValueError(f"duplicate case label {label!r}")
+        seen_labels.add(label)
+        if not isinstance(source, str) or not source:
+            raise ValueError(f"cases[{case_index}].source must be a non-empty string")
+        raw_groups = raw_case.get("groups")
+        if not isinstance(raw_groups, list) or not raw_groups:
+            raise ValueError(f"{label}: groups must be a non-empty list")
+        groups = []
+        for group_index, raw_group in enumerate(raw_groups):
+            tier = raw_group.get("tier")
+            if tier is not None and (isinstance(tier, bool) or tier not in TIERS):
+                raise ValueError(
+                    f"{label}: groups[{group_index}].tier must be one of {TIERS} or null"
+                )
+            raw_events = raw_group.get("events")
+            if not isinstance(raw_events, list) or not raw_events:
+                raise ValueError(
+                    f"{label}: groups[{group_index}].events must be non-empty"
+                )
+            events = []
+            for event_index, raw_event in enumerate(raw_events):
+                kind = raw_event.get("kind")
+                start = raw_event.get("start")
+                if kind not in ("ko", "assist"):
+                    raise ValueError(
+                        f"{label}: groups[{group_index}].events[{event_index}] "
+                        f"has unsupported kind {kind!r}"
+                    )
+                if isinstance(start, bool) or not isinstance(start, (int, float)):
+                    raise ValueError(
+                        f"{label}: groups[{group_index}].events[{event_index}].start "
+                        f"must be a number"
+                    )
+                events.append((kind, round(float(start), 6)))
+            if len(set(events)) != len(events):
+                raise ValueError(f"{label}: groups[{group_index}] has duplicate events")
+            groups.append(
+                GtGroup(tier=None if tier is None else int(tier), events=tuple(events))
+            )
+        cases.append(GtCase(label=label, source=source, groups=tuple(groups)))
+
+    known = _case_events()
+    for case in cases:
+        if case.label not in known:
+            raise ValueError(f"case {case.label!r} has no indicator GT fixture")
+        listed = {event for group in case.groups for event in group.events}
+        actual = {_event_key(event) for event in known[case.label]}
+        if listed != actual:
+            missing = sorted(actual - listed)
+            extra = sorted(listed - actual)
+            raise ValueError(
+                f"{case.label}: group events do not match the indicator GT "
+                f"(missing={missing}, extra={extra})"
+            )
+
+    return ScoringGt(
+        reference_window=reference,
+        chosen_window=None if chosen is None else float(chosen),
+        provenance=str(payload.get("provenance", "")),
+        cases=tuple(cases),
+    )
+
+
+def _require_gt(*, require_adjudicated: bool = False) -> ScoringGt:
+    if not GT_FILE.is_file():
+        pytest.skip(
+            f"GT 裁定が未投入: {GT_FILE} が無い。"
+            f"ワークシートは `{WORKSHEET_COMMAND}` で生成できる "
+            "(設計メモ 5.1 節 / Q3-B の裁定は Idios の作業)"
+        )
+    gt = _load_gt()
+    if require_adjudicated and not gt.adjudicated:
+        pytest.skip(
+            f"tier 未記入が {gt.pending_groups} 件残っている（draft 状態）。"
+            f"`{GT_FILE}` の各 group の `tier` を 1=弱 / 2=中 / 3=強 で埋め、"
+            "`chosen_window_seconds` を記入すると有効になる "
+            f"(一覧は `{WORKSHEET_COMMAND}`)"
+        )
+    return gt
+
+
+def _ranks(values: Sequence[float]) -> list[float]:
+    """同点に平均順位を与える (Spearman の tie 補正)。"""
+    order = sorted(range(len(values)), key=lambda index: values[index])
+    ranks = [0.0] * len(values)
+    position = 0
+    while position < len(order):
+        end = position
+        while (
+            end + 1 < len(order) and values[order[end + 1]] == values[order[position]]
+        ):
+            end += 1
+        average = (position + end) / 2 + 1
+        for slot in range(position, end + 1):
+            ranks[order[slot]] = average
+        position = end + 1
+    return ranks
+
+
+def _pearson(xs: Sequence[float], ys: Sequence[float]) -> float:
+    if len(xs) != len(ys) or len(xs) < 2:
+        raise ValueError("pearson requires two sequences of the same length >= 2")
+    mean_x = sum(xs) / len(xs)
+    mean_y = sum(ys) / len(ys)
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True))
+    var_x = sum((x - mean_x) ** 2 for x in xs)
+    var_y = sum((y - mean_y) ** 2 for y in ys)
+    if var_x <= 0 or var_y <= 0:
+        # 片方が完全な同点だと相関は定義できない。0 を返して「識別力なし」を表す。
+        return 0.0
+    return cov / math.sqrt(var_x * var_y)
+
+
+def _spearman(xs: Sequence[float], ys: Sequence[float]) -> float:
+    return _pearson(_ranks(xs), _ranks(ys))
+
+
+def _model_scores_by_streak(
+    events: Sequence[ScoringEvent], window: float
+) -> dict[tuple[str, float], float]:
+    """ストリークの先頭イベントで引けるスコア表。"""
+    return {
+        _event_key(item.streak.events[0]): item.score
+        for item in score_events(events, window_seconds=window)
+    }
+
+
+def _streak_of(
+    events: Sequence[ScoringEvent], window: float, key: tuple[str, float]
+) -> tuple[str, float]:
+    """イベントが属するストリークの先頭イベントを返す (窓の拡大で必ず一意)。"""
+    for streak in group_streaks(events, window):
+        if any(_event_key(event) == key for event in streak.events):
+            return _event_key(streak.events[0])
+    raise AssertionError(f"event {key} not found in any streak")
+
+
+def _reference_tiers_by_window(
+    gt: ScoringGt, window: float, *, aggregate: str
+) -> tuple[list[float], list[float]]:
+    """窓 `window` の (モデルスコア, 参照段階) を全 case 分返す (5.2)。"""
+    known = _case_events()
+    scores: list[float] = []
+    tiers: list[float] = []
+    for case in gt.cases:
+        events = known[case.label]
+        score_by_streak = _model_scores_by_streak(events, window)
+        collected: dict[tuple[str, float], list[int]] = {}
+        for group in case.groups:
+            if group.tier is None:
+                raise AssertionError(
+                    f"{case.label}: unadjudicated group reached the scoring path"
+                )
+            anchor = _streak_of(events, window, group.events[0])
+            for event in group.events:
+                if _streak_of(events, window, event) != anchor:
+                    raise AssertionError(
+                        f"{case.label}: reference group split at window {window:g} "
+                        "(reference window must be the minimum)"
+                    )
+            collected.setdefault(anchor, []).append(group.tier)
+        for anchor, group_tiers in collected.items():
+            if aggregate == "max":
+                tier = float(max(group_tiers))
+            elif aggregate == "mean":
+                tier = sum(group_tiers) / len(group_tiers)
+            else:  # pragma: no cover - 呼び出し側の取り違え
+                raise ValueError(f"unknown aggregate {aggregate!r}")
+            scores.append(score_by_streak[anchor])
+            tiers.append(tier)
+    return scores, tiers
+
+
+def _rhos(gt: ScoringGt) -> dict[float, float]:
+    """窓ごとの Spearman (max 集約)。"""
+    return {
+        window: _spearman(*_reference_tiers_by_window(gt, window, aggregate="max"))
+        for window in WINDOWS
+    }
+
+
+def _best_window(rhos: dict[float, float]) -> float:
+    """rho 最大の窓。同点は窓が狭い方 (変更が小さい方) を採る。"""
+    return max(rhos, key=lambda window: (rhos[window], -window))
+
+
+def _rho_table(gt: ScoringGt) -> str:
+    lines = [
+        "| window (s) | n | rho (max) | rho (mean) | スコア異なり数 |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for window in WINDOWS:
+        max_scores, max_tiers = _reference_tiers_by_window(gt, window, aggregate="max")
+        mean_scores, mean_tiers = _reference_tiers_by_window(
+            gt, window, aggregate="mean"
+        )
+        lines.append(
+            f"| {window:g} | {len(max_scores)} | "
+            f"{_spearman(max_scores, max_tiers):.3f} | "
+            f"{_spearman(mean_scores, mean_tiers):.3f} | "
+            f"{len(set(max_scores))} |"
+        )
+    return "\n".join(lines)
+
+
+def test_worksheet_covers_every_reference_streak() -> None:
+    """裁定用ワークシートが参照窓の全ストリークを含む (GT 未投入でも回る)。"""
+    worksheet = _worksheet()
+    rows = [
+        line
+        for line in worksheet.splitlines()
+        if line.startswith("| ") and "---" not in line
+    ]
+    # ヘッダ行を除いた件数が、参照窓のストリーク総数と一致する。
+    expected = sum(
+        len(group_streaks(events, DEFAULT_WINDOW_SECONDS))
+        for events in _case_events().values()
+    )
+    assert len(rows) - 1 == expected
+    assert expected > 0
+    print(worksheet)  # `-s` で一覧を確認できる
+
+
+def test_spearman_handles_ties_and_extremes() -> None:
+    """Spearman 実装の性質 (同点平均順位・完全一致・完全逆転)。"""
+    assert _spearman([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]) == pytest.approx(1.0)
+    assert _spearman([1.0, 2.0, 3.0], [3.0, 2.0, 1.0]) == pytest.approx(-1.0)
+    # 27 件の同点塊があっても 0 除算しない。
+    assert math.isfinite(_spearman([0.372] * 5, [1.0, 2.0, 3.0, 1.0, 2.0]))
+    # 片側が完全な同点なら「識別力なし」の 0。
+    assert _spearman([0.5] * 4, [1.0, 2.0, 3.0, 1.0]) == 0.0
+
+
+def test_gt_file_is_well_formed() -> None:
+    """GT が形式・イベント集合・参照窓の整合を満たす (5.1)。"""
+    gt = _require_gt()
+    known = _case_events()
+    assert gt.reference_window == min(WINDOWS)
+    assert gt.group_count > 0
+    assert {case.label for case in gt.cases} <= set(known)
+
+
+def test_reference_groups_match_group_streaks() -> None:
+    """参照グループが実装の束ね結果と一致する (GT とコードのドリフト検出)。"""
+    gt = _require_gt()
+    known = _case_events()
+    for case in gt.cases:
+        expected = [
+            tuple(sorted(_event_key(event) for event in streak.events))
+            for streak in group_streaks(known[case.label], gt.reference_window)
+        ]
+        actual = [tuple(sorted(group.events)) for group in case.groups]
+        assert sorted(actual) == sorted(expected), (
+            f"{case.label}: GT groups drifted from group_streaks() at "
+            f"{gt.reference_window:g}s\nGT={sorted(actual)}\nimpl={sorted(expected)}"
+        )
+
+
+def test_chosen_window_maximizes_spearman() -> None:
+    """`chosen_window_seconds` が rho 最大の窓で、かつ合格線を満たす (5.3)。"""
+    gt = _require_gt(require_adjudicated=True)
+    table = _rho_table(gt)
+    print(table)
+    if gt.chosen_window is None:
+        pytest.skip(
+            f"chosen_window_seconds が未記入 (裁定の窓選定が未了)。実測:\n{table}"
+        )
+    rhos = _rhos(gt)
+    best = _best_window(rhos)
+    assert gt.chosen_window == best, (
+        f"chosen_window_seconds={gt.chosen_window:g} is not the best window "
+        f"(best={best:g})\n{table}"
+    )
+    assert rhos[gt.chosen_window] >= MIN_SPEARMAN, (
+        f"Spearman {rhos[gt.chosen_window]:.3f} < {MIN_SPEARMAN}\n{table}"
+    )
+
+
+def test_mean_aggregate_tracks_merged_groups() -> None:
+    """max は最良の瞬間、mean は平均。広い窓で段階が割れると両者はずれる。"""
+    gt = _require_gt(require_adjudicated=True)
+    diverged = False
+    for window in WINDOWS:
+        scores, tiers = _reference_tiers_by_window(gt, window, aggregate="mean")
+        assert len(scores) == len(tiers)
+        assert all(math.isfinite(score) for score in scores)
+        _, max_tiers = _reference_tiers_by_window(gt, window, aggregate="max")
+        assert all(mean <= peak for mean, peak in zip(tiers, max_tiers, strict=True))
+        diverged |= tiers != max_tiers
+    if gt.chosen_window is None:
+        pytest.skip("裁定未了のため max / mean の乖離は記録のみ")
+    assert diverged, (
+        "参照グループが window 内で混ざらない = GT の粒度が窓に対して細かすぎる"
+    )
+
+
+# --- 合成 GT: 人手裁定を待たずに Spearman 経路を実試験する -------------------
+
+
+def _write_synthetic_gt(
+    tmp_path: Path,
+    tier_of_score: Callable[[float], int],
+) -> Path:
+    """スコアから機械的に tier を作った GT (人手裁定の代用)。
+
+    **ゲートの経路 (ロード・窓写像・Spearman) を今のうちに実行するためだけ**の
+    もので、精度の根拠にはならない。tier がスコアの単調関数なら Spearman は 1.0 に
+    なるはずで、写像の取り違え (窓を跨いだグループの取りこぼし等) を検出できる。
+    """
+    cases = []
+    for label, events in _case_events().items():
+        scored = sorted(
+            (
+                (item.streak, item.score)
+                for item in score_events(events, window_seconds=DEFAULT_WINDOW_SECONDS)
+            ),
+            key=lambda pair: pair[0].start,
+        )
+        cases.append(
+            {
+                "label": label,
+                "source": "synthetic",
+                "groups": [
+                    {
+                        "tier": tier_of_score(score),
+                        "events": [
+                            {"kind": event.kind, "start": round(event.start, 6)}
+                            for event in streak.events
+                        ],
+                    }
+                    for streak, score in scored
+                ],
+            }
+        )
+    payload = {
+        "reference_window_seconds": DEFAULT_WINDOW_SECONDS,
+        "chosen_window_seconds": None,
+        "provenance": "synthetic (テスト専用。人手裁定の代用にはならない)",
+        "cases": cases,
+    }
+    path = tmp_path / "scoring_gt.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_synthetic_gt_runs_the_full_gate_path(tmp_path: Path) -> None:
+    """合成 GT でロード->窓写像->Spearman が一貫して動く (単調なら rho=1)。"""
+    gt = _load_gt(
+        _write_synthetic_gt(tmp_path, lambda s: 3 if s >= 0.6 else 2 if s >= 0.5 else 1)
+    )
+    known = _case_events()
+    assert gt.adjudicated
+    assert gt.pending_groups == 0
+    assert gt.group_count == sum(
+        len(group_streaks(events, DEFAULT_WINDOW_SECONDS)) for events in known.values()
+    )
+    scores, tiers = _reference_tiers_by_window(
+        gt, DEFAULT_WINDOW_SECONDS, aggregate="max"
+    )
+    assert len(scores) == gt.group_count
+    # tier はスコアの階段関数なので、同点 (同一 tier 内の異なるスコア) の分だけ 1.0 を下回る。
+    assert _spearman(scores, tiers) > 0.95
+    # 窓を広げても正の相関を保つ（写像でグループを取りこぼしていない）。
+    assert all(rho > 0.3 for rho in _rhos(gt).values())
+
+
+def test_synthetic_reversed_gt_fails_the_threshold(tmp_path: Path) -> None:
+    """逆順の GT では rho < 0 になり合格線を満たさない（ゲートの red 実証）。"""
+    gt = _load_gt(_write_synthetic_gt(tmp_path, lambda s: 1 if s >= 0.6 else 3))
+    rhos = _rhos(gt)
+    assert rhos[DEFAULT_WINDOW_SECONDS] < 0
+    assert max(rhos.values()) < MIN_SPEARMAN
+
+
+def test_synthetic_mean_aggregate_diverges_from_max(tmp_path: Path) -> None:
+    """広い窓で段階が割れると mean 集約は max 集約より小さくなる。"""
+    gt = _load_gt(
+        _write_synthetic_gt(tmp_path, lambda s: 3 if s >= 0.6 else 2 if s >= 0.5 else 1)
+    )
+    diverged = False
+    for window in WINDOWS:
+        _, mean_tiers = _reference_tiers_by_window(gt, window, aggregate="mean")
+        _, max_tiers = _reference_tiers_by_window(gt, window, aggregate="max")
+        assert all(
+            mean <= peak for mean, peak in zip(mean_tiers, max_tiers, strict=True)
+        )
+        diverged |= mean_tiers != max_tiers
+    assert diverged

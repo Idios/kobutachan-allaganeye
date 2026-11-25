@@ -1,0 +1,688 @@
+{
+  "reference_window_seconds": 5.0,
+  "chosen_window_seconds": null,
+  "provenance": "DRAFT: 参照窓 ±5 秒の束ね結果を機械生成したもの。`tier` を 1=弱 / 2=中 / 3=強 で人手記入し、`chosen_window_seconds` を 5 / 10 / 15 のいずれかに記入するとSpearman ゲートが有効になる (設計: docs/superpowers/specs/2026-11-25-l6-streak-scoring-design.md §5)。",
+  "cases": [
+    {
+      "label": "ref1",
+      "source": "tests/fixtures/indicators_gt/20260116_1.json",
+      "groups": [
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 65.9
+            },
+            {
+              "kind": "assist",
+              "start": 68.0
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 79.2
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 85.2
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 108.1
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 118.6
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 169.8
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 193.2
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 201.0
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 206.4
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 391.6
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "ko",
+              "start": 493.4
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 513.7
+            },
+            {
+              "kind": "assist",
+              "start": 515.5
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "ko",
+              "start": 584.3
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 603.6
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 623.2
+            },
+            {
+              "kind": "assist",
+              "start": 626.4
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 656.3
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 661.5
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 685.0
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 726.0
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 770.9
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 788.5
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 812.9
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 834.7
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 842.7
+            },
+            {
+              "kind": "ko",
+              "start": 847.2
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 858.9
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 866.7
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "ko",
+              "start": 911.2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "ref5",
+      "source": "tests/fixtures/indicators_gt/20260116_5.json",
+      "groups": [
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "ko",
+              "start": 40.9
+            },
+            {
+              "kind": "assist",
+              "start": 45.7
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 57.3
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 70.7
+            },
+            {
+              "kind": "assist",
+              "start": 71.1
+            },
+            {
+              "kind": "ko",
+              "start": 73.5
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 102.2
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 119.8
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "ko",
+              "start": 139.2
+            },
+            {
+              "kind": "ko",
+              "start": 142.8
+            },
+            {
+              "kind": "assist",
+              "start": 147.5
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 153.7
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 171.9
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 195.3
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 208.3
+            },
+            {
+              "kind": "assist",
+              "start": 209.8
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 244.1
+            },
+            {
+              "kind": "assist",
+              "start": 244.9
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 250.2
+            },
+            {
+              "kind": "assist",
+              "start": 250.9
+            },
+            {
+              "kind": "assist",
+              "start": 253.6
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 302.6
+            },
+            {
+              "kind": "assist",
+              "start": 305.4
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 327.4
+            },
+            {
+              "kind": "ko",
+              "start": 329.4
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 354.6
+            },
+            {
+              "kind": "assist",
+              "start": 357.7
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 365.2
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "ko",
+              "start": 376.4
+            },
+            {
+              "kind": "assist",
+              "start": 378.9
+            },
+            {
+              "kind": "assist",
+              "start": 382.7
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 414.9
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 456.1
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "ko",
+              "start": 487.9
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 495.2
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 508.2
+            },
+            {
+              "kind": "assist",
+              "start": 509.8
+            },
+            {
+              "kind": "ko",
+              "start": 510.3
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 523.5
+            },
+            {
+              "kind": "assist",
+              "start": 526.0
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 542.8
+            },
+            {
+              "kind": "ko",
+              "start": 544.1
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 619.2
+            },
+            {
+              "kind": "assist",
+              "start": 620.2
+            },
+            {
+              "kind": "assist",
+              "start": 622.1
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 642.8
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 648.4
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 662.8
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "ko",
+              "start": 735.6
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "ko",
+              "start": 788.4
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 853.3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "other_hud",
+      "source": "tests/fixtures/indicators_gt/other_hud.json",
+      "groups": [
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 669.6
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "ko",
+              "start": 762.4
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 880.0
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 890.9
+            }
+          ]
+        },
+        {
+          "tier": null,
+          "events": [
+            {
+              "kind": "assist",
+              "start": 899.3
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
