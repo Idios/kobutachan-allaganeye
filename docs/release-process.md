@@ -263,6 +263,7 @@ gh api 'repos/Idios/kobutachan-allaganeye/rulesets?includes_parents=true'
 - [ ] 対象バージョンセクションの entry が **§CHANGELOG entry の記述規約 に適合**している — 掲載範囲が利用者から見た振る舞いの変化に限られ、3 部構成 (太字機能名 + issue 番号 / 使い方 2-3 行 / 詳細リンク) で書かれ、内部用語が spec 側へ寄せられていること (`python scripts/check_changelog_style.py` が exit 0。ただし同 script は**語彙と節の形しか見ず、entry の欠落や内容の正しさは見ない**ので、読者視点の適合はここで人が確認する)
 - [ ] `deferred` ラベル付き issue を全件レビュー済 (close、または次バージョン `deferred` 維持判断、または当該バージョンに引き取り)
 - [ ] 対象レイヤースコープの `P1-high` issue 全 close + `P2-medium` issue 全 close または `deferred` ラベル付与
+- [ ] **Python 依存が宣言 / CI / 配布 ZIP で同一版** — `constraints.txt` の exact pin が CI (`.github/workflows/ci.yml` の `-c constraints.txt`) と Portable ZIP build (`scripts/build-portable-zip.ps1` の `-c constraints.txt`) の双方で効いていることを確認する。新しい 4.x が出ても ZIP だけ版が動かないようにするための確認 (#916)。major 移行 (cv2 5.x 等) は bit-exact baseline の再取得を伴うので、この確認とは別に issue で判断する ([#951](https://github.com/Idios/kobutachan-allaganeye/issues/951))
 
 ### v0.2.0 (L2: GUI サポート + ゼロ環境構築配布) 固有項目
 
