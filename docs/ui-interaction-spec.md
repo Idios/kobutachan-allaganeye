@@ -932,15 +932,20 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 | store mutation | `appStateStore.setPendingSeekSeconds(null)` (§1.1 の例外: match 編集ではないため `metadataStore` は触らない) |
 | 例外 / edge case | **IN / OUT の編集バッファ (`startT` / `endT`) には触らない**。値から `currentTime` を再同期する既存 effect は deps 不変なら走らないため、境界も dirty も動かない。§2.4.5 の再生中 sync は `paused` 中のみ `t → currentTime` を書くので、シーク後の TC 表示は境界のまま (「その瞬間を見る」専用)。**クリップ範囲の調整画面 (§2.4.18) が描画されている間は消費だけする**: その画面が自前で IN を clip の先頭へシークするため、値を持ち越すと境界エディタに戻ったときに古い位置へ飛ぶ (#1139) |
 
-#### §2.4.18 クリップ範囲の調整画面 (ClipRangeView、#1139)
+#### §2.4.18 クリップ範囲の調整画面 (ClipRangeView、#1139 / #1156)
 
 | 項目 | 内容 |
 | --- | --- |
-| 種類 | PreviewScreen の**画面状態の差し替え** (`data-testid="clip-range-view"`)。`appStateStore.clipRange.matchIndex` が開いている試合と一致するとき、試合境界エディタの代わりに早期 return で描画する。動画ペインと TC 入力は共通部品 `TimecodePane` を流用 |
-| 状態 | `clipRange.start` / `end` を local state の初期値にし、編集中は local state だけが動く（`metadata.events` は [保存] まで触らない）。`position === null` (metadata に未適用) のときは TC 入力 / nudge / 再生による時間変更をすべて閉じる。マウント直後は IN ペインを **イベントの発生時刻**（`events[position-1].timestamp`）へ 1 回だけシークする（TC は clip の IN のまま、§2.4.17 と同じ「その瞬間を見る」役割） |
-| 遷移トリガー | TC 入力 / ±1s・±10s nudge（IN は `OUT - 0.01` で止まり追い越さない）/ **キーボード**: `←` `→` = active な端を ±1s、`Shift` = ±10s、`Alt` = ±1 frame、`Space` = active ペインの再生 / 停止（境界エディタ §2.4.7 と同じ割当）/ [⬦ この範囲を保存] → `setEventClipRange(position, {start, end})` + `apply()` / [保存せず戻る]・[◀ クリップ一覧へ] → `navigate('clips')` |
+| 種類 | PreviewScreen の**画面状態の差し替え** (`data-testid="clip-range-view"`)。`appStateStore.clipRange.matchIndex` が開いている試合と一致するとき、試合境界エディタの代わりに早期 return で描画する。動画ペインと TC 入力は共通部品 `TimecodePane` を流用。**2 セクション構成** (`映像と操作対象 ⸱ VIEW` / `結果 ⸱ RESULT`)。端ごとに「ペイン + nudge」を 1 列にまとめ、右の余白 300px に結果ブロックを置く（幅 1200px 以下では結果が下段に回る） |
+| 状態 | `clipRange.start` / `end` を local state の初期値にし、編集中は local state だけが動く（`metadata.events` は [保存] まで触らない）。**nudge は端ごとの行見出し `IN (開始)` / `OUT (終了)` で束縛**され、行のボタンはその端だけを動かす（±10s / ±1s / ±0.1s）。**操作対象** (←→ が効く端) は `● 操作対象: IN (開始)` の行に文字で出て、ペインのクリック / TC 入力のフォーカスで切り替わる。マウント直後の IN ペインは **クリップ IN**（= TC と同時刻）にシークし、イベントの発生時刻は `イベント発生 H:MM:SS.FF` の静的な行で示す（#1156 で #1139 の「イベント開始へシーク」を置換） |
+| 遷移トリガー | TC 入力 / 行ごとの nudge（IN は `OUT - 0.01` で止まり追い越さない）/ **キーボード**: `←` `→` = active な端を ±1s、`Shift` = ±10s、`Alt` = ±1 frame、`Space` = active ペインの再生 / 停止（境界エディタ §2.4.7 と同じ割当）/ [自動範囲に戻す] = local を `clipRange.baseline` へ / [⬦ この範囲を保存] → `setEventClipRange(position, {start, end})` + `apply()` / [保存せず戻る]・[◀ クリップ一覧へ] → `navigate('clips')` |
 | store mutation | `metadataStore.setEventClipRange` (`events[position-1].clip_start` / `clip_end` を書いて `dirty`) + `apply()`、`appStateStore.setClipRange` |
-| 例外 / edge case | 試合境界のエディタとは **状態を共有しない**（部品だけ共有）。`clipRange` が `null` で直接来たときは「クリップ範囲が選択されていません」+ [◀ クリップ一覧へ]。`position === null` は保存不可（`clip-range-unlinked`）。`events[position-1]` に `clip_start` があるときは `手動` の注記（`clip-range-manual`）。時刻表示は `fmtPreciseTime`（フレーム付き、編集 precision のため）で、一覧の `hh:mm:ss` とは別 |
+| 例外 / edge case | 試合境界のエディタとは **状態を共有しない**（部品だけ共有）。`clipRange` が `null` で直接来たときは「クリップ範囲が選択されていません」+ [◀ クリップ一覧へ]。`position === null` は TC / nudge / 保存を無効（`clip-range-unlinked`）だが**再生は許可**（値を変える経路が無い）。sample mode (`filePath === null`) は read-only。`events[position-1]` に `clip_start` があるときは結果行に `手動指定` タグ（`clip-range-manual`）。時刻表示は TC が `fmtPreciseTime`（`H:MM:SS.FF`、**FF = フレーム番号**）で結果行が `fmtClockTenths`（`HH:MM:SS.d`、0.1 秒精度） |
+| 結果ブロック (#1156) | `クリップ N.N 秒 HH:MM:SS.d → HH:MM:SS.d` / `自動範囲 …`（`clipRange.baseline` があるときだけ）/ `差 長さ ±N.N 秒（開始 ±N.N 秒 / 終了 ±N.N 秒）` / `近接 N 件の共通範囲。手動で保存するとこのイベントは分離されます。`（`baseline.bundled > 1` のときだけ）。**`baseline` は保存後も保持**し、自動範囲と一致する値で保存したときは `setEventClipRange(position, null)` で上書きを消す（結果行は `自動範囲のまま`） |
+| 保存の意味 | `apply()` は metadata **全体**を書く（他の未保存編集も一緒に書かれる。入場時に `dirty` ならその旨を注記）。動画は生成しないので、ボタン近傍に「切り抜きは [クリップ一覧] の [切り抜く] から」を常時表示する |
+| 保存の成否 | `apply()` は失敗を catch して `applyErrorState` / `conflictErrorState` に入れ、**例外を投げずに resolve する**。成否は store の状態で判定し、失敗時は成功注記を出さず `clipRange` も更新しない（local 編集と dirty を残す） |
+| 試合区間クランプ (#1156) | 編集値は対象試合の `[start_time, end_time]` へ clamp する。CLI は手動区間も試合区間へ clamp し、潰れたらクリップごと捨てるため、ここで揃えないと「画面の数字」と「出力される区間」が食い違う |
+| a11y | focus 時は TC 入力内の矢印を横取りしない（`clip-range-active-edge` で操作対象を示す）。**新規の live region を追加しない**（画面内の `role="status"` は `clip-range-unlinked` の 1 つだけ。test で DOM query して pin） |
 
 ### §2.5 export
 
@@ -1544,7 +1549,7 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 **実行は 1 件ずつ (Q2 C)**: `eventIndexes: [position]` を渡す。CLI は索引を含むクリップ全体 (束ねられた仲間を含む) を書き出し、クリップ番号は計画時のまま (振り直さない — 別のイベントが同じ `{idx}` を指して既存ファイルを潰さないため)。
 
-**session-local config**: 前後秒数 (`pre` / `post`)・束ね幅 (`gap`)・形式 (`codec`) は match 編集ではない一時設定なので `metadataStore` に commit しない (§3.4 の §1.1 例外と同じ扱い)。
+**session-local config**: 前後秒数 (`pre` / `post`)・束ね幅 (`gap`)・形式 (`codec`) は match 編集ではない一時設定なので `metadataStore` に commit しない (§3.4 の §1.1 例外と同じ扱い)。ただし前後秒数と束ね幅は **`appStateStore.clipMargins` に置く** (#1156): `ClipsScreen` の local state にすると preview へ遷移して戻る間に既定値へ戻り、クリップ範囲エディタが表示した「自動範囲」と実際に切り抜く区間が食い違う。形式 (`codec`) は同画面に留まる設定なので local state のまま。
 
 **dirty / sample mode**: [⬦ 切り抜く] は `filePath === null` (§1.4) または `dirty === true` で disabled。CLI は **disk の metadata.json** を読むため、未適用の編集があると in-memory の `events[]` と位置がずれて**別のイベントを切り抜き得る**。理由文は §2.8.2 のノートに出す。
 
@@ -1587,11 +1592,11 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 
 | 項目 | 内容 |
 | --- | --- |
-| 種類 | 数値入力 ×3 (`aria-label` は `前 (秒)` / `後 (秒)` / `束ね (秒)`) + セレクト (`aria-label="形式"`、`無劣化 (copy)` / `再エンコード (h264)`)。初期値は CLI 既定の 10 / 10 / 5 秒・`copy` |
+| 種類 | 数値入力 ×3 (`aria-label` は `前 (秒)` / `後 (秒)` / `束ね (秒)`) + セレクト (`aria-label="形式"`、`無劣化 (copy)` / `再エンコード (h264)`)。初期値は `appStateStore.clipMargins` (既定 10 / 10 / 5 秒) と `copy` |
 | 状態 | 常時 enabled (走行中も値を変えられるが、実行中の run には影響しない) |
-| 遷移トリガー | 入力 → local state (文字列のまま保持) → §2.8.2 / §2.8.3 のクリック時に `validateMargins()` / `validateGap()` で検証。束ね値は表示中の `planClipWindows()` にも即時反映する |
-| store mutation | なし (session-local、§2.8 ヘッダ) |
-| 例外 / edge case | 受理値は 3 つとも `^\d+(\.\d+)?$` (0 以上の整数 / 小数)。負値・空・指数表記は CLI が exit 5 で拒否するため、GUI が先に弾く。違反は §2.8.4 の `role="alert"` に出す |
+| 遷移トリガー | 入力 → local state (文字列のまま保持) → §2.8.2 / §2.8.3 のクリック時に `validateMargins()` / `validateGap()` で検証。**3 値がすべて妥当なら `appStateStore.setClipMargins` に載せ**、表示中の `planClipWindows()` に即時反映する |
+| store mutation | `appStateStore.setClipMargins` (#1156)。`metadataStore` には書かない (§2.8 ヘッダ) |
+| 例外 / edge case | 受理値は 3 つとも `^\d+(\.\d+)?$` (0 以上の整数 / 小数)。負値・空・指数表記は CLI が exit 5 で拒否するため、GUI が先に弾く。違反は §2.8.4 の `role="alert"` に出す。**不正な入力中は store の直前の有効値を維持する** (クリップ範囲エディタの baseline 計算に使うため) |
 
 **copy のキーフレーム丸め注記 (#1131 受け入れ条件)**: `codec === 'copy'` のときフォームの下に `data-testid="clips-copy-note"` の注記を出す — 「無劣化 (copy) はキーフレーム単位で切るため、指定した秒数より前後することがあります。厳密に指定したいときは『再エンコード (h264)』を選んでください」。`h264` に切り替えると非表示になる (`copy` が既定のため、既定表示)。
 
@@ -1611,9 +1616,9 @@ global toast 未採用 (画面が log 中心で各情報源と表示位置が固
 | --- | --- |
 | 種類 | `match_index` ごとのグループ (`data-testid="clips-group-<index>"`) + `<li data-testid="clips-candidate-<position>">`。行内は badge (`KO` / `ASSIST`) + イベントの時刻範囲 (`hh:mm:ss - hh:mm:ss`) + 切り抜き範囲 (`範囲 hh:mm:ss - hh:mm:ss ・ N 秒`) + [この範囲を確認] (secondary) + [⬦ 切り抜く] (primary) |
 | 状態 | 候補が 1 件以上のとき常時描画。走行中は [⬦ 切り抜く] のみ disabled (別行の実行中に別の run を重ねない)。`planClipWindows()` が区間を返さない行 (クランプで 0 幅) は範囲を `範囲外` とし、両ボタンを disabled にする。`events[].clip_start` / `clip_end` を持つ行は範囲の隣に `手動` バッジを出す (#1139) |
-| 遷移トリガー | [この範囲を確認] → `planClipWindows()` の区間を `appStateStore.clipRange` (`{start, end, matchIndex}`) に入れ、`pendingSeekSeconds = range.start` → `openPreviewFor(match_index)`。 [⬦ 切り抜く] → `cutOne(position, overwrite=false)` |
+| 遷移トリガー | [この範囲を確認] → `planClipWindows()` の区間と `planClipBaseline()` の「自動範囲」(束ね件数込み) を `appStateStore.clipRange` (`{start, end, matchIndex, position, baseline}`) に入れ、`pendingSeekSeconds = range.start` → `openPreviewFor(match_index)`。 [⬦ 切り抜く] → `cutOne(position, overwrite=false)` |
 | store mutation | `appStateStore.setClipRange` / `setPendingSeekSeconds` / `openPreviewFor`、または `clipsStore.start()` |
-| 例外 / edge case | 時刻は両方とも `hh:mm:ss` (1 秒切り捨て、出所は `utils/time.ts` の `fmtClockTime`)。`clipRange` の終端は `start` より前にならず、`start` は 0 秒でクランプする。試合区間へのクランプと近接イベントの束ねは `planClipWindows()` が担う (§2.8 ヘッダ)。`clipRange.matchIndex` はクリップ範囲の調整画面 (§2.4.18) のスコープキーで、別の試合を開くと試合境界のエディタに戻る。ボタンの可視名は `KO 00:08:13 の範囲をプレビューで確認` / `KO 00:08:13 を切り抜く` |
+| 例外 / edge case | 時刻は両方とも `hh:mm:ss` (1 秒切り捨て、出所は `utils/time.ts` の `fmtClockTime`)。`clipRange` の終端は `start` より前にならず、`start` は 0 秒でクランプする。試合区間へのクランプと近接イベントの束ねは `planClipWindows()` が担う (§2.8 ヘッダ)。**`clipRange.baseline` は `planClipBaseline()` の「自動範囲」(束ね件数込み)** で、クリップ範囲の調整画面の差分表示と [自動範囲に戻す] の基準になる (#1156)。`clipRange.matchIndex` はクリップ範囲の調整画面 (§2.4.18) のスコープキーで、別の試合を開くと試合境界のエディタに戻る。ボタンの可視名は `KO 00:08:13 の範囲をプレビューで確認` / `KO 00:08:13 を切り抜く` |
 
 #### §2.8.4 前後秒数 / 束ねの検証エラー
 

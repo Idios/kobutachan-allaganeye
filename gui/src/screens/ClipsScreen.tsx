@@ -21,7 +21,7 @@
  * 拒否するので、そのときだけ [上書きして切り抜く] を出す (#1132 の緩和)。
  */
 import { invoke } from '@tauri-apps/api/core';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import pathStyles from '../styles/path-display.module.css';
 
@@ -36,6 +36,7 @@ import {
   DEFAULT_GAP_SECONDS,
   DEFAULT_MARGIN_SECONDS,
   overrideWindowFor,
+  planClipBaseline,
   planClipWindows,
 } from '../utils/clipWindow';
 import { splitPath } from '../utils/path';
@@ -295,10 +296,26 @@ export function ClipsScreen() {
   const start = useClipsStore((s) => s.start);
   const cancel = useClipsStore((s) => s.cancel);
 
-  const [preText, setPreText] = useState(String(DEFAULT_MARGIN_SECONDS));
-  const [postText, setPostText] = useState(String(DEFAULT_MARGIN_SECONDS));
+  const clipMargins = useAppStateStore((s) => s.clipMargins);
+  const setClipMargins = useAppStateStore((s) => s.setClipMargins);
+
+  // 入力欄は編集中の文字列を保持する (不正値を即座に捨てない / エラーを出す) が、
+  // 実効値は `appStateStore.clipMargins` が持つ (#1156)。local state だけで持つと
+  // preview へ遷移して戻る間に既定値へ戻り、クリップ範囲エディタの「自動範囲」と
+  // 実際に切り抜く区間が食い違う。
+  const [preText, setPreText] = useState(String(clipMargins.pre));
+  const [postText, setPostText] = useState(String(clipMargins.post));
   // #1131 受け入れ条件: 束ね幅 (CLI `--gap`) も GUI から変えられる。
-  const [gapText, setGapText] = useState(String(DEFAULT_GAP_SECONDS));
+  const [gapText, setGapText] = useState(String(clipMargins.gap));
+
+  // 3 値がすべて妥当なときだけ store へ載せる (不正な入力中は直前の値を維持)。
+  // local state ではなく store の setter なので set-state-in-effect の対象外。
+  useEffect(() => {
+    if (validateMargins(preText, postText) !== null) return;
+    if (validateGap(gapText) !== null) return;
+    const { pre, post } = parseMarginsSafe(preText, postText);
+    setClipMargins({ pre, post, gap: parseGapSafe(gapText) });
+  }, [preText, postText, gapText, setClipMargins]);
   const [codec, setCodec] = useState<'copy' | 'h264'>('copy');
   const [marginsError, setMarginsError] = useState<string | null>(null);
   /** 直近の実行対象 (上書き再実行のために覚えておく)。 */
@@ -366,17 +383,16 @@ export function ClipsScreen() {
   const runDisabled = runDisabledReason !== null && displayedStatus !== 'running';
 
   // 実際に書き出される区間 (CLI の `plan_clips` + クランプの鏡)。
-  // pre / post を編集したら再計算するので、表示とプレビューが常に一致する。
+  // pre / post / gap を編集したら再計算するので、表示とプレビューが常に一致する。
   const windows = useMemo(() => {
-    const { pre, post } = parseMarginsSafe(preText, postText);
     return planClipWindows(
       allEvents,
       metadata?.matches ?? [],
-      pre,
-      post,
-      parseGapSafe(gapText),
+      clipMargins.pre,
+      clipMargins.post,
+      clipMargins.gap,
     );
-  }, [allEvents, metadata, preText, postText, gapText]);
+  }, [allEvents, metadata, clipMargins]);
 
   /** 行の「実際の区間」。クランプの結果 0 幅なら null (クリップにならない)。 */
   function windowFor(position: number): { start: number; end: number } | null {
@@ -429,8 +445,7 @@ export function ClipsScreen() {
       return;
     }
 
-    const { pre, post } = parseMargins(preText, postText);
-    const gap = Number(gapText.trim());
+    const { pre, post, gap } = clipMargins;
     setLastPosition(position);
     const request: ClipsRequest = {
       metadataPath: path,
@@ -460,7 +475,17 @@ export function ClipsScreen() {
     const range = windowFor(candidate.position);
     const matchIndex = candidate.event.match_index;
     if (range === null || matchIndex === null) return;
-    setClipRange({ ...range, matchIndex, position: candidate.position });
+    // #1156: 「自動範囲」= 手動上書きを消したときの実効区間 (束ね + クランプ込み)。
+    // クリップ範囲エディタの結果ブロックと [自動範囲に戻す] の基準になる。
+    const baseline = planClipBaseline(
+      allEvents,
+      metadata?.matches ?? [],
+      clipMargins.pre,
+      clipMargins.post,
+      clipMargins.gap,
+      candidate.position,
+    );
+    setClipRange({ ...range, matchIndex, position: candidate.position, baseline });
     setPendingSeekSeconds(range.start);
     openPreviewFor(matchIndex);
   }

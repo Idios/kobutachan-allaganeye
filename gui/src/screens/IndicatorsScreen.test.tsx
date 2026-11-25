@@ -446,6 +446,8 @@ describe('IndicatorsScreen complete', () => {
       end: 30,
       matchIndex: 1,
       position: 2,
+      // #1156: 保存済みの手動区間で開いても「自動範囲」は引ける。
+      baseline: { start: 0, end: 15.6, bundled: 1 },
     });
   });
 

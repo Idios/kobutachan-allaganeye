@@ -39,9 +39,9 @@ import {
 } from '../state/indicatorsStore';
 import { useMetadataStore } from '../state/metadataStore';
 import {
-  DEFAULT_MARGIN_SECONDS,
   eventClipWindow,
   overrideWindowFor,
+  planClipBaseline,
 } from '../utils/clipWindow';
 import { splitPath } from '../utils/path';
 import { signalLabel } from '../utils/signals';
@@ -207,6 +207,7 @@ export function IndicatorsScreen() {
   const navigate = useAppStateStore((s) => s.navigate);
   const setPendingSeekSeconds = useAppStateStore((s) => s.setPendingSeekSeconds);
   const setClipRange = useAppStateStore((s) => s.setClipRange);
+  const clipMargins = useAppStateStore((s) => s.clipMargins);
   const openPreviewFor = useAppStateStore((s) => s.openPreviewFor);
 
   const status = useIndicatorsStore((s) => s.status);
@@ -383,8 +384,22 @@ export function IndicatorsScreen() {
     const position = stored >= 0 ? stored + 1 : null;
     const override =
       stored >= 0 ? overrideWindowFor(metadata!.events![stored]) : null;
-    const window = override ?? eventClipWindow(event, DEFAULT_MARGIN_SECONDS, DEFAULT_MARGIN_SECONDS);
-    setClipRange({ ...window, matchIndex: event.match_index, position });
+    const window = override ?? eventClipWindow(event, clipMargins.pre, clipMargins.post);
+    // #1156: 「自動範囲」(束ね + クランプ込みの実効値) を積む。保存済みの手動区間で
+    // 開いたときも [自動範囲に戻す] の基準になる。未保存イベント (position: null) は
+    // 書込先が無いので null。
+    const baseline =
+      position === null
+        ? null
+        : planClipBaseline(
+            metadata?.events,
+            metadata?.matches ?? [],
+            clipMargins.pre,
+            clipMargins.post,
+            clipMargins.gap,
+            position,
+          );
+    setClipRange({ ...window, matchIndex: event.match_index, position, baseline });
     setPendingSeekSeconds(event.timestamp);
     openPreviewFor(event.match_index);
   }

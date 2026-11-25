@@ -88,6 +88,28 @@ export function planClipWindows(
   post: number,
   gap: number = DEFAULT_GAP_SECONDS,
 ): Map<number, ClipWindow> {
+  return planClipWindowsDetailed(events, matches, pre, post, gap).windows;
+}
+
+/** 区間と、その区間を共有しているイベント数。 */
+export interface ClipPlan {
+  windows: Map<number, ClipWindow>;
+  /** `position` -> その区間を共有するイベント数 (ユーザー指定区間は常に 1)。 */
+  bundled: Map<number, number>;
+}
+
+/**
+ * 実際に書き出される区間 + 束ね件数 (#1156)。
+ *
+ * 「自動範囲」の表示と、手動保存で束ねから外れる副作用の告知に使う。
+ */
+export function planClipWindowsDetailed(
+  events: readonly HighlightEvent[] | undefined,
+  matches: readonly { index: number; start_time: number; end_time: number }[],
+  pre: number,
+  post: number,
+  gap: number = DEFAULT_GAP_SECONDS,
+): ClipPlan {
   const spans = new Map<number, { start: number; end: number }>();
   for (const match of matches) {
     if (Number.isFinite(match.start_time) && Number.isFinite(match.end_time)) {
@@ -130,6 +152,7 @@ export function planClipWindows(
   );
 
   const windows = new Map<number, ClipWindow>();
+  const bundled = new Map<number, number>();
 
   let group: Item & { positions: number[] } | null = null;
   const flush = () => {
@@ -140,6 +163,7 @@ export function planClipWindows(
       const end = Math.min(span.end, group.end + post);
       if (end - start >= MIN_WINDOW_SECONDS) {
         windows.set(position, { start, end });
+        bundled.set(position, group.positions.length);
       }
     }
     group = null;
@@ -165,7 +189,49 @@ export function planClipWindows(
     const end = Math.min(span.end, item.end);
     if (windowSurvives(start, end, true)) {
       windows.set(item.position, { start, end });
+      bundled.set(item.position, 1);
     }
   }
-  return windows;
+  return { windows, bundled };
+}
+
+/** 「自動範囲」= 手動上書きを消したときに `planClipWindows` が返す区間 (#1156)。 */
+export interface ClipBaseline extends ClipWindow {
+  /** この区間を共有するイベント数 (1 は束ねなし)。 */
+  bundled: number;
+}
+
+/**
+ * イベント 1 件の「自動範囲」を引く (#1156)。
+ *
+ * 対象イベントの `clip_start` / `clip_end` を消したクローンで計画を引き直すので、
+ * **近接イベントの束ね (`gap`) と試合区間へのクランプを含む実効値**になる。
+ * イベント単体の `timestamp ± pre/post` ではない点が重要 (束ねを無視すると
+ * 表示と実際のクリップが食い違う)。
+ *
+ * クランプで 0 幅になる (クリップにならない) 場合は null。
+ */
+export function planClipBaseline(
+  events: readonly HighlightEvent[] | undefined,
+  matches: readonly { index: number; start_time: number; end_time: number }[],
+  pre: number,
+  post: number,
+  gap: number,
+  position: number,
+): ClipBaseline | null {
+  const cleared = (events ?? []).map((event, index) => {
+    if (index !== position - 1) return event;
+    const next: Record<string, unknown> = { ...event };
+    delete next.clip_start;
+    delete next.clip_end;
+    return next as HighlightEvent;
+  });
+  const plan = planClipWindowsDetailed(cleared, matches, pre, post, gap);
+  const window = plan.windows.get(position);
+  if (window === undefined) return null;
+  return {
+    start: window.start,
+    end: window.end,
+    bundled: plan.bundled.get(position) ?? 1,
+  };
 }
