@@ -363,7 +363,7 @@ export function ClipRangeView() {
         >
           ◀ クリップ一覧へ
         </button>
-        <div>
+        <div className={styles.headerInfo}>
           {source && (
             <div className={pathStyles.pathDisplay} title={source}>
               <div className={styles.headerFileName}>{fileName || '(video)'}</div>
@@ -372,13 +372,15 @@ export function ClipRangeView() {
           )}
           <div className={styles.caption}>クリップ範囲 ⸱ CLIP RANGE</div>
           <div className={styles.title}>{kind} の切り抜き範囲</div>
-          <div className={styles.purpose}>
-            この画面は「この 1 本のクリップ」の開始 / 終了を決める画面です。試合の境界は変わりません。
-            決めた範囲は metadata.json に保存され、
-            <code> allaganeye clips </code>
-            がその範囲で切り抜きます。
-          </div>
         </div>
+      </div>
+
+      {/* #1156 (レイアウト): 説明はヘッダの列から出して全幅 1 行にした。 */}
+      <div className={styles.purpose} data-testid="clip-range-purpose">
+        この画面は「この 1 本のクリップ」の開始 / 終了を決める画面です（試合の境界は変わりません）。
+        決めた範囲は metadata.json に保存され、
+        <code> allaganeye clips </code>
+        がその範囲で切り抜きます。
       </div>
 
       {position === null && (
@@ -388,34 +390,130 @@ export function ClipRangeView() {
         </div>
       )}
 
-      <div className={styles.sectionCaption}>1  映像と操作対象 ⸱ VIEW</div>
-      <div className={styles.panes}>
-        <TimecodePane
-          label="IN ⸱ 開始"
-          active={editing === 'start'}
-          t={startT}
-          onActivate={() => setEditing('start')}
-          onTChange={applyStart}
-          videoUrl={videoUrl}
-          videoError={videoError}
-          videoRef={inVideoRef}
-          fps={fps}
-          disabled={!editable}
-          disabledReason={editDisabledReason}
-        />
-        <TimecodePane
-          label="OUT ⸱ 終了"
-          active={editing === 'end'}
-          t={endT}
-          onActivate={() => setEditing('end')}
-          onTChange={applyEnd}
-          videoUrl={videoUrl}
-          videoError={videoError}
-          videoRef={outVideoRef}
-          fps={fps}
-          disabled={!editable}
-          disabledReason={editDisabledReason}
-        />
+      <div className={styles.sectionCaption}>映像と操作対象 ⸱ VIEW</div>
+      <div className={styles.sectionHint}>
+        各ボタンは、その行の端だけを直接動かします（操作対象の選択は不要）。
+      </div>
+
+      {/*
+        #1156 (レイアウト): 端ごとに「ペイン + nudge」を 1 列へまとめ、右の余白に
+        結果ブロックを置く。ペインの高さは列幅で決まるので、全幅 2 列で縦に伸びて
+        いたときより 1 画面に収まる。狭いウィンドウでは結果が下へ回る (media query)。
+      */}
+      <div className={styles.editorGrid}>
+        <div className={styles.paneColumn}>
+          <TimecodePane
+            label="IN ⸱ 開始"
+            active={editing === 'start'}
+            t={startT}
+            onActivate={() => setEditing('start')}
+            onTChange={applyStart}
+            videoUrl={videoUrl}
+            videoError={videoError}
+            videoRef={inVideoRef}
+            fps={fps}
+            disabled={!editable}
+            disabledReason={editDisabledReason}
+          />
+          <NudgeRow
+            edge="start"
+            label="IN (開始)"
+            disabled={!editable}
+            disabledReason={editDisabledReason}
+            onNudge={nudge}
+          />
+        </div>
+
+        <div className={styles.paneColumn}>
+          <TimecodePane
+            label="OUT ⸱ 終了"
+            active={editing === 'end'}
+            t={endT}
+            onActivate={() => setEditing('end')}
+            onTChange={applyEnd}
+            videoUrl={videoUrl}
+            videoError={videoError}
+            videoRef={outVideoRef}
+            fps={fps}
+            disabled={!editable}
+            disabledReason={editDisabledReason}
+          />
+          <NudgeRow
+            edge="end"
+            label="OUT (終了)"
+            disabled={!editable}
+            disabledReason={editDisabledReason}
+            onNudge={nudge}
+          />
+        </div>
+
+        <div className={styles.resultColumn}>
+          <div className={styles.sectionCaption}>結果 ⸱ RESULT</div>
+          <div className={styles.results}>
+            <div className={styles.resultBlock} data-testid="clip-range-duration">
+              <span className={styles.resultLabel}>クリップ</span>
+              <span className={styles.resultValue}>{duration.toFixed(1)} 秒</span>
+              <span className={styles.resultRange}>
+                {fmtClockTenths(startT)} → {fmtClockTenths(endT)}
+              </span>
+              {manual && (
+                <span className={styles.tag} data-testid="clip-range-manual">
+                  手動指定
+                </span>
+              )}
+            </div>
+
+            {baseline !== null && baselineDuration !== null && (
+              <div className={styles.resultBlock} data-testid="clip-range-baseline">
+                <span className={styles.resultLabel}>自動範囲</span>
+                <span className={styles.resultValue}>
+                  {baselineDuration.toFixed(1)} 秒
+                </span>
+                <span className={styles.resultRange}>
+                  {fmtClockTenths(baseline.start)} → {fmtClockTenths(baseline.end)}
+                </span>
+                {isAtBaseline && (
+                  <span className={styles.tagMuted}>自動範囲のまま</span>
+                )}
+              </div>
+            )}
+
+            {baseline !== null && baseline.bundled > 1 && (
+              <div className={styles.resultNote} data-testid="clip-range-bundled">
+                近接 {baseline.bundled} 件の共通範囲。手動で保存するとこのイベントは分離されます。
+              </div>
+            )}
+
+            {baseline !== null && baselineDuration !== null && !isAtBaseline && (
+              <div className={styles.resultBlock} data-testid="clip-range-diff">
+                <span className={styles.resultLabel}>差</span>
+                <span className={styles.resultValue}>
+                  長さ {fmtDelta(duration - baselineDuration)} 秒
+                </span>
+                <span className={styles.resultRange}>
+                  開始 {fmtDelta(startT - baseline.start)} 秒 ／ 終了{' '}
+                  {fmtDelta(endT - baseline.end)} 秒
+                </span>
+              </div>
+            )}
+
+            <div className={styles.resultActions}>
+              <DisabledTooltip disabled={!canReset} reason={resetReason}>
+                {(p) => (
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={handleReset}
+                    disabled={!canReset}
+                    {...p}
+                  >
+                    自動範囲に戻す
+                  </button>
+                )}
+              </DisabledTooltip>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className={styles.activeLine} data-testid="clip-range-active-edge">
@@ -428,100 +526,10 @@ export function ClipRangeView() {
         </div>
       )}
 
-      <div className={styles.sectionCaption}>2  秒数の調整 ⸱ ADJUST</div>
-      <div className={styles.sectionHint}>
-        各ボタンは、その行の端だけを直接動かします（操作対象の選択は不要）。
-      </div>
-      <div className={styles.nudgeRows}>
-        <NudgeRow
-          edge="start"
-          label="IN (開始)"
-          disabled={!editable}
-          disabledReason={editDisabledReason}
-          onNudge={nudge}
-        />
-        <NudgeRow
-          edge="end"
-          label="OUT (終了)"
-          disabled={!editable}
-          disabledReason={editDisabledReason}
-          onNudge={nudge}
-        />
-      </div>
-
       {/* キーボードショートカットの可視化 (境界エディタと共通部品、#1139) */}
       <KeyboardHints />
       <div className={styles.unitNote}>
-        ※ 上の TC は H:MM:SS.FF（FF = フレーム番号）。結果は 0.1 秒刻みで表示。
-      </div>
-      <div className={styles.unitNote}>
-        ※ 無劣化 (copy) で切り抜くときは最寄りのキーフレームに丸まります（形式は一覧で選択）。
-      </div>
-
-      <div className={styles.sectionCaption}>3  結果 ⸱ RESULT</div>
-      <div className={styles.results}>
-        <div className={styles.resultRow} data-testid="clip-range-duration">
-          <span className={styles.resultLabel}>クリップ</span>
-          <span className={styles.resultValue}>{duration.toFixed(1)} 秒</span>
-          <span className={styles.resultRange}>
-            {fmtClockTenths(startT)} → {fmtClockTenths(endT)}
-          </span>
-          {manual && (
-            <span className={styles.tag} data-testid="clip-range-manual">
-              手動指定
-            </span>
-          )}
-        </div>
-
-        {baseline !== null && baselineDuration !== null && (
-          <div className={styles.resultRow} data-testid="clip-range-baseline">
-            <span className={styles.resultLabel}>自動範囲</span>
-            <span className={styles.resultValue}>
-              {baselineDuration.toFixed(1)} 秒
-            </span>
-            <span className={styles.resultRange}>
-              {fmtClockTenths(baseline.start)} → {fmtClockTenths(baseline.end)}
-            </span>
-            {isAtBaseline && (
-              <span className={styles.tagMuted}>自動範囲のまま</span>
-            )}
-          </div>
-        )}
-
-        {baseline !== null && baseline.bundled > 1 && (
-          <div className={styles.resultNote} data-testid="clip-range-bundled">
-            近接 {baseline.bundled} 件の共通範囲。手動で保存するとこのイベントは分離されます。
-          </div>
-        )}
-
-        {baseline !== null && baselineDuration !== null && !isAtBaseline && (
-          <div className={styles.resultRow} data-testid="clip-range-diff">
-            <span className={styles.resultLabel}>差</span>
-            <span className={styles.resultValue}>
-              長さ {fmtDelta(duration - baselineDuration)} 秒
-            </span>
-            <span className={styles.resultRange}>
-              （開始 {fmtDelta(startT - baseline.start)} 秒 ／ 終了{' '}
-              {fmtDelta(endT - baseline.end)} 秒）
-            </span>
-          </div>
-        )}
-
-        <div className={styles.resultActions}>
-          <DisabledTooltip disabled={!canReset} reason={resetReason}>
-            {(p) => (
-              <button
-                type="button"
-                className={styles.secondaryButton}
-                onClick={handleReset}
-                disabled={!canReset}
-                {...p}
-              >
-                自動範囲に戻す
-              </button>
-            )}
-          </DisabledTooltip>
-        </div>
+        ※ TC は H:MM:SS.FF（FF = フレーム番号）、結果は 0.1 秒刻み。無劣化 (copy) はキーフレームに丸まります（形式は一覧で選択）。
       </div>
 
       <div className={styles.saveNote} data-testid="clip-range-save-note">

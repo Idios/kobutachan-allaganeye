@@ -10,7 +10,7 @@
   display: flex;
   flex-direction: column;
   padding: 20px;
-  gap: 14px;
+  gap: 8px;
   overflow: auto;
 }
 
@@ -36,6 +36,11 @@
 .backButton:hover {
   color: var(--ae-gold-bright);
   border-color: var(--ae-gold-bright);
+}
+
+.headerInfo {
+  flex: 1;
+  min-width: 0;
 }
 
 .headerFileName {
@@ -65,8 +70,8 @@
   font-family: var(--ae-font-body);
   font-size: 12px;
   color: var(--ae-text-dim);
-  margin-top: 4px;
-  max-width: 80ch;
+  /* #1156 (レイアウト): ヘッダの列から出したので、全幅で 1 行になる。 */
+  max-width: none;
 }
 
 .note {
@@ -78,10 +83,43 @@
   font-size: 12px;
 }
 
-.panes {
+/*
+ * #1156 (レイアウト): 端ごとに「ペイン + nudge」を 1 列にし、右の余白に結果を置く。
+ * ペインの高さは列幅で決まるので、全幅 2 列で縦に伸びていたときより 1 画面に収まる。
+ */
+.editorGrid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 300px;
   gap: 14px;
+  align-items: start;
+}
+
+.paneColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.resultColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 
+ * 狭いウィンドウ (960px まで縮められる) では、ペインを潰さずに結果を下へ回す。
+ * 1200px は「2 列 + 300px」でペインが 420px を下回る境界の目安。
+ */
+@media (max-width: 1200px) {
+  .editorGrid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .resultColumn {
+    grid-column: 1 / -1;
+  }
 }
 
 .stepRow {
@@ -117,12 +155,6 @@
   font-family: var(--ae-font-mono);
   font-size: 11px;
   color: var(--ae-text-dim);
-}
-
-.nudgeRows {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 .nudgeRow {
@@ -164,15 +196,14 @@
   border: 1px solid rgba(var(--ae-gold-rgb), 0.18);
 }
 
-.resultRow {
+.resultBlock {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .resultLabel {
-  min-width: 76px;
   font-family: var(--ae-font-ui);
   font-size: 11px;
   letter-spacing: 1px;

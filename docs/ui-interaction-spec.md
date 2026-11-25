@@ -936,7 +936,7 @@ global toast への昇格は Phase 2.5 / [#569](https://github.com/Idios/kobutac
 
 | 項目 | 内容 |
 | --- | --- |
-| 種類 | PreviewScreen の**画面状態の差し替え** (`data-testid="clip-range-view"`)。`appStateStore.clipRange.matchIndex` が開いている試合と一致するとき、試合境界エディタの代わりに早期 return で描画する。動画ペインと TC 入力は共通部品 `TimecodePane` を流用。**3 セクション構成** (`1 映像と操作対象 ⸱ VIEW` / `2 秒数の調整 ⸱ ADJUST` / `3 結果 ⸱ RESULT`) |
+| 種類 | PreviewScreen の**画面状態の差し替え** (`data-testid="clip-range-view"`)。`appStateStore.clipRange.matchIndex` が開いている試合と一致するとき、試合境界エディタの代わりに早期 return で描画する。動画ペインと TC 入力は共通部品 `TimecodePane` を流用。**2 セクション構成** (`映像と操作対象 ⸱ VIEW` / `結果 ⸱ RESULT`)。端ごとに「ペイン + nudge」を 1 列にまとめ、右の余白 300px に結果ブロックを置く（幅 1200px 以下では結果が下段に回る） |
 | 状態 | `clipRange.start` / `end` を local state の初期値にし、編集中は local state だけが動く（`metadata.events` は [保存] まで触らない）。**nudge は端ごとの行見出し `IN (開始)` / `OUT (終了)` で束縛**され、行のボタンはその端だけを動かす（±10s / ±1s / ±0.1s）。**操作対象** (←→ が効く端) は `● 操作対象: IN (開始)` の行に文字で出て、ペインのクリック / TC 入力のフォーカスで切り替わる。マウント直後の IN ペインは **クリップ IN**（= TC と同時刻）にシークし、イベントの発生時刻は `イベント発生 H:MM:SS.FF` の静的な行で示す（#1156 で #1139 の「イベント開始へシーク」を置換） |
 | 遷移トリガー | TC 入力 / 行ごとの nudge（IN は `OUT - 0.01` で止まり追い越さない）/ **キーボード**: `←` `→` = active な端を ±1s、`Shift` = ±10s、`Alt` = ±1 frame、`Space` = active ペインの再生 / 停止（境界エディタ §2.4.7 と同じ割当）/ [自動範囲に戻す] = local を `clipRange.baseline` へ / [⬦ この範囲を保存] → `setEventClipRange(position, {start, end})` + `apply()` / [保存せず戻る]・[◀ クリップ一覧へ] → `navigate('clips')` |
 | store mutation | `metadataStore.setEventClipRange` (`events[position-1].clip_start` / `clip_end` を書いて `dirty`) + `apply()`、`appStateStore.setClipRange` |
