@@ -296,7 +296,7 @@ def score_streak(
     長さ項 = `w / (w + saturation)` (w = KO 重み x KO 数 + ASSIST 重み x ASSIST 数)。
     密度項 = `min(1, size / (span + window) / full_density)`。
 
-    比は**最大の重みで正規化してから**計算する。`w` を先に作ると、
+    比は**寄与する項だけを最大の重みで正規化してから**計算する。`w` を先に作ると、
     受理している有限値 (`ko=1e308` 等) で `inf` になり、比が 1.0 に
     潰れてしまう (数学的には 2/3 等になるべき場面)。
     """
@@ -305,14 +305,24 @@ def score_streak(
     if not math.isfinite(window_seconds) or window_seconds < 0:
         raise ValueError("window_seconds must be a finite non-negative number")
 
-    scale = max(weights.ko, weights.assist, weights.saturation)
-    ko = weights.ko / scale if scale > 0 else 0.0
-    assist = weights.assist / scale if scale > 0 else 0.0
-    saturation = weights.saturation / scale if scale > 0 else 0.0
-    weighted = ko * streak.ko_count + assist * streak.assist_count
-    length_term = (
-        0.0 if weighted + saturation <= 0 else weighted / (weighted + saturation)
-    )
+    # 比は**実際に寄与する項だけ**を、それらと saturation の最大値で正規化して作る。
+    # 存在しない種別の重みまで割ると、極端な値が inf になって `inf * 0 = nan` で
+    # 全体を汚す (KO だけのストリークが assist の重みで 0 点になる) ため。
+    scale = weights.saturation
+    if streak.ko_count:
+        scale = max(scale, weights.ko)
+    if streak.assist_count:
+        scale = max(scale, weights.assist)
+    weighted = 0.0
+    if streak.ko_count:
+        weighted += (weights.ko / scale) * streak.ko_count
+    if streak.assist_count:
+        weighted += (weights.assist / scale) * streak.assist_count
+    saturation = weights.saturation / scale
+    if weighted + saturation <= 0:
+        length_term = 0.0
+    else:
+        length_term = weighted / (weighted + saturation)
 
     denominator = max(streak.span_seconds + window_seconds, 1e-6)
     density = streak.size / denominator

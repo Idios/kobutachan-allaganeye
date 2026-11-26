@@ -173,6 +173,16 @@ class TestScoreStreak:
         # length 2/3, density 2/11/0.25
         assert score_streak(two, weights=weights) == pytest.approx(0.685)
 
+    def test_absent_signal_weight_does_not_change_the_score(self) -> None:
+        # KO しかないストリークに ASSIST の重み (未使用) が影響してはいけない。
+        # 極端な値でも `inf * 0 = nan` で汚さないこと。
+        [streak] = group_streaks([ko(1.0)])
+        normal = score_streak(streak, weights=ScoringWeights())
+        for absent in (0.0, 1e308):
+            assert score_streak(streak, weights=ScoringWeights(assist=absent)) == (
+                normal
+            )
+
     def test_invalid_weights_are_rejected(self) -> None:
         with pytest.raises(ValueError):
             ScoringWeights(ko=-1.0)
