@@ -108,21 +108,21 @@ class TestGroupStreaks:
 
     def test_input_order_does_not_change_the_grouping(self) -> None:
         # 同一時刻のイベントが別試合に属していても、入力順で結果が変わらないこと。
-        a = ScoringEvent(kind="ko", start=0.0, end=1.0, match_index=1)
-        b = ScoringEvent(kind="ko", start=0.0, end=1.0, match_index=2)
-        c = ScoringEvent(kind="ko", start=1.0, end=2.0, match_index=1)
+        a = ScoringEvent(kind="ko", start=0.0, end=1.0, match_index=1, position=1)
+        b = ScoringEvent(kind="ko", start=0.0, end=1.0, match_index=2, position=2)
+        c = ScoringEvent(kind="ko", start=1.0, end=2.0, match_index=1, position=3)
         expected = [
-            (streak.start, streak.match_index, streak.size)
+            (streak.match_index, streak.size, streak.positions)
             for streak in group_streaks([a, b, c])
         ]
-        for permutation in ([b, a, c], [c, b, a], [b, c, a]):
+        for permutation in ([b, a, c], [c, b, a], [c, a, b]):
             actual = [
-                (streak.start, streak.match_index, streak.size)
+                (streak.match_index, streak.size, streak.positions)
                 for streak in group_streaks(permutation)
             ]
             assert actual == expected
         # 同一試合の a と c は 1 秒差なので同じストリークに入る。
-        assert (0.0, 1, 2) in expected
+        assert (1, 2, (1, 3)) in expected
 
 
 class TestScoreStreak:
@@ -138,10 +138,20 @@ class TestScoreStreak:
         assert score_streak(only_ko) > score_streak(only_assist)
 
     def test_more_events_score_higher_when_density_is_equal(self) -> None:
-        # 同じ 1 秒間隔で件数だけ増やす。
+        # 密度を 0.1 件/秒に揃える (size / (span + window) が同一) ので、
+        # 差は長さ項だけで出る。
         [one] = group_streaks([ko(1.0)])
-        [two] = group_streaks([ko(1.0), ko(2.0)])
-        [three] = group_streaks([ko(1.0), ko(2.0), ko(3.0)])
+        [two] = group_streaks([ko(1.0), ko(11.0)])
+        [three] = group_streaks([ko(1.0), ko(11.0), ko(21.0)])
+        assert len(three.events) == 3
+        assert [
+            one.size / (one.span_seconds + 10),
+            two.size / (two.span_seconds + 10),
+        ] == [
+            pytest.approx(0.1),
+            pytest.approx(0.1),
+        ]
+        assert three.size / (three.span_seconds + 10) == pytest.approx(0.1)
         assert score_streak(one) < score_streak(two) < score_streak(three)
 
     def test_tighter_events_score_higher_for_the_same_count(self) -> None:

@@ -233,6 +233,11 @@ def _match_sort_key(match_index: int | None) -> int:
     return -1 if match_index is None else match_index
 
 
+def _position_sort_key(position: int | None) -> int:
+    """同一時刻のイベントの並びを決定的にするためのソートキー (`None` は先頭)。"""
+    return -1 if position is None else position
+
+
 def group_streaks(
     events: Iterable[ScoringEvent],
     window_seconds: float = DEFAULT_WINDOW_SECONDS,
@@ -256,7 +261,12 @@ def group_streaks(
     partitions: dict[int | None, list[ScoringEvent]] = {}
     for event in sorted(
         (event for event in events if math.isfinite(event.start)),
-        key=lambda event: (event.start, event.end, event.kind),
+        key=lambda event: (
+            event.start,
+            event.end,
+            event.kind,
+            _position_sort_key(event.position),
+        ),
     ):
         partitions.setdefault(event.match_index, []).append(event)
 
@@ -278,6 +288,7 @@ def group_streaks(
         key=lambda group: (
             group[0].start,
             _match_sort_key(group[0].match_index),
+            _position_sort_key(group[0].position),
             group[0].end,
             group[0].kind,
         ),

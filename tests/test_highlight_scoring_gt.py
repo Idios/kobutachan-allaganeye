@@ -466,6 +466,11 @@ def test_spearman_handles_ties_and_extremes() -> None:
     """Spearman 実装の性質 (同点平均順位・完全一致・完全逆転)。"""
     assert _spearman([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]) == pytest.approx(1.0)
     assert _spearman([1.0, 2.0, 3.0], [3.0, 2.0, 1.0]) == pytest.approx(-1.0)
+    # 部分的に同点がある場合: x の順位 [1, 2.5, 2.5, 4] / y の順位 [1, 2, 3, 4]。
+    # 同点を平均順位にしなければこの値にはならない。
+    assert _spearman([1.0, 2.0, 2.0, 3.0], [1.0, 2.0, 3.0, 4.0]) == pytest.approx(
+        0.9486832980505138
+    )
     # 27 件の同点塊があっても 0 除算しない。
     assert math.isfinite(_spearman([0.372] * 5, [1.0, 2.0, 3.0, 1.0, 2.0]))
     # 片側が完全な同点なら「識別力なし」の 0。
