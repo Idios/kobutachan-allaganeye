@@ -486,3 +486,33 @@ def test_indicator_layout_requires_all_keys(missing: str):
     sample["indicator_layout"] = layout
     with pytest.raises(jsonschema.ValidationError):
         Draft202012Validator(schema).validate(sample)
+
+
+# ---------------------------------------------------------------------------
+# indicator_status (#1141)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("status", ["detected", "skipped", "failed"])
+def test_indicator_status_accepts_known_values(status: str):
+    schema = _load_schema()
+    sample = _valid_sample()
+    sample["indicator_status"] = status
+    Draft202012Validator(schema).validate(sample)
+
+
+def test_indicator_status_omitted_accepted():
+    # 旧 writer の metadata.json は field 欠落 = valid (後方互換)。
+    schema = _load_schema()
+    sample = _valid_sample()
+    assert "indicator_status" not in sample
+    Draft202012Validator(schema).validate(sample)
+
+
+@pytest.mark.parametrize("bad", ["", "DETECTED", "reused", None, 1])
+def test_indicator_status_rejects_unknown_values(bad: object):
+    schema = _load_schema()
+    sample = _valid_sample()
+    sample["indicator_status"] = bad
+    with pytest.raises(jsonschema.ValidationError):
+        Draft202012Validator(schema).validate(sample)

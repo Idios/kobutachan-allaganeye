@@ -64,6 +64,12 @@
 - イベント一覧の行は `<button>` なので Tab + Enter / Space でプレビューに遷移する（試合外 (`match_index === null`) の行は遷移先が無いため非 button で、keyboard focus も与えない）
 - 探索領域の解決に失敗したときの領域フォーム (X / Y / W / H) は数値入力なので、mouse を使わずに再実行できる
 
+### ClipsScreen (#1131 Phase B2)
+
+- Tab で全 button / input / select に到達
+- 候補行の [この範囲を確認] / [⬦ 切り抜く] は `<button>` なので Tab + Enter / Space で実行できる（クランプで 0 幅になる行は disabled）
+- 前後秒数は数値入力なので mouse なしで指定できる。形式 (`copy` / `h264`) は `select` なので矢印キーで切り替えられる
+
 ### Modal (ConflictModal / ConfirmExitModal / ErrorModal)
 
 - Tab で modal 内循環、Escape で「キャンセル」相当

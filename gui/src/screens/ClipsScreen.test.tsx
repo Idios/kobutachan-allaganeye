@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -110,17 +110,28 @@ function renderClips(
   patch: Partial<ClipsState> = {},
   overrides: {
     events?: HighlightEvent[];
+    /** `true` で `events` キー自体を落とす (未実行 / 旧 writer の metadata)。 */
+    noEventsKey?: boolean;
     filePath?: string | null;
     dirty?: boolean;
+    /** `indicator_status` / `warnings` など root の追加入力 (#1141)。 */
+    metadataPatch?: Record<string, unknown>;
   } = {},
 ): HTMLElement {
   useAppStateStore.getState().reset();
   useMetadataStore.getState().clear();
   useMetadataStore.getState().loadSample();
   const base = useMetadataStore.getState().metadata;
+  if (base !== null) {
+    const next: Record<string, unknown> = { ...base, ...(overrides.metadataPatch ?? {}) };
+    if (overrides.noEventsKey) {
+      delete next.events;
+    } else {
+      next.events = overrides.events ?? EVENTS;
+    }
+    useMetadataStore.setState({ metadata: next as unknown as typeof base });
+  }
   useMetadataStore.setState({
-    metadata:
-      base === null ? base : { ...base, events: overrides.events ?? EVENTS },
     filePath: overrides.filePath === undefined ? METADATA_PATH : overrides.filePath,
     loadedMtimeMs: 42,
     dirty: overrides.dirty ?? false,
@@ -416,6 +427,7 @@ describe('ClipsScreen idle', () => {
     renderClips();
     expect(screen.getByLabelText('前 (秒)')).toHaveValue(DEFAULT_MARGIN_SECONDS);
     expect(screen.getByLabelText('後 (秒)')).toHaveValue(DEFAULT_MARGIN_SECONDS);
+    expect(screen.getByLabelText('束ね (秒)')).toHaveValue(DEFAULT_GAP_SECONDS);
   });
 
   it('counts events outside every match and does not list them', () => {
@@ -429,8 +441,9 @@ describe('ClipsScreen idle', () => {
 
   it('explains an empty candidate list and links to indicators', () => {
     renderClips({}, { events: [] });
-    expect(screen.getByTestId('clips-empty')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '⬦ KO / ASSIST を検出' })).toBeInTheDocument();
+    expect(screen.getByTestId('clips-empty')).toHaveAttribute('data-reason', 'no-events');
+    // 走査済みで 0 件なので「先に検出してください」ではなく再検出に誘導する。
+    expect(screen.getByRole('button', { name: '⬦ KO / ASSIST を再検出' })).toBeInTheDocument();
   });
 
   it('shows the metadata-missing note when nothing is loaded', () => {
@@ -448,6 +461,89 @@ describe('ClipsScreen idle', () => {
   });
 });
 
+describe('ClipsScreen empty-state reasons (#1141)', () => {
+  it('explains a failed indicator scan with the warning detail', () => {
+    renderClips(
+      {},
+      {
+        noEventsKey: true,
+        metadataPatch: {
+          indicator_status: 'failed',
+          warnings: [
+            {
+              code: 'indicators_failed',
+              severity: 'warn',
+              context: { error: 'calibration failed' },
+            },
+          ],
+        },
+      },
+    );
+    expect(screen.getByTestId('clips-empty')).toHaveAttribute(
+      'data-reason',
+      'indicator-failed',
+    );
+    expect(screen.getByTestId('clips-empty-detail')).toHaveTextContent(
+      'calibration failed',
+    );
+    expect(
+      screen.getByRole('button', { name: '⬦ KO / ASSIST を検出' }),
+    ).toBeInTheDocument();
+  });
+
+  it('names the 詳細設定 OFF path when the scan was skipped', () => {
+    renderClips(
+      {},
+      { noEventsKey: true, metadataPatch: { indicator_status: 'skipped' } },
+    );
+    expect(screen.getByTestId('clips-empty')).toHaveAttribute(
+      'data-reason',
+      'indicator-skipped',
+    );
+    expect(screen.getByTestId('clips-empty')).toHaveTextContent('詳細設定');
+  });
+
+  it('stays neutral for legacy metadata without indicator_status', () => {
+    renderClips({}, { noEventsKey: true });
+    expect(screen.getByTestId('clips-empty')).toHaveAttribute(
+      'data-reason',
+      'not-scanned',
+    );
+    expect(screen.getByTestId('clips-empty-detail')).toHaveTextContent(
+      '詳細設定で OFF のまま検出した場合もここに出ます',
+    );
+  });
+
+  it('explains that the detected events are outside every match', () => {
+    renderClips({}, { events: [{ ...EVENTS[2] }] });
+    expect(screen.getByTestId('clips-empty')).toHaveAttribute(
+      'data-reason',
+      'no-usable-events',
+    );
+    expect(
+      screen.getByRole('button', { name: '⬦ KO / ASSIST の一覧を見る' }),
+    ).toBeInTheDocument();
+  });
+
+  it('hides the empty-state action in sample mode', () => {
+    renderClips({}, { events: [], filePath: null });
+    expect(screen.getByTestId('clips-empty')).toHaveAttribute('data-reason', 'no-events');
+    expect(
+      screen.queryByRole('button', { name: '⬦ KO / ASSIST を再検出' }),
+    ).not.toBeInTheDocument();
+  });
+
+  // events 優先 (2026-11-22 確定): status は events が無いときの理由付け。
+  it.each(['skipped', 'failed'] as const)(
+    'lists candidates despite indicator_status=%s (events 優先)',
+    (status) => {
+      renderClips({}, { metadataPatch: { indicator_status: status } });
+      expect(screen.queryByTestId('clips-empty')).not.toBeInTheDocument();
+      expect(screen.getByTestId('clips-candidate-1')).toBeInTheDocument();
+    },
+  );
+});
+
 describe('ClipsScreen run guards', () => {
   it('disables 切り抜く in sample mode with a reason', () => {
     renderClips({}, { filePath: null }); // sample mode (filePath === null)
@@ -463,6 +559,25 @@ describe('ClipsScreen run guards', () => {
     expect(screen.getByTestId('clips-run-disabled')).toHaveTextContent(
       '未適用の編集があります',
     );
+  });
+
+  it('does not show another file\'s progress and blocks 切り抜く (#1141)', () => {
+    renderClips({
+      status: 'running',
+      metadataPath: 'C:/other/metadata.json',
+    });
+    // 別ファイルの進捗は見せない (自ファイルの候補一覧は読める)。
+    expect(screen.queryByTestId('clips-progress')).not.toBeInTheDocument();
+    expect(screen.getByTestId('clips-run-disabled')).toHaveTextContent('別の動画');
+    expect(screen.getByTestId('clips-cut-1')).toBeDisabled();
+    // 逃げ道 ([中断]) は出す (store が run の重なりを拒否するため)。
+    expect(screen.getByTestId('clips-other-file-cancel')).toBeInTheDocument();
+  });
+
+  it('shows the progress when the run belongs to this file', () => {
+    renderClips({ status: 'running', metadataPath: METADATA_PATH });
+    expect(screen.getByTestId('clips-progress')).toBeInTheDocument();
+    expect(screen.queryByTestId('clips-other-file-cancel')).not.toBeInTheDocument();
   });
 
   it('reports invalid margins instead of seeking or invoking the CLI', async () => {
@@ -524,6 +639,8 @@ describe('ClipsScreen actions', () => {
       end: 504.9,
       matchIndex: 1,
       position: 1,
+      // #1156: 「自動範囲に戻したときの区間」(束ね + クランプ込み)。
+      baseline: { start: 483.4, end: 504.9, bundled: 1 },
     });
     expect(app.pendingSeekSeconds).toBe(483.4);
   });
@@ -540,7 +657,26 @@ describe('ClipsScreen actions', () => {
       end: 497.9,
       matchIndex: 1,
       position: 1,
+      // baseline も編集後の前後秒数 (post=3) で引く。
+      baseline: { start: 483.4, end: 497.9, bundled: 1 },
     });
+  });
+
+  it('keeps the edited margins across a remount (#1156)', async () => {
+    const user = userEvent.setup();
+    renderClips();
+    const post = screen.getByLabelText('後 (秒)');
+    await user.clear(post);
+    await user.type(post, '3');
+
+    // preview へ遷移して戻ると ClipsScreen は unmount される (#1156 レビュー指摘 1)。
+    cleanup();
+    render(<ClipsScreen />);
+
+    expect((screen.getByLabelText('後 (秒)') as HTMLInputElement).value).toBe('3');
+    expect(screen.getByTestId('clips-candidate-1').textContent).toContain(
+      '14.5 秒',
+    );
   });
 
   it('切り抜く invokes start_clips with the 1-based events[] position', async () => {
@@ -553,6 +689,7 @@ describe('ClipsScreen actions', () => {
         metadataPath: METADATA_PATH,
         pre: 10,
         post: 10,
+        gap: 5,
         codec: 'copy',
         eventIndexes: [4],
         overwrite: false,
@@ -571,6 +708,69 @@ describe('ClipsScreen actions', () => {
       'start_clips',
       expect.objectContaining({ req: expect.objectContaining({ codec: 'h264' }) }),
     );
+  });
+
+  // #1131 受け入れ条件: 束ね幅 (--gap) も GUI から変えられる。
+  it('uses the edited 束ね value for the display and start_clips', async () => {
+    const user = userEvent.setup();
+    // 近接する 2 件 (既定 gap 5 秒で束ねられる) を使う。
+    const events: HighlightEvent[] = [
+      { ...EVENTS[0], signal_id: 'assist_indicator', timestamp: 512.1, end: 513.6 },
+      { ...EVENTS[3], signal_id: 'assist_indicator', timestamp: 515.5, end: 517.0 },
+    ];
+    renderClips({}, { events });
+    // 既定では束ねられて同じ区間 (502.1 - 527.0) になる。
+    expect(
+      within(screen.getByTestId('clips-candidate-1')).getByText(
+        /範囲 00:08:22 - 00:08:47/,
+      ),
+    ).toBeInTheDocument();
+
+    const gap = screen.getByLabelText('束ね (秒)');
+    expect(gap).toHaveValue(DEFAULT_GAP_SECONDS);
+    await user.clear(gap);
+    await user.type(gap, '0');
+
+    // 束ねないので、行の範囲はそのイベント単体の前後だけになる。
+    expect(
+      within(screen.getByTestId('clips-candidate-1')).getByText(
+        /範囲 00:08:22 - 00:08:43/,
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByTestId('clips-cut-1'));
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'start_clips',
+      expect.objectContaining({ req: expect.objectContaining({ gap: 0 }) }),
+    );
+  });
+
+  it('reports an invalid 束ね value instead of invoking the CLI', async () => {
+    const user = userEvent.setup();
+    renderClips();
+    const gap = screen.getByLabelText('束ね (秒)');
+    await user.clear(gap);
+    await user.type(gap, '-1');
+
+    expect(screen.getByTestId('clips-cut-1')).toBeDisabled();
+    expect(screen.getByTestId('clips-run-disabled')).toHaveTextContent(
+      '束ね は 0 以上の秒数',
+    );
+    await user.click(screen.getByTestId('clips-preview-1'));
+    expect(screen.getByTestId('clips-margins-error')).toHaveTextContent(
+      '束ね は 0 以上の秒数',
+    );
+    expect(mockInvoke).not.toHaveBeenCalledWith('start_clips', expect.anything());
+  });
+
+  // #1131 受け入れ条件: copy がキーフレームに丸められることを UI で明示する。
+  it('explains that copy clips snap to keyframes', async () => {
+    const user = userEvent.setup();
+    renderClips();
+    expect(screen.getByTestId('clips-copy-note')).toHaveTextContent('キーフレーム');
+
+    await user.selectOptions(screen.getByLabelText('形式'), 'h264');
+    expect(screen.queryByTestId('clips-copy-note')).not.toBeInTheDocument();
   });
 
   it('shows the written paths after a successful run', async () => {
@@ -597,9 +797,24 @@ describe('ClipsScreen running / result / error', () => {
     expect(mockInvoke).toHaveBeenCalledWith('kill_tracked_processes');
   });
 
-  it('hides a run that belongs to a different metadata.json', () => {
-    renderClips({ metadataPath: 'C:/other/metadata.json' });
+  it('hides the complete result of a different metadata.json', () => {
+    renderClips({
+      status: 'complete',
+      result: CLIPS_RESULT,
+      metadataPath: 'C:/other/metadata.json',
+    });
     expect(screen.getByTestId('clips-screen')).toHaveAttribute('data-status', 'idle');
+    expect(screen.queryByTestId('clips-result')).not.toBeInTheDocument();
+  });
+
+  it('hides the error of a different metadata.json', () => {
+    renderClips({
+      status: 'error',
+      error: { message: 'boom', hint: null, code: 'subprocess.exit_failed' },
+      metadataPath: 'C:/other/metadata.json',
+    });
+    expect(screen.getByTestId('clips-screen')).toHaveAttribute('data-status', 'idle');
+    expect(screen.queryByTestId('clips-error')).not.toBeInTheDocument();
   });
 
   it('offers an overwrite retry only for an existing-output failure', async () => {

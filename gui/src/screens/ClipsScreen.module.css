@@ -130,6 +130,14 @@
   color: var(--ae-danger);
 }
 
+/* #1131 受け入れ条件: `copy` はキーフレーム単位で切ることを UI で明示する。 */
+.copyNote {
+  font-family: var(--ae-font-ui);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ae-text-dim);
+}
+
 /* ── Notes / state blocks ────────────────────────────────────────────────── */
 
 .note {

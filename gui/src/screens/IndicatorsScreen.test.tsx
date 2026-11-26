@@ -9,10 +9,7 @@ const { mockInvoke, mockListen, progressHandlers } = vi.hoisted(() => {
     progressHandlers,
     mockInvoke: vi.fn(),
     mockListen: vi.fn(
-      async (
-        _name: string,
-        cb: (event: { payload: unknown }) => void,
-      ): Promise<() => void> => {
+      async (_name: string, cb: (event: { payload: unknown }) => void): Promise<() => void> => {
         progressHandlers.push(cb);
         return () => undefined;
       },
@@ -59,10 +56,38 @@ const LAYOUT: IndicatorsLayout = {
 };
 
 const EVENTS: IndicatorsEvent[] = [
-  { signal_id: 'assist_indicator', timestamp: 130.25, end: 131, score: 0.7, evidence: { samples: 3 }, match_index: 2 },
-  { signal_id: 'ko_indicator', timestamp: 12.3, end: 13, score: 0.88, evidence: { samples: 3 }, match_index: 1 },
-  { signal_id: 'ko_indicator', timestamp: 5.05, end: 5.6, score: 0.91, evidence: { samples: 2 }, match_index: 1 },
-  { signal_id: 'assist_indicator', timestamp: 300.5, end: 301, score: 0.66, evidence: { samples: 2 }, match_index: null },
+  {
+    signal_id: 'assist_indicator',
+    timestamp: 130.25,
+    end: 131,
+    score: 0.7,
+    evidence: { samples: 3 },
+    match_index: 2,
+  },
+  {
+    signal_id: 'ko_indicator',
+    timestamp: 12.3,
+    end: 13,
+    score: 0.88,
+    evidence: { samples: 3 },
+    match_index: 1,
+  },
+  {
+    signal_id: 'ko_indicator',
+    timestamp: 5.05,
+    end: 5.6,
+    score: 0.91,
+    evidence: { samples: 2 },
+    match_index: 1,
+  },
+  {
+    signal_id: 'assist_indicator',
+    timestamp: 300.5,
+    end: 301,
+    score: 0.66,
+    evidence: { samples: 2 },
+    match_index: null,
+  },
 ];
 
 const COMPLETE_RESULT: IndicatorsResult = {
@@ -131,9 +156,7 @@ function renderIndicators(patch: Partial<IndicatorsState> = {}): void {
   render(<IndicatorsScreen />);
 }
 
-function completePatch(
-  overrides: Partial<IndicatorsState> = {},
-): Partial<IndicatorsState> {
+function completePatch(overrides: Partial<IndicatorsState> = {}): Partial<IndicatorsState> {
   return {
     status: 'complete',
     metadataPath: METADATA_PATH,
@@ -149,9 +172,7 @@ beforeEach(() => {
   mockInvoke.mockReset();
   // 既定: start_indicators は complete payload、それ以外 (kill_*) は undefined。
   mockInvoke.mockImplementation((cmd: string) =>
-    cmd === 'start_indicators'
-      ? Promise.resolve(COMPLETE_RESULT)
-      : Promise.resolve(undefined),
+    cmd === 'start_indicators' ? Promise.resolve(COMPLETE_RESULT) : Promise.resolve(undefined),
   );
   mockListen.mockClear();
   progressHandlers.length = 0;
@@ -166,10 +187,7 @@ beforeEach(() => {
 describe('IndicatorsScreen idle', () => {
   it('explains the run and offers 検出を開始 / 戻る', () => {
     renderIndicators();
-    expect(screen.getByTestId('indicators-screen')).toHaveAttribute(
-      'data-status',
-      'idle',
-    );
+    expect(screen.getByTestId('indicators-screen')).toHaveAttribute('data-status', 'idle');
     expect(screen.getByTestId('indicators-idle')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '検出を開始' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '戻る' })).toBeInTheDocument();
@@ -187,17 +205,13 @@ describe('IndicatorsScreen idle', () => {
     useAppStateStore.getState().navigate('indicators');
     render(<IndicatorsScreen />);
     expect(screen.getByRole('button', { name: '検出を開始' })).toBeDisabled();
-    expect(
-      screen.getByText('サンプル動画では検出を実行できません'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('サンプル動画では検出を実行できません')).toBeInTheDocument();
   });
 
   it('shows a metadata-missing note when nothing is loaded', () => {
     useAppStateStore.getState().navigate('indicators');
     render(<IndicatorsScreen />);
-    expect(
-      screen.getByTestId('indicators-metadata-missing'),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId('indicators-metadata-missing')).toBeInTheDocument();
   });
 });
 
@@ -235,9 +249,7 @@ describe('IndicatorsScreen run (idle → running → complete)', () => {
     const summary = await screen.findByTestId('indicators-summary');
     expect(summary).toHaveTextContent('KO 2');
     expect(summary).toHaveTextContent('ASSIST 2');
-    expect(screen.getByTestId('indicators-layout-source')).toHaveTextContent(
-      '自動解決 (anchor)',
-    );
+    expect(screen.getByTestId('indicators-layout-source')).toHaveTextContent('自動解決 (anchor)');
   });
 
   it('passes metadataPath and the loaded mtime as the CAS guard', async () => {
@@ -316,17 +328,13 @@ describe('IndicatorsScreen run (idle → running → complete)', () => {
     await user.click(screen.getByRole('button', { name: '検出を開始' }));
 
     // 次の [再検出] が自分の write を外部変更とみなさないよう mtime が追従する
-    await waitFor(() =>
-      expect(useMetadataStore.getState().loadedMtimeMs).toBe(777),
-    );
+    await waitFor(() => expect(useMetadataStore.getState().loadedMtimeMs).toBe(777));
     expect(useMetadataStore.getState().metadata?.indicator_layout).toEqual(LAYOUT);
   });
 
   it('中断 calls cancel() on the store', async () => {
     mockInvoke.mockImplementation((cmd: string) =>
-      cmd === 'start_indicators'
-        ? new Promise(() => undefined)
-        : Promise.resolve(undefined),
+      cmd === 'start_indicators' ? new Promise(() => undefined) : Promise.resolve(undefined),
     );
     const cancelSpy = vi.fn();
     const user = userEvent.setup();
@@ -355,9 +363,7 @@ describe('IndicatorsScreen complete', () => {
     expect(outside).toHaveTextContent('試合外');
     // 試合外の区間はプレビュー遷移先が無いのでボタンにしない
     expect(within(outside).queryAllByRole('button')).toHaveLength(0);
-    expect(
-      within(outside).getByTestId('indicators-event-outside-0'),
-    ).toHaveTextContent('ASSIST');
+    expect(within(outside).getByTestId('indicators-event-outside-0')).toHaveTextContent('ASSIST');
   });
 
   it('ignores events whose signal_id the screen does not know (#127 §4-3)', () => {
@@ -382,9 +388,7 @@ describe('IndicatorsScreen complete', () => {
     expect(within(match1).getAllByRole('button')).toHaveLength(2);
     // 件数も既知分だけを数える。
     expect(screen.getByTestId('indicators-summary')).toHaveTextContent('KO 2');
-    expect(screen.getByTestId('indicators-summary')).toHaveTextContent(
-      'ASSIST 2',
-    );
+    expect(screen.getByTestId('indicators-summary')).toHaveTextContent('ASSIST 2');
     expect(screen.queryByText('kill_feed')).not.toBeInTheDocument();
   });
 
@@ -405,12 +409,8 @@ describe('IndicatorsScreen complete', () => {
   });
 
   it('shows the user-specified layout provenance', () => {
-    renderIndicators(
-      completePatch({ layout: { ...LAYOUT, source: 'user' } }),
-    );
-    expect(screen.getByTestId('indicators-layout-source')).toHaveTextContent(
-      '手動指定 (--region)',
-    );
+    renderIndicators(completePatch({ layout: { ...LAYOUT, source: 'user' } }));
+    expect(screen.getByTestId('indicators-layout-source')).toHaveTextContent('手動指定 (--region)');
   });
 
   it('clicking a row opens that match in preview and queues the seek', async () => {
@@ -434,10 +434,7 @@ describe('IndicatorsScreen complete', () => {
     useMetadataStore.setState({
       metadata: {
         ...base,
-        events: [
-          { ...EVENTS[1] },
-          { ...EVENTS[2], clip_start: 0.05, clip_end: 30 },
-        ],
+        events: [{ ...EVENTS[1] }, { ...EVENTS[2], clip_start: 0.05, clip_end: 30 }],
       },
     });
 
@@ -449,6 +446,8 @@ describe('IndicatorsScreen complete', () => {
       end: 30,
       matchIndex: 1,
       position: 2,
+      // #1156: 保存済みの手動区間で開いても「自動範囲」は引ける。
+      baseline: { start: 0, end: 15.6, bundled: 1 },
     });
   });
 
@@ -500,10 +499,7 @@ describe('IndicatorsScreen results scoping', () => {
 
   it('hides results produced for a different metadata file', () => {
     renderIndicators(completePatch({ metadataPath: OTHER }));
-    expect(screen.getByTestId('indicators-screen')).toHaveAttribute(
-      'data-status',
-      'idle',
-    );
+    expect(screen.getByTestId('indicators-screen')).toHaveAttribute('data-status', 'idle');
     expect(screen.queryByTestId('indicators-summary')).toBeNull();
     expect(screen.queryByTestId('indicators-group-1')).toBeNull();
     expect(screen.getByRole('button', { name: '検出を開始' })).toBeEnabled();
@@ -529,9 +525,7 @@ describe('IndicatorsScreen results scoping', () => {
       metadataPath: OTHER,
       phase: 'scanning',
     });
-    expect(
-      screen.getByTestId('indicators-other-file-running'),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId('indicators-other-file-running')).toBeInTheDocument();
     expect(screen.queryByTestId('indicators-progress')).toBeNull();
     // 止める手段を必ず出す (store は run の重なりを拒否するため)
     expect(screen.getByRole('button', { name: '中断' })).toBeEnabled();
@@ -555,8 +549,7 @@ describe('IndicatorsScreen error', () => {
     code: 'subprocess.exit_failed',
   };
   const layoutError = {
-    message:
-      'インジケータの探索領域を解決できませんでした (2 フレームの合意が取れず)。',
+    message: 'インジケータの探索領域を解決できませんでした (2 フレームの合意が取れず)。',
     hint: null,
     code: 'subprocess.exit_failed',
   };
@@ -679,9 +672,7 @@ describe('IndicatorsScreen error', () => {
       metadataPath: METADATA_PATH,
       error: { message: 'cancelled', hint: null, code: 'subprocess.cancelled' },
     });
-    expect(screen.getByTestId('indicators-cancelled')).toHaveTextContent(
-      '検出を中断しました。',
-    );
+    expect(screen.getByTestId('indicators-cancelled')).toHaveTextContent('検出を中断しました。');
     expect(screen.queryByTestId('indicators-error')).toBeNull();
     expect(screen.queryByTestId('indicators-region-form')).toBeNull();
     expect(screen.getByRole('button', { name: '検出を開始' })).toBeEnabled();
@@ -755,17 +746,129 @@ describe('IndicatorsScreen helpers', () => {
     expect(validateRegionInputs(EMPTY_REGION_INPUTS)).toBe(
       'X は 0 以上の整数 (px) で入力してください',
     );
-    expect(
-      validateRegionInputs({ x: '1.5', y: '0', w: '320', h: '40' }),
-    ).toBe('X は 0 以上の整数 (px) で入力してください');
-    expect(
-      validateRegionInputs({ x: '0', y: '0', w: '19', h: '40' }),
-    ).toBe('幅 (W) は 20px 以上にしてください');
-    expect(
-      validateRegionInputs({ x: '0', y: '0', w: '320', h: '1' }),
-    ).toBe('高さ (H) は 2px 以上にしてください');
-    expect(
-      validateRegionInputs({ x: '640', y: '980', w: '320', h: '40' }),
-    ).toBeNull();
+    expect(validateRegionInputs({ x: '1.5', y: '0', w: '320', h: '40' })).toBe(
+      'X は 0 以上の整数 (px) で入力してください',
+    );
+    expect(validateRegionInputs({ x: '0', y: '0', w: '19', h: '40' })).toBe(
+      '幅 (W) は 20px 以上にしてください',
+    );
+    expect(validateRegionInputs({ x: '0', y: '0', w: '320', h: '1' })).toBe(
+      '高さ (H) は 2px 以上にしてください',
+    );
+    expect(validateRegionInputs({ x: '640', y: '980', w: '320', h: '40' })).toBeNull();
+  });
+});
+
+describe('IndicatorsScreen persisted results (#1141)', () => {
+  /**
+   * `detect --indicators` は metadata.json に `events[]` を直接書く。
+   * 本画面の store はここから run したときしか埋まらないので、store が idle でも
+   * metadata に結果があれば「検出を開始」ではなく結果を表示する。
+   */
+  function renderWithMetadata(
+    patch: Record<string, unknown>,
+    storePatch: Partial<IndicatorsState> = {},
+  ): void {
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.getState().loadSample();
+    const base = useMetadataStore.getState().metadata!;
+    useMetadataStore.setState({
+      metadata: { ...base, ...patch } as typeof base,
+      filePath: METADATA_PATH,
+      loadedMtimeMs: MTIME,
+      dirty: false,
+    });
+    useAppStateStore.getState().navigate('indicators');
+    useIndicatorsStore.setState({ status: 'idle', metadataPath: null, ...storePatch });
+    render(<IndicatorsScreen />);
+  }
+
+  it('shows the events that detect already wrote', () => {
+    renderWithMetadata({ events: EVENTS, indicator_layout: LAYOUT });
+
+    expect(screen.getByTestId('indicators-screen')).toHaveAttribute('data-status', 'complete');
+    expect(screen.queryByRole('button', { name: '検出を開始' })).not.toBeInTheDocument();
+    const summary = screen.getByTestId('indicators-summary');
+    expect(summary).toHaveTextContent('KO 2');
+    expect(summary).toHaveTextContent('ASSIST 2');
+    expect(screen.getByTestId('indicators-layout-source')).toHaveTextContent('自動解決 (anchor)');
+    expect(screen.getByTestId('indicators-group-1')).toBeInTheDocument();
+    expect(screen.getByTestId('indicators-group-outside')).toBeInTheDocument();
+  });
+
+  it('treats an empty events array as a finished scan (0 件)', () => {
+    renderWithMetadata({ events: [], indicator_layout: LAYOUT });
+
+    expect(screen.getByTestId('indicators-screen')).toHaveAttribute('data-status', 'complete');
+    expect(screen.getByTestId('indicators-empty')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '検出を開始' })).not.toBeInTheDocument();
+  });
+
+  it('stays idle when metadata has no events key at all', () => {
+    renderWithMetadata({});
+
+    expect(screen.getByTestId('indicators-screen')).toHaveAttribute('data-status', 'idle');
+    expect(screen.getByTestId('indicators-idle')).toBeInTheDocument();
+  });
+
+  it('explains that the scan was skipped in 詳細設定 (#1141)', () => {
+    renderWithMetadata({ indicator_status: 'skipped' });
+
+    expect(screen.getByTestId('indicators-screen')).toHaveAttribute('data-status', 'idle');
+    expect(screen.getByTestId('indicators-skipped-note')).toHaveTextContent('詳細設定');
+  });
+
+  it('shows the previous failure reason from warnings[] (#1141)', () => {
+    renderWithMetadata({
+      indicator_status: 'failed',
+      warnings: [
+        {
+          code: 'indicators_failed',
+          severity: 'warn',
+          context: { error: 'calibration failed' },
+        },
+      ],
+    });
+
+    expect(screen.getByTestId('indicators-screen')).toHaveAttribute('data-status', 'idle');
+    expect(screen.getByTestId('indicators-previous-failure')).toHaveTextContent(
+      'calibration failed',
+    );
+  });
+
+  it('does not show the stage notes for legacy metadata (#1141)', () => {
+    renderWithMetadata({});
+
+    expect(screen.queryByTestId('indicators-skipped-note')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('indicators-previous-failure')).not.toBeInTheDocument();
+  });
+
+  // events 優先 (2026-11-22 確定): status は events が無いときの理由付け。
+  it.each(['skipped', 'failed'] as const)(
+    'shows the persisted events despite indicator_status=%s',
+    (status) => {
+      renderWithMetadata({
+        events: EVENTS,
+        indicator_layout: LAYOUT,
+        indicator_status: status,
+      });
+
+      expect(screen.getByTestId('indicators-screen')).toHaveAttribute(
+        'data-status',
+        'complete',
+      );
+      expect(screen.queryByTestId('indicators-skipped-note')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('indicators-previous-failure')).not.toBeInTheDocument();
+      expect(screen.getByTestId('indicators-summary')).toHaveTextContent('KO 2');
+    },
+  );
+
+  it('prefers the store result for this file over the persisted one', () => {
+    renderWithMetadata({ events: [], indicator_layout: LAYOUT }, completePatch());
+
+    const summary = screen.getByTestId('indicators-summary');
+    expect(summary).toHaveTextContent('KO 2');
+    expect(screen.queryByTestId('indicators-empty')).not.toBeInTheDocument();
   });
 });

@@ -13,6 +13,9 @@ exit code:
 * 2 -- 構造エラー (manifest 欠損 / glob が空 / 宣言と実体の不一致)
 
 `--update` は再撮影後に digest を書き戻すためのもの。**撮り直しとセットで**使う。
+例外: **描画変更が意図されないのに gate だけが赤になった**場合は、画像を revert して
+hash のみを更新する手順がある。規約は `scripts/capture-readme-screens.mjs` の docstring
+§Recording convention (#1008) が正。
 
 ## なぜ git を使わないか (実測に基づく設計判断)
 

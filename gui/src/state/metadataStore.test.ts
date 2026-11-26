@@ -1805,6 +1805,25 @@ describe('normalizeForPersistence events round-trip (#127)', () => {
   });
 });
 
+describe('normalizeForPersistence indicator_status round-trip (#1141)', () => {
+  it('keeps indicator_status when the GUI applies unrelated edits', async () => {
+    // root 直下のキーなので top-level spread で保持される (#127 の events と同じ)。
+    // 落ちると apply のたびに「未実行 / 詳細設定 OFF / 失敗」の区別が消える。
+    configureInvoke({
+      load_metadata: { ...validMetadata(), indicator_status: 'skipped' },
+      apply_changes: 2000,
+      check_backup_exists: false,
+    });
+    await useMetadataStore.getState().load('p');
+    useMetadataStore.getState().updateMatch(1, { name: 'x' });
+    await useMetadataStore.getState().apply();
+    const applyCall = invokeMock.mock.calls.find((c) => c[0] === 'apply_changes');
+    expect(applyCall).toBeDefined();
+    const persisted = (applyCall![1] as { metadata: Metadata }).metadata;
+    expect(persisted.indicator_status).toBe('skipped');
+  });
+});
+
 describe('useMetadataStore.reloadFromDisk (#893)', () => {
   it('reloadFromDisk refreshes metadata + mtime and clears conflict', async () => {
     const fresh = { ...validMetadata(), minimap_regions: [{ match_index: 1, region: { x: 0.01, y: 0.02, w: 0.15, h: 0.2, confidence: 1, source: 'manual' } }] };

@@ -62,7 +62,11 @@ export interface Metadata {
   minimap_regions?: MinimapRegionEntry[];
   indicator_layout?: IndicatorLayout;
   /**
-   * L4 highlight events (#127 / #1106 item 4). Written by `allaganeye indicators --write` as a full replacement. Field absent = the recording was never scanned. Consumers must ignore unknown fields and unknown `signal_id` values (docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md).
+   * #1141 -- Result of the KO / ASSIST indicator stage. "detected" = the scan completed, or previous results were reused from the detection cache, so `events[]` is authoritative; "skipped" = detection was disabled (`--no-indicators` or the GUI's KO / ASSIST toggle was off); "failed" = the scan was attempted and failed, so `events[]` is absent and `warnings[]` carries `indicators_failed`. Field absent = written by a version that predates this field (not scanned and skipped cannot be distinguished).
+   */
+  indicator_status?: 'detected' | 'skipped' | 'failed';
+  /**
+   * L4 highlight events (#127 / #1106 item 4). Written by `allaganeye detect` / `split` (with `--indicators`) and `allaganeye indicators --write` as a full replacement. Field absent = no stored scan result; see `indicator_status` for why (`skipped` / `failed` / not scanned). Consumers must ignore unknown fields and unknown `signal_id` values (docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md).
    */
   events?: HighlightEvent[];
 }

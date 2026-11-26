@@ -44,6 +44,9 @@ export function toStartDetectParams(p: DetectionParams): Record<string, unknown>
   } else if (p.detectionPath === 'vtuber') {
     args.vtuber = true;
   }
+  // #1141: 既定は ON (CLI 側も ON) なので、OFF を選んだときは Rust が
+  // `--no-indicators` を載せるために **boolean を常に送る**。
+  args.indicators = p.indicators;
   return args;
 }
 
@@ -56,6 +59,7 @@ export function isDetectionParamsModified(p: DetectionParams): boolean {
     p.blackoutThreshold !== DEFAULT_DETECTION_PARAMS.blackoutThreshold ||
     p.workers !== DEFAULT_DETECTION_PARAMS.workers ||
     p.gpu !== DEFAULT_DETECTION_PARAMS.gpu ||
-    p.detectionPath !== DEFAULT_DETECTION_PARAMS.detectionPath
+    p.detectionPath !== DEFAULT_DETECTION_PARAMS.detectionPath ||
+    p.indicators !== DEFAULT_DETECTION_PARAMS.indicators
   );
 }

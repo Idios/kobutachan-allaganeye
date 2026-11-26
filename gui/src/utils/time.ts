@@ -40,6 +40,28 @@ export function fmtClockTime(seconds: number): string {
 }
 
 /**
+ * Format seconds as HH:MM:SS.d (0.1 秒精度)。
+ *
+ * クリップ範囲エディタの「結果」行 (#1156) 用。TC 入力は `fmtPreciseTime`
+ * (`H:MM:SS.FF`、**FF はフレーム番号**) なので、0.1 秒単位の比較表示はこの関数で行う。
+ * 同じ瞬間を TC と結果で別の数字に見せないため、端点は **0.1 秒に丸める**
+ * (切り捨てると 0.5 秒動かしても表示が変わらない = #1156 の症状 F)。
+ *
+ * - Negative / NaN input is clamped to 0.
+ * - 丸めで 60.0 秒に上がる場合は繰り上げる (59.96 → `00:01:00.0`)。
+ */
+export function fmtClockTenths(seconds: number): string {
+  const clamped = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  const total = Math.round(clamped * 10);
+  const h = Math.floor(total / 36000);
+  const m = Math.floor((total % 36000) / 600);
+  const s = Math.floor((total % 600) / 10);
+  const tenth = total % 10;
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(h)}:${pad(m)}:${pad(s)}.${tenth}`;
+}
+
+/**
  * Format seconds as HH:MM:SS.ff (frame-accurate timecode).
  * Mirror of fmtPreciseTime in docs/design/bundle/project/variants/aether-preview.jsx.
  *

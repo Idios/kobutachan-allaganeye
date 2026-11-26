@@ -11,6 +11,9 @@ import { CompleteScreen, formatElapsed } from './CompleteScreen';
 import { useAppStateStore } from '../state/appStateStore';
 import { useMetadataStore } from '../state/metadataStore';
 
+/** 3 つの導線 (ミニマップ / KO / ASSIST / クリップ) の disabled 理由 (§1.2)。 */
+const NO_MATCHES_REASON = '試合が検出されていません。先に動画を検出してください';
+
 beforeEach(() => {
   useAppStateStore.getState().reset();
   useMetadataStore.getState().clear();
@@ -483,6 +486,9 @@ describe('#893 CompleteScreen minimap entry', () => {
     render(<CompleteScreen />);
     const btn = screen.getByRole('button', { name: 'ミニマップ切抜き' });
     expect(btn).toBeDisabled();
+    // §1.2: tooltip + inline hint (3 つの導線が同じ理由を持つ)
+    expect(btn).toHaveAttribute('title', NO_MATCHES_REASON);
+    expect(screen.getAllByText(NO_MATCHES_REASON)).toHaveLength(3);
   });
 });
 
@@ -527,6 +533,60 @@ describe('#1106 CompleteScreen indicators entry', () => {
     render(<CompleteScreen />);
     const btn = screen.getByRole('button', { name: 'KO / ASSIST を検出' });
     expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', NO_MATCHES_REASON);
+  });
+});
+
+// #1131 Phase B2 / #1141: クリップ画面への導線。未検出 / 詳細設定 OFF / 失敗でも
+// 遷移は許可し、理由と検出への戻りは遷移先 (§2.8.0) が受け持つ。
+describe('#1131 CompleteScreen clips entry', () => {
+  beforeEach(() => {
+    useAppStateStore.getState().reset();
+    useMetadataStore.getState().clear();
+    useMetadataStore.getState().loadSample();
+    useAppStateStore.getState().navigate('complete');
+  });
+
+  it('navigates to the clips screen on クリップ切り抜き click', async () => {
+    render(<CompleteScreen />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'クリップ切り抜き' }));
+    expect(useAppStateStore.getState().screen).toBe('clips');
+  });
+
+  it('stays enabled when metadata has no events (the destination explains why)', () => {
+    const base = useMetadataStore.getState().metadata!;
+    useMetadataStore.setState({ metadata: { ...base } });
+    render(<CompleteScreen />);
+    expect(screen.getByRole('button', { name: 'クリップ切り抜き' })).toBeEnabled();
+  });
+
+  it('クリップ切り抜き button is disabled when matches is empty', () => {
+    useMetadataStore.setState({
+      metadata: {
+        source: 'x',
+        source_duration: 1,
+        source_duration_display: '0:01',
+        detected_at: '2026-04-22T00:00:00Z',
+        detection_params: {
+          sample_interval: 2,
+          blackout_threshold: 15,
+          min_match_duration: 300,
+          min_blackout_duration: 3,
+          no_audio: false,
+          use_gpu: null,
+          workers: null,
+        },
+        matches: [],
+        gaps: [],
+      },
+      hasBackup: false,
+    });
+    render(<CompleteScreen />);
+    expect(screen.getByRole('button', { name: 'クリップ切り抜き' })).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'クリップ切り抜き' }),
+    ).toHaveAttribute('title', NO_MATCHES_REASON);
   });
 });
 

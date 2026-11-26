@@ -10,6 +10,7 @@ import typer
 
 from allaganeye import __version__
 from allaganeye.config import SUPPORTED_EXTENSIONS, SplitConfig
+from allaganeye.detection.indicator_stage import CLI_DEFAULT_INDICATORS
 from allaganeye.exceptions import (
     AllaganEyeError,
     ConfigValidationError,
@@ -234,6 +235,16 @@ def split(
             "excluded from the split output (#805).",
         ),
     ] = False,
+    indicators: Annotated[
+        bool | None,
+        typer.Option(
+            "--indicators/--no-indicators",
+            help="Also detect KO / ASSIST indicator intervals and write them into "
+            "metadata.json in the same atomic write as the boundaries (#1141). "
+            "Default: on (use --no-indicators to skip it). Not compatible with "
+            "--from-metadata.",
+        ),
+    ] = None,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -270,6 +281,11 @@ def split(
             raise ConfigValidationError(
                 "--dry-run is not compatible with --from-metadata "
                 "(use `allaganeye detect` to regenerate metadata)"
+            )
+        if from_metadata is not None and indicators:
+            raise ConfigValidationError(
+                "--indicators is not compatible with --from-metadata "
+                "(run `allaganeye indicators <metadata.json>` instead)"
             )
 
         # Collapse the two independent flags back into the tri-state
@@ -336,7 +352,15 @@ def split(
 
         from allaganeye.commands.split_matches import run_split
 
-        run_split(video_path, config, verbose=verbose, quiet=quiet)
+        # 未指定は CLI 既定 (ON) に解決する。`--from-metadata` との排他は
+        # 「明示的に --indicators を渡した」ときだけ効かせる (#1141)。
+        run_split(
+            video_path,
+            config,
+            verbose=verbose,
+            quiet=quiet,
+            indicators=(CLI_DEFAULT_INDICATORS if indicators is None else indicators),
+        )
 
     except AllaganEyeError as e:
         _report_app_error(e, verbose=verbose, quiet=quiet)
@@ -440,6 +464,15 @@ def detect(
             "excluded from the split output (#805).",
         ),
     ] = False,
+    indicators: Annotated[
+        bool | None,
+        typer.Option(
+            "--indicators/--no-indicators",
+            help="Also detect KO / ASSIST indicator intervals and write them into "
+            "metadata.json in the same atomic write as the boundaries (#1141). "
+            "Default: on (use --no-indicators to skip it).",
+        ),
+    ] = None,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -524,6 +557,7 @@ def detect(
             verbose=verbose,
             quiet=quiet,
             progress_format=progress_format,
+            indicators=(CLI_DEFAULT_INDICATORS if indicators is None else indicators),
         )
 
     except AllaganEyeError as e:

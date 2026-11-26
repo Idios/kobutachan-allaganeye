@@ -108,10 +108,13 @@ PR #669 で追加した 2 command (`read_error_log_tail` / `probe_environment_in
 
 - `blackoutThreshold` / `minBlackoutDuration` / `minMatchDuration` / `workers` / `noAudio` / `noCache` / `gpu` / `gpuVendor` (#569)
 - `masked` / `vtuber` (#1136): `Some(true)` のときだけ `--masked` / `--vtuber`。両方 `Some(true)` は **spawn 前に `validation.detection_path_conflict` で拒否**する (frontend は 3 値 radio なので通常起きないが、command を直接 invoke する経路に対する多層防御。CLI 単体では exit 5)
+- `indicators` (#1141): CLI の既定は **ON** なので、`Some(false)` -> `--no-indicators`、`Some(true)` -> `--indicators`、`None` -> どちらも載せない (CLI 既定に任せる)。frontend は常に boolean を送るため GUI からはどちらかが必ず明示される (Rust unit test `detect_command_args_translates_indicators_tristate` が pin)
 
 ## `start_detect` stdout schema と parse 失敗時の挙動 (#648)
 
 `start_detect` が spawn する `allaganeye detect --progress-format json` の stdout は **1 行 1 JSON object の stream** (UTF-8、LF separator)。GUI 側は `parse_detect_progress_line` で 1 行ずつ deserialize する。
+
+`phase` は `start` / `probing` / `scan` / `refine` / `scorebar` / `audio` / `chunk_dispatch` / `chunk` / `cache_hit` / **`indicators` (#1141)** / `writing_metadata` / `done` / `error` をとりうる。`indicators` は KO / ASSIST 走査 (`--indicators` は既定 ON、`--no-indicators` で skip) を表し、`completed` / `total` は**走査済み秒 / 総尺秒**、`eta_s` は推定残り秒。DetectingScreen はこれを 3 段目のバー (`phase-row-indicators`) とログ行に写す。
 
 **許容パターン (silent skip)**:
 

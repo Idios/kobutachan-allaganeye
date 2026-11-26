@@ -2143,6 +2143,11 @@ pub struct DetectParams {
     /// the pair before spawning so a caller that bypasses the frontend's
     /// single-choice radio cannot reach the subprocess.
     pub vtuber: Option<bool>,
+    /// #1141 -- KO / ASSIST 検出の統合。CLI の既定は **ON** なので、
+    /// `Some(false)` -> `--no-indicators`、`Some(true)` -> `--indicators`、
+    /// `None` は「CLI 既定に任せる」で flag を載せない。frontend は常に
+    /// boolean を送るため、GUI 経由ではどちらかが必ず明示される。
+    pub indicators: Option<bool>,
 }
 
 /// #569 -- one progress event emitted on channel `detect-progress`.
@@ -2439,6 +2444,13 @@ fn detect_command_args(video_path: &str, output_dir: &str, params: &DetectParams
     }
     if params.vtuber.unwrap_or(false) {
         args.push("--vtuber".to_string());
+    }
+    // #1141 -- KO / ASSIST 検出の統合。CLI の既定は ON なので、OFF を選んだ
+    // ときだけ `--no-indicators` を載せる (`None` は CLI 既定 = ON に任せる)。
+    match params.indicators {
+        Some(true) => args.push("--indicators".to_string()),
+        Some(false) => args.push("--no-indicators".to_string()),
+        None => {}
     }
     args
 }
@@ -6945,6 +6957,39 @@ mod tests {
         assert!(!joined.contains("--gpu"));
         assert!(!joined.contains("--no-gpu"));
         assert!(!joined.contains("--workers"));
+        assert!(!joined.contains("--indicators"));
+    }
+
+    /// #1141 -- KO / ASSIST 統合。`Some(true)` -> `--indicators`、
+    /// `Some(false)` -> `--no-indicators`、`None` -> どちらも載せない。
+    #[test]
+    fn detect_command_args_translates_indicators_tristate() {
+        let args_on = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                indicators: Some(true),
+                ..Default::default()
+            },
+        );
+        assert!(args_on.iter().any(|a| a == "--indicators"));
+
+        // #1141: CLI の既定は ON なので、OFF は明示的に `--no-indicators` を送る。
+        let args_off = detect_command_args(
+            "in.mkv",
+            "out",
+            &DetectParams {
+                indicators: Some(false),
+                ..Default::default()
+            },
+        );
+        assert!(args_off.iter().any(|a| a == "--no-indicators"));
+        assert!(!args_off.iter().any(|a| a == "--indicators"));
+
+        // `None` は CLI 既定 (= ON) に任せるので、どちらの flag も載せない。
+        let args_auto = detect_command_args("in.mkv", "out", &DetectParams::default());
+        assert!(!args_auto.iter().any(|a| a == "--no-indicators"));
+        assert!(!args_auto.iter().any(|a| a == "--indicators"));
     }
 
     #[test]

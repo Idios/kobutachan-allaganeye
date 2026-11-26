@@ -34,15 +34,14 @@ import { useAppStateStore } from '../state/appStateStore';
 import {
   useIndicatorsStore,
   type IndicatorsEvent,
-  type IndicatorsLayout,
   type IndicatorsRequest,
   type IndicatorsStatus,
 } from '../state/indicatorsStore';
 import { useMetadataStore } from '../state/metadataStore';
 import {
-  DEFAULT_MARGIN_SECONDS,
   eventClipWindow,
   overrideWindowFor,
+  planClipBaseline,
 } from '../utils/clipWindow';
 import { splitPath } from '../utils/path';
 import { signalLabel } from '../utils/signals';
@@ -137,6 +136,8 @@ export interface RegionInputs {
   h: string;
 }
 
+const EMPTY_EVENTS: IndicatorsEvent[] = [];
+
 export const EMPTY_REGION_INPUTS: RegionInputs = { x: '', y: '', w: '', h: '' };
 
 /**
@@ -176,7 +177,14 @@ export function parseRegionInputs(
   ];
 }
 
-function layoutSourceLabel(layout: IndicatorsLayout | null): string {
+/**
+ * 探索領域の由来 (2 値だけを表示する)。
+ *
+ * `indicator_layout.source` は schema 上 free string (未知値を許容する
+ * forward-compat 契約) なので、store の 2 値型ではなく `{ source: string }` で
+ * 受ける (#1141 で metadata 由来の値をそのまま渡すため)。
+ */
+function layoutSourceLabel(layout: { source: string } | null): string {
   if (layout === null) return '不明';
   return layout.source === 'user'
     ? '手動指定 (--region)'
@@ -199,6 +207,7 @@ export function IndicatorsScreen() {
   const navigate = useAppStateStore((s) => s.navigate);
   const setPendingSeekSeconds = useAppStateStore((s) => s.setPendingSeekSeconds);
   const setClipRange = useAppStateStore((s) => s.setClipRange);
+  const clipMargins = useAppStateStore((s) => s.clipMargins);
   const openPreviewFor = useAppStateStore((s) => s.openPreviewFor);
 
   const status = useIndicatorsStore((s) => s.status);
@@ -225,11 +234,42 @@ export function IndicatorsScreen() {
   const runDisabled = isSample;
   const runDisabledReason = 'サンプル動画では検出を実行できません';
 
+  // #1141 -- 統合経路 (`detect --indicators`) が残したステージの結果。
+  // 値の意味は docs/metadata-spec.md §indicator_status が正。idle
+  // (metadata に events が無い) のとき、"未実行" と "詳細設定 OFF / 前回失敗"
+  // を区別して案内する。
+  const indicatorStatus = metadata?.indicator_status ?? null;
+  const indicatorWarning = (metadata?.warnings ?? []).find(
+    (warning) => warning.code === 'indicators_failed',
+  );
+  const indicatorFailureDetail =
+    typeof indicatorWarning?.context?.error === 'string'
+      ? indicatorWarning.context.error
+      : null;
+
   // #127 §4-3: 未知の signal_id は描画しない (新しい信号が増えても既存画面は
   // 素通りさせる)。件数も既知分だけを数える。
+  // #1141: `detect --indicators` は metadata.json に `events[]` を直接書く。
+  // この画面の store は本画面から run したときしか埋まらないので、store に
+  // 結果が無いときは **metadata に永続化された結果を表示する** (毎回「検出を
+  // 開始」に戻さない)。`events` が **空配列でも「走査済み」**として扱う
+  // (0 件という結果を出し直させる意味は無い)。
+  const persistedEvents = metadata?.events;
+  const persistedLayout = metadata?.indicator_layout ?? null;
+  const hasPersistedResult = Array.isArray(persistedEvents);
+  // store にこのファイル向けの結果があればそれを優先し、無ければ metadata に
+  // 永続化された結果 (#1141 の統合経路) を表示する。
+  const runIsForThisFile =
+    runMetadataPath !== null && runMetadataPath === filePath;
+  const hasStoreResult = status !== 'running' && runIsForThisFile;
+  const shownEvents: IndicatorsEvent[] = hasStoreResult
+    ? events
+    : (persistedEvents ?? EMPTY_EVENTS);
+  const shownLayout = hasStoreResult ? layout : persistedLayout;
+
   const knownEvents = useMemo(
-    () => events.filter((e) => signalLabel(e.signal_id) !== null),
-    [events],
+    () => shownEvents.filter((e) => signalLabel(e.signal_id) !== null),
+    [shownEvents],
   );
   const groups = useMemo(() => groupEventsByMatch(knownEvents), [knownEvents]);
   const koCount = knownEvents.filter((e) => e.signal_id === 'ko_indicator').length;
@@ -257,10 +297,14 @@ export function IndicatorsScreen() {
    *   (走行していないので新しい run を開始できる。Phase 1 store の重なり拒否は
    *   走行中のみなので衝突しない)
    */
-  const runIsForThisFile =
-    runMetadataPath !== null && runMetadataPath === filePath;
   const displayedStatus: IndicatorsStatus =
-    status === 'running' ? 'running' : runIsForThisFile ? status : 'idle';
+    status === 'running'
+      ? 'running'
+      : hasStoreResult
+        ? status
+        : hasPersistedResult
+          ? 'complete'
+          : 'idle';
   const runningElsewhere = displayedStatus === 'running' && !runIsForThisFile;
 
   const cancelled =
@@ -340,8 +384,22 @@ export function IndicatorsScreen() {
     const position = stored >= 0 ? stored + 1 : null;
     const override =
       stored >= 0 ? overrideWindowFor(metadata!.events![stored]) : null;
-    const window = override ?? eventClipWindow(event, DEFAULT_MARGIN_SECONDS, DEFAULT_MARGIN_SECONDS);
-    setClipRange({ ...window, matchIndex: event.match_index, position });
+    const window = override ?? eventClipWindow(event, clipMargins.pre, clipMargins.post);
+    // #1156: 「自動範囲」(束ね + クランプ込みの実効値) を積む。保存済みの手動区間で
+    // 開いたときも [自動範囲に戻す] の基準になる。未保存イベント (position: null) は
+    // 書込先が無いので null。
+    const baseline =
+      position === null
+        ? null
+        : planClipBaseline(
+            metadata?.events,
+            metadata?.matches ?? [],
+            clipMargins.pre,
+            clipMargins.post,
+            clipMargins.gap,
+            position,
+          );
+    setClipRange({ ...window, matchIndex: event.match_index, position, baseline });
     setPendingSeekSeconds(event.timestamp);
     openPreviewFor(event.match_index);
   }
@@ -407,6 +465,20 @@ export function IndicatorsScreen() {
       <AllaganFrame className={styles.panel}>
         {displayedStatus === 'idle' && (
           <div className={styles.stateBlock}>
+            {indicatorStatus === 'skipped' && (
+              <div className={styles.note} data-testid="indicators-skipped-note">
+                詳細設定で KO / ASSIST 検出を OFF のまま検出されています。ここで検出すると
+                metadata.json に結果が書き込まれます。
+              </div>
+            )}
+            {indicatorStatus === 'failed' && (
+              <div className={styles.note} data-testid="indicators-previous-failure">
+                前回の KO / ASSIST 検出は失敗しました
+                {indicatorFailureDetail === null
+                  ? '。もう一度実行できます。'
+                  : `: ${indicatorFailureDetail}`}
+              </div>
+            )}
             <div className={styles.stateLead} role="status" data-testid="indicators-idle">
               録画全体を走査するため、動画の長さに応じて数分かかることがあります。
             </div>
@@ -510,10 +582,10 @@ export function IndicatorsScreen() {
               className={styles.provenance}
               data-testid="indicators-layout-source"
             >
-              探索領域: {layoutSourceLabel(layout)}
+              探索領域: {layoutSourceLabel(shownLayout)}
             </div>
 
-            {events.length === 0 ? (
+            {shownEvents.length === 0 ? (
               <div className={styles.emptyNote} data-testid="indicators-empty">
                 イベントは見つかりませんでした
               </div>
