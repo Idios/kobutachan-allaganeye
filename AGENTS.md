@@ -173,6 +173,7 @@ MP4/MKV入力 → probe.py（ffprobe でメタデータ取得）
 | `export/pool.py` | 並列 export オーケストレータ (#761)。`ThreadPoolExecutor` で N ワーカーを起動し、`cancel_event` で in-flight ffmpeg を kill |
 | `export/clips.py` | L4 イベントから切り抜きクリップを計画する純関数 (#135 / #1050 Phase A)。近接イベントの束ね（`--gap`）/ 前後マージン（`--pre` / `--post`）/ 試合区間へのクランプを担い、ffmpeg は呼ばない。設計の正は [docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md](docs/superpowers/specs/2026-11-16-l4-event-output-format-design.md) と同じ `events[]` |
 | `export/ffmpeg_runner.py` | 単一 match の ffmpeg 起動 + libx264 fallback retry (#761)。NVDEC/NVENC 失敗パターン検知は `_nvenc_decode_stage_failure` (#791 / #899) |
+| `highlights/scoring.py` | L6 価値評価 (#1049)。`events[]` の KO / ASSIST を時間窓（既定 ±10 秒、`window_seconds` で変更可）でストリークに束ね、重み付き長さ（KO > ASSIST）+ 密度で 0..1 にスコア化する純関数。束ねは `match_index` ごとに分ける。`metadata.highlights[]` の write-back は L7 (#135)。設計と GT 検証（Spearman / 上限 / 限界）は [docs/superpowers/specs/2026-11-25-l6-streak-scoring-design.md](docs/superpowers/specs/2026-11-25-l6-streak-scoring-design.md)。GT 裁定用のコンタクトシート生成は `scripts/highlights_gt_sheets.py`（dev 専用、`output/` は gitignore） |
 | `export/schema.py` | stdout JSON Lines の wire protocol dataclass (#761)。Rust `start_export` が `ExportProgress` イベントへ変換 |
 | `export/wire.py` | thread-safe な stdout JSON Lines emitter (#761)。`threading.Lock` で 1 行 emit の原子性を保証 |
 | `audio/extract.py` | ffmpeg で音声 PCM 抽出 |
