@@ -44,7 +44,7 @@ TIERS = (1, 2, 3)
 STRONG_TIER = max(TIERS)
 # 合格線は**絶対値ではなく回帰ピン**（設計メモ 5.3 節 / 6 節）。
 # 2026-11-26 の人手裁定 (Idios) に対する実測値で、品質の主張ではない。
-# 上限 (同点構造を最良に並べた場合) は 0.519 なので 0.60 は原理的に届かない。
+# 同点構造による上限は 0.619 だが、重みの振り幅では 0.33 止まり (6.1 節)。
 BASELINE_RHO = 0.231
 RHO_TOLERANCE = 0.02
 TOP_N = 10
@@ -320,14 +320,31 @@ def _spearman(xs: Sequence[float], ys: Sequence[float]) -> float:
 def _ceiling_rho(scores: Sequence[float], tiers: Sequence[float]) -> float:
     """到達可能な上限の rho。
 
-    同点のスコア群を「人手の平均 tier 順」に並べ替えられたと仮定したときの値。
-    スコアが同点の項目はどんな並べ替えでも分離できないので、**これが上限**になる。
+    スコアが同点の項目は、どんなスコア式でも分離できない。そこで**同点グループの
+    並び順だけを最良に選べる**としたときの rho を上限とする。Spearman は
+    グループの平均 tier 順位でグループを並べたときに最大になるので、その順に
+    x の平均順位を割り当てて相関を取る（グループ内の段階の割れは上限を下げる）。
     """
-    grouped: dict[float, list[float]] = {}
-    for score, tier in zip(scores, tiers, strict=True):
-        grouped.setdefault(score, []).append(tier)
-    means = {score: sum(values) / len(values) for score, values in grouped.items()}
-    return _spearman(scores, [means[score] for score in scores])
+    tier_ranks = _ranks(tiers)
+    grouped: dict[float, list[int]] = {}
+    for index, score in enumerate(scores):
+        grouped.setdefault(score, []).append(index)
+    order = sorted(
+        grouped,
+        key=lambda score: (
+            sum(tier_ranks[i] for i in grouped[score]) / len(grouped[score])
+        ),
+    )
+    x_ranks = [0.0] * len(scores)
+    position = 0
+    for score in order:
+        members = grouped[score]
+        end = position + len(members)
+        average = (position + end + 1) / 2
+        for index in members:
+            x_ranks[index] = average
+        position = end
+    return _pearson(x_ranks, tier_ranks)
 
 
 def _precision_at(scores: Sequence[float], tiers: Sequence[float], n: int) -> float:
@@ -479,8 +496,9 @@ def test_reference_groups_match_group_streaks() -> None:
 def test_default_window_is_not_worse_than_the_recorded_baseline() -> None:
     """既定窓で人手と正相関し、記録した baseline を下回らない（回帰ゲート）。
 
-    絶対値の合格線を使わないのは、同点構造による上限が 0.519 で 0.60 に
-    届かないため（設計メモ 5.3 節）。数値の意味は表を読んで判断する。
+    絶対値の合格線（当初の 0.60）を使わないのは、上限が同点構造で 0.619 に
+    抑えられ、重みの振り幅では 0.33 までしか届かないため（設計メモ 5.3 / 6.1 節）。
+    数値の意味は表を読んで判断する。
     """
     gt = _require_gt(require_adjudicated=True)
     table = _rho_table(gt)

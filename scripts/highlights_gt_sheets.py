@@ -392,14 +392,20 @@ def main() -> int:
                 missing.append(f"{group.case}: {video} not found")
                 continue
             span = group.last_start - group.start + PRE_SECONDS + POST_SECONDS
+            # グループごとに使い捨ての抽出先を掘る。共有すると前のグループの
+            # フレームが残り、出力枚数が減ったときに別の場面のコマが混入する。
             frames = _extract_frames(
-                video, max(0.0, group.start - PRE_SECONDS), span, scratch
+                video,
+                max(0.0, group.start - PRE_SECONDS),
+                span,
+                scratch / _strip_name(group.case, group.index).removesuffix(".png"),
             )
             strip = _compose(frames, group.label, span / FRAME_COUNT)
             target = strips_dir / _strip_name(group.case, group.index)
             if target.parent != strips_dir:  # pragma: no cover - sanitised above
                 raise RuntimeError(f"refusing to write outside {strips_dir}: {target}")
-            cv2.imwrite(str(target), strip)
+            if not cv2.imwrite(str(target), strip):
+                raise RuntimeError(f"failed to write {target}")
             strips[group.key] = f"strips/{target.name}"
             print(f"[{len(strips):2d}/{len(groups)}] {group.label}")
 
