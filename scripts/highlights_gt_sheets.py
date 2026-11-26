@@ -33,8 +33,10 @@ import argparse
 import html
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -168,11 +170,10 @@ def _extract_frames(
     """Decode `FRAME_COUNT` evenly spaced frames from `start` for `span` seconds.
 
     `-ss` goes before `-i` and `-t` after it (same order the frames module pins;
-    swapping them changes which frames come out).
+    swapping them changes which frames come out). `scratch` is a throw-away
+    directory owned by this run (see `_strip_name`), so no existing file is
+    deleted here.
     """
-    if scratch.exists():
-        for stale in scratch.glob("f_*.png"):
-            stale.unlink()
     scratch.mkdir(parents=True, exist_ok=True)
     fps = FRAME_COUNT / span
     command = [
@@ -197,6 +198,13 @@ def _extract_frames(
     if not frames:
         raise RuntimeError(f"ffmpeg produced no frames for {video} at {start:.2f}s")
     return frames
+
+
+def _strip_name(case: str, index: int) -> str:
+    """File name for one strip. The case label is sanitised because it comes from
+    a fixture and is joined into an output path (no `..` / separators allowed)."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", case) or "case"
+    return f"{safe}_{index:02d}.png"
 
 
 def _compose(frames: list[Path], label: str, step: float) -> np.ndarray:
@@ -364,30 +372,36 @@ def main() -> int:
     cases = _indicator_cases()
     groups = _groups(args.case)
     out: Path = args.out
-    (out / "strips").mkdir(parents=True, exist_ok=True)
+    strips_dir = out / "strips"
+    strips_dir.mkdir(parents=True, exist_ok=True)
 
     missing = []
     strips: dict[str, str] = {}
-    scratch = out / ".scratch"
-    for group in groups:
-        video_env, video_rel = cases[group.case]
-        root = roots.get(video_env)
-        if root is None:
-            missing.append(f"{group.case}: {video_env} root not given")
-            continue
-        video = root / video_rel
-        if not video.is_file():
-            missing.append(f"{group.case}: {video} not found")
-            continue
-        span = group.last_start - group.start + PRE_SECONDS + POST_SECONDS
-        frames = _extract_frames(
-            video, max(0.0, group.start - PRE_SECONDS), span, scratch
-        )
-        strip = _compose(frames, group.label, span / FRAME_COUNT)
-        relative = f"strips/{group.case}_{group.index:02d}.png"
-        cv2.imwrite(str(out / relative), strip)
-        strips[group.key] = relative
-        print(f"[{len(strips):2d}/{len(groups)}] {group.label}")
+    # The scratch directory is created fresh per run and removed afterwards, so a
+    # mistyped --out can never have its existing files deleted or picked up.
+    with tempfile.TemporaryDirectory(prefix="highlights-gt-") as scratch_name:
+        scratch = Path(scratch_name)
+        for group in groups:
+            video_env, video_rel = cases[group.case]
+            root = roots.get(video_env)
+            if root is None:
+                missing.append(f"{group.case}: {video_env} root not given")
+                continue
+            video = root / video_rel
+            if not video.is_file():
+                missing.append(f"{group.case}: {video} not found")
+                continue
+            span = group.last_start - group.start + PRE_SECONDS + POST_SECONDS
+            frames = _extract_frames(
+                video, max(0.0, group.start - PRE_SECONDS), span, scratch
+            )
+            strip = _compose(frames, group.label, span / FRAME_COUNT)
+            target = strips_dir / _strip_name(group.case, group.index)
+            if target.parent != strips_dir:  # pragma: no cover - sanitised above
+                raise RuntimeError(f"refusing to write outside {strips_dir}: {target}")
+            cv2.imwrite(str(target), strip)
+            strips[group.key] = f"strips/{target.name}"
+            print(f"[{len(strips):2d}/{len(groups)}] {group.label}")
 
     if not strips:
         print("no strips produced:")
