@@ -164,16 +164,14 @@ class TestScoreStreak:
         )
 
     def test_extreme_weights_do_not_overflow(self) -> None:
-        # `w / (w + saturation)` をそのまま書くと inf / inf で 0 に潰れる。
-        [streak] = group_streaks([ko(1.0)])
-        score = score_streak(streak, weights=ScoringWeights(ko=1e308, saturation=1e308))
-        assert 0.0 < score <= 1.0
+        # 比は最大の重みで正規化するので、巨大な重みでも数学値のまま。
+        weights = ScoringWeights(ko=1e308, saturation=1e308)
+        [one] = group_streaks([ko(1.0)])
+        # length 1/2 = 0.5, density 1/10/0.25 = 0.4 -> 0.7*0.5 + 0.3*0.4
+        assert score_streak(one, weights=weights) == pytest.approx(0.470)
         [two] = group_streaks([ko(1.0), ko(2.0)])
-        assert (
-            0.0
-            < score_streak(two, weights=ScoringWeights(ko=1e308, saturation=1e308))
-            <= 1.0
-        )
+        # length 2/3, density 2/11/0.25
+        assert score_streak(two, weights=weights) == pytest.approx(0.685)
 
     def test_invalid_weights_are_rejected(self) -> None:
         with pytest.raises(ValueError):
@@ -258,6 +256,26 @@ class TestMetadataConversion:
         ]
         converted = scoring_events_from_metadata(events)
         assert [event.kind for event in converted] == ["ko"]
+
+    def test_float_match_index_is_normalised(self) -> None:
+        # JSON の `1.0` は integer スキーマ上有効。落とすと試合区画が消える。
+        events = [
+            {
+                "signal_id": "ko_indicator",
+                "timestamp": 10.0,
+                "end": 11.0,
+                "match_index": 1.0,
+            },
+            {
+                "signal_id": "ko_indicator",
+                "timestamp": 12.0,
+                "end": 13.0,
+                "match_index": 2.0,
+            },
+        ]
+        converted = scoring_events_from_metadata(events)
+        assert [event.match_index for event in converted] == [1, 2]
+        assert len(group_streaks(converted)) == 2
 
     def test_malformed_entries_are_skipped(self) -> None:
         events = [

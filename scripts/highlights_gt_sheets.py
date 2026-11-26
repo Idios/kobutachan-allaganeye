@@ -207,32 +207,29 @@ def _strip_name(case: str, index: int) -> str:
     return f"{safe}_{index:02d}.png"
 
 
-def _compose(frames: list[Path], label: str, step: float) -> np.ndarray:
+def _compose(frames: list[Path], label: str, step: float, offset: float) -> np.ndarray:
+    """1 枚のストリップにまとめる。
+
+    `offset` は抽出開始時刻の streak 先頭からの差 (負値)。各コマの `+Xs` は
+    **streak 先頭からの経過秒**で、抽出は 3 秒前から始まるので先頭は負になる。
+    """
     images = []
-    for offset, path in enumerate(frames):
+    for index, path in enumerate(frames):
         image = cv2.imread(str(path))
         if image is None:
             raise RuntimeError(f"cannot read {path}")
-        cv2.putText(
-            image,
-            f"+{offset * step:.1f}s",
-            (10, image.shape[0] - 12),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 0, 0),
-            3,
-            cv2.LINE_AA,
-        )
-        cv2.putText(
-            image,
-            f"+{offset * step:.1f}s",
-            (10, image.shape[0] - 12),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (255, 255, 255),
-            1,
-            cv2.LINE_AA,
-        )
+        elapsed = offset + index * step
+        for colour, thickness in (((0, 0, 0), 3), ((255, 255, 255), 1)):
+            cv2.putText(
+                image,
+                f"{elapsed:+.1f}s",
+                (10, image.shape[0] - 12),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                colour,
+                thickness,
+                cv2.LINE_AA,
+            )
         images.append(image)
     height = min(image.shape[0] for image in images)
     resized = [
@@ -289,7 +286,7 @@ select {{ font-size: 16px; padding: 2px; }}
 <body>
 <h1>L6 ストリーク GT: 1=弱 / 2=中 / 3=強</h1>
 <p>画像は {PRE_SECONDS:g} 秒前から {POST_SECONDS:g} 秒後までを {FRAME_COUNT} 枚に等間隔で
-切り出したもの（画像内の +Xs は streak 先頭からの経過秒）。採点後に
+切り出したもの（画像内の `+Xs` / `-Xs` は **streak 先頭からの経過秒**）。採点後に
 [JSON を表示] を押してコピーし、エージェントに渡す。</p>
 <table>
 <thead><tr><th>#</th><th>streak</th><th>tier</th><th>strip</th></tr></thead>
@@ -394,13 +391,19 @@ def main() -> int:
             span = group.last_start - group.start + PRE_SECONDS + POST_SECONDS
             # グループごとに使い捨ての抽出先を掘る。共有すると前のグループの
             # フレームが残り、出力枚数が減ったときに別の場面のコマが混入する。
+            extraction_start = max(0.0, group.start - PRE_SECONDS)
             frames = _extract_frames(
                 video,
-                max(0.0, group.start - PRE_SECONDS),
+                extraction_start,
                 span,
                 scratch / _strip_name(group.case, group.index).removesuffix(".png"),
             )
-            strip = _compose(frames, group.label, span / FRAME_COUNT)
+            strip = _compose(
+                frames,
+                group.label,
+                span / FRAME_COUNT,
+                extraction_start - group.start,
+            )
             target = strips_dir / _strip_name(group.case, group.index)
             if target.parent != strips_dir:  # pragma: no cover - sanitised above
                 raise RuntimeError(f"refusing to write outside {strips_dir}: {target}")

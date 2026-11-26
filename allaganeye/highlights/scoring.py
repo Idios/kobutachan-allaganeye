@@ -295,15 +295,24 @@ def score_streak(
 
     長さ項 = `w / (w + saturation)` (w = KO 重み x KO 数 + ASSIST 重み x ASSIST 数)。
     密度項 = `min(1, size / (span + window) / full_density)`。
+
+    比は**最大の重みで正規化してから**計算する。`w` を先に作ると、
+    受理している有限値 (`ko=1e308` 等) で `inf` になり、比が 1.0 に
+    潰れてしまう (数学的には 2/3 等になるべき場面)。
     """
     if not streak.events:
         raise ValueError("empty streak")
     if not math.isfinite(window_seconds) or window_seconds < 0:
         raise ValueError("window_seconds must be a finite non-negative number")
 
-    weighted = weights.ko * streak.ko_count + weights.assist * streak.assist_count
-    # `w / (w + saturation)` と同じ式を、巨大な重みでも inf / nan を出さない形で書く。
-    length_term = 0.0 if weighted == 0 else 1.0 / (1.0 + weights.saturation / weighted)
+    scale = max(weights.ko, weights.assist, weights.saturation)
+    ko = weights.ko / scale if scale > 0 else 0.0
+    assist = weights.assist / scale if scale > 0 else 0.0
+    saturation = weights.saturation / scale if scale > 0 else 0.0
+    weighted = ko * streak.ko_count + assist * streak.assist_count
+    length_term = (
+        0.0 if weighted + saturation <= 0 else weighted / (weighted + saturation)
+    )
 
     denominator = max(streak.span_seconds + window_seconds, 1e-6)
     density = streak.size / denominator
@@ -356,6 +365,22 @@ def to_highlights(
     )
 
 
+def _match_index_of(value: Any) -> int | None:
+    """`match_index` を int に正規化する。
+
+    JSON Schema の `integer` は `1.0` も許すが、Python の `json` は float で
+    読む。ここで落とすと試合区画が消えて束ねが別試合をまたぐので、
+    整数値の float は int に寄せる。
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    return None
+
+
 def scoring_events_from_metadata(
     events: Sequence[dict[str, Any]],
 ) -> tuple[ScoringEvent, ...]:
@@ -372,13 +397,13 @@ def scoring_events_from_metadata(
             continue
         if not isinstance(timestamp, (int, float)) or not isinstance(end, (int, float)):
             continue
-        match_index = raw.get("match_index")
+        match_index = _match_index_of(raw.get("match_index"))
         event = ScoringEvent.from_signal(
             signal_id,
             float(timestamp),
             float(end),
             position=index,
-            match_index=match_index if isinstance(match_index, int) else None,
+            match_index=match_index,
         )
         if event is not None:
             converted.append(event)
