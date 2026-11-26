@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildBrightnessPath,
@@ -33,6 +33,13 @@ describe('buildBrightnessPath', () => {
     const path = buildBrightnessPath([255], 100, 100, 0.5);
     // y = 100 - (255/255 * 100 * 0.5) = 50.00
     expect(path).toBe('M0 50.00');
+  });
+
+  it('applies yScale to every point of a multi-sample path', () => {
+    // 2 点以上でも yScale が掛け算で効く (割り算に化けると値が 4 倍ずれる)
+    expect(buildBrightnessPath([255, 0], 100, 100, 0.5)).toBe(
+      'M0.00 50.00 L100.00 100.00',
+    );
   });
 });
 
@@ -73,6 +80,12 @@ describe('findBlackoutRegions', () => {
     // samples[1] = 14 < 15 → region; samples[0], samples[2] = 15 not < 15 → not region
     expect(regions).toEqual([{ start: 50, end: 100 }]);
   });
+
+  it('places a single sample at t = 0 and merges it into one region', () => {
+    // 1 サンプルだけのときは t = 0 (i / (n-1) は 0 除算になるため分岐する)
+    expect(findBlackoutRegions([5], 100)).toEqual([{ start: 0, end: 100 }]);
+    expect(findBlackoutRegions([200], 100)).toEqual([]);
+  });
 });
 
 describe('buildLocalBrightness', () => {
@@ -102,11 +115,66 @@ describe('buildLocalBrightness', () => {
     }
   });
 
+  it('uses three distinct brightness bands by distance from centerT', () => {
+    // 帯の境界は 1.2 秒 / 2.5 秒。乱数を固定して帯ごとの値を確定させる
+    // (値の根拠: 帯ごとの係数 4+rand*6 / 20+rand*30 / 85+sin+sin+rand)。
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      const samples = buildLocalBrightness(100, 3.5, 2);
+      expect(samples.map((s) => s.t)).toEqual([
+        96.5, 97, 97.5, 98, 98.5, 99, 99.5, 100, 100.5, 101, 101.5, 102, 102.5, 103,
+      ]);
+      const byDistance = samples.map((s) => Math.abs(s.t - 100));
+      expect(byDistance.filter((d) => d < 1.2)).toHaveLength(5);
+      expect(byDistance.filter((d) => d >= 1.2 && d < 2.5)).toHaveLength(4);
+      expect(byDistance.filter((d) => d >= 2.5)).toHaveLength(5);
+
+      // 暗転 (0-10) → ローディング (20-50) → 試合中 (正弦波 + 揺らぎ)
+      const low = samples.find((s) => s.t === 100)!;
+      expect(low.b).toBeCloseTo(7, 5);
+      const mid = samples.find((s) => s.t === 98)!;
+      expect(mid.b).toBeCloseTo(35, 5);
+      const high = samples.find((s) => s.t === 97)!;
+      expect(high.b).toBeCloseTo(105.2748, 3);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
   it('clamps brightness to [0, 255]', () => {
     const samples = buildLocalBrightness(500, 50, 4);
     for (const s of samples) {
       expect(s.b).toBeGreaterThanOrEqual(0);
       expect(s.b).toBeLessThanOrEqual(255);
+    }
+  });
+
+  it('treats the band edges at exactly 1.2s and 2.5s as the upper bands', () => {
+    // 境界値: d === 1.2 はローディング帯、d === 2.5 は試合中帯 (< は排他)
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.25);
+    try {
+      const samples = buildLocalBrightness(100, 3, 10);
+      const atBoundary = samples.find((s) => Math.abs(s.t - 98.8) < 1e-9)!;
+      expect(Math.abs(atBoundary.t - 100)).toBeCloseTo(1.2, 9);
+      expect(atBoundary.b).toBeCloseTo(27.5, 5);
+
+      const atOuter = samples.find((s) => Math.abs(s.t - 97.5) < 1e-9)!;
+      expect(Math.abs(atOuter.t - 100)).toBeCloseTo(2.5, 9);
+      expect(atOuter.b).toBeCloseTo(107.6974, 3);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('adds symmetric noise to the gameplay band', () => {
+    // 揺らぎの符号が反転・除算化すると値が変わる (rand=0.25 で -3.5 される)
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.25);
+    try {
+      const samples = buildLocalBrightness(100, 3, 2);
+      expect(samples.find((s) => s.t === 97)!.b).toBeCloseTo(101.7748, 3);
+      expect(samples.find((s) => s.t === 100)!.b).toBeCloseTo(5.5, 5);
+    } finally {
+      random.mockRestore();
     }
   });
 });
