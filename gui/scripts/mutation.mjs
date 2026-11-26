@@ -33,6 +33,9 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const stateDir = join(root, '.mutator');
 const markerPath = join(stateDir, 'full-run.json');
+// コミットする台帳。CI はこれだけを見て「計測済みか」を判定する
+// (`.mutator/` は gitignore された実行キャッシュなので CI には存在しない)。
+const baselinePath = join(root, 'mutation-baseline.json');
 
 // 差分の基準。この repo の作業ブランチは release ごとに変わるので、
 // 必要なら MUTATION_SINCE で上書きする (docs/testing-guide.md 参照)。
@@ -84,7 +87,10 @@ function hashFiles(paths) {
   const entries = [];
   for (const path of [...paths].sort()) {
     const rel = relative(root, path).split(sep).join('/');
-    const digest = createHash('sha256').update(readFileSync(path)).digest('hex');
+    // checkout の改行変換 (Windows CRLF / Linux LF) でハッシュが変わらないよう
+    // テキストは LF に正規化してから食う。これがないと CI が常に STALE になる。
+    const content = readFileSync(path, 'utf-8').replace(/\r\n/g, '\n');
+    const digest = createHash('sha256').update(content).digest('hex');
     entries.push({ path: rel, sha256: digest });
     hash.update(rel).update('\0').update(digest).update('\n');
   }
@@ -114,29 +120,43 @@ function readMarker() {
   }
 }
 
-/** marker と現状を比べる。fresh なら再実行不要。 */
-function freshness() {
-  const marker = readMarker();
-  if (marker === null) {
-    return { fresh: false, reason: 'marker がない (一度も全ソースを完走していない)', changes: [] };
+function readBaseline() {
+  if (!existsSync(baselinePath)) return null;
+  try {
+    return JSON.parse(readFileSync(baselinePath, 'utf-8'));
+  } catch {
+    return null;
   }
-  if (!marker.sources || !marker.config) {
+}
+
+/** 台帳 (baseline) と現状を比べる。fresh なら再計測不要。 */
+function freshness() {
+  const baseline = readBaseline();
+  if (baseline === null) {
     return {
       fresh: false,
-      reason: 'marker が旧形式 (計測対象のハッシュなし)。次回の full run で更新される',
+      reason: 'gui/mutation-baseline.json がない (計測結果がコミットされていない)',
       changes: [],
     };
   }
+  if (!baseline.sources || !baseline.config) {
+    return {
+      fresh: false,
+      reason: 'baseline が旧形式 (計測対象のハッシュなし)',
+      changes: [],
+      baseline,
+    };
+  }
   const current = currentSources();
-  if (marker.config.hash !== current.config.hash) {
+  if (baseline.config.hash !== current.config.hash) {
     return {
       fresh: false,
       reason: 'ランナー / 設定 / 依存が変わった (config を変えると計測対象が変わる)',
       changes: [],
-      marker,
+      baseline,
     };
   }
-  const previous = new Map(marker.entries.map((entry) => [entry.path, entry.sha256]));
+  const previous = new Map(baseline.entries.map((entry) => [entry.path, entry.sha256]));
   const changes = [];
   for (const entry of current.entries) {
     const before = previous.get(entry.path);
@@ -150,24 +170,31 @@ function freshness() {
     fresh: changes.length === 0,
     reason: changes.length === 0 ? '変更なし' : `${changes.length} ファイルが変わった`,
     changes,
-    marker,
+    baseline,
   };
 }
 
 function printStatus() {
   const state = freshness();
-  const marker = readMarker();
-  if (marker) {
-    const totals = marker.totals ? ` / ${marker.totals.mutants} mutants` : '';
-    console.log(`[mutation] 最後の全ソース計測: ${marker.completedAt} (status ${marker.status}${totals})`);
+  const baseline = state.baseline ?? readBaseline();
+  if (baseline) {
+    const full = baseline.fullRun;
+    const totals = full
+      ? ` / 全ソース ${full.mutants} mutants (${full.survived ?? '?'} survived)`
+      : '';
+    console.log(
+      `[mutation] 計測済みの範囲: ${baseline.completedAt} mode=${baseline.mode ?? 'full'} (status ${baseline.status}${totals})`,
+    );
   }
   console.log(`[mutation] 判定: ${state.fresh ? 'FRESH' : 'STALE'} — ${state.reason}`);
+  if (state.fresh) return 0;
   if (state.changes.length > 0) {
     for (const line of state.changes.slice(0, 40)) console.log(`  ${line}`);
     if (state.changes.length > 40) console.log(`  … ${state.changes.length - 40} more`);
-    console.log('[mutation] 再計測: npm run test:mutation (差分のみ。キャッシュが効く)');
   }
-  return state.fresh ? 0 : 1;
+  console.log('[mutation] 次にやること: cd gui && npm run test:mutation');
+  console.log('  (差分だけ計測し、計測結果を gui/mutation-baseline.json に書き戻します。commit してください)');
+  return 1;
 }
 
 // `--status`: 計測をせずに「前回の全ソース計測が今のソースに対して有効か」だけを返す。
@@ -286,30 +313,53 @@ function readTotals() {
   }
 }
 
-// `mode.length === 0` = この実行が **全ソース** を対象にしたことを意味する
-// (marker があると自動で `--since` が入るので、差分 run で marker を
-//  上書きしない。codex review 2026-11-19 P2)。
-if (!informational && !scoped && mode.length === 0 && completed) {
+// 完走した run は **計測台帳 (`gui/mutation-baseline.json`)** を必ず更新する。
+// 差分 run でも更新するのは、「前回の台帳 + 今回の差分 = 全ソース計測済み」が
+// 成り立つため (cache は関数単位。docs/testing-guide.md 参照)。
+// local の marker (`.mutator/full-run.json`) は **全ソース run のときだけ** 書く。
+// これは「この端末の cache が全ソース分揃っている」の印で、差分の基準に使う。
+if (!informational && !scoped && completed) {
   const head = spawnSync('git', ['rev-parse', 'HEAD'], {
     cwd: root,
     encoding: 'utf-8',
   });
   const current = currentSources();
+  const thisRun = readTotals();
+  const runMode = mode.length === 0 ? 'full' : 'incremental';
+  const completedAt = new Date().toISOString();
+  const previous = readBaseline();
+  const previousFull = previous?.fullRun ?? null;
+  // 台帳がまだ無い場合 (初回) は、この端末の全ソース marker の集計を引き継ぐ。
+  const marker = readMarker();
+  const markerFull =
+    marker?.totals && marker.sources && marker.completedAt
+      ? { completedAt: marker.completedAt, ...marker.totals }
+      : null;
+  // 集計値 (mutants / killed / survived) は **直近の全ソース run** のもの。
+  // 差分 run の snapshot は「その run のスコープ」しか含まないので、
+  // 集計を差分で上書きすると意味のない小さい数字になる。
+  const fullRun =
+    mode === 'full'
+      ? { completedAt, ...(thisRun ?? {}) }
+      : (previousFull ?? markerFull ?? null);
   try {
-    mkdirSync(stateDir, { recursive: true });
     writeFileSync(
-      markerPath,
+      baselinePath,
       `${JSON.stringify(
         {
-          // marker の形式。v2 で sources / config / entries / totals を追加した。
-          version: 2,
-          completedAt: new Date().toISOString(),
-          head: (head.stdout ?? '').trim(),
+          schemaVersion: 1,
+          completedAt,
+          mode: runMode,
           status,
-          totals: readTotals(),
           sources: current.sources,
           config: current.config,
           entries: current.entries,
+          // 直近の全ソース計測の集計 (差分 run では前回の値を引き継ぐ)
+          fullRun,
+          // この run が測った範囲の内訳 (差分 run では小さい)
+          thisRun,
+          // 差分 run のときは「どこから引き継いだか」を残す (監査用)。
+          carriedFrom: runMode === 'incremental' ? (previous?.completedAt ?? null) : null,
         },
         null,
         2,
@@ -317,15 +367,43 @@ if (!informational && !scoped && mode.length === 0 && completed) {
       'utf-8',
     );
     console.log(
-      `[mutation] 全ソースの計測を記録しました (.mutator/full-run.json: ${current.sources.count} files, sha256 ${current.sources.hash.slice(0, 12)}…)`,
+      `[mutation] 計測台帳を更新しました (gui/mutation-baseline.json: mode=${runMode}, ${current.sources.count} files, sha256 ${current.sources.hash.slice(0, 12)}…)`,
     );
-    console.log('[mutation] 以後は `npm run test:mutation:status` で再実行の要否を確認できます');
+    console.log('[mutation] このファイルを commit すると CI の mutation-baseline job が通ります');
   } catch (error) {
-    console.warn(`[mutation] marker を書けませんでした: ${error.message}`);
+    console.warn(`[mutation] 台帳を書けませんでした: ${error.message}`);
+  }
+
+  if (runMode === 'full') {
+    try {
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(
+        markerPath,
+        `${JSON.stringify(
+          {
+            // marker の形式。v2 で sources / config / entries / totals を追加した。
+            version: 2,
+            completedAt,
+            head: (head.stdout ?? '').trim(),
+            status,
+            totals: thisRun,
+            sources: current.sources,
+            config: current.config,
+            entries: current.entries,
+          },
+          null,
+          2,
+        )}\n`,
+        'utf-8',
+      );
+      console.log('[mutation] 全ソース run を記録しました (.mutator/full-run.json)');
+    } catch (error) {
+      console.warn(`[mutation] marker を書けませんでした: ${error.message}`);
+    }
   }
 } else if (!informational && (scoped || !completed)) {
   console.log(
-    '[mutation] 部分実行 / 未完走のため marker は更新しません (次回も全ソースか、partial のまま)',
+    '[mutation] 部分実行 / 未完走のため計測台帳は更新しません (完走するまで CI の mutation-baseline は red のまま)',
   );
 }
 

@@ -287,6 +287,26 @@ jobs:
           path: gui/dist
           retention-days: 1
 
+  # mutation testing の計測台帳 (gui/mutation-baseline.json) が今の GUI ソースを
+  # カバーしているかを検査する (#1154)。計測自体は CI で回さない (1 時間規模)。
+  # 開発者が `npm run test:mutation` を完走させて台帳を commit することで green になる。
+  # 依存インストール不要 (node の標準モジュールだけで動く)。
+  mutation-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Check mutation baseline covers the current GUI sources
+        run: |
+          if ! node gui/scripts/mutation.mjs --status; then
+            echo "::error::mutation testing の計測結果が今の GUI ソースと一致していません。cd gui && npm run test:mutation を完走させ、更新された gui/mutation-baseline.json を commit してください (docs/testing-guide.md §GUI mutation testing)。"
+            exit 1
+          fi
+
   gui-rust:
     runs-on: windows-latest
     # #767 -- needs: gui-frontend を削除して並列実行可能に (~60s wall clock 短縮)。

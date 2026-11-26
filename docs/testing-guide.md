@@ -435,53 +435,78 @@ npx mutator accept <key> --reason "<理由>"       # equivalent mutant を理由
 
 ### 「全ソースを 1 回測ったら、ソースが変わるまでやらない」の管理
 
-`gui/scripts/mutation.mjs` が `.mutator/full-run.json`（marker）で状態を持つ。
-**marker には実行時刻だけでなく計測対象の内容ハッシュを残す**ので、
-`npm run test:mutation:status` が「再実行が要るか」を即答する（exit 0 = FRESH / 1 = STALE）。
+2 つの成果物で管理する。
+
+| file | 場所 | 役割 |
+| --- | --- | --- |
+| `.mutator/full-run.json` | ローカルのみ（gitignore） | この端末の cache が全ソース分揃っているかの印。**差分の基準**（`--since`）を決める |
+| **`gui/mutation-baseline.json`** | **コミットする** | 計測結果の台帳。**CI はこれだけを見る** |
+
+**日常の手順（GUI のソース / 設定を変えたとき）**:
+
+1. `cd gui && npm run test:mutation` — 差分だけ計測する（2 回目以降は数秒〜数分。judgment は関数単位でキャッシュ）
+2. 完走すると **`gui/mutation-baseline.json` が自動で書き換わる** → そのまま commit する
+3. `npm run test:mutation:status` で `FRESH` を確認する
+4. CI の `mutation-baseline` job が同じ判定を行う（**STALE なら red**）
 
 ```text
 $ npm run test:mutation:status
-[mutation] 最後の全ソース計測: 2026-11-26T07:10:50.289Z (status 0 / 8601 mutants)
+[mutation] 計測済みの範囲: 2026-11-26T12:14:58.394Z mode=full (status 0 / 全ソース 8601 mutants (1816 survived))
 [mutation] 判定: STALE — 1 ファイルが変わった
   M src/utils/time.ts
-[mutation] 再計測: npm run test:mutation (差分のみ。キャッシュが効く)
+[mutation] 次にやること: cd gui && npm run test:mutation
+  (差分だけ計測し、計測結果を gui/mutation-baseline.json に書き戻します。commit してください)
 ```
 
-marker の中身（v2）:
+台帳（`schemaVersion: 1`）の中身:
 
 | フィールド | 内容 |
 | --- | --- |
-| `completedAt` / `head` / `status` | 完走日時 / commit / mutator の終了コード |
-| `totals` | 8,601 mutants の内訳（snapshot から集計。status 表示に出す） |
-| `sources` | `src/**/*.{ts,tsx}`（テスト含む）の件数と内容ハッシュ |
+| `completedAt` / `mode` / `status` | 計測日時 / `full` か `incremental` か / mutator の終了コード |
+| `sources` | `src/**/*.{ts,tsx}`（**テスト含む**）の件数と内容ハッシュ |
 | `config` | `mutator.config.ts` / `vite.config.ts` / `package{,-lock}.json` / `tsconfig.json` の内容ハッシュ |
-| `entries` | 上記 source 1 ファイルごとの path + sha256（差分を人間向けに列挙するため） |
+| `entries` | source 1 ファイルごとの path + sha256（STALE 時に差分を列挙するため） |
+| `fullRun` / `thisRun` | 直近の**全ソース**計測の集計 / この run が測った範囲の内訳 |
+| `carriedFrom` | 差分 run のとき、どの計測から引き継いだか |
 
-- テストファイルもハッシュ対象に入れている。**テストを変えると killer が変わる**ので、
+- **テストファイルもハッシュ対象**。テストを変えると killer が変わるので、
   「ソース不変なら再計測不要」の判定にテスト変更を含めないと嘘になる
-- `config` ハッシュが変わったら `--since` を付けず**自動で full に戻す**（include scope / ランナー /
-  依存が変わると計測対象自体が変わるため）
-- marker が旧形式（ハッシュなし）なら STALE 扱い。次の full run で v2 に上がる
+- 改行コードは LF に正規化してからハッシュする（Windows の CRLF checkout と CI の LF で
+  同じ値になるように。これがないと CI が常に STALE になる）
+- `config` ハッシュが変わったら `--since` を付けず**自動で full に戻す**（include scope /
+  ランナー / 依存が変わると計測対象自体が変わるため）
+- 差分 run でも台帳は更新する（「前回の台帳 + 今回の差分 = 全ソース計測済み」が成り立つ）。
+  一方 `.mutator/full-run.json` は**全ソース run のときだけ**書く
+- 台帳の集計（`fullRun`）は**直近の全ソース run の値**。差分 run で上書きしない
+  （snapshot はその run のスコープしか持たないため）
+
+### CI ゲート
+
+`.github/workflows/ci.yml` の `mutation-baseline` job が
+`node gui/scripts/mutation.mjs --status` を実行する（node の標準モジュールだけで動くので
+`npm ci` 不要・数秒）。**STALE / 台帳なしなら fail**。
+計測自体は CI で回さない（1 時間規模なので）。開発者が手元で完走させて台帳を commit するのが正規経路。
 
 ### 実行モードの切り替え（marker と argv）
 
 | 状態 | 実行内容 |
 | --- | --- |
-| marker なし | 全ソース（`--since` を付けない）。終了コード 0 / 2 で marker を書く |
-| marker あり | `--since ${MUTATION_SINCE:-origin/develop-0.4.0}`（差分のみ） |
+| ローカル marker なし | 全ソース（`--since` を付けない）。完走で marker と台帳を書く |
+| marker あり | `--since ${MUTATION_SINCE:-origin/develop-0.4.0}`（差分のみ。完走で台帳を更新） |
 | marker の `config` ハッシュが不一致 | 全ソース（設定変更で計測対象が変わるため） |
-| `--include` / `--exclude` / `--only` / `--since` を明示 | そのまま渡す（marker は触らない） |
-| `--time-budget` / `--mutants-per-line` / `--shard` を明示 | 全ソース（`--since` を付けない）。**marker は書かない**（`Pending` が残るため） |
-| `--config-file` / `--root` を明示 | そのまま渡す（実効スコープを argv から確定できないので **marker は書かない**） |
-| `--status` | 計測せず FRESH / STALE だけを返す（marker は触らない） |
-| `--help` / `-h` / `--version` / `-v` | 何もしない（marker は触らない） |
-| `MUTATION_FULL=1` / `--full` | marker があっても全ソース（marker を更新する） |
+| `--include` / `--exclude` / `--only` / `--since` を明示 | そのまま渡す（marker も台帳も触らない） |
+| `--time-budget` / `--mutants-per-line` / `--shard` を明示 | 全ソース（`--since` を付けない）。**marker も台帳も書かない**（`Pending` が残るため） |
+| `--config-file` / `--root` を明示 | そのまま渡す（実効スコープを argv から確定できないので **台帳も書かない**） |
+| `--status` | 計測せず FRESH / STALE だけを返す |
+| `--help` / `-h` / `--version` / `-v` | 何もしない |
+| `MUTATION_FULL=1` / `--full` | marker があっても全ソース（marker と台帳を更新） |
 
-**marker を書く条件は「スコープ制限なし + 終了コード 0 / 2」**。`--time-budget` 付きの
-full run は mutant を `Pending` のまま残すので「全ソースを測った」証拠にならない
-（書いてしまうと次の run が差分モードに入り、未計測のファイルが永久に測られない。
-codex adversarial-review 2026-11-19 P1）。初回計測を分割するときは
-`--time-budget` を付けて回し続け、**最後に `--time-budget` なしで 1 回完走させる**。
+**marker を書く条件は「スコープ制限なし + 終了コード 0 / 2 + `--time-budget` 等なし」**。
+`--time-budget` 付きの full run は mutant を `Pending` のまま残すので「全ソースを測った」
+証拠にならない（書いてしまうと次の run が差分モードに入り、未計測のファイルが永久に測られない。
+codex adversarial-review 2026-11-19 P1）。**未完走のまま kill すると cache が保存されない**
+（Ctrl+C / タイムアウト kill で 48 分を 2 回捨てた実例あり）。区切るなら `--time-budget`
+を使い、最後に 1 回完走させて台帳を書かせる。
 
 snapshot の有無ではなく marker で判定するのは、**`--include` 付きの部分実行でも
 `.mutator/snapshot.json` が書かれる**ため（部分実行で差分モードに入ると、未計測の
@@ -522,10 +547,9 @@ ExportScreen 223 / DetectingScreen 191 / PreviewScreen 179 …）。これは「
 `--reporter simplify` の候補 817 件（224 関数）も同じ性質（`condition always true/false` が 661 件）。
 
 **初回は 1 回で終わらない前提で回す**: GUI テストは jsdom + RTL で 1 mutant あたりが重く、
-full run は **1 時間規模**（2026-11-26 実測 47 分 + typecheck）。`--time-budget` で区切ると残りは
-`Pending` になり、次の `MUTATION_FULL=1` 実行で続きから消化される（判定は関数ハッシュ単位でキャッシュ）。
-**未完走のまま止めると（Ctrl+C / タイムアウト kill）キャッシュが保存されず、次回も最初から**になる。
-区切るなら必ず `--time-budget` を使い、最後に 1 回完走させて marker を書かせる。
+full run は **1 時間規模**（2026-11-26 実測 47 分 + typecheck）。`--time-budget` で区切りながら
+回し、最後に 1 回完走させて台帳を書かせる。新規 clone では cache が無いので最初の 1 回だけ full になる
+（台帳は commit 済みでも cache は `.mutator/` にしかない）。
 
 ### 生存 mutant の扱い
 
@@ -535,6 +559,19 @@ full run は **1 時間規模**（2026-11-26 実測 47 分 + typecheck）。`--t
 1. テストを足して殺す（`not detected` / `not infected` / `not reached` の分類ごとに、足すべき入力が違う）
 2. コードを消す（`--reporter simplify` の削除系候補）
 3. `npx mutator accept <key> --reason "<理由>"` で `mutator.accepted.json` に記録する（コミットする）
+
+### 変更したときのチェックリスト（テスト状況を完了させる）
+
+`gui/src/**` または `gui/mutator.config.ts` 等を変えた PR は、以下を満たしてから出す。
+
+- [ ] `cd gui && npm run test:mutation` を**完走**させた（`--time-budget` で切ったままにしない）
+- [ ] 新しく Survived / NoCoverage になった mutant を triage した
+      （テスト追加 / デッドコード削除 / `accept` + 理由。未 triage のまま放置しない）
+- [ ] 更新された `gui/mutation-baseline.json` を commit した
+- [ ] `npm run test:mutation:status` が `FRESH`（CI の `mutation-baseline` job と同じ判定）
+
+Iron Law 6 の GUI チェック（AGENTS.md）にも含めてある。CI が red のときは
+job のログに「どのファイルが変わったか」と次のコマンドが出る。
 
 ### エージェント skill
 
