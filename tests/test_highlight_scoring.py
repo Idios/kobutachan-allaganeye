@@ -93,12 +93,36 @@ class TestGroupStreaks:
         assert [streak.match_index for streak in group_streaks(events)] == [1, 2]
 
     def test_match_index_none_is_its_own_partition(self) -> None:
+        # `None` は独立した区画。同じ試合の 2 件は `None` のイベントを挟んでも連鎖する。
         events = [
             ScoringEvent(kind="ko", start=10.0, end=11.5, match_index=1),
             ScoringEvent(kind="ko", start=11.0, end=12.5),
             ScoringEvent(kind="ko", start=12.0, end=13.5, match_index=1),
         ]
-        assert [len(streak.events) for streak in group_streaks(events)] == [1, 1, 1]
+        assert [
+            (streak.match_index, streak.size) for streak in group_streaks(events)
+        ] == [
+            (1, 2),
+            (None, 1),
+        ]
+
+    def test_input_order_does_not_change_the_grouping(self) -> None:
+        # 同一時刻のイベントが別試合に属していても、入力順で結果が変わらないこと。
+        a = ScoringEvent(kind="ko", start=0.0, end=1.0, match_index=1)
+        b = ScoringEvent(kind="ko", start=0.0, end=1.0, match_index=2)
+        c = ScoringEvent(kind="ko", start=1.0, end=2.0, match_index=1)
+        expected = [
+            (streak.start, streak.match_index, streak.size)
+            for streak in group_streaks([a, b, c])
+        ]
+        for permutation in ([b, a, c], [c, b, a], [b, c, a]):
+            actual = [
+                (streak.start, streak.match_index, streak.size)
+                for streak in group_streaks(permutation)
+            ]
+            assert actual == expected
+        # 同一試合の a と c は 1 秒差なので同じストリークに入る。
+        assert (0.0, 1, 2) in expected
 
 
 class TestScoreStreak:
@@ -137,6 +161,18 @@ class TestScoreStreak:
         [streak] = group_streaks([ko(1.0)])
         assert score_streak(streak, window_seconds=5.0) < score_streak(
             streak, window_seconds=1.0
+        )
+
+    def test_extreme_weights_do_not_overflow(self) -> None:
+        # `w / (w + saturation)` をそのまま書くと inf / inf で 0 に潰れる。
+        [streak] = group_streaks([ko(1.0)])
+        score = score_streak(streak, weights=ScoringWeights(ko=1e308, saturation=1e308))
+        assert 0.0 < score <= 1.0
+        [two] = group_streaks([ko(1.0), ko(2.0)])
+        assert (
+            0.0
+            < score_streak(two, weights=ScoringWeights(ko=1e308, saturation=1e308))
+            <= 1.0
         )
 
     def test_invalid_weights_are_rejected(self) -> None:

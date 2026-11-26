@@ -228,6 +228,11 @@ class Highlight:
         }
 
 
+def _match_sort_key(match_index: int | None) -> int:
+    """試合区画の並びを決定的にするためのソートキー (`None` は先頭)。"""
+    return -1 if match_index is None else match_index
+
+
 def group_streaks(
     events: Iterable[ScoringEvent],
     window_seconds: float = DEFAULT_WINDOW_SECONDS,
@@ -238,30 +243,46 @@ def group_streaks(
     ストリークへ連鎖させる (3 秒刻みの 3 件は 1 本、11 秒離れた 2 件は 2 本)。
     非有限の発生時刻を持つイベントは捨てる。
 
-    **`match_index` が変わったら必ず切る。** 連続する試合の最終イベントと
+    **`match_index` ごとに分けてから連鎖する。** 連続する試合の最終イベントと
     次の試合の最初のイベントは、試合間の暗転が短いと窓に収まってしまう。
     またいで束ねると `Streak.match_index` が片方の試合を名乗り、L7 の
-    クリップ範囲が別試合をまたぐ。
+    クリップ範囲が別試合をまたぐ。区画を先に分けるのは、試合をまたいで
+    並んでいるイベントが別の試合のイベントを挟んで連鎖判定を乱すのを避け、
+    **入力順を並べ替えても結果が変わらない**ようにするため。
     """
     if not math.isfinite(window_seconds) or window_seconds < 0:
         raise ValueError("window_seconds must be a finite non-negative number")
 
-    ordered = sorted(
+    partitions: dict[int | None, list[ScoringEvent]] = {}
+    for event in sorted(
         (event for event in events if math.isfinite(event.start)),
         key=lambda event: (event.start, event.end, event.kind),
-    )
+    ):
+        partitions.setdefault(event.match_index, []).append(event)
+
     groups: list[list[ScoringEvent]] = []
-    for event in ordered:
-        previous = groups[-1][-1] if groups else None
-        if (
-            previous is not None
-            and event.match_index == previous.match_index
-            and event.start - previous.start <= window_seconds
-        ):
-            groups[-1].append(event)
-        else:
-            groups.append([event])
-    return tuple(Streak(events=tuple(group)) for group in groups)
+    for partition in partitions.values():
+        current: list[ScoringEvent] = []
+        for event in partition:
+            if current and event.start - current[-1].start <= window_seconds:
+                current.append(event)
+            else:
+                if current:
+                    groups.append(current)
+                current = [event]
+        if current:
+            groups.append(current)
+
+    ordered_groups = sorted(
+        groups,
+        key=lambda group: (
+            group[0].start,
+            _match_sort_key(group[0].match_index),
+            group[0].end,
+            group[0].kind,
+        ),
+    )
+    return tuple(Streak(events=tuple(group)) for group in ordered_groups)
 
 
 def score_streak(
@@ -281,7 +302,8 @@ def score_streak(
         raise ValueError("window_seconds must be a finite non-negative number")
 
     weighted = weights.ko * streak.ko_count + weights.assist * streak.assist_count
-    length_term = weighted / (weighted + weights.saturation)
+    # `w / (w + saturation)` と同じ式を、巨大な重みでも inf / nan を出さない形で書く。
+    length_term = 0.0 if weighted == 0 else 1.0 / (1.0 + weights.saturation / weighted)
 
     denominator = max(streak.span_seconds + window_seconds, 1e-6)
     density = streak.size / denominator

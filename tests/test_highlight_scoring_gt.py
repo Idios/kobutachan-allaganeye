@@ -426,14 +426,18 @@ def _rhos(gt: ScoringGt) -> dict[float, float]:
 
 def _rho_table(gt: ScoringGt) -> str:
     lines = [
-        "| window (s) | n | rho | 上限 rho | precision@10 | 母集団 |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| window (s) | n | rho (max) | 上限 (max) | rho (mean) | precision@10 | 母集団 |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for window in WINDOWS:
         scores, tiers = _reference_tiers_by_window(gt, window, aggregate="max")
+        mean_scores, mean_tiers = _reference_tiers_by_window(
+            gt, window, aggregate="mean"
+        )
         lines.append(
             f"| {window:g} | {len(scores)} | {_spearman(scores, tiers):+.3f} | "
             f"{_ceiling_rho(scores, tiers):.3f} | "
+            f"{_spearman(mean_scores, mean_tiers):+.3f} | "
             f"{_precision_at(scores, tiers, TOP_N):.2f} | "
             f"{_strong_share(tiers):.2f} |"
         )
