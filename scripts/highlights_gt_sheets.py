@@ -48,15 +48,20 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from allaganeye.ffmpeg_path import find_ffmpeg  # noqa: E402
+from allaganeye.highlights.scoring import (  # noqa: E402
+    DEFAULT_WINDOW_SECONDS,
+    ScoringEvent,
+    group_streaks,
+)
 
 GT_FILE = ROOT / "tests" / "fixtures" / "highlights_gt" / "scoring_gt.json"
 INDICATOR_GT_DIR = ROOT / "tests" / "fixtures" / "indicators_gt"
 DEFAULT_OUT = ROOT / "output" / "highlights_gt"
 
-# 判定に必要な文脈。KO / ASSIST は 1.5 秒程度しか表示されないので、その前後を広めに取る。
-PRE_SECONDS = 2.5
-POST_SECONDS = 4.0
-FRAME_COUNT = 6
+# 判定に必要な文脈。既定窓 (10 秒) の streak を 1 枚で見渡せる範囲を取る。
+PRE_SECONDS = 3.0
+POST_SECONDS = 5.0
+FRAME_COUNT = 8
 FRAME_WIDTH = 400
 LABEL_BAR_HEIGHT = 30
 
@@ -103,6 +108,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--case", action="append", help="Limit to these case labels")
+    parser.add_argument(
+        "--emit-draft",
+        action="store_true",
+        help="Print the draft GT JSON (tier: null) for the default window and exit;"
+        " redirect it into the fixture",
+    )
     return parser.parse_args()
 
 
@@ -296,8 +307,59 @@ document.getElementById('build').addEventListener('click', () => {{
     (out / "index.html").write_text(document, encoding="utf-8")
 
 
+def _draft_payload() -> dict:
+    """Draft GT for the default window, regenerated from the indicator GT.
+
+    The reference groups are a mechanical product of `group_streaks`, so they are
+    emitted here rather than hand-written; only `tier` is human input.
+    """
+    cases = []
+    for path in sorted(INDICATOR_GT_DIR.glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        events = [
+            ScoringEvent(
+                kind=raw["kind"], start=float(raw["start"]), end=float(raw["start"])
+            )
+            for raw in payload["events"]
+        ]
+        streaks = sorted(
+            group_streaks(events, DEFAULT_WINDOW_SECONDS),
+            key=lambda streak: streak.start,
+        )
+        cases.append(
+            {
+                "label": payload["label"],
+                "source": f"tests/fixtures/indicators_gt/{path.name}",
+                "groups": [
+                    {
+                        "tier": None,
+                        "events": [
+                            {"kind": event.kind, "start": round(event.start, 6)}
+                            for event in streak.events
+                        ],
+                    }
+                    for streak in streaks
+                ],
+            }
+        )
+    return {
+        "reference_window_seconds": DEFAULT_WINDOW_SECONDS,
+        "provenance": (
+            f"DRAFT: {DEFAULT_WINDOW_SECONDS:g} 秒窓の束ね結果を機械生成したもの。"
+            "`tier` を 1=弱 / 2=中 / 3=強 で人手記入すると Spearman ゲートが有効になる"
+            " (設計: docs/superpowers/specs/2026-11-25-l6-streak-scoring-design.md 5 節)。"
+            "再生成: python scripts/highlights_gt_sheets.py --emit-draft"
+        ),
+        "cases": cases,
+    }
+
+
 def main() -> int:
     args = parse_args()
+    if args.emit_draft:
+        print(json.dumps(_draft_payload(), ensure_ascii=False, indent=2))
+        return 0
+
     roots = _video_roots(args)
     cases = _indicator_cases()
     groups = _groups(args.case)

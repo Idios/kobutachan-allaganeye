@@ -2,9 +2,9 @@
 
 設計の正: `docs/superpowers/specs/2026-11-25-l6-streak-scoring-design.md`
 
-- **ストリーク** = KO / ASSIST イベントを時間窓で束ねたもの。信号モデル spec
-  (`2026-09-10-l4l6-highlight-signal-model-design.md` 5.3 節) の既定は +-5 秒で、
-  本実装もその既定を踏襲する。窓は引数で変えられる (GT 検証で確定する)。
+- **ストリーク** = KO / ASSIST イベントを時間窓で束ねたもの。既定は **+-10 秒**
+  (信号モデル spec 5.3 節の既定 +-5 秒からの**意図的な差**。理由は設計メモ 1 節 Q2)。
+  窓は引数 (`window_seconds`) で変えられる。
 - **束ね方**: 直前のイベント発生時刻から `window_seconds` 以内に始まるイベントを
   同じストリークへ入れる (連鎖)。終了時刻ではなく発生時刻の差で判定する。
 - **スコア** = 重み付きの長さ (KO > ASSIST) + 密度 (`events / (span + window)`)。
@@ -44,8 +44,9 @@ __all__ = [
 
 SignalKind = Literal["ko", "assist"]
 
-# 信号モデル spec 5.3 節の既定窓 (秒)。
-DEFAULT_WINDOW_SECONDS = 5.0
+# 既定の窓 (秒)。信号モデル spec 5.3 節は +-5 秒だが、+-5 秒では GT 実測で 71% が
+# 単独イベントになりスコアが同点に潰れるため +-10 秒を既定にした (設計メモ 1 節 Q2)。
+DEFAULT_WINDOW_SECONDS = 10.0
 
 # KO 1 回の重み (基準)。
 DEFAULT_KO_WEIGHT = 1.0

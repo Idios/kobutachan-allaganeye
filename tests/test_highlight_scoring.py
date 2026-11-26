@@ -49,14 +49,19 @@ class TestGroupStreaks:
         assert (streaks[0].ko_count, streaks[0].assist_count) == (2, 1)
 
     def test_gap_beyond_the_window_splits(self) -> None:
-        # 直前から 6 秒 > 既定 5 秒なので 2 本。
-        streaks = group_streaks([ko(10.0), ko(16.0)])
+        # 既定 (10 秒) に対して 11 秒差なので 2 本。
+        streaks = group_streaks([ko(10.0), ko(21.0)])
         assert [streak.size for streak in streaks] == [1, 1]
 
     def test_window_is_a_parameter(self) -> None:
         events = [ko(10.0), ko(16.0)]
         assert len(group_streaks(events, window_seconds=5.0)) == 2
         assert len(group_streaks(events, window_seconds=6.0)) == 1
+
+    def test_window_default_is_ten_seconds(self) -> None:
+        # 既定ちょうどは同じストリーク、超えたら別。
+        assert len(group_streaks([ko(0.0), ko(10.0)])) == 1
+        assert len(group_streaks([ko(0.0), ko(10.5)])) == 2
 
     def test_out_of_order_input_is_sorted(self) -> None:
         streaks = group_streaks([ko(9.0), assist(3.0), ko(6.0)])
@@ -127,21 +132,21 @@ class TestScoreStreak:
 
 class TestScoreEventsAndRanking:
     def test_score_events_keeps_occurrence_order(self) -> None:
-        scored = score_events([ko(30.0), assist(10.0), ko(20.0)])
-        assert [item.streak.start for item in scored] == [10.0, 20.0, 30.0]
+        scored = score_events([ko(40.0), assist(10.0), ko(25.0)])
+        assert [item.streak.start for item in scored] == [10.0, 25.0, 40.0]
 
     def test_rank_streaks_sorts_by_score_then_time(self) -> None:
-        scored = score_events([assist(10.0), ko(20.0), ko(20.5)])
+        scored = score_events([assist(10.0), ko(30.0), ko(30.5)])
         ranked = rank_streaks(scored)
         assert ranked[0].score == max(item.score for item in scored)
-        assert ranked[0].streak.start == 20.0
+        assert ranked[0].streak.start == 30.0
         assert ranked[-1].streak.start == 10.0
 
     def test_to_highlights_numbers_by_rank(self) -> None:
-        # 3 本になるよう窓 (5 秒) より大きく離す。
-        highlights = to_highlights(score_events([assist(10.0), ko(20.0), ko(26.0)]))
+        # 3 本になるよう窓 (10 秒) より大きく離す。
+        highlights = to_highlights(score_events([assist(10.0), ko(30.0), ko(41.0)]))
         assert [item.index for item in highlights] == [1, 2, 3]
-        assert highlights[0].start == 20.0
+        assert highlights[0].start == 30.0
         assert highlights[-1].start == 10.0
         assert highlights[0].event_positions == ()
         payload = highlights[0].to_payload()
@@ -208,6 +213,8 @@ class TestMetadataConversion:
         ]
         assert scoring_events_from_metadata(events) == ()
 
-    def test_default_window_matches_the_signal_model_spec(self) -> None:
-        assert DEFAULT_WINDOW_SECONDS == 5.0
+    def test_default_window_is_ten_seconds(self) -> None:
+        # 信号モデル spec 5.3 節は +-5 秒だが、実測 (設計メモ 1 節 Q2) で +-10 秒に
+        # 変更した。spec との差分は設計メモに記録してある。
+        assert DEFAULT_WINDOW_SECONDS == 10.0
         assert DEFAULT_WEIGHTS.ko > DEFAULT_WEIGHTS.assist

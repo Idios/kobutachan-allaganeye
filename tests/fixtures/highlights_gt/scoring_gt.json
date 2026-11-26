@@ -1,7 +1,6 @@
 {
-  "reference_window_seconds": 5.0,
-  "chosen_window_seconds": null,
-  "provenance": "DRAFT: 参照窓 ±5 秒の束ね結果を機械生成したもの。`tier` を 1=弱 / 2=中 / 3=強 で人手記入し、`chosen_window_seconds` を 5 / 10 / 15 のいずれかに記入するとSpearman ゲートが有効になる (設計: docs/superpowers/specs/2026-11-25-l6-streak-scoring-design.md §5)。",
+  "reference_window_seconds": 10.0,
+  "provenance": "DRAFT: 10 秒窓の束ね結果を機械生成したもの。`tier` を 1=弱 / 2=中 / 3=強 で人手記入すると Spearman ゲートが有効になる (設計: docs/superpowers/specs/2026-11-25-l6-streak-scoring-design.md 5 節)。再生成: python scripts/highlights_gt_sheets.py --emit-draft",
   "cases": [
     {
       "label": "ref1",
@@ -26,12 +25,7 @@
             {
               "kind": "assist",
               "start": 79.2
-            }
-          ]
-        },
-        {
-          "tier": null,
-          "events": [
+            },
             {
               "kind": "assist",
               "start": 85.2
@@ -71,21 +65,11 @@
             {
               "kind": "assist",
               "start": 193.2
-            }
-          ]
-        },
-        {
-          "tier": null,
-          "events": [
+            },
             {
               "kind": "assist",
               "start": 201.0
-            }
-          ]
-        },
-        {
-          "tier": null,
-          "events": [
+            },
             {
               "kind": "assist",
               "start": 206.4
@@ -160,12 +144,7 @@
             {
               "kind": "assist",
               "start": 656.3
-            }
-          ]
-        },
-        {
-          "tier": null,
-          "events": [
+            },
             {
               "kind": "assist",
               "start": 661.5
@@ -223,12 +202,7 @@
             {
               "kind": "assist",
               "start": 834.7
-            }
-          ]
-        },
-        {
-          "tier": null,
-          "events": [
+            },
             {
               "kind": "assist",
               "start": 842.7
@@ -245,12 +219,7 @@
             {
               "kind": "assist",
               "start": 858.9
-            }
-          ]
-        },
-        {
-          "tier": null,
-          "events": [
+            },
             {
               "kind": "assist",
               "start": 866.7
@@ -343,12 +312,7 @@
             {
               "kind": "assist",
               "start": 147.5
-            }
-          ]
-        },
-        {
-          "tier": null,
-          "events": [
+            },
             {
               "kind": "assist",
               "start": 153.7
@@ -396,12 +360,7 @@
             {
               "kind": "assist",
               "start": 244.9
-            }
-          ]
-        },
-        {
-          "tier": null,
-          "events": [
+            },
             {
               "kind": "assist",
               "start": 250.2
@@ -452,12 +411,7 @@
             {
               "kind": "assist",
               "start": 357.7
-            }
-          ]
-        },
-        {
-          "tier": null,
-          "events": [
+            },
             {
               "kind": "assist",
               "start": 365.2
@@ -505,12 +459,7 @@
             {
               "kind": "ko",
               "start": 487.9
-            }
-          ]
-        },
-        {
-          "tier": null,
-          "events": [
+            },
             {
               "kind": "assist",
               "start": 495.2
@@ -583,12 +532,7 @@
             {
               "kind": "assist",
               "start": 642.8
-            }
-          ]
-        },
-        {
-          "tier": null,
-          "events": [
+            },
             {
               "kind": "assist",
               "start": 648.4
@@ -670,12 +614,7 @@
             {
               "kind": "assist",
               "start": 890.9
-            }
-          ]
-        },
-        {
-          "tier": null,
-          "events": [
+            },
             {
               "kind": "assist",
               "start": 899.3

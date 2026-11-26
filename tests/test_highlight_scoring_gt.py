@@ -20,7 +20,7 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
 import pytest
 
@@ -35,8 +35,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
 INDICATOR_GT_DIR = FIXTURES / "indicators_gt"
 GT_FILE = FIXTURES / "highlights_gt" / "scoring_gt.json"
 
-# 比較する窓（5.2）。参照窓はこの最小値でなければならない。
-WINDOWS = (5.0, 10.0, 15.0)
+# 既定窓 (10 秒) を参照窓として採点し、広い窓は感度チェック用に併記する
+# (窓の既定は Idios 判断 2026-11-26 で +-10 秒に確定。設計メモ 1 節 Q2)。
+WINDOWS = (10.0, 15.0, 20.0)
 # 段階は 3 値。Spearman の合格線は暫定（5.3 節 / 7 節-3）。
 TIERS = (1, 2, 3)
 MIN_SPEARMAN = 0.60
@@ -65,7 +66,6 @@ class GtCase:
 @dataclass(frozen=True)
 class ScoringGt:
     reference_window: float
-    chosen_window: float | None
     provenance: str
     cases: tuple[GtCase, ...]
 
@@ -182,13 +182,6 @@ def _load_gt(path: Path = GT_FILE) -> ScoringGt:
             f"reference_window_seconds must be {min(WINDOWS):g} (got {reference:g})"
         )
 
-    chosen = payload.get("chosen_window_seconds")
-    if chosen is not None:
-        if isinstance(chosen, bool) or not isinstance(chosen, (int, float)):
-            raise ValueError("chosen_window_seconds must be a number or null")
-        if float(chosen) not in WINDOWS:
-            raise ValueError(f"chosen_window_seconds must be one of {WINDOWS}")
-
     raw_cases = payload.get("cases")
     if not isinstance(raw_cases, list) or not raw_cases:
         raise ValueError("cases must be a non-empty list")
@@ -258,7 +251,6 @@ def _load_gt(path: Path = GT_FILE) -> ScoringGt:
 
     return ScoringGt(
         reference_window=reference,
-        chosen_window=None if chosen is None else float(chosen),
         provenance=str(payload.get("provenance", "")),
         cases=tuple(cases),
     )
@@ -275,9 +267,9 @@ def _require_gt(*, require_adjudicated: bool = False) -> ScoringGt:
     if require_adjudicated and not gt.adjudicated:
         pytest.skip(
             f"tier 未記入が {gt.pending_groups} 件残っている（draft 状態）。"
-            f"`{GT_FILE}` の各 group の `tier` を 1=弱 / 2=中 / 3=強 で埋め、"
-            "`chosen_window_seconds` を記入すると有効になる "
-            f"(一覧は `{WORKSHEET_COMMAND}`)"
+            f"`{GT_FILE}` の各 group の `tier` を 1=弱 / 2=中 / 3=強 で埋めると有効になる "
+            f"(一覧は `{WORKSHEET_COMMAND}`、画像は "
+            "`python scripts/highlights_gt_sheets.py`)"
         )
     return gt
 
@@ -382,11 +374,6 @@ def _rhos(gt: ScoringGt) -> dict[float, float]:
     }
 
 
-def _best_window(rhos: dict[float, float]) -> float:
-    """rho 最大の窓。同点は窓が狭い方 (変更が小さい方) を採る。"""
-    return max(rhos, key=lambda window: (rhos[window], -window))
-
-
 def _rho_table(gt: ScoringGt) -> str:
     lines = [
         "| window (s) | n | rho (max) | rho (mean) | スコア異なり数 |",
@@ -459,23 +446,16 @@ def test_reference_groups_match_group_streaks() -> None:
         )
 
 
-def test_chosen_window_maximizes_spearman() -> None:
-    """`chosen_window_seconds` が rho 最大の窓で、かつ合格線を満たす (5.3)。"""
+def test_default_window_meets_the_spearman_threshold() -> None:
+    """既定窓 (10 秒) で人手の順位と Spearman 合格線を満たす (受け入れ条件)。"""
     gt = _require_gt(require_adjudicated=True)
     table = _rho_table(gt)
     print(table)
-    if gt.chosen_window is None:
-        pytest.skip(
-            f"chosen_window_seconds が未記入 (裁定の窓選定が未了)。実測:\n{table}"
-        )
-    rhos = _rhos(gt)
-    best = _best_window(rhos)
-    assert gt.chosen_window == best, (
-        f"chosen_window_seconds={gt.chosen_window:g} is not the best window "
-        f"(best={best:g})\n{table}"
-    )
-    assert rhos[gt.chosen_window] >= MIN_SPEARMAN, (
-        f"Spearman {rhos[gt.chosen_window]:.3f} < {MIN_SPEARMAN}\n{table}"
+    reference = gt.reference_window
+    assert reference == DEFAULT_WINDOW_SECONDS
+    rho = _spearman(*_reference_tiers_by_window(gt, reference, aggregate="max"))
+    assert rho >= MIN_SPEARMAN, (
+        f"Spearman {rho:.3f} < {MIN_SPEARMAN} at {reference:g}s\n{table}"
     )
 
 
@@ -490,8 +470,6 @@ def test_mean_aggregate_tracks_merged_groups() -> None:
         _, max_tiers = _reference_tiers_by_window(gt, window, aggregate="max")
         assert all(mean <= peak for mean, peak in zip(tiers, max_tiers, strict=True))
         diverged |= tiers != max_tiers
-    if gt.chosen_window is None:
-        pytest.skip("裁定未了のため max / mean の乖離は記録のみ")
     assert diverged, (
         "参照グループが window 内で混ざらない = GT の粒度が窓に対して細かすぎる"
     )
@@ -501,15 +479,20 @@ def test_mean_aggregate_tracks_merged_groups() -> None:
 
 
 def _write_synthetic_gt(
-    tmp_path: Path,
-    tier_of_score: Callable[[float], int],
+    tmp_path: Path, *, low: float = 0.4, high: float = 0.55, reverse: bool = False
 ) -> Path:
     """スコアから機械的に tier を作った GT (人手裁定の代用)。
 
     **ゲートの経路 (ロード・窓写像・Spearman) を今のうちに実行するためだけ**の
-    もので、精度の根拠にはならない。tier がスコアの単調関数なら Spearman は 1.0 に
-    なるはずで、写像の取り違え (窓を跨いだグループの取りこぼし等) を検出できる。
+    もので、精度の根拠にはならない。tier がスコアの単調関数なら高い相関が出る
+    はずで、写像の取り違え (窓を跨いだグループの取りこぼし等) を検出できる。
+    しきい値は既定窓でのスコア分布のおよそ三分位 (設計メモ 6 節)。
     """
+
+    def tier_of_score(score: float) -> int:
+        tier = 3 if score >= high else 2 if score >= low else 1
+        return 4 - tier if reverse else tier
+
     cases = []
     for label, events in _case_events().items():
         scored = sorted(
@@ -537,7 +520,6 @@ def _write_synthetic_gt(
         )
     payload = {
         "reference_window_seconds": DEFAULT_WINDOW_SECONDS,
-        "chosen_window_seconds": None,
         "provenance": "synthetic (テスト専用。人手裁定の代用にはならない)",
         "cases": cases,
     }
@@ -547,10 +529,8 @@ def _write_synthetic_gt(
 
 
 def test_synthetic_gt_runs_the_full_gate_path(tmp_path: Path) -> None:
-    """合成 GT でロード->窓写像->Spearman が一貫して動く (単調なら rho=1)。"""
-    gt = _load_gt(
-        _write_synthetic_gt(tmp_path, lambda s: 3 if s >= 0.6 else 2 if s >= 0.5 else 1)
-    )
+    """合成 GT でロード -> 窓写像 -> Spearman が一貫して動く (単調なら高相関)。"""
+    gt = _load_gt(_write_synthetic_gt(tmp_path))
     known = _case_events()
     assert gt.adjudicated
     assert gt.pending_groups == 0
@@ -561,15 +541,15 @@ def test_synthetic_gt_runs_the_full_gate_path(tmp_path: Path) -> None:
         gt, DEFAULT_WINDOW_SECONDS, aggregate="max"
     )
     assert len(scores) == gt.group_count
-    # tier はスコアの階段関数なので、同点 (同一 tier 内の異なるスコア) の分だけ 1.0 を下回る。
-    assert _spearman(scores, tiers) > 0.95
+    # tier はスコアの階段関数なので、同点 (同一 tier 内の異なるスコア) の分だけ下がる。
+    assert _spearman(scores, tiers) > 0.9
     # 窓を広げても正の相関を保つ（写像でグループを取りこぼしていない）。
     assert all(rho > 0.3 for rho in _rhos(gt).values())
 
 
 def test_synthetic_reversed_gt_fails_the_threshold(tmp_path: Path) -> None:
     """逆順の GT では rho < 0 になり合格線を満たさない（ゲートの red 実証）。"""
-    gt = _load_gt(_write_synthetic_gt(tmp_path, lambda s: 1 if s >= 0.6 else 3))
+    gt = _load_gt(_write_synthetic_gt(tmp_path, reverse=True))
     rhos = _rhos(gt)
     assert rhos[DEFAULT_WINDOW_SECONDS] < 0
     assert max(rhos.values()) < MIN_SPEARMAN
@@ -577,9 +557,7 @@ def test_synthetic_reversed_gt_fails_the_threshold(tmp_path: Path) -> None:
 
 def test_synthetic_mean_aggregate_diverges_from_max(tmp_path: Path) -> None:
     """広い窓で段階が割れると mean 集約は max 集約より小さくなる。"""
-    gt = _load_gt(
-        _write_synthetic_gt(tmp_path, lambda s: 3 if s >= 0.6 else 2 if s >= 0.5 else 1)
-    )
+    gt = _load_gt(_write_synthetic_gt(tmp_path))
     diverged = False
     for window in WINDOWS:
         _, mean_tiers = _reference_tiers_by_window(gt, window, aggregate="mean")
