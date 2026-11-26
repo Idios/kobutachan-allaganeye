@@ -1,13 +1,13 @@
 {
   "reference_window_seconds": 10.0,
-  "provenance": "DRAFT: 10 秒窓の束ね結果を機械生成したもの。`tier` を 1=弱 / 2=中 / 3=強 で人手記入すると Spearman ゲートが有効になる (設計: docs/superpowers/specs/2026-11-25-l6-streak-scoring-design.md 5 節)。再生成: python scripts/highlights_gt_sheets.py --emit-draft",
+  "provenance": "人手裁定 (Idios, 2026-11-26)。参照窓 ±10 秒の 51 グループに 3=強 / 2=中 / 1=弱 を付与。判定基準は docs/superpowers/specs/2026-11-25-l6-streak-scoring-design.md 5.1 節。採点はモデルのスコアを見ずに行った (アンカリング回避)。",
   "cases": [
     {
       "label": "ref1",
       "source": "tests/fixtures/indicators_gt/20260116_1.json",
       "groups": [
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -20,7 +20,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -33,7 +33,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -42,7 +42,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -51,7 +51,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -60,7 +60,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -77,7 +77,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -86,7 +86,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "ko",
@@ -95,7 +95,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -108,7 +108,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "ko",
@@ -117,7 +117,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -126,7 +126,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -139,7 +139,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -152,7 +152,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -161,7 +161,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -170,7 +170,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -179,7 +179,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -188,7 +188,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -197,7 +197,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -214,7 +214,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -227,7 +227,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "ko",
@@ -242,7 +242,7 @@
       "source": "tests/fixtures/indicators_gt/20260116_5.json",
       "groups": [
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "ko",
@@ -255,7 +255,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -264,7 +264,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -281,7 +281,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -290,7 +290,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -299,7 +299,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "ko",
@@ -320,7 +320,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -329,7 +329,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -338,7 +338,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -351,7 +351,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -376,7 +376,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -389,7 +389,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -402,7 +402,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -419,7 +419,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "ko",
@@ -436,7 +436,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -445,7 +445,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -454,7 +454,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "ko",
@@ -467,7 +467,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -484,7 +484,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -497,7 +497,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -510,7 +510,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -527,7 +527,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -540,7 +540,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -549,7 +549,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "ko",
@@ -558,7 +558,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "ko",
@@ -567,7 +567,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
@@ -582,7 +582,7 @@
       "source": "tests/fixtures/indicators_gt/other_hud.json",
       "groups": [
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -591,7 +591,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "ko",
@@ -600,7 +600,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 3,
           "events": [
             {
               "kind": "assist",
@@ -609,7 +609,7 @@
           ]
         },
         {
-          "tier": null,
+          "tier": 2,
           "events": [
             {
               "kind": "assist",
