@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "tauri": "tauri",
     "generate-types": "node scripts/generate-ts.mjs",
-    "test:mutation": "node scripts/mutation.mjs"
+    "test:mutation": "node scripts/mutation.mjs",
+    "test:mutation:status": "node scripts/mutation.mjs --status"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",

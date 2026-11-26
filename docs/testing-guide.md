@@ -424,6 +424,7 @@ GUI (`gui/`) のテスト品質とデッドコード整理のため、[mizchi/mu
 ```bash
 cd gui
 npm run test:mutation                            # 初回 full / 2 回目以降は差分のみ (自動)
+npm run test:mutation:status                     # 前回の full run が今のソースに有効か (FRESH / STALE)
 npm run test:mutation -- --reporter simplify    # デッドコード候補を出す
 npm run test:mutation -- --kill-matrix          # 検出力ゼロ / 包含されるテストを出す
 npm run test:mutation -- --include 'src/utils/*.ts'   # 部分実行 (全ソース扱いにしない)
@@ -432,17 +433,47 @@ MUTATION_SINCE=origin/main npm run test:mutation # 差分の基準を変える
 npx mutator accept <key> --reason "<理由>"       # equivalent mutant を理由付きで除外
 ```
 
-### 「初回 full → 以後差分」の管理
+### 「全ソースを 1 回測ったら、ソースが変わるまでやらない」の管理
 
-`gui/scripts/mutation.mjs` が `.mutator/full-run.json`（marker）の有無で切り替える。
+`gui/scripts/mutation.mjs` が `.mutator/full-run.json`（marker）で状態を持つ。
+**marker には実行時刻だけでなく計測対象の内容ハッシュを残す**ので、
+`npm run test:mutation:status` が「再実行が要るか」を即答する（exit 0 = FRESH / 1 = STALE）。
+
+```text
+$ npm run test:mutation:status
+[mutation] 最後の全ソース計測: 2026-11-26T07:10:50.289Z (status 0 / 8601 mutants)
+[mutation] 判定: STALE — 1 ファイルが変わった
+  M src/utils/time.ts
+[mutation] 再計測: npm run test:mutation (差分のみ。キャッシュが効く)
+```
+
+marker の中身（v2）:
+
+| フィールド | 内容 |
+| --- | --- |
+| `completedAt` / `head` / `status` | 完走日時 / commit / mutator の終了コード |
+| `totals` | 8,601 mutants の内訳（snapshot から集計。status 表示に出す） |
+| `sources` | `src/**/*.{ts,tsx}`（テスト含む）の件数と内容ハッシュ |
+| `config` | `mutator.config.ts` / `vite.config.ts` / `package{,-lock}.json` / `tsconfig.json` の内容ハッシュ |
+| `entries` | 上記 source 1 ファイルごとの path + sha256（差分を人間向けに列挙するため） |
+
+- テストファイルもハッシュ対象に入れている。**テストを変えると killer が変わる**ので、
+  「ソース不変なら再計測不要」の判定にテスト変更を含めないと嘘になる
+- `config` ハッシュが変わったら `--since` を付けず**自動で full に戻す**（include scope / ランナー /
+  依存が変わると計測対象自体が変わるため）
+- marker が旧形式（ハッシュなし）なら STALE 扱い。次の full run で v2 に上がる
+
+### 実行モードの切り替え（marker と argv）
 
 | 状態 | 実行内容 |
 | --- | --- |
 | marker なし | 全ソース（`--since` を付けない）。終了コード 0 / 2 で marker を書く |
 | marker あり | `--since ${MUTATION_SINCE:-origin/develop-0.4.0}`（差分のみ） |
+| marker の `config` ハッシュが不一致 | 全ソース（設定変更で計測対象が変わるため） |
 | `--include` / `--exclude` / `--only` / `--since` を明示 | そのまま渡す（marker は触らない） |
 | `--time-budget` / `--mutants-per-line` / `--shard` を明示 | 全ソース（`--since` を付けない）。**marker は書かない**（`Pending` が残るため） |
 | `--config-file` / `--root` を明示 | そのまま渡す（実効スコープを argv から確定できないので **marker は書かない**） |
+| `--status` | 計測せず FRESH / STALE だけを返す（marker は触らない） |
 | `--help` / `-h` / `--version` / `-v` | 何もしない（marker は触らない） |
 | `MUTATION_FULL=1` / `--full` | marker があっても全ソース（marker を更新する） |
 
@@ -454,22 +485,47 @@ codex adversarial-review 2026-11-19 P1）。初回計測を分割するときは
 
 snapshot の有無ではなく marker で判定するのは、**`--include` 付きの部分実行でも
 `.mutator/snapshot.json` が書かれる**ため（部分実行で差分モードに入ると、未計測の
-ファイルが永久に測られなくなる）。`.mutator/` は gitignore 済み
-（`mutator.accepted.json` は**コミット対象**）。
+ファイルが永久に測られなくなる）。`.mutator/` は gitignore だが
+**`mutator.accepted.json` だけはコミットする**（equivalent mutant の理由をレビュー可能にするため。
+`gui/.gitignore` は `.mutator/*` + `!.mutator/mutator.accepted.json`）。
 
-### 初回 full run の実測（2026-11-19、Windows / 32 論理コア）
+> **注意（実測 2026-11-26）**: `snapshot.json` は**実行スコープ単位で置き換わる**。
+> `--include` 付きの部分実行をすると、その時点の full run のキャッシュが消え、
+> 次の full run が全 mutant を再実行する（8,601 mutants で約 48 分）。
+> 部分実行は **full run を済ませた後**に行い、頻繁に切り替えない。
+
+### 実測（2026-11-26、Windows / 32 論理コア、`--concurrency 32`）
+
+**全ソース完走（marker 記録済み）**:
 
 | 項目 | 値 |
 | --- | --- |
-| 対象 | 64 files（`src/**/*.ts{,x}`、テスト / 生成物は除外） |
-| mutant 総数 | **8,068** |
-| 内訳 | Killed 1,836 / Survived 1,047 / NoCoverage 463 / CompileError 2,951 / Ignored 5 / RuntimeError 5 / Timeout 1 / **Pending 1,760** |
-| mutation score | **63.7%**（covered 2,884 のうち 1,837 を検出） |
-| 所要 | `--time-budget 900` で 2,807 mutants 消化 → 全体の ETA は **約 2 時間 26 分** |
+| 対象 | 134 files（`src/**/*.{ts,tsx}` のうち mutation 対象） |
+| mutant 総数 | **8,601** |
+| 内訳 | Killed 2,954 / Survived 1,813 / NoCoverage 462 / CompileError 3,170 / Timeout 189 / RuntimeError 5 / Ignored 8 |
+| mutation score | **58.0%** |
+| 所要 | 47 分 33 秒（うち typecheck 約 10 分。typecheck はキャッシュされない） |
+
+**改善前後の比較（`src/utils/brightness.ts`、帯ごとの境界値を pin するテストを追加）**:
+
+| 時点 | killed / executed | score |
+| --- | --- | --- |
+| 追加前 | 68 / 85 | 55.8%（ファイル単位） |
+| 追加後 | 80 / 85 | **96.5%** |
+
+残る 3 件は equivalent（空配列 2 件 + `d < 1.2` の `<=`。1.2 は二進小数で表現できないため
+両者は同一に分類される）として `mutator.accepted.json` に記録した。
+
+**既知の傾向**: 画面 (screens) が全 undetected の約 6 割を占める（MinimapScreen 533 /
+ExportScreen 223 / DetectingScreen 191 / PreviewScreen 179 …）。これは「画面の分岐を
+テストが変化させていない」ことの現れで、デッドコードではなく**テストギャップ**。
+`--reporter simplify` の候補 817 件（224 関数）も同じ性質（`condition always true/false` が 661 件）。
 
 **初回は 1 回で終わらない前提で回す**: GUI テストは jsdom + RTL で 1 mutant あたりが重く、
-full run は 2.5 時間規模。`--time-budget` で区切ると残りは `Pending` になり、次の
-`MUTATION_FULL=1` 実行で続きから消化される（判定は関数ハッシュ単位でキャッシュされる）。
+full run は **1 時間規模**（2026-11-26 実測 47 分 + typecheck）。`--time-budget` で区切ると残りは
+`Pending` になり、次の `MUTATION_FULL=1` 実行で続きから消化される（判定は関数ハッシュ単位でキャッシュ）。
+**未完走のまま止めると（Ctrl+C / タイムアウト kill）キャッシュが保存されず、次回も最初から**になる。
+区切るなら必ず `--time-budget` を使い、最後に 1 回完走させて marker を書かせる。
 
 ### 生存 mutant の扱い
 
