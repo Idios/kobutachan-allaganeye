@@ -82,6 +82,24 @@ class TestGroupStreaks:
         assert streak.span_seconds == 2.0
         assert streak.end == 30.0
 
+    def test_events_from_different_matches_never_group(self) -> None:
+        # 連続する試合の境界は暗転が短いと窓に収まる。またいで束ねると
+        # クリップ範囲が別試合にまたがるため、match_index で必ず切る。
+        events = [
+            ScoringEvent(kind="ko", start=100.0, end=101.5, match_index=1),
+            ScoringEvent(kind="ko", start=102.0, end=103.5, match_index=2),
+        ]
+        assert [len(streak.events) for streak in group_streaks(events)] == [1, 1]
+        assert [streak.match_index for streak in group_streaks(events)] == [1, 2]
+
+    def test_match_index_none_is_its_own_partition(self) -> None:
+        events = [
+            ScoringEvent(kind="ko", start=10.0, end=11.5, match_index=1),
+            ScoringEvent(kind="ko", start=11.0, end=12.5),
+            ScoringEvent(kind="ko", start=12.0, end=13.5, match_index=1),
+        ]
+        assert [len(streak.events) for streak in group_streaks(events)] == [1, 1, 1]
+
 
 class TestScoreStreak:
     def test_score_is_bounded_and_rounded(self) -> None:

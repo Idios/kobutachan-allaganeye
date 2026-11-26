@@ -171,7 +171,7 @@ class Streak:
 
     @property
     def match_index(self) -> int | None:
-        """属する試合。混在したら最初の非 None を採る (窓が小さいので実質発生しない)。"""
+        """属する試合。束ねが試合をまたがないので全イベントが同じ値を持つ。"""
         for event in self.events:
             if event.match_index is not None:
                 return event.match_index
@@ -235,8 +235,13 @@ def group_streaks(
     """イベントを時間窓で束ねる。並びは発生時刻の昇順。
 
     直前のイベント発生時刻から `window_seconds` 以内に始まるイベントを同じ
-    ストリークへ連鎖させる (3 秒刻みの 3 件は 1 本、6 秒離れた 2 件は 2 本)。
+    ストリークへ連鎖させる (3 秒刻みの 3 件は 1 本、11 秒離れた 2 件は 2 本)。
     非有限の発生時刻を持つイベントは捨てる。
+
+    **`match_index` が変わったら必ず切る。** 連続する試合の最終イベントと
+    次の試合の最初のイベントは、試合間の暗転が短いと窓に収まってしまう。
+    またいで束ねると `Streak.match_index` が片方の試合を名乗り、L7 の
+    クリップ範囲が別試合をまたぐ。
     """
     if not math.isfinite(window_seconds) or window_seconds < 0:
         raise ValueError("window_seconds must be a finite non-negative number")
@@ -247,7 +252,12 @@ def group_streaks(
     )
     groups: list[list[ScoringEvent]] = []
     for event in ordered:
-        if groups and event.start - groups[-1][-1].start <= window_seconds:
+        previous = groups[-1][-1] if groups else None
+        if (
+            previous is not None
+            and event.match_index == previous.match_index
+            and event.start - previous.start <= window_seconds
+        ):
             groups[-1].append(event)
         else:
             groups.append([event])
