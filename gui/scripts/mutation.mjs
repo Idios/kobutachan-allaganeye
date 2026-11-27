@@ -42,10 +42,10 @@ const markerPath = join(stateDir, 'full-run.json');
 // (`.mutator/` は gitignore された実行キャッシュなので CI には存在しない)。
 const baselinePath = join(root, 'mutation-baseline.json');
 
-// 差分の基準。この repo の作業ブランチは release ごとに変わるので、
-// 必要なら MUTATION_SINCE で上書きする (docs/testing-guide.md 参照)。
-// 上書き値は「前回の計測以降に変わったソースをすべて含むか」を git で検証し、
-// 含まなければ既定の base に戻す (それも駄目なら full run)。
+// 差分の基準。既定は **前回の計測時点の commit** (台帳 / marker の `head`)。
+// そこからの差分だけを測れば「前回の計測 + 今回の差分 = 全ソース計測済み」が
+// 保たれるので、base が前進 (develop 取り込み) しても full を強いない。
+// 上書きは MUTATION_SINCE で行う (値は `coverageOf()` が git で検証する)。
 const DEFAULT_SINCE = 'origin/develop-0.4.0';
 const requestedSince = process.env.MUTATION_SINCE ?? null;
 let since = requestedSince ?? DEFAULT_SINCE;
@@ -80,28 +80,26 @@ const hasFlag = (name) =>
 // .ts/.tsx (テスト含む。killer が変わるのも計測結果が変わる要因)。
 //
 // 設定は 2 種類に分ける。
-//   CONFIG_FILES: 「何を測るか」を決める設定。変わったら **全ソースを測り直す**
-//                 (未計測のファイルが増えうるので marker を無効化する)。
-//   INPUT_FILES:  計測結果に関わるが、変えても計測範囲は変わらない入力。
-//                 `entries` に含めて変更だけ検出し、次の差分 run で台帳を更新する
-//                 (accept の追加は通常運用なので 40 分超の full を強制しない)。
+//   CONFIG_FILES: 「何を測るか」、または**測った結果を変えうる**入力。変わったら
+//                 **全ソースを測り直す** (marker を無効化する)。
+//   INPUT_FILES:  計測結果を変えない記録物。`entries` にだけ入れて変更を検出し、
+//                 次の差分 run で台帳を更新する (full run の 40 分超を強制しない)。
 const CONFIG_FILES = [
   'mutator.config.ts',
   'vite.config.ts',
   'package.json',
   'package-lock.json',
   'tsconfig.json',
-];
-
-//   - mutator.accepted.json: accept の追加は計測結果を変えない (判定の上書き)
-//   - scripts/mutation.mjs: どの範囲を測るかの判定ロジック。差分範囲の妥当性は
-//     `coverageOf()` が git で検証する
-//   - ../schemas/metadata.schema.json: テストが読む入力 (生成型の元データ)
-const INPUT_FILES = [
-  'mutator.accepted.json',
-  join('scripts', 'mutation.mjs'),
+  // テストが読む入力 (生成型の元データ)。変わると zod / 型検査系テストの
+  // kill 結果が変わりうるので full 側に入れる (codex review 2026-11-19 P2)。
   join('..', 'schemas', 'metadata.schema.json'),
 ];
+
+//   - mutator.accepted.json: accept の追加は計測結果を変えない (判定の上書き)。
+//     日常的に変わるので full を強制しない
+//   - scripts/mutation.mjs: どの範囲を測るかの判定ロジック。差分範囲の妥当性は
+//     `coverageOf()` が git で検証する
+const INPUT_FILES = ['mutator.accepted.json', join('scripts', 'mutation.mjs')];
 
 function walkSources(dir, out) {
   if (!existsSync(dir)) return out;
@@ -110,7 +108,7 @@ function walkSources(dir, out) {
     if (entry.isDirectory()) {
       if (entry.name === 'node_modules' || entry.name === '.mutator') continue;
       walkSources(path, out);
-    } else if (/\.(ts|tsx)$/.test(entry.name)) {
+    } else {
       out.push(path);
     }
   }
@@ -133,14 +131,18 @@ function hashFiles(paths) {
 }
 
 function currentSources() {
-  const sourceFiles = walkSources(join(root, 'src'), []);
+  // mutation の対象 (.ts/.tsx) と、freshness の追跡対象 (src 配下の全 file) を
+  // 分ける。テストが直接読む file (CSS / JSON fixture 等) も追跡しないと、
+  // それを変えただけで `FRESH` を返してしまう (codex review 2026-11-19 P2)。
+  const trackedSrc = walkSources(join(root, 'src'), []);
+  const sourceFiles = trackedSrc.filter((path) => /\.(ts|tsx)$/.test(path));
   const existing = (names) =>
     names.map((name) => join(root, name)).filter((path) => existsSync(path));
   const sources = hashFiles(sourceFiles);
-  // `entries` は src だけでなく、計測結果に効く設定 / 入力も含めて記録する
-  // (どれが変わったかを `--status` でファイル単位に出すため)。
-  // `config.hash` は CONFIG_FILES だけを対象にする (marker の有効性判定用)。
-  const tracked = hashFiles([...sourceFiles, ...existing(CONFIG_FILES), ...existing(INPUT_FILES)]);
+  // `entries` は src 全部 + 設定 + 入力。どれが変わったかを `--status` で
+  // 1 file 単位に出すため。`config.hash` は CONFIG_FILES だけを対象にする
+  // (marker の有効性判定用)。
+  const tracked = hashFiles([...trackedSrc, ...existing(CONFIG_FILES), ...existing(INPUT_FILES)]);
   return {
     sources: { count: sources.entries.length, hash: sources.hash },
     config: { hash: hashFiles(existing(CONFIG_FILES)).hash },
@@ -193,11 +195,8 @@ const LEDGER_SCHEMA_VERSION = 2;
 
 /**
  * `base` (git ref) の差分に含まれるファイルを集める。git が使えない / ref が
- * 解決できないときは null。
- *
- * 未追跡ファイルは **含めない** (`git diff` と一致させる)。mutator の `--since`
- * も `git diff <ref>` 基準なので、未追跡の新規ソースを「計測済み」と誤認すると
- * そのファイルが永久に測られなくなる。
+ * 解決できないときは null。未追跡ファイルを含めるのは mutator の `--since` と
+ * 揃えるため (mutator は未追跡 file を丸ごと計測対象にする)。
  */
 function changedSince(base) {
   const diff = spawnSync('git', ['diff', '--name-only', '--no-renames', '--relative', base, '--'], {
@@ -206,28 +205,32 @@ function changedSince(base) {
   });
   if (diff.error || diff.status !== 0) return null;
   const files = new Set();
-  for (const line of diff.stdout.split('\n')) {
+  const untracked = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], {
+    cwd: root,
+    encoding: 'utf-8',
+  });
+  const text = `${diff.stdout}\n${untracked.status === 0 ? untracked.stdout : ''}`;
+  for (const line of text.split('\n')) {
     const rel = line.trim();
     if (rel) files.add(rel.split(sep).join('/'));
   }
   return files;
 }
 
-/** git がまだ追跡していないファイル (cwd からの相対パス)。 */
-function untrackedFiles() {
-  const res = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], {
+/** `base` が `ref` の祖先 (または同一) か。判定できなければ null。 */
+function isAncestor(base, ref) {
+  const res = spawnSync('git', ['merge-base', '--is-ancestor', base, ref], {
     cwd: root,
     encoding: 'utf-8',
   });
-  if (res.error || res.status !== 0) return new Set();
-  return new Set(
-    res.stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((path) => path.split(sep).join('/')),
-  );
+  if (res.error) return null;
+  if (res.status === 0) return true;
+  if (res.status === 1) return false;
+  return null; // 128: ref が解決できない
 }
+
+/** mutation の対象になる file (src 配下の .ts/.tsx)。 */
+const MUTATABLE = /^src\/.*\.(ts|tsx)$/;
 
 /**
  * `base` が「前回の計測以降に変わったソース」をすべて含むかを調べる。
@@ -235,12 +238,38 @@ function untrackedFiles() {
  * 差分 run の結果で台帳を書いてよいのは、この条件が成り立つときだけ
  * (codex review 2026-11-19 P1)。`MUTATION_SINCE=HEAD` のように狭すぎる基準を
  * 指定すると差分が空になり、未計測のまま台帳が全ファイル現行ハッシュで埋まる。
- * 対象を `src/` に限るのは、設定 / 入力ファイルは「測る対象」ではなく
- * 「記録する対象」だから (変わっても計測漏れにはならない)。
+ *
+ * 判定は 2 段:
+ *   1) **履歴**: `base` が前回計測時の HEAD の祖先か。祖先でない (= base が前進した /
+ *      履歴を書き換えた) なら、base..HEAD の変更が差分に入らないので却下。
+ *      file 単位の差分だけでは「同じ file の別 hunk (base 側の変更)」を
+ *      取りこぼす (codex review 2026-11-19 P1)。
+ *   2) **作業ツリー**: 前回計測から内容が変わった対象 file が全部 `git diff base` に
+ *      含まれるか。未追跡の新規 file をここで弾く。
  */
 function coverageOf(base, previous, current) {
   if (!previous || !Array.isArray(previous.entries)) {
     return { ok: false, reason: '前回の計測記録 (台帳) がない' };
+  }
+  const measuredAt = previous.head;
+  if (typeof measuredAt !== 'string' || measuredAt === '') {
+    return {
+      ok: false,
+      reason: '前回の計測がどの commit で行われたか台帳に記録がない (当時のソースを特定できない)',
+    };
+  }
+  const ancestor = isAncestor(base, measuredAt);
+  if (ancestor === null) {
+    return {
+      ok: false,
+      reason: `\`${base}\` と前回計測 (${measuredAt.slice(0, 7)}) の関係を判定できない`,
+    };
+  }
+  if (!ancestor) {
+    return {
+      ok: false,
+      reason: `\`${base}\` が前回計測 (${measuredAt.slice(0, 7)}) の祖先ではない (base が前進した / 履歴が書き換わった)`,
+    };
   }
   const files = changedSince(base);
   if (files === null) {
@@ -248,18 +277,14 @@ function coverageOf(base, previous, current) {
   }
   const before = new Map(previous.entries.map((entry) => [entry.path, entry.sha256]));
   const changed = current.entries
-    .filter((entry) => entry.path.startsWith('src/') && before.get(entry.path) !== entry.sha256)
+    .filter((entry) => MUTATABLE.test(entry.path) && before.get(entry.path) !== entry.sha256)
     .map((entry) => entry.path);
   if (changed.length === 0) return { ok: true, reason: '前回の計測以降に変わったソースはない' };
   const missing = changed.filter((path) => !files.has(path));
   if (missing.length > 0) {
-    const untracked = untrackedFiles();
-    const hint = missing.some((path) => untracked.has(path))
-      ? '。新規ファイルは git add してから実行してください'
-      : '';
     return {
       ok: false,
-      reason: `\`${base}\` の差分に含まれない変更が ${missing.length} 件ある (例: ${missing[0]})${hint}`,
+      reason: `\`${base}\` の差分に含まれない変更が ${missing.length} 件ある (例: ${missing[0]})`,
     };
   }
   return { ok: true, reason: '' };
@@ -334,7 +359,7 @@ function printStatus() {
       ? ` / 全ソース ${full.mutants} mutants (${full.survived ?? '?'} survived)`
       : '';
     console.error(
-      `[mutation] 計測済みの範囲: ${baseline.completedAt} mode=${baseline.mode ?? 'full'} (status ${baseline.status}${totals})`,
+      `[mutation] 計測済みの範囲: ${baseline.completedAt} (${String(baseline.head ?? '?').slice(0, 7)}) mode=${baseline.mode ?? 'full'} (status ${baseline.status}${totals})`,
     );
   }
   console.error(`[mutation] 判定: ${state.fresh ? 'FRESH' : 'STALE'} — ${state.reason}`);
@@ -412,11 +437,23 @@ const scoped = partialFlags.some(hasFlag);
 // 現状のハッシュは 1 回だけ取る (run 後に取り直すと「測った時点のソース」を
 // 記録できない)。
 const current = currentSources();
+const ledger = readBaseline();
 const markerState = readMarker();
 const markerValid = isValidMarker(markerState);
-// 設定 (ランナー / include scope / 依存) が変わっていたら差分では足りない。
-// 未計測のファイルが増える可能性があるので full に戻す。
+// 設定 (ランナー / include scope / 依存 / テスト入力) が変わっていたら
+// 差分では足りない。未計測 / 再計測が必要な file が増えるので full に戻す。
 const configChanged = markerValid && markerState.config.hash !== current.config.hash;
+
+// 差分の基準の既定値 = **前回の計測時点の commit** (台帳 > marker の順)。
+// そこからの差分だけを測れば「前回の計測 + 今回の差分 = 全ソース計測済み」が
+// 成り立つ。release base を基準にすると、base が前進 (develop の取り込み) した
+// ときに「base の変更が差分に入らない」ため full が避けられない (codex review
+// 2026-11-19 P1)。
+const measuredAt =
+  [ledger?.head, markerState?.head].find((head) => typeof head === 'string' && head !== '') ?? null;
+const fallbackSince = measuredAt ?? DEFAULT_SINCE;
+if (requestedSince === null) since = fallbackSince;
+const previousState = ledger ?? markerState;
 
 // 差分モードの条件を 1 か所で決める。台帳に「全ソース計測済み」と書けるのは
 // 次のすべてを満たすときだけ:
@@ -432,19 +469,19 @@ if (!scoped && !forceFull) {
   if (!markerValid) {
     fullReason = markerState === null ? null : 'marker が壊れている / 旧形式';
   } else if (configChanged) {
-    fullReason = '設定 / 依存が変わった (計測対象が変わりうる)';
+    fullReason = '設定 / 依存 / テスト入力が変わった (未計測の mutant が増えうる)';
   } else {
-    const coverage = coverageOf(since, readBaseline() ?? markerState, current);
+    const coverage = coverageOf(since, previousState, current);
     if (coverage.ok) {
       diffMode = true;
-    } else if (requestedSince !== null && requestedSince !== DEFAULT_SINCE) {
-      // 明示された基準が狭すぎる場合、既定の base で覆えるならそちらを使う
+    } else if (requestedSince !== null && since !== fallbackSince) {
+      // 明示された基準が使えない場合、前回計測時点で覆えるならそちらを使う
       // (いきなり 40 分超の全ソース run に落ちないように)。
-      const fallback = coverageOf(DEFAULT_SINCE, readBaseline() ?? markerState, current);
+      const fallback = coverageOf(fallbackSince, previousState, current);
       if (fallback.ok) {
         diffMode = true;
-        fallbackNotice = `MUTATION_SINCE=${requestedSince} は計測範囲を網羅しないため ${DEFAULT_SINCE} を使います (${coverage.reason})`;
-        since = DEFAULT_SINCE;
+        fallbackNotice = `MUTATION_SINCE=${requestedSince} は計測範囲を網羅しないため ${fallbackSince.slice(0, 7)} (前回計測時点) を基準にします (${coverage.reason})`;
+        since = fallbackSince;
       } else {
         fullReason = `差分の基準を決められない: ${fallback.reason}`;
       }
@@ -623,6 +660,9 @@ if (certifying && completed) {
         {
           schemaVersion: LEDGER_SCHEMA_VERSION,
           completedAt,
+          // 計測時点の commit。差分の基準 (`--since`) がこの commit の祖先かを
+          // `coverageOf()` が検証する (差分範囲の妥当性の根拠)。
+          head: (head.stdout ?? '').trim(),
           mode: runMode,
           status,
           sources: current.sources,

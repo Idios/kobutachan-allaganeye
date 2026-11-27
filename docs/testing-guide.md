@@ -466,22 +466,24 @@ $ npm run test:mutation:status
 | --- | --- |
 | `completedAt` / `mode` / `status` | 計測日時 / `full` か `incremental` か / mutator の終了コード |
 | `sources` | `src/**/*.{ts,tsx}`（**テスト含む**）の件数と内容ハッシュ |
-| `config` | **計測対象を決める** 5 file（`mutator.config.ts` / `vite.config.ts` / `package{,-lock}.json` / `tsconfig.json`）の内容ハッシュ |
-| `entries` | 追跡対象 1 file ごとの path + sha256。src に加えて config と**入力 file**（`mutator.accepted.json` / `scripts/mutation.mjs` / `../schemas/metadata.schema.json`）も含む |
+| `config` | **計測対象 / 結果を決める** file（`mutator.config.ts` / `vite.config.ts` / `package{,-lock}.json` / `tsconfig.json` / `../schemas/metadata.schema.json`）の内容ハッシュ |
+| `head` | 計測時点の commit。次の差分の基準（`--since`）に使い、その値の妥当性を git で検証する |
+| `entries` | 追跡対象 1 file ごとの path + sha256。**src 配下の全 file**（`.ts` / `.tsx` に加えてテストが読む CSS / JSON 等）と config / 入力 file を含む |
 | `fullRun` | 直近の**全ソース**計測の集計（差分 run でもこの値は引き継ぐ） |
 | `carriedFrom` | 差分 run のとき、どの計測から引き継いだか |
 
 - **テストファイルもハッシュ対象**。テストを変えると killer が変わるので、
   「ソース不変なら再計測不要」の判定にテスト変更を含めないと嘘になる
+- テストが直接読む file（`src/styles/tokens.css` 等）も `entries` に含める。
+  これがないと、CSS を変えただけで `FRESH` を返してしまう（codex review 2026-11-19 P2）
 - 改行コードは LF に正規化してからハッシュする（Windows の CRLF checkout と CI の LF で
   同じ値になるように。これがないと CI が常に STALE になる）
 - `config` ハッシュが変わったら `--since` を付けず**自動で full に戻す**（include scope /
-  ランナー / 依存が変わると計測対象自体が変わるため）
-- **設定は 2 種類に分ける**。スコープを決める 5 file は `config`（full を強制）、
-  `mutator.accepted.json` / `scripts/mutation.mjs` / `schemas/metadata.schema.json` は
-  `entries` にだけ入れて **full を強制しない**。accept の追加は通常運用（計測結果自体は
-  変わらない）なので、そのたびに 48 分の full run を強いるのは過剰。変更は `STALE` として
-  検出され、次の差分 run で台帳に記録される
+  ランナー / 依存 / テスト入力が変わると、未計測 / 再計測が必要な mutant が生じるため）
+- **設定は 2 種類に分ける**。`config`（上の 6 file）は full を強制、
+  `mutator.accepted.json` と `scripts/mutation.mjs` は `entries` にだけ入れて
+  **full を強制しない**（accept は通常運用で、計測結果自体を変えないため）。
+  変更は `STALE` として検出され、次の差分 run で台帳に記録される
 - `schemaVersion` が想定外なら **STALE**（未知 / 旧形式の台帳を FRESH と誤認しない）
 - 差分 run でも台帳は更新する（「前回の台帳 + 今回の差分 = 全ソース計測済み」が成り立つ）。
   一方 `.mutator/full-run.json` は**全ソース run のときだけ**書く
@@ -500,9 +502,9 @@ $ npm run test:mutation:status
 | 状態 | 実行内容 |
 | --- | --- |
 | ローカル marker なし / **marker が壊れている・旧形式** | 全ソース（`--since` を付けない）。完走で marker と台帳を書く（marker は**存在だけでなく中身を検証**する。壊れた marker を掴むと未計測のまま差分モードに入るため） |
-| marker あり・差分の基準が変更を網羅 | **2 pass**: ① `--since ${MUTATION_SINCE:-origin/develop-0.4.0} --fail-on-survived`（変更ソースのゲート）② `--since … --include-test-changes`（テスト変更分も計測して台帳更新） |
-| marker の `config` ハッシュが不一致 | 全ソース（設定変更で計測対象が変わるため） |
-| `--since` の基準が前回計測以降の変更を網羅しない | 全ソース。`MUTATION_SINCE` の上書き値が狭すぎる場合は既定の base に戻して再判定する |
+| marker あり・差分の基準が変更を網羅 | **2 pass**: ① `--since <前回計測時点の commit> --fail-on-survived`（変更ソースのゲート）② `--since … --include-test-changes`（テスト変更分も計測して台帳更新） |
+| marker の `config` ハッシュが不一致 | 全ソース（設定 / 依存 / テスト入力の変更で再計測が必要になるため） |
+| `--since` の基準が前回計測以降の変更を網羅しない | 全ソース。`MUTATION_SINCE` の上書き値が使えない場合は**前回計測時点の commit** に戻して再判定する |
 | `--include` / `--exclude` / `--only` / `--since` を明示 | そのまま渡す（marker も台帳も触らない） |
 | `--reporter` を明示（差分モード） | 1 pass（`--since --include-test-changes`）。**台帳は更新しない**（ゲートを挟まないため） |
 | `--time-budget` / `--mutants-per-line` / `--shard` を明示 | 全ソース（`--since` を付けない）。**marker も台帳も書かない**（`Pending` が残るため） |
@@ -522,11 +524,21 @@ codex adversarial-review 2026-11-19 P1）。**未完走のまま kill すると 
 （Ctrl+C / タイムアウト kill で 48 分を 2 回捨てた実例あり）。区切るなら `--time-budget`
 を使い、最後に 1 回完走させて台帳を書かせる。
 
-**差分の基準の妥当性検証**: `--since` は「前回の計測以降に変わった `src/**` が
-`git diff <base>` に含まれるか」を確かめてから使う。`MUTATION_SINCE=HEAD` のような狭すぎる指定で
-差分が空になり、未計測のまま台帳が全ファイル現行ハッシュで埋まるのを防ぐ（codex review 2026-11-19 P1）。
-未追跡の新規ファイルは `--since` の対象になる（mutator が `git ls-files --others` を含める）が、
-`git add` 前は `git diff` に出ないため検証では弾かれる（メッセージで `git add` を促す）。
+**差分の基準は「前回の計測時点の commit」**（台帳 / marker の `head`）を使う。release base（`origin/develop-x.y.z`）
+を基準にすると、base が前進（develop の取り込み）したときに「base 側の変更が差分に入らない」ため
+full run が避けられない。前回計測の commit を基準にすれば、「前回の計測 + 今回の差分 = 全ソース計測済み」
+が常に成り立つ（差分の基準は `npm run test:mutation -- --plan` で見られる）。
+
+**基準の妥当性検証**は 2 段。どちらかが崩れたら full run に落とす（codex review 2026-11-19 P1）。
+
+1. **履歴**: 基準が前回計測時点の commit の祖先（または同一）か。祖先でない（base が前進した /
+   履歴を書き換えた）なら、その間の変更が差分に入らないので却下。file 単位の差分だけでは
+   「同じ file の別 hunk（base 側の変更）」を取りこぼす
+2. **作業ツリー**: 前回計測から内容が変わった**計測対象**（`src/**/*.{ts,tsx}`）が全部
+   `git diff <base>`（未追跡 file を含む）にあるか
+
+`MUTATION_SINCE` で明示指定した値が検証を通らない場合は、前回計測時点の commit に戻して再判定する
+（いきなり 40 分超の full run に落ちないように）。
 
 > **削除だけの差分は 0 件になる**: mutator の `--since` は「新しい側の行」に立つ mutant を選ぶ。
 > デッドコード削除だけの PR では 1 pass 目（ゲート）が `0 in the diff` になり、ゲートは実質空振りする
@@ -636,7 +648,7 @@ skill 本文は upstream のまま（`--dir` の 1 文だけ修正）なので�
 | skill の記述 | この repo では |
 | --- | --- |
 | 「project root で `npx mutator ...`」 | **`cd gui` で実行する**（mutation の対象は `gui/`。`mutator.config.ts` と `mutator.accepted.json` も `gui/` 直下） |
-| `--since <base>` の base は「usually `main`」 | `origin/develop-x.y.z`（現在は `origin/develop-0.4.0`）。`npm run test:mutation` 経由なら自動で入る |
+| `--since <base>` の base は「usually `main`」 | wrapper は**前回計測時点の commit** を自動で入れる（`MUTATION_SINCE` で上書き可、検証あり）。手で回すときは `--since origin/develop-x.y.z` でもよいが、直前の計測を無駄にしないなら wrapper 経由が良い |
 | `--since <base>`（step 1） | **テストを変えたときは `--include-test-changes` を付ける**（wrapper は 2 pass 目で自動的に付ける）。付けないとテスト変更だけの差分が 0 件になり、追加したテストが検証されない（2026-11-26 実測: 0 件 vs 1,028 件） |
 | `--fail-on-survived` | wrapper の 1 pass 目（変更ソース）で付与する。skill の step 1 には無いので、skill だけで回すときは `--fail-on-survived` を足す |
 | `references/ci.md` の GitHub Action | **不採用**。計測は 1 時間規模なので CI では回さず、**台帳のハッシュ比較だけ**をゲートにする |
