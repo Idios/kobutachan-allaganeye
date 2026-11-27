@@ -136,12 +136,11 @@ function hashFiles(paths) {
     // テキスト判定を拡張子で行うのは、バイナリを UTF-8 に変換すると
     // 不正バイトが U+FFFD に潰れて別内容が同じハッシュになるため (codex review
     // 2026-11-19 P2)。
-    const raw = readFileSync(path);
     // symlink は **リンク文字列** をハッシュする。リンク先の内容を読むと、git から
-    // 見て無変更なのにハッシュが変わる (dirty 判定と commit 同定の穴になる。
-    // codex review 2026-11-19 P2)。
+    // 見て無変更なのにハッシュが変わる (dirty 判定と commit 同定の穴になる)。
+    // リンク文字列の前に種別を付け、同じ内容の通常 file とも区別する。
     const isLink = lstatSync(path).isSymbolicLink();
-    const bytes = isLink ? Buffer.from(readlinkSync(path), 'utf-8') : raw;
+    const bytes = isLink ? Buffer.from(`link\0${readlinkSync(path)}`, 'utf-8') : readFileSync(path);
     const content =
       !isLink && TEXT_FILE.test(path)
         ? Buffer.from(bytes.toString('utf-8').replace(/\r\n/g, '\n'), 'utf-8')
