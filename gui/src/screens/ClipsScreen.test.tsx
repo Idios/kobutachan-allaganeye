@@ -33,7 +33,6 @@ import {
   DEFAULT_MARGIN_SECONDS,
   collectClipCandidates,
   groupClipCandidates,
-  parseMargins,
   planClipWindows,
   validateMargins,
 } from './ClipsScreen';
@@ -363,11 +362,10 @@ describe('planClipWindows (CLI plan_clips の鏡)', () => {
   });
 });
 
-describe('validateMargins / parseMargins', () => {
+describe('validateMargins', () => {
   it('accepts 0 and positive decimal seconds', () => {
     expect(validateMargins('0', '10')).toBeNull();
     expect(validateMargins('2.5', '0.5')).toBeNull();
-    expect(parseMargins(' 3 ', '4.5')).toEqual({ pre: 3, post: 4.5 });
   });
 
   it('rejects negative / non-numeric / empty / exponent', () => {

@@ -234,14 +234,6 @@ export function validateMargins(
   return null;
 }
 
-/** 検証済みの入力を数値にする。 */
-export function parseMargins(
-  preText: string,
-  postText: string,
-): { pre: number; post: number } {
-  return { pre: Number(preText.trim()), post: Number(postText.trim()) };
-}
-
 /**
  * 束ね幅 (`--gap`) の client-side 検証。CLI は 0 以上の有限値しか受け付けない。
  * 問題なければ null。
