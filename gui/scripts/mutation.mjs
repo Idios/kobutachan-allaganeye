@@ -11,10 +11,18 @@
 //
 // 使い方:
 //   npm run test:mutation                         # 初回 full / 以後 diff
-//   npm run test:mutation -- --reporter simplify  # 追加引数はそのまま渡す
+//   npm run test:mutation -- --reporter simplify  # 見るだけ (台帳は更新しない)
 //   MUTATION_FULL=1 npm run test:mutation         # marker があっても full
 //   MUTATION_SINCE=origin/main npm run test:mutation  # 差分の基準を変える
 //   npm run test:mutation -- --include 'src/utils/*.ts'  # 部分実行 (marker は触らない)
+//
+// 計測台帳 (`gui/mutation-baseline.json`) を更新してよいのは「全ソースを測った
+// ことが確かな run」だけ。次のどれかに当たるときは台帳を書かない
+// (codex review 2026-11-19 の P1 群はすべてこの 1 本の規則の穴だった):
+//   - 部分実行 / 明示指定 (`--include` / `--since` / `--runner` など)
+//   - `--reporter` 付きの差分 run (ゲートを挟まずに測るため)
+//   - 変更ソースに survivor が残って `--fail-on-survived` で止まった run
+//   - 差分の基準 (`--since`) が「前回の計測以降の変更」を網羅していない run
 //
 // Windows でも `npx` のシェル差異を踏まないよう、CLI の JS を node で直接起動する。
 //
@@ -22,13 +30,7 @@
 // JSON など機械可読な出力に譲る (`> .mutator/agent.json` でそのまま保存できるように)。
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,11 +44,26 @@ const baselinePath = join(root, 'mutation-baseline.json');
 
 // 差分の基準。この repo の作業ブランチは release ごとに変わるので、
 // 必要なら MUTATION_SINCE で上書きする (docs/testing-guide.md 参照)。
-const since = process.env.MUTATION_SINCE ?? 'origin/develop-0.4.0';
+// 上書き値は「前回の計測以降に変わったソースをすべて含むか」を git で検証し、
+// 含まなければ既定の base に戻す (それも駄目なら full run)。
+const DEFAULT_SINCE = 'origin/develop-0.4.0';
+const requestedSince = process.env.MUTATION_SINCE ?? null;
+let since = requestedSince ?? DEFAULT_SINCE;
 
 const argv = process.argv.slice(2);
 const forceFull = process.env.MUTATION_FULL === '1' || argv.includes('--full');
-const passthrough = argv.filter((arg) => arg !== '--full');
+
+// wrapper が自分で組み立てる指定。利用者が渡しても二重に付けないよう取り除く。
+// `--no-fail-on-survived` は差分モードのゲートを消せてしまうので受理しない
+// (fail-closed)。
+const MANAGED_FLAGS = new Set([
+  '--fail-on-survived',
+  '--no-fail-on-survived',
+  '--include-test-changes',
+]);
+const requestedNoGate = argv.includes('--no-fail-on-survived');
+const requestedGate = argv.includes('--fail-on-survived');
+const passthrough = argv.filter((arg) => arg !== '--full' && !MANAGED_FLAGS.has(arg));
 
 const hasFlag = (name) =>
   passthrough.some((arg) => arg === name || arg.startsWith(`${name}=`)) ||
@@ -60,15 +77,30 @@ const hasFlag = (name) =>
 //  docs/testing-guide.md §GUI mutation testing)。
 //
 // ハッシュ対象は保守的に「mutation の対象になりうるもの全部」= src 配下の
-// .ts/.tsx (テスト含む。killer が変わるのも計測結果が変わる要因) と、
-// ランナー/設定 (config + vite + package)。設定が変わったら scope が
-// 変わった可能性があるので **marker を無効化して full に戻す**。
+// .ts/.tsx (テスト含む。killer が変わるのも計測結果が変わる要因)。
+//
+// 設定は 2 種類に分ける。
+//   CONFIG_FILES: 「何を測るか」を決める設定。変わったら **全ソースを測り直す**
+//                 (未計測のファイルが増えうるので marker を無効化する)。
+//   INPUT_FILES:  計測結果に関わるが、変えても計測範囲は変わらない入力。
+//                 `entries` に含めて変更だけ検出し、次の差分 run で台帳を更新する
+//                 (accept の追加は通常運用なので 40 分超の full を強制しない)。
 const CONFIG_FILES = [
   'mutator.config.ts',
   'vite.config.ts',
   'package.json',
   'package-lock.json',
   'tsconfig.json',
+];
+
+//   - mutator.accepted.json: accept の追加は計測結果を変えない (判定の上書き)
+//   - scripts/mutation.mjs: どの範囲を測るかの判定ロジック。差分範囲の妥当性は
+//     `coverageOf()` が git で検証する
+//   - ../schemas/metadata.schema.json: テストが読む入力 (生成型の元データ)
+const INPUT_FILES = [
+  'mutator.accepted.json',
+  join('scripts', 'mutation.mjs'),
+  join('..', 'schemas', 'metadata.schema.json'),
 ];
 
 function walkSources(dir, out) {
@@ -102,15 +134,17 @@ function hashFiles(paths) {
 
 function currentSources() {
   const sourceFiles = walkSources(join(root, 'src'), []);
-  const configFiles = CONFIG_FILES.map((name) => join(root, name)).filter((p) =>
-    existsSync(p),
-  );
+  const existing = (names) =>
+    names.map((name) => join(root, name)).filter((path) => existsSync(path));
   const sources = hashFiles(sourceFiles);
-  const config = hashFiles(configFiles);
+  // `entries` は src だけでなく、計測結果に効く設定 / 入力も含めて記録する
+  // (どれが変わったかを `--status` でファイル単位に出すため)。
+  // `config.hash` は CONFIG_FILES だけを対象にする (marker の有効性判定用)。
+  const tracked = hashFiles([...sourceFiles, ...existing(CONFIG_FILES), ...existing(INPUT_FILES)]);
   return {
     sources: { count: sources.entries.length, hash: sources.hash },
-    config: { hash: config.hash },
-    entries: sources.entries,
+    config: { hash: hashFiles(existing(CONFIG_FILES)).hash },
+    entries: tracked.entries,
   };
 }
 
@@ -123,6 +157,28 @@ function readMarker() {
   }
 }
 
+/**
+ * marker の中身を検証する。**存在チェックだけでは不十分** (codex review
+ * 2026-11-19 P1): 壊れた / 旧形式の marker を掴むと「全ソースを測っていない」
+ * のに差分モードに入り、未計測のまま台帳を書いてしまう。
+ */
+function isValidMarker(marker) {
+  if (marker === null || typeof marker !== 'object') return false;
+  if (!Number.isInteger(marker.version) || marker.version < 2) return false;
+  if (typeof marker.completedAt !== 'string') return false;
+  if (!marker.sources || !Number.isInteger(marker.sources.count)) return false;
+  if (typeof marker.sources.hash !== 'string') return false;
+  if (!marker.config || typeof marker.config.hash !== 'string') return false;
+  if (!Array.isArray(marker.entries)) return false;
+  return marker.entries.every(
+    (entry) =>
+      entry !== null &&
+      typeof entry === 'object' &&
+      typeof entry.path === 'string' &&
+      typeof entry.sha256 === 'string',
+  );
+}
+
 function readBaseline() {
   if (!existsSync(baselinePath)) return null;
   try {
@@ -130,6 +186,83 @@ function readBaseline() {
   } catch {
     return null;
   }
+}
+
+/** 台帳の形式。entries の構成 (設定 / 入力も含む) を変えたら bump する。 */
+const LEDGER_SCHEMA_VERSION = 2;
+
+/**
+ * `base` (git ref) の差分に含まれるファイルを集める。git が使えない / ref が
+ * 解決できないときは null。
+ *
+ * 未追跡ファイルは **含めない** (`git diff` と一致させる)。mutator の `--since`
+ * も `git diff <ref>` 基準なので、未追跡の新規ソースを「計測済み」と誤認すると
+ * そのファイルが永久に測られなくなる。
+ */
+function changedSince(base) {
+  const diff = spawnSync('git', ['diff', '--name-only', '--no-renames', '--relative', base, '--'], {
+    cwd: root,
+    encoding: 'utf-8',
+  });
+  if (diff.error || diff.status !== 0) return null;
+  const files = new Set();
+  for (const line of diff.stdout.split('\n')) {
+    const rel = line.trim();
+    if (rel) files.add(rel.split(sep).join('/'));
+  }
+  return files;
+}
+
+/** git がまだ追跡していないファイル (cwd からの相対パス)。 */
+function untrackedFiles() {
+  const res = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], {
+    cwd: root,
+    encoding: 'utf-8',
+  });
+  if (res.error || res.status !== 0) return new Set();
+  return new Set(
+    res.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((path) => path.split(sep).join('/')),
+  );
+}
+
+/**
+ * `base` が「前回の計測以降に変わったソース」をすべて含むかを調べる。
+ *
+ * 差分 run の結果で台帳を書いてよいのは、この条件が成り立つときだけ
+ * (codex review 2026-11-19 P1)。`MUTATION_SINCE=HEAD` のように狭すぎる基準を
+ * 指定すると差分が空になり、未計測のまま台帳が全ファイル現行ハッシュで埋まる。
+ * 対象を `src/` に限るのは、設定 / 入力ファイルは「測る対象」ではなく
+ * 「記録する対象」だから (変わっても計測漏れにはならない)。
+ */
+function coverageOf(base, previous, current) {
+  if (!previous || !Array.isArray(previous.entries)) {
+    return { ok: false, reason: '前回の計測記録 (台帳) がない' };
+  }
+  const files = changedSince(base);
+  if (files === null) {
+    return { ok: false, reason: `\`${base}\` を git の ref として解決できない` };
+  }
+  const before = new Map(previous.entries.map((entry) => [entry.path, entry.sha256]));
+  const changed = current.entries
+    .filter((entry) => entry.path.startsWith('src/') && before.get(entry.path) !== entry.sha256)
+    .map((entry) => entry.path);
+  if (changed.length === 0) return { ok: true, reason: '前回の計測以降に変わったソースはない' };
+  const missing = changed.filter((path) => !files.has(path));
+  if (missing.length > 0) {
+    const untracked = untrackedFiles();
+    const hint = missing.some((path) => untracked.has(path))
+      ? '。新規ファイルは git add してから実行してください'
+      : '';
+    return {
+      ok: false,
+      reason: `\`${base}\` の差分に含まれない変更が ${missing.length} 件ある (例: ${missing[0]})${hint}`,
+    };
+  }
+  return { ok: true, reason: '' };
 }
 
 /** 台帳 (baseline) と現状を比べる。fresh なら再計測不要。 */
@@ -142,7 +275,22 @@ function freshness() {
       changes: [],
     };
   }
-  if (!baseline.sources || !baseline.config) {
+  if (baseline.schemaVersion !== LEDGER_SCHEMA_VERSION) {
+    return {
+      fresh: false,
+      reason: `台帳の形式が想定外 (schemaVersion ${JSON.stringify(
+        baseline.schemaVersion,
+      )}、期待 ${LEDGER_SCHEMA_VERSION})`,
+      changes: [],
+      baseline,
+    };
+  }
+  if (
+    !baseline.sources ||
+    !baseline.config ||
+    typeof baseline.config.hash !== 'string' ||
+    !Array.isArray(baseline.entries)
+  ) {
     return {
       fresh: false,
       reason: 'baseline が旧形式 (計測対象のハッシュなし)',
@@ -196,7 +344,9 @@ function printStatus() {
     if (state.changes.length > 40) console.error(`  … ${state.changes.length - 40} more`);
   }
   console.error('[mutation] 次にやること: cd gui && npm run test:mutation');
-  console.error('  (差分だけ計測し、計測結果を gui/mutation-baseline.json に書き戻します。commit してください)');
+  console.error(
+    '  (差分だけ計測し、計測結果を gui/mutation-baseline.json に書き戻します。commit してください)',
+  );
   console.error(
     '  (変更したソースに検出されない mutant が残っていると --fail-on-survived で止まり、台帳も更新されません)',
   );
@@ -220,13 +370,15 @@ const informational =
   (positional !== undefined && SUBCOMMANDS.has(positional));
 
 // 部分実行 / 明示的な差分指定 / 実効設定が argv から分からない指定。
-// marker もモードも変えない (そのまま渡す)。
+// これらが付いた run は **台帳も marker も書かない** (そのまま mutator へ渡す)。
 // `--time-budget` / `--mutants-per-line` / `--shard` を入れるのは重要: これらを
 // 付けた full run は mutant を Pending のまま残すので、「全ソースを測った」
 // 証拠にならない (codex review 2026-11-19 P1)。
 // `--config-file` (制限が設定側に書かれうる) と `--root` (別 project を測る) は
 // 実効スコープを argv から確定できないので、保守的に marker を書かない
 // (codex review 2026-11-19 P2)。
+// テストランナー / mutator 集合 / 計測粒度を差し替える指定も「何を測るか」を
+// 変えるので同じ扱い (codex review 2026-11-19 P1)。
 const partialFlags = [
   '--include',
   '--exclude',
@@ -237,17 +389,71 @@ const partialFlags = [
   '--shard',
   '--root',
   '--config-file',
+  '--runner',
+  '--config',
+  '--jest-config',
+  '--playwright-config',
+  '--exclude-mutator',
+  '--plugin',
+  '--scope',
+  '--experimental-callgraph',
+  '--full-dry-run',
+  '--shared-cache',
+  '--no-arid',
+  '--arid-callee',
+  '--no-weak-mutation',
+  '--typecheck',
+  '--no-typecheck',
+  '--critical',
+  '--threshold-break',
 ];
 const scoped = partialFlags.some(hasFlag);
 
-const hasFullRun = existsSync(markerPath);
-const marker = readMarker();
+// 現状のハッシュは 1 回だけ取る (run 後に取り直すと「測った時点のソース」を
+// 記録できない)。
+const current = currentSources();
+const markerState = readMarker();
+const markerValid = isValidMarker(markerState);
 // 設定 (ランナー / include scope / 依存) が変わっていたら差分では足りない。
 // 未計測のファイルが増える可能性があるので full に戻す。
-const configChanged =
-  hasFullRun && marker?.config?.hash !== undefined
-    ? marker.config.hash !== currentSources().config.hash
-    : false;
+const configChanged = markerValid && markerState.config.hash !== current.config.hash;
+
+// 差分モードの条件を 1 か所で決める。台帳に「全ソース計測済み」と書けるのは
+// 次のすべてを満たすときだけ:
+//   a) 部分実行 / 明示指定ではない
+//   b) この端末に **検証済みの**全ソース marker がある (壊れた marker を掴まない)
+//   c) 計測対象を決める設定が変わっていない
+//   d) 差分の基準 (`--since`) が前回の計測以降の変更を網羅している
+//      (MUTATION_SINCE の狭すぎる基準を拒否する。codex review 2026-11-19 P1)
+let diffMode = false;
+let fallbackNotice = null;
+let fullReason = null;
+if (!scoped && !forceFull) {
+  if (!markerValid) {
+    fullReason = markerState === null ? null : 'marker が壊れている / 旧形式';
+  } else if (configChanged) {
+    fullReason = '設定 / 依存が変わった (計測対象が変わりうる)';
+  } else {
+    const coverage = coverageOf(since, readBaseline() ?? markerState, current);
+    if (coverage.ok) {
+      diffMode = true;
+    } else if (requestedSince !== null && requestedSince !== DEFAULT_SINCE) {
+      // 明示された基準が狭すぎる場合、既定の base で覆えるならそちらを使う
+      // (いきなり 40 分超の全ソース run に落ちないように)。
+      const fallback = coverageOf(DEFAULT_SINCE, readBaseline() ?? markerState, current);
+      if (fallback.ok) {
+        diffMode = true;
+        fallbackNotice = `MUTATION_SINCE=${requestedSince} は計測範囲を網羅しないため ${DEFAULT_SINCE} を使います (${coverage.reason})`;
+        since = DEFAULT_SINCE;
+      } else {
+        fullReason = `差分の基準を決められない: ${fallback.reason}`;
+      }
+    } else {
+      fullReason = `差分の基準が計測範囲を網羅しない: ${coverage.reason}`;
+    }
+  }
+}
+
 // 差分モードは **2 pass** 回す:
 //   1) 変更したソースの殺し漏れをゲート: `--since <base> --fail-on-survived`
 //      ここで survivor が残ると **完走扱いにせず台帳も書かない** ので、
@@ -258,41 +464,61 @@ const configChanged =
 //        `--include-test-changes` を入れると、変えたテストが触る関数の
 //        **既存** survivor までゲート対象になる。この repo では 125 件あり、
 //        無関係なテスト編集を止めてしまう。ゲートは「今回変えたソース」に限定する）
-const diffMode = !scoped && !forceFull && hasFullRun && !configChanged;
-// `--reporter` を明示されたら 1 pass だけ回す。`--reporter agent` は stdout に
+//
+// `--reporter` を明示されたら 1 pass で回す。`--reporter agent` は stdout に
 // JSON を 1 つだけ吐く前提なので、2 pass にすると JSON が 2 つ並んで壊れる。
-// この場合はゲートなし (gaps の確認用) で、台帳だけ更新する。
-const singleReporterPass = hasFlag('--reporter');
+// ただし **ゲートなしで回る**ので、この run では台帳を書かない (書くと
+// `--reporter` を付けるだけでゲートを迂回できてしまう。codex review 2026-11-19 P1)。
+const reporterExplicit = hasFlag('--reporter');
+const certifying = !informational && !scoped && !(diffMode && reporterExplicit);
 const runs = diffMode
-  ? singleReporterPass
+  ? reporterExplicit
     ? [['--since', since, '--include-test-changes']]
     : [
         ['--since', since, '--fail-on-survived'],
         ['--since', since, '--include-test-changes'],
       ]
-  : [[]];
+  : [[...(requestedGate && !requestedNoGate ? ['--fail-on-survived'] : [])]];
 
 if (informational) {
   console.error('[mutation] 引数を表示/検証するだけで実行しません');
-} else if (scoped || forceFull) {
+} else if (scoped) {
+  console.error('[mutation] 部分実行 / 明示指定: そのまま渡します (計測台帳は更新しません)');
+} else if (forceFull) {
+  console.error('[mutation] 全ソースを対象にします (MUTATION_FULL / --full)');
+} else if (!markerValid) {
   console.error(
-    forceFull
-      ? '[mutation] 全ソースを対象にします (MUTATION_FULL / --full)'
-      : '[mutation] 部分実行 / 明示指定: そのまま渡します',
+    markerState === null
+      ? '[mutation] 初回実行: 全ソースを対象にします'
+      : '[mutation] 全ソース run の記録 (.mutator/full-run.json) が壊れている / 旧形式なので、全ソースを対象にします',
   );
-} else if (configChanged) {
-  console.error(
-    '[mutation] 設定 / 依存が変わったので全ソースを対象にします (計測対象が変わりうる)',
-  );
-} else if (hasFullRun) {
-  if (singleReporterPass) {
-    console.error(`[mutation] 差分のみ (--reporter 明示): --since ${since} --include-test-changes`);
+} else if (!diffMode) {
+  console.error(`[mutation] 全ソースを対象にします — ${fullReason}`);
+} else {
+  if (fallbackNotice !== null) console.error(`[mutation] ${fallbackNotice}`);
+  if (reporterExplicit) {
+    console.error(
+      `[mutation] 差分のみ (--reporter 明示、計測台帳は更新しません): --since ${since} --include-test-changes`,
+    );
   } else {
     console.error(`[mutation] 差分のみ (2 pass): 1) --since ${since} --fail-on-survived`);
     console.error(`[mutation]                    2) --since ${since} --include-test-changes`);
   }
-} else {
-  console.error('[mutation] 初回実行: 全ソースを対象にします');
+}
+if (!informational && !scoped && diffMode && requestedNoGate) {
+  console.error(
+    '[mutation] 差分モードのゲート (--fail-on-survived) は無効化できません (--no-fail-on-survived は無視します)',
+  );
+}
+
+// `--plan`: 実行せずに「どのモードで何を測るか」だけを表示する。
+// モード判定 (marker 検証 / config 変更 / 差分基準の網羅性) のデバッグと、
+// docs に載せる検証用 (gate の判定を実行せずに確かめられる)。
+if (argv.includes('--plan')) {
+  console.error(
+    `[mutation] plan: mode=${diffMode ? 'incremental' : 'full'} certify=${certifying} since=${since} runs=${JSON.stringify(runs)}`,
+  );
+  process.exit(0);
 }
 
 const require = createRequire(import.meta.url);
@@ -350,7 +576,12 @@ function readTotals() {
       counts[state] = (counts[state] ?? 0) + 1;
     }
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
-    return { mutants: total, killed: counts.Killed ?? 0, survived: counts.Survived ?? 0, ...counts };
+    return {
+      mutants: total,
+      killed: counts.Killed ?? 0,
+      survived: counts.Survived ?? 0,
+      ...counts,
+    };
   } catch {
     return null;
   }
@@ -361,36 +592,36 @@ function readTotals() {
 // 成り立つため (cache は関数単位。docs/testing-guide.md 参照)。
 // local の marker (`.mutator/full-run.json`) は **全ソース run のときだけ** 書く。
 // これは「この端末の cache が全ソース分揃っている」の印で、差分の基準に使う。
-if (!informational && !scoped && completed) {
+//
+// `certifying` が false の run (`--reporter` 付きの差分 / 部分実行 / 表示のみ)
+// は台帳を書かない。ここを緩めると「ゲートを通らずに certified にする」
+// 迂回路ができてしまう。
+if (certifying && completed) {
   const head = spawnSync('git', ['rev-parse', 'HEAD'], {
     cwd: root,
     encoding: 'utf-8',
   });
-  const current = currentSources();
   const thisRun = readTotals();
   const runMode = diffMode ? 'incremental' : 'full';
   const completedAt = new Date().toISOString();
   const previous = readBaseline();
   const previousFull = previous?.fullRun ?? null;
   // 台帳がまだ無い場合 (初回) は、この端末の全ソース marker の集計を引き継ぐ。
-  const marker = readMarker();
   const markerFull =
-    marker?.totals && marker.sources && marker.completedAt
-      ? { completedAt: marker.completedAt, ...marker.totals }
+    markerState?.totals && markerState.sources && markerState.completedAt
+      ? { completedAt: markerState.completedAt, ...markerState.totals }
       : null;
   // 集計値 (mutants / killed / survived) は **直近の全ソース run** のもの。
   // 差分 run の snapshot は「その run のスコープ」しか含まないので、
   // 集計を差分で上書きすると意味のない小さい数字になる。
   const fullRun =
-    runMode === 'full'
-      ? { completedAt, ...(thisRun ?? {}) }
-      : (previousFull ?? markerFull ?? null);
+    runMode === 'full' ? { completedAt, ...(thisRun ?? {}) } : (previousFull ?? markerFull ?? null);
   try {
     writeFileSync(
       baselinePath,
       `${JSON.stringify(
         {
-          schemaVersion: 1,
+          schemaVersion: LEDGER_SCHEMA_VERSION,
           completedAt,
           mode: runMode,
           status,
@@ -442,23 +673,33 @@ if (!informational && !scoped && completed) {
       console.warn(`[mutation] marker を書けませんでした: ${error.message}`);
     }
   }
-} else if (!informational && (scoped || !completed)) {
+} else if (!informational && !(certifying && completed)) {
   if (gateFailed) {
     console.error(
       '[mutation] 変更したソースに検出されていない mutant が残っています (--fail-on-survived)。',
     );
     console.error(
-      '  1) 詳細を見る: npx mutator --since ' +
-        `${since} --reporter agent > .mutator/agent.json`,
+      '  1) 詳細を見る: npx mutator --since ' + `${since} --reporter agent > .mutator/agent.json`,
     );
-    console.error('  2) トリアージ: テストを追加して殺す / デッドコードなら消す / equivalent なら accept');
+    console.error(
+      '  2) トリアージ: テストを追加して殺す / デッドコードなら消す / equivalent なら accept',
+    );
     console.error(
       '  3) もう一度 npm run test:mutation (通ると台帳が更新されます。skill `mutation-test-loop` も使えます)',
     );
   }
-  console.error(
-    '[mutation] 部分実行 / 未完走のため計測台帳は更新しません (完走するまで CI の mutation-baseline は red のまま)',
-  );
+  if (diffMode && reporterExplicit) {
+    console.error(
+      '[mutation] --reporter 付きの差分 run はゲートを挟まないため、計測台帳を更新しません',
+    );
+    console.error(
+      '  台帳を更新するには --reporter を外して npm run test:mutation を実行してください',
+    );
+  } else {
+    console.error(
+      '[mutation] 部分実行 / 未完走のため計測台帳は更新しません (完走するまで CI の mutation-baseline は red のまま)',
+    );
+  }
 }
 
 process.exit(status);

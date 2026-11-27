@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 1,
-  "completedAt": "2026-11-27T00:58:41.062Z",
+  "schemaVersion": 2,
+  "completedAt": "2026-11-27T01:22:59.680Z",
   "mode": "incremental",
   "status": 0,
   "sources": {
@@ -11,6 +11,26 @@
     "hash": "c5c6b8d588f66298f31968f40d1a9da58ac295e61c5f83531102c4df98d80c84"
   },
   "entries": [
+    {
+      "path": "mutator.accepted.json",
+      "sha256": "afdda3481d229a3d8aa60c507aac17361189f4d2123a119606f62aa057e48f20"
+    },
+    {
+      "path": "mutator.config.ts",
+      "sha256": "5be25d44645e29c1527433dd8216332a10b1e213b166f55df22f3e0d7e623e02"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "598a5e40a2968b221b7a122d44f1410461dd8883b0c045d8b2c99375f0ce96e6"
+    },
+    {
+      "path": "package.json",
+      "sha256": "d8d7f403b0e581c78df688a8fb298ef9dc72ee5c2d2ef2aced5169ab1bd9999c"
+    },
+    {
+      "path": "scripts/mutation.mjs",
+      "sha256": "a32312518ff092a05dc713185fed2a80ec6c50c3c936f3dcf4448ca2a3a51c39"
+    },
     {
       "path": "src/App.test.tsx",
       "sha256": "63dd2b5a6ea133880074681c3c9c14c42283c536696fc208430a29a360f75c51"
@@ -546,6 +566,18 @@
     {
       "path": "src/vitest-axe.d.ts",
       "sha256": "05a0badd44534c772a3226fa2b621b9f6076695345d8563d8948f8241f7399bb"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "7e00c4e771d9264efde87d833e7d1c53a92be8a251c889be701b02a92d245c34"
+    },
+    {
+      "path": "vite.config.ts",
+      "sha256": "b3d76de8202faedf7b8459bb5b9e2064f439fdd17f3eedc3bd58281f74c7c80a"
+    },
+    {
+      "path": "../schemas/metadata.schema.json",
+      "sha256": "5272d494840c9a6f56dba2ceddc3a2cbc3a800982bad4c3221b4c43a82b2fd76"
     }
   ],
   "fullRun": {
@@ -561,5 +593,5 @@
     "Timeout": 189,
     "RuntimeError": 5
   },
-  "carriedFrom": "2026-11-27T00:58:31.322Z"
+  "carriedFrom": "2026-11-27T00:58:41.062Z"
 }

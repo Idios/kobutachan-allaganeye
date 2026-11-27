@@ -34,6 +34,8 @@
      3. ②まで通って更新された `gui/mutation-baseline.json` を commit する
      4. `npm run test:mutation:status` が `FRESH` であることを確認する
 
+     **`--reporter` を明示した run（差分モード）は台帳を更新しない**（ゲートを挟まないため）。gaps を見るのは `--reporter` 付き、台帳を書くのは `--reporter` なしで回す。モード判定は `npm run test:mutation -- --plan` で実行前に確認できる
+
      手順の正は `docs/testing-guide.md` §「GUI mutation testing」§「変更したときのチェックリスト」。skill `mutation-test-loop` を使う場合は `--since` に `--include-test-changes` を足すこと（付けないとテスト変更だけの差分が 0 件になる）
    - ロジック変更 (`gpu_detector.py` / `audio/*.py` / `video/detector.py` / `gui/src-tauri/**` 等) を含む場合は、ユーザー (Idios) に実機検証 (GPU / audio / 長時間動画 / GUI Tauri 起動) を `AskUserQuestion` で依頼する。「mock テスト pass = 実機検証不要」は Red Flag (失敗パターン B 再発)
    - **PR 作成 Pre-flight (#659 で運用化、#722 で Step 0 ハードゲート追加、L-β β-4 で Step 5 Codex adversarial-review 追加)**: Step 0 = `gh pr list --search "<元issue#>" --state open` でハードゲート (<1s、build/verify の前) → Step 1 base 同期 (`git fetch origin <base>`) → Step 2 取り込み未済 commit (`git log HEAD..origin/<base>`) → Step 3 touched files 交差判定 → Step 4 並行 PR 重複再確認 (`gh pr list --search "<元issue#>" --state all`) → Step 5 Codex adversarial-review (focus は固定の例示から選ばず本 PR の diff から導出する — 新設・変更した外部入力境界と不可逆操作の対応ペアを列挙して必ず含める。ペアがゼロならゼロと focus に明記する)。Step 0 と Step 4 は検出 window が異なるため両方実施。「コンフリクト出ないから OK」「Step 0 で 0 件だったから Step 4 skip」は Red Flag (失敗パターン C 再発、`docs/l2-workflow.md` §「PR 作成 Pre-flight」 参照)

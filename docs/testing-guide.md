@@ -425,12 +425,13 @@ GUI (`gui/`) のテスト品質とデッドコード整理のため、[mizchi/mu
 cd gui
 npm run test:mutation                            # 初回 full / 2 回目以降は差分のみ (自動)
 npm run test:mutation:status                     # 前回の full run が今のソースに有効か (FRESH / STALE)
-npm run test:mutation -- --reporter simplify    # デッドコード候補を出す
+npm run test:mutation -- --plan                  # 実行せず「どのモードで何を測るか」だけ見る
+npm run test:mutation -- --reporter simplify    # デッドコード候補を出す（台帳は更新しない）
 npm run test:mutation -- --reporter agent > .mutator/agent.json  # agent 用 JSON（wrapper のログは stderr なので stdout は JSON だけ）
 npm run test:mutation -- --kill-matrix          # 検出力ゼロ / 包含されるテストを出す
 npm run test:mutation -- --include 'src/utils/*.ts'   # 部分実行 (全ソース扱いにしない)
 MUTATION_FULL=1 npm run test:mutation            # 差分モードでも全ソースを再実行
-MUTATION_SINCE=origin/main npm run test:mutation # 差分の基準を変える
+MUTATION_SINCE=origin/main npm run test:mutation # 差分の基準を変える（狭すぎる基準は自動で退けられる）
 npx mutator accept <key> --reason "<理由>"       # equivalent mutant を理由付きで除外
 ```
 
@@ -459,14 +460,14 @@ $ npm run test:mutation:status
   (差分だけ計測し、計測結果を gui/mutation-baseline.json に書き戻します。commit してください)
 ```
 
-台帳（`schemaVersion: 1`）の中身:
+台帳（`schemaVersion: 2`）の中身:
 
 | フィールド | 内容 |
 | --- | --- |
 | `completedAt` / `mode` / `status` | 計測日時 / `full` か `incremental` か / mutator の終了コード |
 | `sources` | `src/**/*.{ts,tsx}`（**テスト含む**）の件数と内容ハッシュ |
-| `config` | `mutator.config.ts` / `vite.config.ts` / `package{,-lock}.json` / `tsconfig.json` の内容ハッシュ |
-| `entries` | source 1 ファイルごとの path + sha256（STALE 時に差分を列挙するため） |
+| `config` | **計測対象を決める** 5 file（`mutator.config.ts` / `vite.config.ts` / `package{,-lock}.json` / `tsconfig.json`）の内容ハッシュ |
+| `entries` | 追跡対象 1 file ごとの path + sha256。src に加えて config と**入力 file**（`mutator.accepted.json` / `scripts/mutation.mjs` / `../schemas/metadata.schema.json`）も含む |
 | `fullRun` | 直近の**全ソース**計測の集計（差分 run でもこの値は引き継ぐ） |
 | `carriedFrom` | 差分 run のとき、どの計測から引き継いだか |
 
@@ -476,6 +477,12 @@ $ npm run test:mutation:status
   同じ値になるように。これがないと CI が常に STALE になる）
 - `config` ハッシュが変わったら `--since` を付けず**自動で full に戻す**（include scope /
   ランナー / 依存が変わると計測対象自体が変わるため）
+- **設定は 2 種類に分ける**。スコープを決める 5 file は `config`（full を強制）、
+  `mutator.accepted.json` / `scripts/mutation.mjs` / `schemas/metadata.schema.json` は
+  `entries` にだけ入れて **full を強制しない**。accept の追加は通常運用（計測結果自体は
+  変わらない）なので、そのたびに 48 分の full run を強いるのは過剰。変更は `STALE` として
+  検出され、次の差分 run で台帳に記録される
+- `schemaVersion` が想定外なら **STALE**（未知 / 旧形式の台帳を FRESH と誤認しない）
 - 差分 run でも台帳は更新する（「前回の台帳 + 今回の差分 = 全ソース計測済み」が成り立つ）。
   一方 `.mutator/full-run.json` は**全ソース run のときだけ**書く
 - 台帳の集計（`fullRun`）は**直近の全ソース run の値**。差分 run で上書きしない
@@ -492,22 +499,38 @@ $ npm run test:mutation:status
 
 | 状態 | 実行内容 |
 | --- | --- |
-| ローカル marker なし | 全ソース（`--since` を付けない）。完走で marker と台帳を書く |
-| marker あり | **2 pass**: ① `--since ${MUTATION_SINCE:-origin/develop-0.4.0} --fail-on-survived`（変更ソースのゲート）② `--since … --include-test-changes`（テスト変更分も計測して台帳更新） |
+| ローカル marker なし / **marker が壊れている・旧形式** | 全ソース（`--since` を付けない）。完走で marker と台帳を書く（marker は**存在だけでなく中身を検証**する。壊れた marker を掴むと未計測のまま差分モードに入るため） |
+| marker あり・差分の基準が変更を網羅 | **2 pass**: ① `--since ${MUTATION_SINCE:-origin/develop-0.4.0} --fail-on-survived`（変更ソースのゲート）② `--since … --include-test-changes`（テスト変更分も計測して台帳更新） |
 | marker の `config` ハッシュが不一致 | 全ソース（設定変更で計測対象が変わるため） |
+| `--since` の基準が前回計測以降の変更を網羅しない | 全ソース。`MUTATION_SINCE` の上書き値が狭すぎる場合は既定の base に戻して再判定する |
 | `--include` / `--exclude` / `--only` / `--since` を明示 | そのまま渡す（marker も台帳も触らない） |
+| `--reporter` を明示（差分モード） | 1 pass（`--since --include-test-changes`）。**台帳は更新しない**（ゲートを挟まないため） |
 | `--time-budget` / `--mutants-per-line` / `--shard` を明示 | 全ソース（`--since` を付けない）。**marker も台帳も書かない**（`Pending` が残るため） |
-| `--config-file` / `--root` を明示 | そのまま渡す（実効スコープを argv から確定できないので **台帳も書かない**） |
+| `--config-file` / `--root` / `--runner` / `--config` / `--jest-config` / `--playwright-config` を明示 | そのまま渡す（実効スコープを argv から確定できないので **台帳も書かない**） |
+| `--exclude-mutator` / `--plugin` / `--scope` / `--experimental-callgraph` / `--full-dry-run` / `--shared-cache` / `--no-arid` / `--arid-callee` / `--no-weak-mutation` / `--[no-]typecheck` / `--critical` / `--threshold-break` を明示 | 同上（計測対象 / 判定が変わるので台帳を書かない） |
+| `--no-fail-on-survived` を明示 | **無視**する。差分モードのゲートは外せない（fail-closed） |
 | `--status` | 計測せず FRESH / STALE だけを返す |
+| `--plan` | 計測せず、選んだモード / `since` / 実際に渡す argv を表示する |
 | `--help` / `-h` / `--version` / `-v` | 何もしない |
 | `MUTATION_FULL=1` / `--full` | marker があっても全ソース（marker と台帳を更新） |
 
-**marker を書く条件は「スコープ制限なし + 終了コード 0 / 2 + `--time-budget` 等なし」**。
+**台帳を書く条件は「スコープ制限なし、`--reporter` なし（差分モード時）、終了コード 0 / 2、
+`--time-budget` 等なし、差分範囲の妥当性検証を通る」のすべて**。
 `--time-budget` 付きの full run は mutant を `Pending` のまま残すので「全ソースを測った」
 証拠にならない（書いてしまうと次の run が差分モードに入り、未計測のファイルが永久に測られない。
 codex adversarial-review 2026-11-19 P1）。**未完走のまま kill すると cache が保存されない**
 （Ctrl+C / タイムアウト kill で 48 分を 2 回捨てた実例あり）。区切るなら `--time-budget`
 を使い、最後に 1 回完走させて台帳を書かせる。
+
+**差分の基準の妥当性検証**: `--since` は「前回の計測以降に変わった `src/**` が
+`git diff <base>` に含まれるか」を確かめてから使う。`MUTATION_SINCE=HEAD` のような狭すぎる指定で
+差分が空になり、未計測のまま台帳が全ファイル現行ハッシュで埋まるのを防ぐ（codex review 2026-11-19 P1）。
+未追跡の新規ファイルは `--since` の対象になる（mutator が `git ls-files --others` を含める）が、
+`git add` 前は `git diff` に出ないため検証では弾かれる（メッセージで `git add` を促す）。
+
+> **削除だけの差分は 0 件になる**: mutator の `--since` は「新しい側の行」に立つ mutant を選ぶ。
+> デッドコード削除だけの PR では 1 pass 目（ゲート）が `0 in the diff` になり、ゲートは実質空振りする
+> （検証自体は 2 pass 目と `--status` で成立する）。2026-11-27 の PR #1155 がこの形だった。
 
 snapshot の有無ではなく marker で判定するのは、**`--include` 付きの部分実行でも
 `.mutator/snapshot.json` が書かれる**ため（部分実行で差分モードに入ると、未計測の
@@ -570,6 +593,8 @@ full run は **1 時間規模**（2026-11-26 実測 47 分 + typecheck）。`--t
       （`--fail-on-survived` が効く。残っていると台帳が更新されない）
 - [ ] 新しく Survived / NoCoverage になった mutant を triage した
       （テスト追加 / デッドコード削除 / `accept` + 理由。未 triage のまま放置しない）
+- [ ] `accept` した / `mutator.accepted.json` を変えた場合は、その後もう一度計測した
+      （追跡対象なので台帳が `STALE` になる。accept 自体は計測を変えないので差分 run で足りる）
 - [ ] 更新された `gui/mutation-baseline.json` を commit した
 - [ ] `npm run test:mutation:status` が `FRESH`（CI の `mutation-baseline` job と同じ判定）
 
@@ -580,8 +605,13 @@ full run は **1 時間規模**（2026-11-26 実測 47 分 + typecheck）。`--t
 
 **`--reporter` を明示した場合**は 1 pass（`--since --include-test-changes`）だけ回す。
 `--reporter agent` は stdout に JSON を 1 つだけ出す前提なので、2 pass にすると JSON が
-2 つ並んで壊れるため。この経路はゲートなし（gaps の確認用）で、完走すれば台帳は更新される。
+2 つ並んで壊れるため。この経路はゲートなし（gaps の確認用）なので **台帳は更新しない**
+（更新してしまうと `--reporter` を付けるだけでゲートを迂回できてしまう。codex review 2026-11-19 P1）。
+台帳を更新するときは `--reporter` を外して `npm run test:mutation` を実行する。
 wrapper 自身のメッセージは **stderr** に出る（stdout は機械可読な出力に譲る）。
+
+モード判定は `npm run test:mutation -- --plan` で実行前に確認できる（`mode` / `certify` /
+`since` / 実際に渡す argv を表示）。「なぜ full になったのか」はこの出力と stderr の 1 行目で分かる。
 
 Iron Law 6 の GUI チェック（AGENTS.md）にも含めてある。CI が red のときは
 job のログに「どのファイルが変わったか」と次のコマンドが出る。
