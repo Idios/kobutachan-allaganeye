@@ -426,6 +426,7 @@ cd gui
 npm run test:mutation                            # 初回 full / 2 回目以降は差分のみ (自動)
 npm run test:mutation:status                     # 前回の full run が今のソースに有効か (FRESH / STALE)
 npm run test:mutation -- --reporter simplify    # デッドコード候補を出す
+npm run test:mutation -- --reporter agent > .mutator/agent.json  # agent 用 JSON（wrapper のログは stderr なので stdout は JSON だけ）
 npm run test:mutation -- --kill-matrix          # 検出力ゼロ / 包含されるテストを出す
 npm run test:mutation -- --include 'src/utils/*.ts'   # 部分実行 (全ソース扱いにしない)
 MUTATION_FULL=1 npm run test:mutation            # 差分モードでも全ソースを再実行
@@ -492,7 +493,7 @@ $ npm run test:mutation:status
 | 状態 | 実行内容 |
 | --- | --- |
 | ローカル marker なし | 全ソース（`--since` を付けない）。完走で marker と台帳を書く |
-| marker あり | `--since ${MUTATION_SINCE:-origin/develop-0.4.0} --include-test-changes`（差分のみ。完走で台帳を更新） |
+| marker あり | **2 pass**: ① `--since ${MUTATION_SINCE:-origin/develop-0.4.0} --fail-on-survived`（変更ソースのゲート）② `--since … --include-test-changes`（テスト変更分も計測して台帳更新） |
 | marker の `config` ハッシュが不一致 | 全ソース（設定変更で計測対象が変わるため） |
 | `--include` / `--exclude` / `--only` / `--since` を明示 | そのまま渡す（marker も台帳も触らない） |
 | `--time-budget` / `--mutants-per-line` / `--shard` を明示 | 全ソース（`--since` を付けない）。**marker も台帳も書かない**（`Pending` が残るため） |
@@ -565,10 +566,22 @@ full run は **1 時間規模**（2026-11-26 実測 47 分 + typecheck）。`--t
 `gui/src/**` または `gui/mutator.config.ts` 等を変えた PR は、以下を満たしてから出す。
 
 - [ ] `cd gui && npm run test:mutation` を**完走**させた（`--time-budget` で切ったままにしない）
+- [ ] **変更したソース**に検出されない mutant が残っていない
+      （`--fail-on-survived` が効く。残っていると台帳が更新されない）
 - [ ] 新しく Survived / NoCoverage になった mutant を triage した
       （テスト追加 / デッドコード削除 / `accept` + 理由。未 triage のまま放置しない）
 - [ ] 更新された `gui/mutation-baseline.json` を commit した
 - [ ] `npm run test:mutation:status` が `FRESH`（CI の `mutation-baseline` job と同じ判定）
+
+**ゲートの範囲**: `--fail-on-survived` は **変更したソース**（`--since <base>`）にだけ掛ける。
+`--include-test-changes` の範囲（変更テストがカバーする関数 = 本 repo では 125 件の既存 survivor）
+までゲートすると、無関係なテスト編集でも大量の triage を強いるため。テスト変更分は
+2 pass 目で計測して台帳に反映する（ゲートはしない）。
+
+**`--reporter` を明示した場合**は 1 pass（`--since --include-test-changes`）だけ回す。
+`--reporter agent` は stdout に JSON を 1 つだけ出す前提なので、2 pass にすると JSON が
+2 つ並んで壊れるため。この経路はゲートなし（gaps の確認用）で、完走すれば台帳は更新される。
+wrapper 自身のメッセージは **stderr** に出る（stdout は機械可読な出力に譲る）。
 
 Iron Law 6 の GUI チェック（AGENTS.md）にも含めてある。CI が red のときは
 job のログに「どのファイルが変わったか」と次のコマンドが出る。
@@ -594,7 +607,8 @@ skill 本文は upstream のまま（`--dir` の 1 文だけ修正）なので�
 | --- | --- |
 | 「project root で `npx mutator ...`」 | **`cd gui` で実行する**（mutation の対象は `gui/`。`mutator.config.ts` と `mutator.accepted.json` も `gui/` 直下） |
 | `--since <base>` の base は「usually `main`」 | `origin/develop-x.y.z`（現在は `origin/develop-0.4.0`）。`npm run test:mutation` 経由なら自動で入る |
-| `--since <base>`（step 1） | **テストを変えたときは `--include-test-changes` を付ける**（wrapper は自動で付ける）。付けないとテスト変更だけの差分が 0 件になり、追加したテストが検証されない（2026-11-26 実測: 0 件 vs 1,028 件） |
+| `--since <base>`（step 1） | **テストを変えたときは `--include-test-changes` を付ける**（wrapper は 2 pass 目で自動的に付ける）。付けないとテスト変更だけの差分が 0 件になり、追加したテストが検証されない（2026-11-26 実測: 0 件 vs 1,028 件） |
+| `--fail-on-survived` | wrapper の 1 pass 目（変更ソース）で付与する。skill の step 1 には無いので、skill だけで回すときは `--fail-on-survived` を足す |
 | `references/ci.md` の GitHub Action | **不採用**。計測は 1 時間規模なので CI では回さず、**台帳のハッシュ比較だけ**をゲートにする |
 | `pnpm add -D` | `npm` で導入済み（`gui/package.json` に exact pin） |
 | Node.js 24+ | 同上。CI の `gui-frontend` は node 22 のままで、mutation は回さない |

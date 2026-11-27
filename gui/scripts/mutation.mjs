@@ -17,6 +17,9 @@
 //   npm run test:mutation -- --include 'src/utils/*.ts'  # 部分実行 (marker は触らない)
 //
 // Windows でも `npx` のシェル差異を踏まないよう、CLI の JS を node で直接起動する。
+//
+// wrapper 自身のメッセージは **stderr** に出す。stdout は `--reporter agent` の
+// JSON など機械可読な出力に譲る (`> .mutator/agent.json` でそのまま保存できるように)。
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -182,18 +185,21 @@ function printStatus() {
     const totals = full
       ? ` / 全ソース ${full.mutants} mutants (${full.survived ?? '?'} survived)`
       : '';
-    console.log(
+    console.error(
       `[mutation] 計測済みの範囲: ${baseline.completedAt} mode=${baseline.mode ?? 'full'} (status ${baseline.status}${totals})`,
     );
   }
-  console.log(`[mutation] 判定: ${state.fresh ? 'FRESH' : 'STALE'} — ${state.reason}`);
+  console.error(`[mutation] 判定: ${state.fresh ? 'FRESH' : 'STALE'} — ${state.reason}`);
   if (state.fresh) return 0;
   if (state.changes.length > 0) {
-    for (const line of state.changes.slice(0, 40)) console.log(`  ${line}`);
-    if (state.changes.length > 40) console.log(`  … ${state.changes.length - 40} more`);
+    for (const line of state.changes.slice(0, 40)) console.error(`  ${line}`);
+    if (state.changes.length > 40) console.error(`  … ${state.changes.length - 40} more`);
   }
-  console.log('[mutation] 次にやること: cd gui && npm run test:mutation');
-  console.log('  (差分だけ計測し、計測結果を gui/mutation-baseline.json に書き戻します。commit してください)');
+  console.error('[mutation] 次にやること: cd gui && npm run test:mutation');
+  console.error('  (差分だけ計測し、計測結果を gui/mutation-baseline.json に書き戻します。commit してください)');
+  console.error(
+    '  (変更したソースに検出されない mutant が残っていると --fail-on-survived で止まり、台帳も更新されません)',
+  );
   return 1;
 }
 
@@ -242,30 +248,51 @@ const configChanged =
   hasFullRun && marker?.config?.hash !== undefined
     ? marker.config.hash !== currentSources().config.hash
     : false;
-// 差分モード。`--include-test-changes` を必ず付ける: これが無いと、テストだけを
-// 変えたときに `--since` の対象が 0 件になり、追加したテストが検証されないまま
-// 台帳だけが「最新」になる (2026-11-26 に実測: 0 件 vs 1,028 件)。
-const mode =
-  scoped || forceFull || !hasFullRun || configChanged
-    ? []
-    : ['--since', since, '--include-test-changes'];
+// 差分モードは **2 pass** 回す:
+//   1) 変更したソースの殺し漏れをゲート: `--since <base> --fail-on-survived`
+//      ここで survivor が残ると **完走扱いにせず台帳も書かない** ので、
+//      kill / accept するまで CI も通らない。
+//   2) 変更したテストがカバーする範囲も計測して台帳を更新:
+//      `--since <base> --include-test-changes`
+//      （1 pass だけで済ませるとテスト変更が 0 件になる。逆に pass 1 に
+//        `--include-test-changes` を入れると、変えたテストが触る関数の
+//        **既存** survivor までゲート対象になる。この repo では 125 件あり、
+//        無関係なテスト編集を止めてしまう。ゲートは「今回変えたソース」に限定する）
+const diffMode = !scoped && !forceFull && hasFullRun && !configChanged;
+// `--reporter` を明示されたら 1 pass だけ回す。`--reporter agent` は stdout に
+// JSON を 1 つだけ吐く前提なので、2 pass にすると JSON が 2 つ並んで壊れる。
+// この場合はゲートなし (gaps の確認用) で、台帳だけ更新する。
+const singleReporterPass = hasFlag('--reporter');
+const runs = diffMode
+  ? singleReporterPass
+    ? [['--since', since, '--include-test-changes']]
+    : [
+        ['--since', since, '--fail-on-survived'],
+        ['--since', since, '--include-test-changes'],
+      ]
+  : [[]];
 
 if (informational) {
-  console.log('[mutation] 引数を表示/検証するだけで実行しません');
+  console.error('[mutation] 引数を表示/検証するだけで実行しません');
 } else if (scoped || forceFull) {
-  console.log(
+  console.error(
     forceFull
       ? '[mutation] 全ソースを対象にします (MUTATION_FULL / --full)'
       : '[mutation] 部分実行 / 明示指定: そのまま渡します',
   );
 } else if (configChanged) {
-  console.log(
+  console.error(
     '[mutation] 設定 / 依存が変わったので全ソースを対象にします (計測対象が変わりうる)',
   );
 } else if (hasFullRun) {
-  console.log(`[mutation] 差分のみ: --since ${since} --include-test-changes`);
+  if (singleReporterPass) {
+    console.error(`[mutation] 差分のみ (--reporter 明示): --since ${since} --include-test-changes`);
+  } else {
+    console.error(`[mutation] 差分のみ (2 pass): 1) --since ${since} --fail-on-survived`);
+    console.error(`[mutation]                    2) --since ${since} --include-test-changes`);
+  }
 } else {
-  console.log('[mutation] 初回実行: 全ソースを対象にします');
+  console.error('[mutation] 初回実行: 全ソースを対象にします');
 }
 
 const require = createRequire(import.meta.url);
@@ -280,17 +307,26 @@ try {
   process.exit(1);
 }
 
-const result = spawnSync(process.execPath, [cli, ...mode, ...passthrough], {
-  cwd: root,
-  stdio: 'inherit',
-});
-
-if (result.error) {
-  console.error(`[mutation] 起動に失敗しました: ${result.error.message}`);
-  process.exit(1);
+let status = 0;
+let gateFailed = false;
+for (const [index, extra] of runs.entries()) {
+  const result = spawnSync(process.execPath, [cli, ...extra, ...passthrough], {
+    cwd: root,
+    stdio: 'inherit',
+  });
+  if (result.error) {
+    console.error(`[mutation] 起動に失敗しました: ${result.error.message}`);
+    process.exit(1);
+  }
+  status = result.status ?? 1;
+  // 4 = mutant 無しでテストが落ちる / 1 = 設定不正: どちらの pass でも中断
+  if (status === 1 || status === 4) break;
+  // 1 pass 目 (変更ソースのゲート) が survivor で落ちたら 2 pass 目は回さない
+  if (diffMode && index === 0 && status === 2) {
+    gateFailed = true;
+    break;
+  }
 }
-
-const status = result.status ?? 1;
 // marker は **スコープ制限のない、完走した full run** でのみ書く。
 // - 0 = ok / 2 = quality gate (survived / critical) は「完走」とみなす
 // - 4 (mutant 無しでテストが落ちる) や 1 (設定不正) は書かない
@@ -298,7 +334,9 @@ const status = result.status ?? 1;
 //   書かない (書くと次の run が差分モードに入り、未計測のファイルが永久に
 //   測られなくなる)。codex review 2026-11-19 P1。
 // - `--help` / `--version` は何も測っていないので書かない (P2)。
-const completed = status === 0 || status === 2;
+// - 差分モードで 1 pass 目 (--fail-on-survived) が落ちた場合も書かない
+//   (変更ソースに未トリアージの survivor が残っている = 計測完了ではない)。
+const completed = (status === 0 || status === 2) && !gateFailed;
 
 /** snapshot から mutant の内訳を読む (marker に残して status 表示に使う)。 */
 function readTotals() {
@@ -330,7 +368,7 @@ if (!informational && !scoped && completed) {
   });
   const current = currentSources();
   const thisRun = readTotals();
-  const runMode = mode.length === 0 ? 'full' : 'incremental';
+  const runMode = diffMode ? 'incremental' : 'full';
   const completedAt = new Date().toISOString();
   const previous = readBaseline();
   const previousFull = previous?.fullRun ?? null;
@@ -344,7 +382,7 @@ if (!informational && !scoped && completed) {
   // 差分 run の snapshot は「その run のスコープ」しか含まないので、
   // 集計を差分で上書きすると意味のない小さい数字になる。
   const fullRun =
-    mode === 'full'
+    runMode === 'full'
       ? { completedAt, ...(thisRun ?? {}) }
       : (previousFull ?? markerFull ?? null);
   try {
@@ -369,10 +407,10 @@ if (!informational && !scoped && completed) {
       )}\n`,
       'utf-8',
     );
-    console.log(
+    console.error(
       `[mutation] 計測台帳を更新しました (gui/mutation-baseline.json: mode=${runMode}, ${current.sources.count} files, sha256 ${current.sources.hash.slice(0, 12)}…)`,
     );
-    console.log('[mutation] このファイルを commit すると CI の mutation-baseline job が通ります');
+    console.error('[mutation] このファイルを commit すると CI の mutation-baseline job が通ります');
   } catch (error) {
     console.warn(`[mutation] 台帳を書けませんでした: ${error.message}`);
   }
@@ -399,13 +437,26 @@ if (!informational && !scoped && completed) {
         )}\n`,
         'utf-8',
       );
-      console.log('[mutation] 全ソース run を記録しました (.mutator/full-run.json)');
+      console.error('[mutation] 全ソース run を記録しました (.mutator/full-run.json)');
     } catch (error) {
       console.warn(`[mutation] marker を書けませんでした: ${error.message}`);
     }
   }
 } else if (!informational && (scoped || !completed)) {
-  console.log(
+  if (gateFailed) {
+    console.error(
+      '[mutation] 変更したソースに検出されていない mutant が残っています (--fail-on-survived)。',
+    );
+    console.error(
+      '  1) 詳細を見る: npx mutator --since ' +
+        `${since} --reporter agent > .mutator/agent.json`,
+    );
+    console.error('  2) トリアージ: テストを追加して殺す / デッドコードなら消す / equivalent なら accept');
+    console.error(
+      '  3) もう一度 npm run test:mutation (通ると台帳が更新されます。skill `mutation-test-loop` も使えます)',
+    );
+  }
+  console.error(
     '[mutation] 部分実行 / 未完走のため計測台帳は更新しません (完走するまで CI の mutation-baseline は red のまま)',
   );
 }

@@ -29,9 +29,9 @@
 6. **NO PR CREATION WITHOUT VERIFIED CHECKS**
    - PR 作成前に変更ファイル path に応じた自動チェック (Python: `ruff check .` / `ruff format --check .` / `pyright --pythonpath <venv python>` / `pytest`、GUI: `npm run lint` / `typecheck` / `test` / `build` / `cargo check` / **`npm run test:mutation:status`**) を全 pass させる。「軽微だから skip」「Python のみだから GUI 側不要」は Red Flag (失敗パターン A 再発)
    - **`gui/src/**` / `gui/mutator.config.ts` 等を変えたときの mutation フロー** (順序厳守。CI job `mutation-baseline` が hard gate):
-     1. `cd gui && npm run test:mutation` — **差分のみ**（`--since origin/develop-<x.y.z> --include-test-changes`）を完走させる
-     2. 新たに Survived / NoCoverage になった mutant を **1 件ずつトリアージ**する: (a) テストを追加して殺す / (b) デッドコードなら削除する (`--reporter simplify`) / (c) equivalent なら `npx mutator accept <key> --reason "..."` で理由付き記録。**未トリアージのまま放置しない**
-     3. 更新された `gui/mutation-baseline.json` を commit する
+     1. `cd gui && npm run test:mutation` — **差分のみ 2 pass**（① `--since origin/develop-<x.y.z> --fail-on-survived` = 変更ソースのゲート / ② `--since … --include-test-changes` = テスト変更分も計測）を完走させる。**① で survivor が残ると exit 2 で止まり、台帳も更新されない**
+     2. ①で止まったら、その mutant を **1 件ずつトリアージ**する: (a) テストを追加して殺す / (b) デッドコードなら削除する (`--reporter simplify`) / (c) equivalent なら `npx mutator accept <key> --reason "..."` で理由付き記録。**未トリアージのまま放置しない**
+     3. ②まで通って更新された `gui/mutation-baseline.json` を commit する
      4. `npm run test:mutation:status` が `FRESH` であることを確認する
 
      手順の正は `docs/testing-guide.md` §「GUI mutation testing」§「変更したときのチェックリスト」。skill `mutation-test-loop` を使う場合は `--since` に `--include-test-changes` を足すこと（付けないとテスト変更だけの差分が 0 件になる）
