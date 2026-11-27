@@ -101,6 +101,9 @@ const CONFIG_FILES = [
 //     `coverageOf()` が git で検証する
 const INPUT_FILES = ['mutator.accepted.json', join('scripts', 'mutation.mjs')];
 
+// CRLF を LF に正規化してハッシュする file (それ以外は byte のまま)。
+const TEXT_FILE = /\.(ts|tsx|js|jsx|mjs|cjs|json|css|html|md|txt|yml|yaml|svg)$/;
+
 function walkSources(dir, out) {
   if (!existsSync(dir)) return out;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -122,7 +125,13 @@ function hashFiles(paths) {
     const rel = relative(root, path).split(sep).join('/');
     // checkout の改行変換 (Windows CRLF / Linux LF) でハッシュが変わらないよう
     // テキストは LF に正規化してから食う。これがないと CI が常に STALE になる。
-    const content = readFileSync(path, 'utf-8').replace(/\r\n/g, '\n');
+    // テキスト判定を拡張子で行うのは、バイナリを UTF-8 に変換すると
+    // 不正バイトが U+FFFD に潰れて別内容が同じハッシュになるため (codex review
+    // 2026-11-19 P2)。
+    const raw = readFileSync(path);
+    const content = TEXT_FILE.test(path)
+      ? Buffer.from(raw.toString('utf-8').replace(/\r\n/g, '\n'), 'utf-8')
+      : raw;
     const digest = createHash('sha256').update(content).digest('hex');
     entries.push({ path: rel, sha256: digest });
     hash.update(rel).update('\0').update(digest).update('\n');
@@ -215,6 +224,39 @@ function changedSince(base) {
     if (rel) files.add(rel.split(sep).join('/'));
   }
   return files;
+}
+
+/**
+ * 計測した内容を指す commit (HEAD)。計測対象に未コミットの変更があると null。
+ *
+ * 台帳は CI に対する証明なので、「ある commit の内容を測った」と言えるときだけ
+ * 書く。dirty な tree を測った内容はどの commit にも存在せず (git stash の
+ * dangling commit も GC される)、差分の基準にもできない。さらに、「dirty で計測
+ * → その変更を revert して別 hunk を編集」の順で進むと、revert した範囲が
+ * 未計測のまま差分範囲外になる (codex review 2026-11-19 P1)。
+ *
+ * 台帳 / marker 自身は計測対象ではないので、未コミットでも構わない (毎回
+ * 「計測 → 台帳を commit」の順で回す通常運用が成り立つ)。
+ */
+function measurementHead(current) {
+  const res = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf-8' });
+  if (res.error || res.status !== 0) return null;
+  const headSha = (res.stdout ?? '').trim();
+  if (!/^[0-9a-f]{40}$/.test(headSha)) return null;
+  const paths = current.entries.map((entry) => entry.path);
+  // 追跡 file (index + working tree) の変更
+  const diff = spawnSync('git', ['diff', '--quiet', 'HEAD', '--', ...paths], {
+    cwd: root,
+    encoding: 'utf-8',
+  });
+  if (diff.error || diff.status !== 0) return null;
+  // 未追跡の新規 file
+  const others = spawnSync('git', ['ls-files', '--others', '--exclude-standard', '--', ...paths], {
+    cwd: root,
+    encoding: 'utf-8',
+  });
+  if (others.error || others.status !== 0) return null;
+  return others.stdout.trim() === '' ? headSha : null;
 }
 
 /** `base` が `ref` の祖先 (または同一) か。判定できなければ null。 */
@@ -319,6 +361,18 @@ function freshness() {
     return {
       fresh: false,
       reason: 'baseline が旧形式 (計測対象のハッシュなし)',
+      changes: [],
+      baseline,
+    };
+  }
+  // 計測時点の commit がなければ、次の差分の基準を検証できない。CI が green でも
+  // 次の run が full に落ちるのは契約の不一致なので、ここで STALE にする
+  // (codex review 2026-11-19 P2)。commit の存在までは見ない (shallow clone で
+  // 落ちるため)。
+  if (typeof baseline.head !== 'string' || !/^[0-9a-f]{40}$/.test(baseline.head)) {
+    return {
+      fresh: false,
+      reason: '台帳に計測時点の commit (head) がない / 不正 (差分の基準を検証できない)',
       changes: [],
       baseline,
     };
@@ -437,6 +491,9 @@ const scoped = partialFlags.some(hasFlag);
 // 現状のハッシュは 1 回だけ取る (run 後に取り直すと「測った時点のソース」を
 // 記録できない)。
 const current = currentSources();
+// 計測対象に未コミットの変更がないかは run の前に見る (30 分の full run を
+// 回してから「証明できない」と分かるのを避ける)。
+const measuredHead = measurementHead(current);
 const ledger = readBaseline();
 const markerState = readMarker();
 const markerValid = isValidMarker(markerState);
@@ -558,6 +615,18 @@ if (argv.includes('--plan')) {
   process.exit(0);
 }
 
+// 台帳は「ある commit の内容を測った」証明なので、計測対象が dirty なままでは
+// 書けない (`measurementHead()` が null)。run する前に止める。
+if (certifying && measuredHead === null) {
+  console.error(
+    '[mutation] 計測対象に未コミットの変更があるため、計測しても台帳を更新できません。commit してから実行してください',
+  );
+  console.error(
+    '  (台帳は CI に対する証明なので、commit された内容に対してだけ書きます。台帳自身は計測対象外なので未コミットで構いません)',
+  );
+  process.exit(1);
+}
+
 const require = createRequire(import.meta.url);
 let cli;
 try {
@@ -634,12 +703,20 @@ function readTotals() {
 // は台帳を書かない。ここを緩めると「ゲートを通らずに certified にする」
 // 迂回路ができてしまう。
 if (certifying && completed) {
-  const head = spawnSync('git', ['rev-parse', 'HEAD'], {
-    cwd: root,
-    encoding: 'utf-8',
-  });
   const thisRun = readTotals();
   const runMode = diffMode ? 'incremental' : 'full';
+  // 完走の証拠を確かめる。snapshot が読めない / full run なのに Pending が残る
+  // (config の timeBudget / mutantsPerLine 等で打ち切られた) なら台帳を書かない
+  // (codex review 2026-11-19 P1)。config 側の制限は `configChanged` で full に
+  // 戻るので、full run の Pending を見れば diff mode の汚染も防げる
+  // (汚染された config は marker / 台帳に記録されないため、以後も full のまま)。
+  const pending = thisRun?.Pending ?? 0;
+  const incomplete =
+    thisRun === null
+      ? 'カバレッジ結果 (.mutator/snapshot.json) を読めない'
+      : runMode === 'full' && pending > 0
+        ? `全ソース run なのに Pending が ${pending} 件残った (config の timeBudget / mutantsPerLine 等の制限?)`
+        : null;
   const completedAt = new Date().toISOString();
   const previous = readBaseline();
   const previousFull = previous?.fullRun ?? null;
@@ -653,64 +730,71 @@ if (certifying && completed) {
   // 集計を差分で上書きすると意味のない小さい数字になる。
   const fullRun =
     runMode === 'full' ? { completedAt, ...(thisRun ?? {}) } : (previousFull ?? markerFull ?? null);
-  try {
-    writeFileSync(
-      baselinePath,
-      `${JSON.stringify(
-        {
-          schemaVersion: LEDGER_SCHEMA_VERSION,
-          completedAt,
-          // 計測時点の commit。差分の基準 (`--since`) がこの commit の祖先かを
-          // `coverageOf()` が検証する (差分範囲の妥当性の根拠)。
-          head: (head.stdout ?? '').trim(),
-          mode: runMode,
-          status,
-          sources: current.sources,
-          config: current.config,
-          entries: current.entries,
-          // 直近の全ソース計測の集計 (差分 run では前回の値を引き継ぐ)
-          fullRun,
-          // 差分 run のときは「どこから引き継いだか」を残す (監査用)。
-          carriedFrom: runMode === 'incremental' ? (previous?.completedAt ?? null) : null,
-        },
-        null,
-        2,
-      )}\n`,
-      'utf-8',
-    );
-    console.error(
-      `[mutation] 計測台帳を更新しました (gui/mutation-baseline.json: mode=${runMode}, ${current.sources.count} files, sha256 ${current.sources.hash.slice(0, 12)}…)`,
-    );
-    console.error('[mutation] このファイルを commit すると CI の mutation-baseline job が通ります');
-  } catch (error) {
-    console.warn(`[mutation] 台帳を書けませんでした: ${error.message}`);
-  }
-
-  if (runMode === 'full') {
+  if (incomplete !== null) {
+    console.error(`[mutation] 完走した証拠にならないため計測台帳は更新しません: ${incomplete}`);
+  } else {
     try {
-      mkdirSync(stateDir, { recursive: true });
       writeFileSync(
-        markerPath,
+        baselinePath,
         `${JSON.stringify(
           {
-            // marker の形式。v2 で sources / config / entries / totals を追加した。
-            version: 2,
+            schemaVersion: LEDGER_SCHEMA_VERSION,
             completedAt,
-            head: (head.stdout ?? '').trim(),
+            // 計測時点の commit。差分の基準 (`--since`) がこの commit の祖先かを
+            // `coverageOf()` が検証する (差分範囲の妥当性の根拠)。dirty な tree では
+            // 台帳を書かないので、この commit の内容 = 計測した内容。
+            head: measuredHead,
+            mode: runMode,
             status,
-            totals: thisRun,
             sources: current.sources,
             config: current.config,
             entries: current.entries,
+            // 直近の全ソース計測の集計 (差分 run では前回の値を引き継ぐ)
+            fullRun,
+            // 差分 run のときは「どこから引き継いだか」を残す (監査用)。
+            carriedFrom: runMode === 'incremental' ? (previous?.completedAt ?? null) : null,
           },
           null,
           2,
         )}\n`,
         'utf-8',
       );
-      console.error('[mutation] 全ソース run を記録しました (.mutator/full-run.json)');
+      console.error(
+        `[mutation] 計測台帳を更新しました (gui/mutation-baseline.json: mode=${runMode}, ${current.sources.count} files, sha256 ${current.sources.hash.slice(0, 12)}…)`,
+      );
+      console.error(
+        '[mutation] このファイルを commit すると CI の mutation-baseline job が通ります',
+      );
     } catch (error) {
-      console.warn(`[mutation] marker を書けませんでした: ${error.message}`);
+      console.warn(`[mutation] 台帳を書けませんでした: ${error.message}`);
+    }
+
+    if (runMode === 'full') {
+      try {
+        mkdirSync(stateDir, { recursive: true });
+        writeFileSync(
+          markerPath,
+          `${JSON.stringify(
+            {
+              // marker の形式。v2 で sources / config / entries / totals を追加した。
+              version: 2,
+              completedAt,
+              head: measuredHead,
+              status,
+              totals: thisRun,
+              sources: current.sources,
+              config: current.config,
+              entries: current.entries,
+            },
+            null,
+            2,
+          )}\n`,
+          'utf-8',
+        );
+        console.error('[mutation] 全ソース run を記録しました (.mutator/full-run.json)');
+      } catch (error) {
+        console.warn(`[mutation] marker を書けませんでした: ${error.message}`);
+      }
     }
   }
 } else if (!informational && !(certifying && completed)) {

@@ -446,10 +446,16 @@ npx mutator accept <key> --reason "<理由>"       # equivalent mutant を理由
 
 **日常の手順（GUI のソース / 設定を変えたとき）**:
 
-1. `cd gui && npm run test:mutation` — 差分だけ計測する（2 回目以降は数秒〜数分。judgment は関数単位でキャッシュ）
+1. **変更を commit してから** `cd gui && npm run test:mutation` — 差分だけ計測する（2 回目以降は数秒〜数分。judgment は関数単位でキャッシュ）
 2. 完走すると **`gui/mutation-baseline.json` が自動で書き換わる** → そのまま commit する
 3. `npm run test:mutation:status` で `FRESH` を確認する
 4. CI の `mutation-baseline` job が同じ判定を行う（**STALE なら red**）
+
+**計測は commit 後に行う**。台帳は「ある commit の内容を測った」という CI への証明なので、
+計測対象（`src/**` / config / 入力 file）に未コミットの変更があると wrapper は**台帳を書かない**
+（dirty な状態で測った内容はどの commit にも存在せず、差分の基準にもできない。dirty で計測 →
+その変更を revert → 別 hunk を編集、の順で未計測の範囲が差分外に残る。codex review 2026-11-19 P1）。
+台帳自身は計測対象外なので、「計測 → 台帳を commit」の順で未コミットのまま `FRESH` になる。
 
 ```text
 $ npm run test:mutation:status
@@ -484,11 +490,16 @@ $ npm run test:mutation:status
   `mutator.accepted.json` と `scripts/mutation.mjs` は `entries` にだけ入れて
   **full を強制しない**（accept は通常運用で、計測結果自体を変えないため）。
   変更は `STALE` として検出され、次の差分 run で台帳に記録される
-- `schemaVersion` が想定外なら **STALE**（未知 / 旧形式の台帳を FRESH と誤認しない）
+- `schemaVersion` が想定外 / `head` がない・不正なら **STALE**（未知 / 旧形式の台帳を FRESH と
+  誤認しない。`head` が無いと次の差分の基準を検証できないので、CI と wrapper で契約を揃える）
 - 差分 run でも台帳は更新する（「前回の台帳 + 今回の差分 = 全ソース計測済み」が成り立つ）。
   一方 `.mutator/full-run.json` は**全ソース run のときだけ**書く
 - 台帳の集計（`fullRun`）は**直近の全ソース run の値**。差分 run で上書きしない
   （snapshot はその run のスコープしか持たないため）
+- **完走の証拠を検証する**: 全ソース run のあと snapshot に `Pending` が残っていたら
+  （config の `timeBudget` / `mutantsPerLine` 等で打ち切られた）台帳を書かない。汚染された
+  config は marker / 台帳に記録されないので、以後も full のまま止まる（codex review 2026-11-19 P1）
+- ハッシュは **バイナリ安全**（テキスト拡張子だけ CRLF→LF 正規化、それ以外は byte のまま）
 
 ### CI ゲート
 
@@ -601,6 +612,7 @@ full run は **1 時間規模**（2026-11-26 実測 47 分 + typecheck）。`--t
 `gui/src/**` または `gui/mutator.config.ts` 等を変えた PR は、以下を満たしてから出す。
 
 - [ ] `cd gui && npm run test:mutation` を**完走**させた（`--time-budget` で切ったままにしない）
+- [ ] **計測対象を commit してから**計測した（未コミットのままでは台帳が書かれない）
 - [ ] **変更したソース**に検出されない mutant が残っていない
       （`--fail-on-survived` が効く。残っていると台帳が更新されない）
 - [ ] 新しく Survived / NoCoverage になった mutant を triage した
