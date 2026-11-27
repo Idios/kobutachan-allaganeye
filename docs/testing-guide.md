@@ -586,6 +586,23 @@ job のログに「どのファイルが変わったか」と次のコマンド�
 | `mutator` | セットアップ / 実行 / レポートの読み方 / CI / 閾値 / accepted mutant（`references/` に詳細） |
 | `mutation-test-loop` | 生存 mutant を 1 件ずつ潰すループ（`--reporter agent` → テスト追加 → `--only` で再確認 → accept） |
 
+#### この repo で skill を使うときの前提
+
+skill 本文は upstream のまま（`--dir` の 1 文だけ修正）なので、以下の読み替えが要る。
+
+| skill の記述 | この repo では |
+| --- | --- |
+| 「project root で `npx mutator ...`」 | **`cd gui` で実行する**（mutation の対象は `gui/`。`mutator.config.ts` と `mutator.accepted.json` も `gui/` 直下） |
+| `--since <base>` の base は「usually `main`」 | `origin/develop-x.y.z`（現在は `origin/develop-0.4.0`）。`npm run test:mutation` 経由なら自動で入る |
+| `references/ci.md` の GitHub Action | **不採用**。計測は 1 時間規模なので CI では回さず、**台帳のハッシュ比較だけ**をゲートにする |
+| `pnpm add -D` | `npm` で導入済み（`gui/package.json` に exact pin） |
+| Node.js 24+ | 同上。CI の `gui-frontend` は node 22 のままで、mutation は回さない |
+
+**skill の `npx mutator` を直叩きすると台帳（`gui/mutation-baseline.json`）は更新されない**
+（wrapper の完走時だけ書く）。skill のループで作業した後は、最後に
+`cd gui && npm run test:mutation` を 1 回完走させて台帳を更新する。
+`--only` / `--include` は部分実行なので台帳を書かない（未完了のまま green にできない設計）。
+
 ## baseline drift の判定
 
 `tests/test_scorebar_regression.py::TestNoResolutionCompat` 系の baseline mismatch が発生した場合、(A) 検知ロジック退行 vs (B) ffmpeg version 依存差異 を以下の手順で判別する。
