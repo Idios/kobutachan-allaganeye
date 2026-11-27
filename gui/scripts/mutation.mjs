@@ -242,8 +242,13 @@ const configChanged =
   hasFullRun && marker?.config?.hash !== undefined
     ? marker.config.hash !== currentSources().config.hash
     : false;
+// 差分モード。`--include-test-changes` を必ず付ける: これが無いと、テストだけを
+// 変えたときに `--since` の対象が 0 件になり、追加したテストが検証されないまま
+// 台帳だけが「最新」になる (2026-11-26 に実測: 0 件 vs 1,028 件)。
 const mode =
-  scoped || forceFull || !hasFullRun || configChanged ? [] : ['--since', since];
+  scoped || forceFull || !hasFullRun || configChanged
+    ? []
+    : ['--since', since, '--include-test-changes'];
 
 if (informational) {
   console.log('[mutation] 引数を表示/検証するだけで実行しません');
@@ -258,7 +263,7 @@ if (informational) {
     '[mutation] 設定 / 依存が変わったので全ソースを対象にします (計測対象が変わりうる)',
   );
 } else if (hasFullRun) {
-  console.log(`[mutation] 差分のみ: --since ${since}`);
+  console.log(`[mutation] 差分のみ: --since ${since} --include-test-changes`);
 } else {
   console.log('[mutation] 初回実行: 全ソースを対象にします');
 }
@@ -356,8 +361,6 @@ if (!informational && !scoped && completed) {
           entries: current.entries,
           // 直近の全ソース計測の集計 (差分 run では前回の値を引き継ぐ)
           fullRun,
-          // この run が測った範囲の内訳 (差分 run では小さい)
-          thisRun,
           // 差分 run のときは「どこから引き継いだか」を残す (監査用)。
           carriedFrom: runMode === 'incremental' ? (previous?.completedAt ?? null) : null,
         },

@@ -466,7 +466,7 @@ $ npm run test:mutation:status
 | `sources` | `src/**/*.{ts,tsx}`（**テスト含む**）の件数と内容ハッシュ |
 | `config` | `mutator.config.ts` / `vite.config.ts` / `package{,-lock}.json` / `tsconfig.json` の内容ハッシュ |
 | `entries` | source 1 ファイルごとの path + sha256（STALE 時に差分を列挙するため） |
-| `fullRun` / `thisRun` | 直近の**全ソース**計測の集計 / この run が測った範囲の内訳 |
+| `fullRun` | 直近の**全ソース**計測の集計（差分 run でもこの値は引き継ぐ） |
 | `carriedFrom` | 差分 run のとき、どの計測から引き継いだか |
 
 - **テストファイルもハッシュ対象**。テストを変えると killer が変わるので、
@@ -492,7 +492,7 @@ $ npm run test:mutation:status
 | 状態 | 実行内容 |
 | --- | --- |
 | ローカル marker なし | 全ソース（`--since` を付けない）。完走で marker と台帳を書く |
-| marker あり | `--since ${MUTATION_SINCE:-origin/develop-0.4.0}`（差分のみ。完走で台帳を更新） |
+| marker あり | `--since ${MUTATION_SINCE:-origin/develop-0.4.0} --include-test-changes`（差分のみ。完走で台帳を更新） |
 | marker の `config` ハッシュが不一致 | 全ソース（設定変更で計測対象が変わるため） |
 | `--include` / `--exclude` / `--only` / `--since` を明示 | そのまま渡す（marker も台帳も触らない） |
 | `--time-budget` / `--mutants-per-line` / `--shard` を明示 | 全ソース（`--since` を付けない）。**marker も台帳も書かない**（`Pending` が残るため） |
@@ -594,6 +594,7 @@ skill 本文は upstream のまま（`--dir` の 1 文だけ修正）なので�
 | --- | --- |
 | 「project root で `npx mutator ...`」 | **`cd gui` で実行する**（mutation の対象は `gui/`。`mutator.config.ts` と `mutator.accepted.json` も `gui/` 直下） |
 | `--since <base>` の base は「usually `main`」 | `origin/develop-x.y.z`（現在は `origin/develop-0.4.0`）。`npm run test:mutation` 経由なら自動で入る |
+| `--since <base>`（step 1） | **テストを変えたときは `--include-test-changes` を付ける**（wrapper は自動で付ける）。付けないとテスト変更だけの差分が 0 件になり、追加したテストが検証されない（2026-11-26 実測: 0 件 vs 1,028 件） |
 | `references/ci.md` の GitHub Action | **不採用**。計測は 1 時間規模なので CI では回さず、**台帳のハッシュ比較だけ**をゲートにする |
 | `pnpm add -D` | `npm` で導入済み（`gui/package.json` に exact pin） |
 | Node.js 24+ | 同上。CI の `gui-frontend` は node 22 のままで、mutation は回さない |

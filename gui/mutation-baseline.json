@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "completedAt": "2026-11-26T12:14:58.394Z",
-  "mode": "full",
+  "completedAt": "2026-11-27T00:17:31.795Z",
+  "mode": "incremental",
   "status": 0,
   "sources": {
     "count": 134,
@@ -561,17 +561,5 @@
     "Timeout": 189,
     "RuntimeError": 5
   },
-  "thisRun": {
-    "mutants": 8601,
-    "killed": 2954,
-    "survived": 1816,
-    "Killed": 2954,
-    "Survived": 1816,
-    "Timeout": 189,
-    "NoCoverage": 462,
-    "Ignored": 5,
-    "RuntimeError": 5,
-    "CompileError": 3170
-  },
-  "carriedFrom": null
+  "carriedFrom": "2026-11-27T00:17:12.404Z"
 }
