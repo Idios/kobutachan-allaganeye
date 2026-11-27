@@ -499,7 +499,11 @@ $ npm run test:mutation:status
 - **完走の証拠を検証する**: 全ソース run のあと snapshot に `Pending` が残っていたら
   （config の `timeBudget` / `mutantsPerLine` 等で打ち切られた）台帳を書かない。汚染された
   config は marker / 台帳に記録されないので、以後も full のまま止まる（codex review 2026-11-19 P1）
-- ハッシュは **バイナリ安全**（テキスト拡張子だけ CRLF→LF 正規化、それ以外は byte のまま）
+- **計測中の変更を検出する**: 台帳に書く直前にハッシュを取り直し、run 開始時と違えば台帳を書かない
+  （長い full run の間にソースを編集すると、別の内容を測った結果で前の内容を certified にしうる）
+- ハッシュは **バイナリ安全**（テキスト拡張子だけ CRLF→LF 正規化、それ以外は byte のまま）。
+  symlink は**リンク文字列**をハッシュする（リンク先の内容を読むと git から見て無変更なのに
+  ハッシュが変わる）。gitignore された file は「計測対象に未追跡 file がある」として台帳を書かない
 
 ### CI ゲート
 
@@ -540,13 +544,17 @@ codex adversarial-review 2026-11-19 P1）。**未完走のまま kill すると 
 full run が避けられない。前回計測の commit を基準にすれば、「前回の計測 + 今回の差分 = 全ソース計測済み」
 が常に成り立つ（差分の基準は `npm run test:mutation -- --plan` で見られる）。
 
-**基準の妥当性検証**は 2 段。どちらかが崩れたら full run に落とす（codex review 2026-11-19 P1）。
+**基準の妥当性検証**は 3 段。どれかが崩れたら full run に落とす（codex review 2026-11-19 P1）。
+mutator は `git diff <since>` ではなく **`git diff <merge-base(since, HEAD)>`** で mutant を選ぶので、
+検証もそれに合わせる。
 
-1. **履歴**: 基準が前回計測時点の commit の祖先（または同一）か。祖先でない（base が前進した /
-   履歴を書き換えた）なら、その間の変更が差分に入らないので却下。file 単位の差分だけでは
-   「同じ file の別 hunk（base 側の変更）」を取りこぼす
-2. **作業ツリー**: 前回計測から内容が変わった**計測対象**（`src/**/*.{ts,tsx}`）が全部
-   `git diff <base>`（未追跡 file を含む）にあるか
+1. **履歴**: 前回計測の commit が今の HEAD の履歴にあるか。別ブランチ / 別 worktree の台帳を
+   持ってきた場合、その commit は HEAD の祖先でなく、差分は fork 点から計算されるため
+   「計測していない部分」が差分外に残る
+2. **merge-base**: `merge-base(base, HEAD)` が前回計測の commit 以前か。それより新しいと、
+   計測時点から merge-base までの変更が差分に入らない
+3. **作業ツリー**: 前回計測から内容が変わった**計測対象**（`src/**/*.{ts,tsx}`）が全部
+   その差分（未追跡 file を含む）にあるか
 
 `MUTATION_SINCE` で明示指定した値が検証を通らない場合は、前回計測時点の commit に戻して再判定する
 （いきなり 40 分超の full run に落ちないように）。

@@ -30,7 +30,15 @@
 // JSON など機械可読な出力に譲る (`> .mutator/agent.json` でそのまま保存できるように)。
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -129,9 +137,15 @@ function hashFiles(paths) {
     // 不正バイトが U+FFFD に潰れて別内容が同じハッシュになるため (codex review
     // 2026-11-19 P2)。
     const raw = readFileSync(path);
-    const content = TEXT_FILE.test(path)
-      ? Buffer.from(raw.toString('utf-8').replace(/\r\n/g, '\n'), 'utf-8')
-      : raw;
+    // symlink は **リンク文字列** をハッシュする。リンク先の内容を読むと、git から
+    // 見て無変更なのにハッシュが変わる (dirty 判定と commit 同定の穴になる。
+    // codex review 2026-11-19 P2)。
+    const isLink = lstatSync(path).isSymbolicLink();
+    const bytes = isLink ? Buffer.from(readlinkSync(path), 'utf-8') : raw;
+    const content =
+      !isLink && TEXT_FILE.test(path)
+        ? Buffer.from(bytes.toString('utf-8').replace(/\r\n/g, '\n'), 'utf-8')
+        : bytes;
     const digest = createHash('sha256').update(content).digest('hex');
     entries.push({ path: rel, sha256: digest });
     hash.update(rel).update('\0').update(digest).update('\n');
@@ -250,8 +264,11 @@ function measurementHead(current) {
     encoding: 'utf-8',
   });
   if (diff.error || diff.status !== 0) return null;
-  // 未追跡の新規 file
-  const others = spawnSync('git', ['ls-files', '--others', '--exclude-standard', '--', ...paths], {
+  // 未追跡 / ignore された file も拾う (`--exclude-standard` を付けない)。
+  // gitignore された file を計測対象に入れてしまうと、HEAD に含まれない内容を
+  // 「HEAD を測った」と記録することになる (codex review 2026-11-19 P2)。
+  // pathspec は entries に限るので node_modules 等は入らない。
+  const others = spawnSync('git', ['ls-files', '--others', '--', ...paths], {
     cwd: root,
     encoding: 'utf-8',
   });
@@ -271,6 +288,14 @@ function isAncestor(base, ref) {
   return null; // 128: ref が解決できない
 }
 
+/** `base` と HEAD の merge-base。求められなければ null。 */
+function mergeBaseWithHead(base) {
+  const res = spawnSync('git', ['merge-base', base, 'HEAD'], { cwd: root, encoding: 'utf-8' });
+  if (res.error || res.status !== 0) return null;
+  const sha = (res.stdout ?? '').trim();
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
+
 /** mutation の対象になる file (src 配下の .ts/.tsx)。 */
 const MUTATABLE = /^src\/.*\.(ts|tsx)$/;
 
@@ -281,13 +306,14 @@ const MUTATABLE = /^src\/.*\.(ts|tsx)$/;
  * (codex review 2026-11-19 P1)。`MUTATION_SINCE=HEAD` のように狭すぎる基準を
  * 指定すると差分が空になり、未計測のまま台帳が全ファイル現行ハッシュで埋まる。
  *
- * 判定は 2 段:
- *   1) **履歴**: `base` が前回計測時の HEAD の祖先か。祖先でない (= base が前進した /
- *      履歴を書き換えた) なら、base..HEAD の変更が差分に入らないので却下。
- *      file 単位の差分だけでは「同じ file の別 hunk (base 側の変更)」を
- *      取りこぼす (codex review 2026-11-19 P1)。
- *   2) **作業ツリー**: 前回計測から内容が変わった対象 file が全部 `git diff base` に
- *      含まれるか。未追跡の新規 file をここで弾く。
+ * 判定は 3 段。**mutator が `git diff <since>` ではなく
+ * `git diff <merge-base(since, HEAD)>` で mutant を選ぶ**ことに合わせる:
+ *   1) **履歴**: 前回計測の commit が今の HEAD の履歴にあるか。別ブランチ /
+ *      別 worktree の台帳をコピーしてきた場合、その commit は HEAD の祖先ではなく、
+ *      差分は fork 点から計算されるので「計測していない部分」が差分外に残る。
+ *   2) **merge-base**: `merge-base(base, HEAD)` が前回計測の commit 以前か。
+ *      それより新しいと、計測時点から merge-base までの変更が差分に入らない。
+ *   3) **作業ツリー**: 前回計測から内容が変わった計測対象が全部差分に入るか。
  */
 function coverageOf(base, previous, current) {
   if (!previous || !Array.isArray(previous.entries)) {
@@ -300,20 +326,31 @@ function coverageOf(base, previous, current) {
       reason: '前回の計測がどの commit で行われたか台帳に記録がない (当時のソースを特定できない)',
     };
   }
-  const ancestor = isAncestor(base, measuredAt);
-  if (ancestor === null) {
+  const inHistory = isAncestor(measuredAt, 'HEAD');
+  if (inHistory === null) {
     return {
       ok: false,
-      reason: `\`${base}\` と前回計測 (${measuredAt.slice(0, 7)}) の関係を判定できない`,
+      reason: `前回計測 (${measuredAt.slice(0, 7)}) が HEAD の履歴にあるか判定できない`,
     };
   }
-  if (!ancestor) {
+  if (!inHistory) {
     return {
       ok: false,
-      reason: `\`${base}\` が前回計測 (${measuredAt.slice(0, 7)}) の祖先ではない (base が前進した / 履歴が書き換わった)`,
+      reason: `前回計測 (${measuredAt.slice(0, 7)}) が HEAD の履歴にない (別ブランチ / 別 worktree の台帳?)`,
     };
   }
-  const files = changedSince(base);
+  const mergeBase = mergeBaseWithHead(base);
+  if (mergeBase === null) {
+    return { ok: false, reason: `\`${base}\` と HEAD の merge-base を求められない` };
+  }
+  const baseBehind = isAncestor(mergeBase, measuredAt);
+  if (baseBehind !== true) {
+    return {
+      ok: false,
+      reason: `\`${base}\` の差分は ${mergeBase.slice(0, 7)} からで、前回計測 (${measuredAt.slice(0, 7)}) より新しい区間を含まない`,
+    };
+  }
+  const files = changedSince(mergeBase);
   if (files === null) {
     return { ok: false, reason: `\`${base}\` を git の ref として解決できない` };
   }
@@ -326,7 +363,7 @@ function coverageOf(base, previous, current) {
   if (missing.length > 0) {
     return {
       ok: false,
-      reason: `\`${base}\` の差分に含まれない変更が ${missing.length} 件ある (例: ${missing[0]})`,
+      reason: `差分に含まれない変更が ${missing.length} 件ある (例: ${missing[0]})`,
     };
   }
   return { ok: true, reason: '' };
@@ -716,7 +753,9 @@ if (certifying && completed) {
       ? 'カバレッジ結果 (.mutator/snapshot.json) を読めない'
       : runMode === 'full' && pending > 0
         ? `全ソース run なのに Pending が ${pending} 件残った (config の timeBudget / mutantsPerLine 等の制限?)`
-        : null;
+        : JSON.stringify(currentSources().entries) !== JSON.stringify(current.entries)
+          ? '計測中に計測対象が変わった (run 開始時の内容を測っていない)'
+          : null;
   const completedAt = new Date().toISOString();
   const previous = readBaseline();
   const previousFull = previous?.fullRun ?? null;
