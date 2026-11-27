@@ -503,7 +503,8 @@ $ npm run test:mutation:status
   （長い full run の間にソースを編集すると、別の内容を測った結果で前の内容を certified にしうる）
 - ハッシュは **バイナリ安全**（テキスト拡張子だけ CRLF→LF 正規化、それ以外は byte のまま）。
   symlink は**リンク文字列**をハッシュする（リンク先の内容を読むと git から見て無変更なのに
-  ハッシュが変わる）。gitignore された file は「計測対象に未追跡 file がある」として台帳を書かない
+  ハッシュが変わる）。リンク先の内容は git が管理しないので、**計測対象に symlink があると
+  台帳を書かない**（fail-closed）。gitignore された file も「未追跡 file」として台帳を書かない
 
 ### CI ゲート
 

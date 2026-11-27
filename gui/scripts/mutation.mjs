@@ -241,13 +241,26 @@ function changedSince(base) {
 }
 
 /**
+ * 計測対象に symlink が含まれるか。含まれると committed-state を保証できない
+ * (git が管理するのはリンク文字列だけ、テストが読むのはリンク先の内容)。
+ * この repo の `gui/src` に symlink は無いので、あれば台帳を書かずに止める
+ * (codex review 2026-11-19 P2)。
+ */
+function hasSymlinkedInput(current) {
+  return current.entries.some((entry) => {
+    const full = join(root, entry.path);
+    return existsSync(full) && lstatSync(full).isSymbolicLink();
+  });
+}
+
+/**
  * 計測した内容を指す commit (HEAD)。計測対象に未コミットの変更があると null。
  *
  * 台帳は CI に対する証明なので、「ある commit の内容を測った」と言えるときだけ
- * 書く。dirty な tree を測った内容はどの commit にも存在せず (git stash の
- * dangling commit も GC される)、差分の基準にもできない。さらに、「dirty で計測
- * → その変更を revert して別 hunk を編集」の順で進むと、revert した範囲が
- * 未計測のまま差分範囲外になる (codex review 2026-11-19 P1)。
+ * 書く。dirty な tree を測った内容はどの commit にも存在せず、差分の基準にも
+ * できない。さらに、「dirty で計測 → その変更を revert して別 hunk を編集」の
+ * 順で進むと、revert した範囲が未計測のまま差分範囲外になる
+ * (codex review 2026-11-19 P1)。
  *
  * 台帳 / marker 自身は計測対象ではないので、未コミットでも構わない (毎回
  * 「計測 → 台帳を commit」の順で回す通常運用が成り立つ)。
@@ -652,8 +665,15 @@ if (argv.includes('--plan')) {
   process.exit(0);
 }
 
-// 台帳は「ある commit の内容を測った」証明なので、計測対象が dirty なままでは
-// 書けない (`measurementHead()` が null)。run する前に止める。
+// 台帳は「ある commit の内容を測った」証明なので、証明できない状態のままでは
+// run する前に止める (30 分の full run を回してから諦めるのを避ける)。
+if (certifying && hasSymlinkedInput(current)) {
+  console.error(
+    '[mutation] 計測対象に symlink が含まれるため、計測台帳を更新できません (リンク先の内容は git が管理しない)',
+  );
+  console.error('  symlink を実 file に置き換えるか、計測対象から外してください');
+  process.exit(1);
+}
 if (certifying && measuredHead === null) {
   console.error(
     '[mutation] 計測対象に未コミットの変更があるため、計測しても台帳を更新できません。commit してから実行してください',
