@@ -27,7 +27,14 @@
    - 「Recommended 付き 2-4 択」が標準
 
 6. **NO PR CREATION WITHOUT VERIFIED CHECKS**
-   - PR 作成前に変更ファイル path に応じた自動チェック (Python: `ruff check .` / `ruff format --check .` / `pyright --pythonpath <venv python>` / `pytest`、GUI: `npm run lint` / `typecheck` / `test` / `build` / `cargo check` / **`npm run test:mutation:status`**) を全 pass させる。「軽微だから skip」「Python のみだから GUI 側不要」は Red Flag (失敗パターン A 再発)。`gui/src/**` を変えた場合は mutation の計測台帳 (`gui/mutation-baseline.json`) を更新して commit する (CI job `mutation-baseline` が hard gate。手順は `docs/testing-guide.md` §「変更したときのチェックリスト」)
+   - PR 作成前に変更ファイル path に応じた自動チェック (Python: `ruff check .` / `ruff format --check .` / `pyright --pythonpath <venv python>` / `pytest`、GUI: `npm run lint` / `typecheck` / `test` / `build` / `cargo check` / **`npm run test:mutation:status`**) を全 pass させる。「軽微だから skip」「Python のみだから GUI 側不要」は Red Flag (失敗パターン A 再発)
+   - **`gui/src/**` / `gui/mutator.config.ts` 等を変えたときの mutation フロー** (順序厳守。CI job `mutation-baseline` が hard gate):
+     1. `cd gui && npm run test:mutation` — **差分のみ**（`--since origin/develop-<x.y.z> --include-test-changes`）を完走させる
+     2. 新たに Survived / NoCoverage になった mutant を **1 件ずつトリアージ**する: (a) テストを追加して殺す / (b) デッドコードなら削除する (`--reporter simplify`) / (c) equivalent なら `npx mutator accept <key> --reason "..."` で理由付き記録。**未トリアージのまま放置しない**
+     3. 更新された `gui/mutation-baseline.json` を commit する
+     4. `npm run test:mutation:status` が `FRESH` であることを確認する
+
+     手順の正は `docs/testing-guide.md` §「GUI mutation testing」§「変更したときのチェックリスト」。skill `mutation-test-loop` を使う場合は `--since` に `--include-test-changes` を足すこと（付けないとテスト変更だけの差分が 0 件になる）
    - ロジック変更 (`gpu_detector.py` / `audio/*.py` / `video/detector.py` / `gui/src-tauri/**` 等) を含む場合は、ユーザー (Idios) に実機検証 (GPU / audio / 長時間動画 / GUI Tauri 起動) を `AskUserQuestion` で依頼する。「mock テスト pass = 実機検証不要」は Red Flag (失敗パターン B 再発)
    - **PR 作成 Pre-flight (#659 で運用化、#722 で Step 0 ハードゲート追加、L-β β-4 で Step 5 Codex adversarial-review 追加)**: Step 0 = `gh pr list --search "<元issue#>" --state open` でハードゲート (<1s、build/verify の前) → Step 1 base 同期 (`git fetch origin <base>`) → Step 2 取り込み未済 commit (`git log HEAD..origin/<base>`) → Step 3 touched files 交差判定 → Step 4 並行 PR 重複再確認 (`gh pr list --search "<元issue#>" --state all`) → Step 5 Codex adversarial-review (focus は固定の例示から選ばず本 PR の diff から導出する — 新設・変更した外部入力境界と不可逆操作の対応ペアを列挙して必ず含める。ペアがゼロならゼロと focus に明記する)。Step 0 と Step 4 は検出 window が異なるため両方実施。「コンフリクト出ないから OK」「Step 0 で 0 件だったから Step 4 skip」は Red Flag (失敗パターン C 再発、`docs/l2-workflow.md` §「PR 作成 Pre-flight」 参照)
    - **resume-plan handoff (#722 で運用化)**: resume task prompt を user に提示する際は 1 行目に `EXECUTOR: self|dispatch (origin=..., generated=...)` を明記。生成側 origin が継続実行 (self) か abort (dispatch) かを prompt 自身で自記する。詳細は `docs/l2-workflow.md` §「resume-plan handoff protocol」 参照

@@ -109,6 +109,7 @@ Fable 俯瞰レビュー (#945) の起動条件 — 次のいずれかに該当�
 - [ ] `cd gui && npm test` (gui-frontend 変更時)
 - [ ] `cd gui && npm run build` (gui-frontend 変更時)
 - [ ] `cargo check --manifest-path gui/src-tauri/Cargo.toml` (gui-rust 変更時)
+- [ ] `cd gui && npm run test:mutation:status` (gui mutation — 差分の計測と台帳更新を済ませて FRESH にする。CI job `mutation-baseline` と同じ判定)
 - [ ] `Invoke-Pester -Path scripts/tests/` (installer-pester 変更時、Windows 上で)
 - [ ] Fable 俯瞰レビュー (#945): <上のコメントの起動条件を見て「実施 (finding N 件 / 消化 M 件 / 残 K 件)」または「非実施 (理由: ...)」に置き換える>
 
