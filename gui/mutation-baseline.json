@@ -1,12 +1,12 @@
 {
   "schemaVersion": 2,
-  "completedAt": "2026-11-27T02:43:04.815Z",
-  "head": "10ad1bd8d4f5599c5f54c3217ad1db14f12e8826",
-  "mode": "incremental",
+  "completedAt": "2026-11-28T00:07:16.172Z",
+  "head": "0f6f1245fd88b98af4fc8f464cba67fc7cd0dd30",
+  "mode": "full",
   "status": 0,
   "sources": {
-    "count": 134,
-    "hash": "616a5b6303f5d5b2ffdf8e1c5944aa552b707212bb8b41009d1cba26dc6d9a8e"
+    "count": 137,
+    "hash": "accbd3b46fa0b9aa2d6f712eb0ff360236b2cbf9c5e5c80d6ac2037aca472f7c"
   },
   "config": {
     "hash": "8a7187d7ff8ac57fb388e881344e8bf3bc786886c059208e20f623ee448577d6"
@@ -14,7 +14,7 @@
   "entries": [
     {
       "path": "mutator.accepted.json",
-      "sha256": "afdda3481d229a3d8aa60c507aac17361189f4d2123a119606f62aa057e48f20"
+      "sha256": "c28ec8f67f00dda65dfdd9a759cab46f3a348f9545f290783e2ef54c2bf405d4"
     },
     {
       "path": "mutator.config.ts",
@@ -166,7 +166,7 @@
     },
     {
       "path": "src/components/FrameStrip.test.tsx",
-      "sha256": "b8bcca6e941ccaf7fef8f865874e8ecf9b2c3719724ae99b9c09034c0770d6f7"
+      "sha256": "68285e96b054187f9636b2e90a03bd49170f97fc318f01167060ffb9805bafbc"
     },
     {
       "path": "src/components/FrameStrip.tsx",
@@ -175,6 +175,10 @@
     {
       "path": "src/components/HelpTip.module.css",
       "sha256": "e12bdf396db26f08c45fc60195fd2e95be906c20995c255454e22b4047495eb2"
+    },
+    {
+      "path": "src/components/HelpTip.mutations.test.tsx",
+      "sha256": "6e05adbea07ddba5ce11ba2377e55561a166978c51f0d11e0b147fc730b4d6a2"
     },
     {
       "path": "src/components/HelpTip.test.tsx",
@@ -319,6 +323,10 @@
     {
       "path": "src/lib/appError.ts",
       "sha256": "2b8ab15a618a3ebc89ef5e6c7c42c3a9fb09a19c36aa2934e2f7fe7669ada68f"
+    },
+    {
+      "path": "src/lib/globalErrorListener.mutations.test.ts",
+      "sha256": "92f5007f17a468ade8f6d06536478cf6b77c9f587ac76e2536d660c78f4ddf7b"
     },
     {
       "path": "src/lib/globalErrorListener.test.ts",
@@ -545,6 +553,10 @@
       "sha256": "38a8e6f0774fc1abe016c5faec9c4886634d5facf91439e4e5aa398025d9e46b"
     },
     {
+      "path": "src/state/metadataStore.mutations.test.ts",
+      "sha256": "9487702408a131cb02b17e182ca72ec99346d89cdde73b27fca5ac3d54f896ec"
+    },
+    {
       "path": "src/state/metadataStore.test.ts",
       "sha256": "c169f9cc5f3668db312007cdf263b94d8e7cb6042916f0c620ae5a4bbfae37ca"
     },
@@ -714,17 +726,17 @@
     }
   ],
   "fullRun": {
-    "completedAt": "2026-11-27T02:23:18.648Z",
+    "completedAt": "2026-11-28T00:07:16.172Z",
     "mutants": 8601,
-    "killed": 2964,
-    "survived": 1975,
-    "Killed": 2964,
-    "NoCoverage": 462,
-    "Survived": 1975,
-    "Timeout": 47,
+    "killed": 3168,
+    "survived": 1790,
+    "Killed": 3168,
+    "Timeout": 48,
+    "Survived": 1790,
+    "NoCoverage": 436,
     "Ignored": 5,
     "RuntimeError": 5,
-    "CompileError": 3143
+    "CompileError": 3149
   },
-  "carriedFrom": "2026-11-27T02:38:14.874Z"
+  "carriedFrom": null
 }
