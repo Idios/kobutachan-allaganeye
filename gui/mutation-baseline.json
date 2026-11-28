@@ -1,12 +1,12 @@
 {
   "schemaVersion": 2,
-  "completedAt": "2026-11-28T00:07:16.172Z",
-  "head": "0f6f1245fd88b98af4fc8f464cba67fc7cd0dd30",
-  "mode": "full",
+  "completedAt": "2026-11-28T00:18:47.694Z",
+  "head": "d0c49a16bebb8bbc3024a49ee706e8b9f95b3455",
+  "mode": "incremental",
   "status": 0,
   "sources": {
     "count": 137,
-    "hash": "accbd3b46fa0b9aa2d6f712eb0ff360236b2cbf9c5e5c80d6ac2037aca472f7c"
+    "hash": "e75ca48c0bb91cb05d6fa2f505617d18259aedb9273087f99889902da6cec520"
   },
   "config": {
     "hash": "8a7187d7ff8ac57fb388e881344e8bf3bc786886c059208e20f623ee448577d6"
@@ -14,7 +14,7 @@
   "entries": [
     {
       "path": "mutator.accepted.json",
-      "sha256": "c28ec8f67f00dda65dfdd9a759cab46f3a348f9545f290783e2ef54c2bf405d4"
+      "sha256": "87cb94954460c1c691bc36a98ec32218a0fcac49d312d35aafa5ae40c008c3a4"
     },
     {
       "path": "mutator.config.ts",
@@ -554,7 +554,7 @@
     },
     {
       "path": "src/state/metadataStore.mutations.test.ts",
-      "sha256": "9487702408a131cb02b17e182ca72ec99346d89cdde73b27fca5ac3d54f896ec"
+      "sha256": "56d1bf384d9194d43ea21d6390c14e7c82b5e57be46ea647a4cc0211ab20811d"
     },
     {
       "path": "src/state/metadataStore.test.ts",
@@ -738,5 +738,5 @@
     "RuntimeError": 5,
     "CompileError": 3149
   },
-  "carriedFrom": null
+  "carriedFrom": "2026-11-28T00:07:16.172Z"
 }
