@@ -391,6 +391,22 @@ describe('metadataStore (mutation coverage, #1164)', () => {
     expect(useMetadataStore.getState().draftLoadErrorState).toBeNull();
   });
 
+  it('treats paths that differ only in unicode case folding as different', async () => {
+    // 'straße'.toUpperCase() は 'STRASSE' になり 'strasse' と等しくなるが、
+    // 小文字化では一致しない。大文字化にすると別録画の draft を受理してしまう。
+    configure({
+      load_metadata: { ...metadata(), source: 'C:/videos/straße.mkv' },
+    });
+    await useMetadataStore.getState().load('p');
+    invokeMock.mockReset();
+    configure({
+      load_draft: { ...metadata(), source: 'C:/videos/strasse.mkv' },
+    });
+    await useMetadataStore.getState().loadDraft();
+    expect(callsOf('clear_draft')).toHaveLength(1);
+    expect(useMetadataStore.getState().pendingDraft).toBeNull();
+  });
+
   it('clears pendingDraft when there is no file path', async () => {
     useMetadataStore.setState({ filePath: null, pendingDraft: metadata() });
     await useMetadataStore.getState().clearDraft();

@@ -599,12 +599,12 @@ snapshot の有無ではなく marker で判定するのは、**`--include` 付�
 
 **#1164 (2026-11-27) のテストギャップ補完（優先順 4 ファイル）**: 画面系に入る前に
 「小さいが影響の大きい」4 ファイルを片付けた。`--include <file>` の個別計測で、
-undetected（survived + no coverage）を **218 → 0** にした（208 killed / 10 equivalent）。
+undetected（survived + no coverage）を **218 → 0** にした（209 killed / 9 equivalent）。
 
 | ファイル | 補完前 | 補完後 | accept |
 | --- | --- | --- | --- |
 | `src/components/FrameStrip.tsx` | 90 | **0** | 6 |
-| `src/state/metadataStore.ts` | 49 | **0** | 2 |
+| `src/state/metadataStore.ts` | 49 | **0** | 1 |
 | `src/lib/globalErrorListener.ts` | 48 | **0** | 0 |
 | `src/components/HelpTip.tsx` | 31 | **0** | 2 |
 

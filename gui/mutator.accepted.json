@@ -19,10 +19,6 @@
     "reason": "equivalent mutants: empty input and d==1.2 are unobservable (1.2 is not representable in binary, so < and <= classify identically)",
     "where": "src/utils/brightness.ts:53:7 samples.length === 0 -> false"
   },
-  "5pe4sgw66a": {
-    "reason": "normalizeSourcePath: 大文字小文字の畳み込みは全単射なので、比較結果 (等しい/等しくない) は toLowerCase でも toUpperCase でも変わらない (equivalent)",
-    "where": "src/state/metadataStore.ts:29:32 toLowerCase -> toUpperCase"
-  },
   "6574ec15vm": {
     "reason": "overlayPath の空文字 fallback は brightnessSamples が falsy のときだけ選ばれ、その場合 SVG ブロック自体が描画されない (unreachable)",
     "where": "src/components/FrameStrip.tsx:155:11 '' -> 'Stryker was here!'"
