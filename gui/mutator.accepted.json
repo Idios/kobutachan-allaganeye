@@ -1,4 +1,8 @@
 {
+  "13xpd8erbpi": {
+    "reason": "synthesizeFrames: count<=0 を false / count<0 にしても for (i<count) が走らないので結果は [] のまま (equivalent)",
+    "where": "src/components/FrameStrip.tsx:77:7 count <= 0 -> false"
+  },
   "1pjrismrff5": {
     "reason": "equivalent mutants: empty input and d==1.2 are unobservable (1.2 is not representable in binary, so < and <= classify identically)",
     "where": "src/utils/brightness.ts:19:7 n === 0 -> false"
@@ -7,8 +11,40 @@
     "reason": "equivalent mutants: empty input and d==1.2 are unobservable (1.2 is not representable in binary, so < and <= classify identically)",
     "where": "src/utils/brightness.ts:97:9 distFromEdge < 1.2 -> distFromEdge <= 1.2"
   },
+  "2aqj4whnk14": {
+    "reason": "refreshFromDiskPreservingEdits: metadata が null のとき ['Stryker was here!'] を map すると key は undefined になり、数値 index の lookup にヒットしないためマージ結果は同じ (equivalent)",
+    "where": "src/state/metadataStore.ts:681:37 [] -> [\"Stryker was here!\"]"
+  },
   "2c59btghhox": {
     "reason": "equivalent mutants: empty input and d==1.2 are unobservable (1.2 is not representable in binary, so < and <= classify identically)",
     "where": "src/utils/brightness.ts:53:7 samples.length === 0 -> false"
+  },
+  "6574ec15vm": {
+    "reason": "overlayPath の空文字 fallback は brightnessSamples が falsy のときだけ選ばれ、その場合 SVG ブロック自体が描画されない (unreachable)",
+    "where": "src/components/FrameStrip.tsx:155:11 '' -> 'Stryker was here!'"
+  },
+  "eibs41tb14": {
+    "reason": "brightness は 0.08 / 0.35 / 0.85 の 3 値しか取らず 0.15 と等しくならないため < と <= は同値 (equivalent)",
+    "where": "src/components/FrameStrip.tsx:206:33 f.brightness < 0.15 -> f.brightness <= 0.15"
+  },
+  "g35zp94v0s": {
+    "reason": "overlayWindowSeconds は findBlackoutRegions の duration と x 軸スケールの両方に同じ係数で効くため、帯の正規化位置は変わらない (equivalent)",
+    "where": "src/components/FrameStrip.tsx:150:59 windowSec * 2 -> windowSec / 2"
+  },
+  "ksm9a55fkx": {
+    "reason": "synthesizeFrames: count<=0 を false / count<0 にしても for (i<count) が走らないので結果は [] のまま (equivalent)",
+    "where": "src/components/FrameStrip.tsx:77:7 count <= 0 -> count < 0"
+  },
+  "q51f1mlne9": {
+    "reason": "document.activeElement !== trigger のとき trigger.blur() は非フォーカス要素への no-op なので、条件を常に true にしても観測差なし (equivalent)",
+    "where": "src/components/HelpTip.tsx:71:11 document.activeElement === triggerRef.current -> true"
+  },
+  "ufg2hi17to": {
+    "reason": "computePlacement は mount 後の ref からしか呼ばれないため el === null 分岐は到達しない (defensive、unreachable)",
+    "where": "src/components/HelpTip.tsx:32:27 'below' -> ''"
+  },
+  "v9bsuikw05": {
+    "reason": "synthesizeFrames: times[length] は undefined で d が NaN になり NaN<closestDist は常に false のため、余分な 1 周は closestIdx を変えない (equivalent)",
+    "where": "src/components/FrameStrip.tsx:88:19 i < times.length -> i <= times.length"
   }
 }
